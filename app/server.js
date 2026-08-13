@@ -14,6 +14,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS leads (
 )`);
 
 app.use(express.json({ limit: '30kb' }));
+app.use('/vendor/three', express.static(path.join(dir, 'node_modules/three/build')));
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
 app.post('/api/leads', (req, res) => {
   const { name, email, whatsapp = '', interest = '', consent } = req.body || {};
