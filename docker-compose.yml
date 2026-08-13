@@ -1,0 +1,24 @@
+services:
+  app:
+    build: ./app
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATA_DIR: /data
+    volumes:
+      - vitrinecity_data:/data
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+volumes:
+  vitrinecity_data:
+  caddy_data:
+  caddy_config:
