@@ -15,11 +15,11 @@
   <main class="content" id="catalogo">
     <div class="titlebar"><div><h2>Catálogo de cursos</h2><p>Conteúdos próprios ou com licença comercial conferida.</p></div><strong>Preço único: R$ 23,99</strong></div>
     <div class="grid" id="course-grid"><div class="card loading">Carregando catálogo…</div></div>
-    <div class="notice"><b>Compra protegida:</b> entre ou crie sua conta, aceite os termos e pague pelo Mercado Pago. O curso aparecerá em “Meus cursos” depois que o pagamento for aprovado.</div>
-    <section class="business"><article><h3>Ganhe 6% indicando cursos</h3><p>Cada curso de R$ 23,99 gera R$ 1,44 de comissão quando a venda indicada for aprovada.</p><a href="/afiliados.html">Quero ser afiliado →</a></article><article><h3>Aprenda no seu ritmo</h3><p>As aulas ficam organizadas na área do aluno, com objetivos, atividades práticas e listas de verificação.</p><a href="/meus-cursos.html">Abrir minha área →</a></article></section>
+    <div class="notice"><b>Compra protegida:</b> entre ou crie sua conta, aceite os termos e pague pelo Mercado Pago. O curso aparecerá em “Meus cursos” depois que o pagamento for aprovado. Conclua todas as aulas para emitir seu certificado nominal de curso livre.</div>
+    <section class="business"><article><h3>Ganhe 45% indicando cursos</h3><p>Cada curso de R$ 23,99 gera aproximadamente R$ 10,80 de comissão quando a venda indicada for aprovada.</p><a href="/afiliados.html">Quero ser afiliado →</a></article><article><h3>Aprenda e receba certificado</h3><p>O progresso fica salvo na conta e o certificado possui código público de validação.</p><a href="/meus-cursos.html">Abrir minha área →</a></article></section>
   </main>
   <script>
-    const icons={'ia-para-pequenos-negocios':'🤖','canva-para-lojas':'🎨','vendas-pelo-whatsapp':'💬','geladinhos-gourmet':'🍧','logo-no-canva':'🖌️'};
+    const icons={'ia-para-pequenos-negocios':'🤖','canva-para-lojas':'🎨','vendas-pelo-whatsapp':'💬','geladinhos-gourmet':'🍧','logo-no-canva':'🖌️','precificacao-e-lucro':'📊','shopee-do-zero':'🛍️','videos-curtos-que-vendem':'🎬'};
     const escapeHtml=value=>String(value).replace(/[&<>'"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
     const money=cents=>(cents/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
     async function buy(slug,button,message,checkbox){

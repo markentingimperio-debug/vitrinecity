@@ -1,3 +1,5 @@
+import { GROWTH_COURSES } from './course-content-growth.js';
+
 export const ORIGINAL_COURSES = Object.freeze({
   'geladinhos-gourmet': Object.freeze({
     description: 'Aprenda a planejar sabores, calcular custos, produzir com higiene e vender geladinhos gourmet com lucro.',
@@ -357,5 +359,5 @@ export const ORIGINAL_COURSES = Object.freeze({
 });
 
 export function originalCourse(slug) {
-  return ORIGINAL_COURSES[slug] || null;
+  return ORIGINAL_COURSES[slug] || GROWTH_COURSES[slug] || null;
 }

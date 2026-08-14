@@ -144,6 +144,21 @@ CREATE TABLE IF NOT EXISTS course_enrollments (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS course_progress (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  course_slug TEXT NOT NULL,
+  lesson_slug TEXT NOT NULL,
+  completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, course_slug, lesson_slug)
+);
+CREATE TABLE IF NOT EXISTS course_certificates (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  course_slug TEXT NOT NULL,
+  verification_code TEXT NOT NULL UNIQUE,
+  issued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, course_slug)
+);
 CREATE TABLE IF NOT EXISTS service_orders (
   id INTEGER PRIMARY KEY,
   reference TEXT NOT NULL UNIQUE,
@@ -178,6 +193,7 @@ const CREDIT_PACKAGE = Object.freeze({ amountCents: 1000, feeCents: 30, creditUn
 const COURSE_PRICE_CENTS = 2399;
 const VIDEO_PACKAGE = Object.freeze({ slug: '10-videos-loja', amountCents: 20000, quantity: 10 });
 const REFERRAL_RATE_BPS = 600;
+const COURSE_REFERRAL_RATE_BPS = 4500;
 const VIDEO_CREATOR_RATE_BPS = 8500;
 const COMMISSION_HOLD_MS = 30 * 24 * 60 * 60 * 1000;
 const AFFILIATE_COOKIE = 'vc_ref';
@@ -205,6 +221,21 @@ const COURSES = Object.freeze({
   }),
   'vendas-pelo-whatsapp': Object.freeze({
     slug: 'vendas-pelo-whatsapp', title: 'Vendas pelo WhatsApp',
+    priceCents: COURSE_PRICE_CENTS, modules: 5,
+    license: 'Conteúdo original VitrineCity. Acesso individual; proibida a redistribuição.'
+  }),
+  'precificacao-e-lucro': Object.freeze({
+    slug: 'precificacao-e-lucro', title: 'Precificação e Lucro para Pequenos Negócios',
+    priceCents: COURSE_PRICE_CENTS, modules: 5,
+    license: 'Conteúdo original VitrineCity. Acesso individual; proibida a redistribuição.'
+  }),
+  'shopee-do-zero': Object.freeze({
+    slug: 'shopee-do-zero', title: 'Shopee do Zero às Primeiras Vendas',
+    priceCents: COURSE_PRICE_CENTS, modules: 6,
+    license: 'Conteúdo original VitrineCity. Acesso individual; proibida a redistribuição.'
+  }),
+  'videos-curtos-que-vendem': Object.freeze({
+    slug: 'videos-curtos-que-vendem', title: 'Vídeos Curtos que Vendem',
     priceCents: COURSE_PRICE_CENTS, modules: 5,
     license: 'Conteúdo original VitrineCity. Acesso individual; proibida a redistribuição.'
   })
@@ -263,6 +294,23 @@ function courseReady(slug) {
 function activeEnrollment(userId, slug) {
   return db.prepare("SELECT 1 FROM course_enrollments WHERE user_id=? AND course_slug=? AND status='active' LIMIT 1")
     .get(userId, slug);
+}
+
+function courseProgress(userId, slug) {
+  const course = originalCourse(slug);
+  const lessonSlugs = course?.lessons?.map(item => item.slug) || [];
+  const completed = db.prepare(`SELECT lesson_slug FROM course_progress
+    WHERE user_id=? AND course_slug=? ORDER BY completed_at`).all(userId, slug)
+    .map(item => item.lesson_slug).filter(value => lessonSlugs.includes(value));
+  const certificate = db.prepare(`SELECT verification_code,issued_at FROM course_certificates
+    WHERE user_id=? AND course_slug=?`).get(userId, slug) || null;
+  return {
+    completedLessonSlugs: completed,
+    completedCount: completed.length,
+    totalLessons: lessonSlugs.length,
+    certificateEligible: lessonSlugs.length > 0 && completed.length === lessonSlugs.length,
+    certificate
+  };
 }
 
 function hashPassword(password) {
@@ -787,7 +835,7 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
           .run(order.reference);
       }
       syncAffiliateCommission({ affiliateId: order.affiliate_id, orderType: 'course', orderReference: order.reference,
-        grossAmountCents: order.amount_cents, rateBps: REFERRAL_RATE_BPS, payment });
+        grossAmountCents: order.amount_cents, rateBps: COURSE_REFERRAL_RATE_BPS, payment });
       return res.sendStatus(200);
     }
     if (reference.startsWith('video_')) {
@@ -864,6 +912,74 @@ app.get('/api/my-courses/:slug/lessons/:lessonSlug', requireUser, (req, res) => 
   if (!lesson) return res.status(404).json({ error: 'Aula não encontrada.' });
   res.set({ 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
   return res.json({ course: { slug, title: COURSES[slug].title }, lesson });
+});
+
+app.get('/api/my-courses/:slug/progress', requireUser, (req, res) => {
+  const slug = String(req.params.slug || '');
+  if (!COURSES[slug] || !originalCourse(slug)) return res.status(404).json({ error: 'Curso não encontrado.' });
+  if (!activeEnrollment(req.user.id, slug)) return res.status(403).json({ error: 'Acesso disponível somente para alunos matriculados.' });
+  return res.json(courseProgress(req.user.id, slug));
+});
+
+app.post('/api/my-courses/:slug/progress', requireUser, (req, res) => {
+  const slug = String(req.params.slug || '');
+  const course = originalCourse(slug);
+  const lessonSlug = String(req.body?.lessonSlug || '');
+  if (!COURSES[slug] || !course) return res.status(404).json({ error: 'Curso não encontrado.' });
+  if (!activeEnrollment(req.user.id, slug)) return res.status(403).json({ error: 'Acesso disponível somente para alunos matriculados.' });
+  if (!course.lessons.some(item => item.slug === lessonSlug)) return res.status(400).json({ error: 'Aula inválida.' });
+  if (req.body?.completed === false) {
+    db.prepare('DELETE FROM course_progress WHERE user_id=? AND course_slug=? AND lesson_slug=?')
+      .run(req.user.id, slug, lessonSlug);
+  } else {
+    db.prepare(`INSERT INTO course_progress (user_id,course_slug,lesson_slug) VALUES (?,?,?)
+      ON CONFLICT(user_id,course_slug,lesson_slug) DO UPDATE SET completed_at=CURRENT_TIMESTAMP`)
+      .run(req.user.id, slug, lessonSlug);
+  }
+  return res.json(courseProgress(req.user.id, slug));
+});
+
+app.post('/api/my-courses/:slug/certificate', requireUser, (req, res) => {
+  const slug = String(req.params.slug || '');
+  if (!COURSES[slug] || !originalCourse(slug)) return res.status(404).json({ error: 'Curso não encontrado.' });
+  if (!activeEnrollment(req.user.id, slug)) return res.status(403).json({ error: 'Acesso disponível somente para alunos matriculados.' });
+  const progress = courseProgress(req.user.id, slug);
+  if (!progress.certificateEligible) return res.status(409).json({ error: 'Conclua todas as aulas para emitir o certificado.' });
+  let certificate = progress.certificate;
+  if (!certificate) {
+    for (let attempt = 0; attempt < 5 && !certificate; attempt += 1) {
+      const code = `VC-${randomBytes(6).toString('hex').toUpperCase()}`;
+      try {
+        db.prepare('INSERT INTO course_certificates (user_id,course_slug,verification_code) VALUES (?,?,?)')
+          .run(req.user.id, slug, code);
+        certificate = db.prepare(`SELECT verification_code,issued_at FROM course_certificates
+          WHERE user_id=? AND course_slug=?`).get(req.user.id, slug);
+      } catch (error) {
+        if (!String(error?.message || '').includes('UNIQUE')) throw error;
+        certificate = db.prepare(`SELECT verification_code,issued_at FROM course_certificates
+          WHERE user_id=? AND course_slug=?`).get(req.user.id, slug) || null;
+      }
+    }
+  }
+  if (!certificate) return res.status(500).json({ error: 'Não foi possível emitir o certificado agora.' });
+  return res.json({
+    holderName: req.user.name,
+    courseTitle: COURSES[slug].title,
+    courseSlug: slug,
+    totalLessons: progress.totalLessons,
+    verificationCode: certificate.verification_code,
+    issuedAt: certificate.issued_at,
+    verificationUrl: `${SITE_URL}/validar-certificado.html?codigo=${encodeURIComponent(certificate.verification_code)}`
+  });
+});
+
+app.get('/api/certificates/:code', (req, res) => {
+  const code = String(req.params.code || '').trim().toUpperCase();
+  const certificate = db.prepare(`SELECT c.verification_code,c.issued_at,c.course_slug,u.name
+    FROM course_certificates c JOIN users u ON u.id=c.user_id WHERE c.verification_code=?`).get(code);
+  if (!certificate || !COURSES[certificate.course_slug]) return res.status(404).json({ valid: false, error: 'Certificado não encontrado.' });
+  return res.json({ valid: true, holderName: certificate.name, courseTitle: COURSES[certificate.course_slug].title,
+    issuedAt: certificate.issued_at, verificationCode: certificate.verification_code });
 });
 
 app.get('/api/my-courses/:slug/material', requireUser, (req, res) => {
