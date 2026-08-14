@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Carteira de Créditos | VitrineCity</title>
+  <meta name="description" content="Compre e acompanhe seus Créditos Vitrine para uso dentro da VitrineCity.">
+  <style>
+    :root{--blue:#1268ed;--navy:#08275c;--gold:#ffbd19;--ink:#102548;--muted:#62728e;--line:#dbe5f3;--bg:#f3f7fd;--ok:#137c55;--danger:#b82f43}
+    *{box-sizing:border-box}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;color:var(--ink);background:radial-gradient(circle at 80% 0,#dcecff,transparent 32rem),var(--bg)}
+    a{color:var(--blue)}header{height:78px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 max(20px,calc((100% - 1120px)/2))}
+    .brand{font-size:27px;font-weight:900;color:var(--navy);text-decoration:none}.brand:before{content:"";display:inline-block;width:29px;height:29px;border-radius:7px;background:var(--blue);vertical-align:-5px;margin-right:9px}
+    main{max-width:1120px;margin:auto;padding:42px 20px 70px}.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:26px;align-items:stretch}.card{background:#fff;border:1px solid var(--line);border-radius:24px;box-shadow:0 18px 45px #194b8a14;padding:30px}
+    .eyebrow{font-size:13px;font-weight:900;letter-spacing:.08em;color:var(--blue)}h1{font-size:clamp(36px,5vw,62px);line-height:1;margin:12px 0 18px}h2{margin:0 0 18px}.lead{font-size:18px;line-height:1.6;color:var(--muted)}
+    .package{background:linear-gradient(145deg,#073071,#1268ed);color:#fff;position:relative;overflow:hidden}.package:after{content:"VC";position:absolute;right:-18px;bottom:-48px;font-size:180px;font-weight:1000;color:#ffffff0d}.coin{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(145deg,#ffe27a,var(--gold));color:#7b4b00;font-weight:1000;font-size:25px;box-shadow:0 12px 30px #001c5055}
+    .price{font-size:44px;font-weight:1000;margin:20px 0 4px}.receive{font-size:22px;font-weight:850;color:#ffe27a}.breakdown{margin:22px 0;border-top:1px solid #ffffff40}.row{display:flex;justify-content:space-between;gap:16px;padding:11px 0;border-bottom:1px solid #ffffff30}.row strong{text-align:right}
+    label{display:block;font-weight:750;margin:12px 0 6px}input{width:100%;border:1px solid #cbd8eb;border-radius:12px;padding:13px 14px;font:inherit}input:focus{outline:3px solid #1268ed22;border-color:var(--blue)}.check{display:flex;gap:10px;align-items:flex-start;font-weight:500;line-height:1.45}.check input{width:auto;margin-top:4px}
+    button,.button{border:0;border-radius:13px;padding:14px 19px;background:var(--blue);color:#fff;font:inherit;font-weight:850;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.button.secondary,button.secondary{background:#edf4ff;color:var(--blue)}button:disabled{opacity:.6;cursor:wait}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.msg{display:none;margin:14px 0;padding:12px 14px;border-radius:12px;background:#e9f8f1;color:var(--ok);font-weight:700}.msg.error{background:#fff0f2;color:var(--danger)}
+    .auth-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:28px}.wallet{display:none}.balance{font-size:50px;font-weight:1000;color:var(--navy)}.small{font-size:13px;line-height:1.5;color:var(--muted)}.history{margin-top:24px}.transaction{display:flex;justify-content:space-between;gap:16px;padding:13px 0;border-bottom:1px solid var(--line)}.positive{color:var(--ok);font-weight:900}.negative{color:var(--danger);font-weight:900}
+    @media(max-width:760px){header{height:68px}.brand{font-size:22px}.hero,.auth-grid{grid-template-columns:1fr}.card{padding:22px}main{padding-top:24px}h1{font-size:41px}.package{order:-1}}
+  </style>
+</head>
+<body>
+  <header><a class="brand" href="/">VitrineCity</a><a href="/">← Página inicial</a></header>
+  <main>
+    <section class="hero">
+      <div class="card">
+        <div class="eyebrow">CARTEIRA DIGITAL INTERNA</div>
+        <h1>Créditos para viver a cidade.</h1>
+        <p class="lead">Use seus Créditos Vitrine em anúncios, avatares, atrações e outros serviços internos que forem disponibilizados na plataforma.</p>
+        <p class="small">Os créditos não são moeda, não podem ser sacados nem transferidos entre usuários. Uso exclusivo na VitrineCity, para maiores de 18 anos.</p>
+      </div>
+      <div class="card package">
+        <div class="coin">VC</div><div class="price">R$ 10,00</div><div class="receive">Você recebe 9,70 créditos</div>
+        <div class="breakdown"><div class="row"><span>Valor pago</span><strong>R$ 10,00</strong></div><div class="row"><span>Taxa de conversão (3%)</span><strong>R$ 0,30</strong></div><div class="row"><span>Validade</span><strong>60 dias após a aprovação</strong></div></div>
+      </div>
+    </section>
+
+    <div id="notice" class="msg" role="status"></div>
+    <section id="guest" class="auth-grid">
+      <form id="register" class="card"><h2>Criar minha conta</h2><label>Nome<input name="name" autocomplete="name" required minlength="2"></label><label>E-mail<input name="email" type="email" autocomplete="email" required></label><label>WhatsApp (opcional)<input name="whatsapp" autocomplete="tel"></label><label>Senha<input name="password" type="password" autocomplete="new-password" required minlength="10"></label><label class="check"><input name="adult" type="checkbox" required><span>Confirmo que tenho 18 anos ou mais.</span></label><label class="check"><input name="terms" type="checkbox" required><span>Li e aceito os <a href="/termos-creditos.html" target="_blank">Termos dos Créditos Vitrine</a>.</span></label><button type="submit">Criar conta segura</button></form>
+      <form id="login" class="card"><h2>Já tenho conta</h2><label>E-mail<input name="email" type="email" autocomplete="email" required></label><label>Senha<input name="password" type="password" autocomplete="current-password" required></label><button type="submit">Entrar</button></form>
+    </section>
+
+    <section id="wallet" class="wallet">
+      <div class="auth-grid">
+        <div class="card"><div class="eyebrow">SEU SALDO</div><div id="balance" class="balance">0,00 VC</div><p id="expiry" class="small">Sem créditos ativos.</p><p id="identity" class="small"></p><button id="logout" class="secondary">Sair da conta</button></div>
+        <div class="card"><h2>Comprar pacote</h2><p>Pague <strong>R$ 10,00</strong> e receba <strong>9,70 Créditos Vitrine</strong>, válidos por 60 dias.</p><label class="check"><input id="purchaseTerms" type="checkbox"><span>Aceito a taxa de conversão de 3%, a validade de 60 dias e os <a href="/termos-creditos.html" target="_blank">termos de uso</a>.</span></label><button id="buy" type="button">Comprar com Mercado Pago</button><p class="small">Você será direcionado ao ambiente seguro do Mercado Pago. O saldo só é liberado após confirmação do pagamento.</p></div>
+      </div>
+      <div class="card history"><h2>Movimentações</h2><div id="transactions"><p class="small">Nenhuma movimentação ainda.</p></div></div>
+    </section>
+  </main>
+  <script>
+    const guest=document.querySelector('#guest'),wallet=document.querySelector('#wallet'),notice=document.querySelector('#notice');
+    const money=n=>(Number(n||0)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const date=n=>new Date(Number(n)).toLocaleDateString('pt-BR');
+    function message(text,error=false){notice.textContent=text;notice.className='msg'+(error?' error':'');notice.style.display='block'}
+    async function json(url,options){const response=await fetch(url,options);const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||'Não foi possível concluir.');return data}
+    function renderWallet(data){guest.style.display='none';wallet.style.display='block';document.querySelector('#identity').textContent=`Conta: ${data.user.name} · ${data.user.email}`;const w=data.wallet;document.querySelector('#balance').textContent=`${money(w.balanceUnits)} VC`;document.querySelector('#expiry').textContent=w.nextExpirationAt?`Próximo vencimento: ${date(w.nextExpirationAt)}. Créditos válidos por 60 dias.`:'Sem créditos ativos.';const box=document.querySelector('#transactions');box.textContent='';if(!w.transactions.length){const p=document.createElement('p');p.className='small';p.textContent='Nenhuma movimentação ainda.';box.append(p)}else w.transactions.forEach(t=>{const row=document.createElement('div');row.className='transaction';const left=document.createElement('span');left.textContent=`${t.description} · ${new Date(t.created_at+'Z').toLocaleDateString('pt-BR')}`;const amount=document.createElement('span');amount.className=t.delta_units>=0?'positive':'negative';amount.textContent=`${t.delta_units>=0?'+':''}${money(t.delta_units)} VC`;row.append(left,amount);box.append(row)})}
+    async function load(){try{renderWallet(await json('/api/auth/me'))}catch{guest.style.display='grid';wallet.style.display='none'}}
+    document.querySelector('#register').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{await json('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:f.get('name'),email:f.get('email'),whatsapp:f.get('whatsapp'),password:f.get('password'),adultConfirmed:f.get('adult')==='on',termsAccepted:f.get('terms')==='on'})});message('Conta criada com sucesso.');await load()}catch(err){message(err.message,true)}});
+    document.querySelector('#login').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{await json('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:f.get('email'),password:f.get('password')})});message('Entrada realizada.');await load()}catch(err){message(err.message,true)}});
+    document.querySelector('#logout').addEventListener('click',async()=>{await json('/api/auth/logout',{method:'POST'});location.reload()});
+    document.querySelector('#buy').addEventListener('click',async e=>{if(!document.querySelector('#purchaseTerms').checked)return message('Aceite os termos e a validade de 60 dias para continuar.',true);e.currentTarget.disabled=true;try{const data=await json('/api/credits/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({termsAccepted:true})});location.href=data.checkoutUrl}catch(err){message(err.message,true);e.currentTarget.disabled=false}});
+    async function checkReturn(){const q=new URLSearchParams(location.search),ref=q.get('ref'),result=q.get('resultado');if(result)message(result==='sucesso'?'Pagamento recebido. Estamos confirmando seu saldo.':result==='pendente'?'Pagamento em análise pelo Mercado Pago.':'Pagamento não concluído.',result==='falha');if(!ref)return;for(let i=0;i<8;i++){try{const order=await json('/api/credits/orders/'+encodeURIComponent(ref));if(order.status==='approved'){message(`Pagamento aprovado! ${money(order.credited_units)} créditos liberados e válidos por 60 dias.`);await load();break}}catch{}await new Promise(r=>setTimeout(r,2500))}}
+    load().then(checkReturn);
+  </script>
+</body>
+</html>
