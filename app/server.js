@@ -30,10 +30,21 @@ app.get('/api/payments/asaas/status', async (_req, res) => {
   if (!apiKey) return res.status(503).json({ ok: false, configured: false, message: 'Chave de pagamento não configurada.' });
   try {
     const response = await fetch('https://api.asaas.com/v3/myAccount', {
-      headers: { access_token: apiKey, accept: 'application/json' },
+      headers: {
+        access_token: apiKey,
+        accept: 'application/json',
+        'User-Agent': 'VitrineCity/1.0'
+      },
       signal: AbortSignal.timeout(8000)
     });
-    if (!response.ok) return res.status(502).json({ ok: false, configured: true, message: 'Não foi possível validar a conexão com o Asaas.' });
+    if (!response.ok) {
+      return res.status(502).json({
+        ok: false,
+        configured: true,
+        asaasStatus: response.status,
+        message: 'Não foi possível validar a conexão com o Asaas.'
+      });
+    }
     return res.json({ ok: true, configured: true, mode: process.env.ASAAS_ENV || 'production' });
   } catch {
     return res.status(502).json({ ok: false, configured: true, message: 'Não foi possível conectar ao Asaas agora.' });
