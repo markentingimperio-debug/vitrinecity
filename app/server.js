@@ -160,7 +160,7 @@ app.get('/api/orders/:reference', (req, res) => {
 app.get('/api/payments/mercadopago/status', async (_req, res) => {
   if (!process.env.MERCADOPAGO_ACCESS_TOKEN) return res.status(503).json({ ok: false, configured: false });
   try {
-    const response = await fetch('https://api.mercadopago.com/users/me', {
+    const response = await fetch('https://api.mercadolibre.com/users/me', {
       headers: mpHeaders(), signal: AbortSignal.timeout(8000)
     });
     return response.ok
