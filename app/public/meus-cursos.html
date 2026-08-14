@@ -1,3 +1,44 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Meus cursos | VitrineCity</title><style>body{margin:0;font:16px/1.5 system-ui;color:#14294d;background:#f3f7fd}header{height:72px;padding:0 6%;display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #dbe5f3}a{color:#1268ed}main{max-width:900px;margin:auto;padding:42px 20px}.card{margin:15px 0;padding:22px;background:#fff;border:1px solid #dbe5f3;border-radius:18px}h1,h2{color:#08275c}.muted{color:#60728e}.button{display:inline-block;padding:12px 15px;border-radius:11px;background:#1268ed;color:#fff;text-decoration:none;font-weight:800}</style></head><body><header><b>VitrineCity Educação</b><a href="/centro-educacional.html">Ver catálogo</a></header><main><h1>Meus cursos</h1><p class="muted">Seus acessos aparecem aqui depois da aprovação do pagamento.</p><div id="list"><div class="card">Carregando…</div></div></main><script>
-async function load(){const list=document.querySelector('#list');try{const r=await fetch('/api/my-courses'),d=await r.json();if(!r.ok)throw new Error(d.error);list.innerHTML=d.courses.length?'':'<div class="card">Você ainda não possui cursos. <a href="/centro-educacional.html">Conheça o catálogo</a>.</div>';d.courses.forEach(c=>{const box=document.createElement('div');box.className='card';box.innerHTML=`<h2>${c.course_title}</h2><p>${c.contentReady?'Acesso ativo.':'Pagamento registrado; conteúdo em preparação segura.'}</p>`;list.append(box)})}catch(e){list.innerHTML='<div class="card">Entre na sua conta para ver os cursos. <a class="button" href="/carteira.html">Entrar ou criar conta</a></div>'}}load();
-</script></body></html>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Meus cursos | VitrineCity</title>
+  <style>
+    body{margin:0;font:16px/1.5 system-ui;color:#14294d;background:#f3f7fd}header{height:72px;padding:0 6%;display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #dbe5f3}a{color:#1268ed}main{max-width:900px;margin:auto;padding:42px 20px}.card{margin:15px 0;padding:22px;background:#fff;border:1px solid #dbe5f3;border-radius:18px}h1,h2{color:#08275c}.muted{color:#60728e}.button{display:inline-block;padding:12px 15px;border:0;border-radius:11px;background:#1268ed;color:#fff;text-decoration:none;font-weight:800;cursor:pointer}.materials{margin-top:18px;border-top:1px solid #dbe5f3;padding-top:12px}.file{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid #edf2f8}.file a{font-weight:750;text-decoration:none}.size{font-size:12px;color:#60728e;white-space:nowrap}
+  </style>
+</head>
+<body>
+  <header><b>VitrineCity Educação</b><a href="/centro-educacional.html">Ver catálogo</a></header>
+  <main><h1>Meus cursos</h1><p class="muted">Seus acessos aparecem aqui depois da aprovação do pagamento.</p><div id="list"><div class="card">Carregando…</div></div></main>
+  <script>
+    const escapeHtml=value=>String(value).replace(/[&<>'"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+    const size=value=>value>1048576?`${(value/1048576).toFixed(1)} MB`:`${Math.max(1,Math.round(value/1024))} KB`;
+    async function showMaterials(slug,target,button){
+      button.disabled=true;button.textContent='Carregando…';
+      try{
+        const r=await fetch(`/api/my-courses/${encodeURIComponent(slug)}/materials`),d=await r.json();
+        if(!r.ok)throw new Error(d.error);
+        target.innerHTML=d.files.length?d.files.map(file=>`<div class="file"><a target="_blank" rel="noopener" href="/api/my-courses/${encodeURIComponent(slug)}/material?path=${encodeURIComponent(file.path)}">${escapeHtml(file.name)}</a><span class="size">${size(file.size)}</span></div>`).join(''):'<p class="muted">Os arquivos ainda estão sendo preparados.</p>';
+        button.remove();
+      }catch(e){target.innerHTML=`<p class="muted">${escapeHtml(e.message||'Não foi possível carregar.')}</p>`;button.disabled=false;button.textContent='Tentar novamente'}
+    }
+    async function load(){
+      const list=document.querySelector('#list');
+      try{
+        const r=await fetch('/api/my-courses'),d=await r.json();if(!r.ok)throw new Error(d.error);
+        list.innerHTML=d.courses.length?'':'<div class="card">Você ainda não possui cursos. <a href="/centro-educacional.html">Conheça o catálogo</a>.</div>';
+        d.courses.forEach(c=>{
+          const box=document.createElement('div');box.className='card';
+          const title=document.createElement('h2');title.textContent=c.course_title;
+          const status=document.createElement('p');status.textContent=c.contentReady?'Acesso ativo e protegido.':'Pagamento registrado; conteúdo em preparação segura.';
+          box.append(title,status);
+          if(c.contentReady){const button=document.createElement('button');button.className='button';button.textContent='Abrir materiais';const materials=document.createElement('div');materials.className='materials';button.onclick=()=>showMaterials(c.course_slug,materials,button);box.append(button,materials)}
+          list.append(box);
+        });
+      }catch(e){list.innerHTML='<div class="card">Entre na sua conta para ver os cursos. <a class="button" href="/carteira.html">Entrar ou criar conta</a></div>'}
+    }
+    load();
+  </script>
+</body>
+</html>
