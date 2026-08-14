@@ -1,4 +1,146 @@
 export const ORIGINAL_COURSES = Object.freeze({
+  'geladinhos-gourmet': Object.freeze({
+    description: 'Aprenda a planejar sabores, calcular custos, produzir com higiene e vender geladinhos gourmet com lucro.',
+    audience: 'Quem deseja começar uma renda extra com alimentos congelados',
+    lessons: Object.freeze([
+      {
+        slug: '1-negocio-e-seguranca', title: '1. Planejamento e segurança dos alimentos', duration: '22 min',
+        objective: 'Organizar a produção e aplicar cuidados básicos de higiene e conservação.',
+        sections: [{ title: 'Comece de forma profissional', paragraphs: [
+          'Defina público, capacidade diária, local de produção e canais de venda antes de comprar muitos ingredientes. Começar com três sabores facilita o controle de qualidade, estoque e aceitação.',
+          'Use água potável, utensílios higienizados, cabelo protegido e mãos lavadas. Separe ingredientes crus, embalagens e produtos prontos. Consulte as exigências da vigilância sanitária e da prefeitura do seu município antes de comercializar.'
+        ]}, { title: 'Frio e identificação', paragraphs: [
+          'Mantenha os produtos congelados, evite descongelar e congelar novamente e identifique cada lote com sabor, data de produção e validade definida por responsável capacitado. Ingredientes alergênicos devem ser informados claramente.'
+        ]}],
+        checklist: ['Escolher três sabores iniciais', 'Higienizar área e utensílios', 'Criar etiqueta de lote', 'Verificar regras sanitárias locais'],
+        activity: 'Desenhe o fluxo da sua produção, do recebimento dos ingredientes ao congelamento.'
+      },
+      {
+        slug: '2-base-e-sabores', title: '2. Base, textura e criação de sabores', duration: '25 min',
+        objective: 'Padronizar uma base e testar sabores sem desperdício.',
+        sections: [{ title: 'Ficha de teste', paragraphs: [
+          'Registre para cada teste as quantidades, rendimento, tamanho da embalagem, tempo de congelamento e avaliação de sabor e textura. Use balança e medidores; receitas apenas “no olho” dificultam repetir o resultado.',
+          'Faça pequenos lotes e altere somente uma variável por vez. Ingredientes diferentes mudam doçura, consistência e custo, por isso toda substituição precisa de um novo teste.'
+        ]}, { title: 'Linha inicial', paragraphs: [
+          'Monte uma linha equilibrada: um sabor clássico, um sabor com fruta e um sabor especial. Só anuncie ingredientes realmente usados e não faça alegações de saúde sem respaldo técnico.'
+        ]}],
+        checklist: ['Pesar ingredientes', 'Registrar rendimento', 'Testar uma variável por vez', 'Selecionar três sabores'],
+        activity: 'Crie uma ficha de teste e compare duas versões do mesmo sabor com cinco avaliadores.'
+      },
+      {
+        slug: '3-custo-e-preco', title: '3. Custo, preço e margem', duration: '24 min',
+        objective: 'Calcular o custo unitário e formar um preço sustentável.',
+        sections: [{ title: 'Custo completo', paragraphs: [
+          'Some ingredientes, embalagem, etiqueta, energia estimada, perdas, entrega, taxas de pagamento e mão de obra. Divida o total apenas pela quantidade de unidades aprovadas para venda.',
+          'O preço deve cobrir o custo, despesas do negócio e margem. Compare com o mercado, mas não copie preços sem conhecer a estrutura do concorrente.'
+        ]}, { title: 'Exemplo de cálculo', paragraphs: [
+          'Se um lote custa R$ 48 e rende 40 unidades vendáveis, o custo direto é R$ 1,20 por unidade. Acrescente despesas, perdas e margem antes de definir o preço final. Recalcule sempre que um insumo mudar.'
+        ]}],
+        checklist: ['Listar todos os custos', 'Medir perdas', 'Calcular custo unitário', 'Definir margem e preço'],
+        activity: 'Calcule o custo de um lote real e simule preços para venda unitária e kits.'
+      },
+      {
+        slug: '4-embalagem-e-venda', title: '4. Embalagem, cardápio e vendas', duration: '21 min',
+        objective: 'Apresentar o produto com clareza e criar ofertas simples.',
+        sections: [{ title: 'Embalagem que informa', paragraphs: [
+          'Use embalagem apropriada para alimentos e congelamento. Informe nome do produto, ingredientes, alergênicos, conteúdo, conservação, identificação do produtor e demais dados exigidos pela legislação aplicável.',
+          'Fotografe o produto em boa luz e monte um cardápio com sabores, preços, formas de pagamento, região de entrega e prazo para encomenda.'
+        ]}, { title: 'Ofertas', paragraphs: [
+          'Crie kits com quantidade e preço transparentes. Use encomendas para festas, pontos parceiros e entrega em rota. Evite produzir grandes estoques antes de validar a demanda.'
+        ]}],
+        checklist: ['Escolher embalagem adequada', 'Preparar identificação', 'Fotografar sabores', 'Criar cardápio e kits'],
+        activity: 'Monte um cardápio de uma página com três sabores e duas opções de kit.'
+      },
+      {
+        slug: '5-plano-de-lancamento', title: '5. Plano de lançamento em sete dias', duration: '18 min',
+        objective: 'Realizar um lançamento pequeno, medir resultados e melhorar.',
+        sections: [{ title: 'Sete dias de execução', paragraphs: [
+          'Dia 1: escolha sabores. Dia 2: faça testes. Dia 3: calcule custos. Dia 4: prepare embalagem e fotos. Dia 5: divulgue a pré-venda. Dia 6: produza os pedidos. Dia 7: entregue e colete avaliações.',
+          'Registre unidades produzidas, vendidas, perdidas, ticket médio, lucro estimado e sabores mais pedidos. Use os dados para decidir o próximo lote.'
+        ]}, { title: 'Crescimento seguro', paragraphs: [
+          'Aumente variedade e volume apenas depois de dominar padronização, conservação e margem. Crescer com controle protege o cliente e o caixa.'
+        ]}],
+        checklist: ['Abrir pré-venda', 'Produzir conforme pedidos', 'Registrar vendas e perdas', 'Coletar avaliações'],
+        activity: 'Monte seu calendário de lançamento e uma meta realista para o primeiro lote.'
+      }
+    ])
+  }),
+  'logo-no-canva': Object.freeze({
+    description: 'Crie uma marca clara e um logotipo funcional no Canva, com versões prontas para redes sociais e impressão.',
+    audience: 'Empreendedores que precisam criar ou organizar a identidade visual do negócio',
+    lessons: Object.freeze([
+      {
+        slug: '1-estrategia-da-marca', title: '1. Estratégia antes do desenho', duration: '18 min',
+        objective: 'Definir posicionamento, público e personalidade da marca.',
+        sections: [{ title: 'Briefing essencial', paragraphs: [
+          'Antes de abrir o Canva, responda: o que a empresa vende, para quem, qual diferença deseja comunicar e quais três palavras devem descrever a marca. Um logotipo não resolve um posicionamento confuso.',
+          'Pesquise referências do segmento para entender padrões, mas não copie símbolos, nomes ou composições. Verifique a disponibilidade do nome e considere uma busca de marca no INPI antes de investir na divulgação.'
+        ]}],
+        checklist: ['Definir público', 'Escolher três atributos', 'Reunir referências', 'Verificar o nome'],
+        activity: 'Escreva um briefing de cinco linhas para sua marca.'
+      },
+      {
+        slug: '2-cores-e-fontes', title: '2. Cores e fontes que combinam', duration: '20 min',
+        objective: 'Escolher uma paleta legível e uma combinação tipográfica consistente.',
+        sections: [{ title: 'Menos é mais', paragraphs: [
+          'Escolha duas cores principais e uma de apoio. Teste contraste em fundo claro e escuro e não dependa apenas da cor para transmitir informação.',
+          'Use uma fonte de destaque e outra de leitura, ou apenas uma família com variações de peso. Evite fontes decorativas em textos pequenos.'
+        ]}],
+        checklist: ['Selecionar três cores', 'Anotar códigos das cores', 'Escolher até duas fontes', 'Testar no celular'],
+        activity: 'Monte uma página com paleta, fontes e exemplos de contraste.'
+      },
+      {
+        slug: '3-construcao-no-canva', title: '3. Construção do logotipo no Canva', duration: '27 min',
+        objective: 'Criar uma composição simples, alinhada e reconhecível.',
+        sections: [{ title: 'Nome e símbolo', paragraphs: [
+          'Comece pelo nome em texto, ajuste espaçamento e alinhamento e só então avalie um símbolo. O símbolo deve apoiar a identificação, não competir com o nome.',
+          'Use grades e guias para manter proporção. Elementos do Canva podem ter regras de licenciamento; confira os termos aplicáveis e evite usar um elemento comum como marca exclusiva sem adaptação e verificação.'
+        ]}],
+        checklist: ['Criar versão somente com nome', 'Testar símbolo opcional', 'Alinhar elementos', 'Conferir licenças'],
+        activity: 'Crie três rascunhos e escolha um usando legibilidade, simplicidade e adequação como critérios.'
+      },
+      {
+        slug: '4-versoes-do-logo', title: '4. Versões para cada situação', duration: '19 min',
+        objective: 'Preparar versões principal, horizontal, reduzida e monocromática.',
+        sections: [{ title: 'Sistema de marca', paragraphs: [
+          'Uma marca precisa funcionar em perfil de rede social, fachada, etiqueta e documento. Prepare versão principal, versão horizontal, símbolo ou iniciais e opções em uma cor.',
+          'Reduza o arquivo até o tamanho de um ícone. Se o nome desaparecer ou os detalhes virarem manchas, simplifique a composição.'
+        ]}],
+        checklist: ['Versão principal', 'Versão horizontal', 'Versão reduzida', 'Versão em uma cor'],
+        activity: 'Aplique cada versão em um avatar, uma etiqueta e um cabeçalho.'
+      },
+      {
+        slug: '5-exportacao', title: '5. Exportação correta', duration: '17 min',
+        objective: 'Exportar arquivos adequados para tela, transparência e impressão.',
+        sections: [{ title: 'Arquivos finais', paragraphs: [
+          'Use PNG para imagem com boa definição e, quando o plano permitir, fundo transparente. PDF para impressão preserva melhor textos e formas. Guarde o arquivo editável e uma cópia de cada versão.',
+          'Não aumente um arquivo pequeno esperando recuperar qualidade. Para produção gráfica, confirme formato, cores e sangria com a empresa responsável.'
+        ]}],
+        checklist: ['Exportar PNG', 'Exportar PDF', 'Guardar editável', 'Nomear arquivos claramente'],
+        activity: 'Crie uma pasta final com todas as versões e formatos.'
+      },
+      {
+        slug: '6-manual-rapido', title: '6. Manual rápido da marca', duration: '20 min',
+        objective: 'Documentar regras para manter a identidade consistente.',
+        sections: [{ title: 'Uma página de regras', paragraphs: [
+          'Registre versões permitidas, cores, fontes, área de proteção e exemplos do que não fazer. Inclua fundos autorizados e tamanho mínimo.',
+          'Esse guia ajuda funcionários, parceiros e fornecedores a produzir materiais sem deformar, recolorir ou esconder a marca.'
+        ]}],
+        checklist: ['Listar cores e fontes', 'Definir área de proteção', 'Mostrar usos incorretos', 'Salvar guia em PDF'],
+        activity: 'Monte um manual de uma página no Canva.'
+      },
+      {
+        slug: '7-aplicacao-pratica', title: '7. Aplicação e revisão final', duration: '21 min',
+        objective: 'Testar a marca em materiais reais antes de publicar.',
+        sections: [{ title: 'Teste de realidade', paragraphs: [
+          'Aplique o logotipo em foto de perfil, post, cartão, embalagem e fachada simulada. Peça para pessoas do público dizerem o nome que leram e o tipo de negócio que imaginaram.',
+          'Revise ortografia, proporções, contraste e direitos de uso. Faça ajustes antes de atualizar todos os canais da empresa.'
+        ]}],
+        checklist: ['Testar cinco aplicações', 'Ouvir o público', 'Revisar ortografia', 'Publicar versões finais'],
+        activity: 'Crie um painel com cinco aplicações e registre os ajustes necessários.'
+      }
+    ])
+  }),
   'ia-para-pequenos-negocios': Object.freeze({
     description: 'Use inteligência artificial para planejar ofertas, criar conteúdo e atender clientes com mais agilidade.',
     audience: 'Lojistas, prestadores de serviço e pequenos empreendedores',

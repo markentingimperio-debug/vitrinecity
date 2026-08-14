@@ -186,12 +186,12 @@ const COURSES = Object.freeze({
   'geladinhos-gourmet': Object.freeze({
     slug: 'geladinhos-gourmet', title: 'Geladinhos Gourmet: produção e vendas',
     priceCents: COURSE_PRICE_CENTS, modules: 5,
-    license: 'Venda autorizada somente ao aluno final; direitos PLR não são transferidos.'
+    license: 'Conteúdo original VitrineCity. Acesso individual; proibida a redistribuição.'
   }),
   'logo-no-canva': Object.freeze({
     slug: 'logo-no-canva', title: 'Criação de Logo no Canva',
     priceCents: COURSE_PRICE_CENTS, modules: 7,
-    license: 'Venda e inclusão em área paga autorizadas pela licença PLR do produto.'
+    license: 'Conteúdo original VitrineCity. Acesso individual; proibida a redistribuição.'
   }),
   'ia-para-pequenos-negocios': Object.freeze({
     slug: 'ia-para-pequenos-negocios', title: 'IA para Pequenos Negócios',
