@@ -94,13 +94,103 @@ CREATE TABLE IF NOT EXISTS credit_batches (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS affiliates (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  code TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  status TEXT NOT NULL DEFAULT 'active',
+  terms_version TEXT NOT NULL DEFAULT '2026-08-14',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS affiliate_commissions (
+  id INTEGER PRIMARY KEY,
+  affiliate_id INTEGER NOT NULL REFERENCES affiliates(id),
+  order_type TEXT NOT NULL,
+  order_reference TEXT NOT NULL,
+  gross_amount_cents INTEGER NOT NULL,
+  rate_bps INTEGER NOT NULL,
+  commission_cents INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  available_at INTEGER,
+  payment_id TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(order_type, order_reference)
+);
+CREATE TABLE IF NOT EXISTS course_orders (
+  id INTEGER PRIMARY KEY,
+  reference TEXT NOT NULL UNIQUE,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  course_slug TEXT NOT NULL,
+  course_title TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  affiliate_id INTEGER REFERENCES affiliates(id),
+  status TEXT NOT NULL DEFAULT 'created',
+  mp_preference_id TEXT,
+  mp_payment_id TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS course_enrollments (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  course_slug TEXT NOT NULL,
+  order_reference TEXT NOT NULL UNIQUE REFERENCES course_orders(reference),
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS service_orders (
+  id INTEGER PRIMARY KEY,
+  reference TEXT NOT NULL UNIQUE,
+  service_slug TEXT NOT NULL,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  whatsapp TEXT,
+  amount_cents INTEGER NOT NULL,
+  affiliate_id INTEGER REFERENCES affiliates(id),
+  status TEXT NOT NULL DEFAULT 'created',
+  delivery_status TEXT NOT NULL DEFAULT 'awaiting_payment',
+  mp_preference_id TEXT,
+  mp_payment_id TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_credit_orders_user ON credit_orders(user_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_wallet_ledger_user ON wallet_ledger(user_id, created_at);`);
+CREATE INDEX IF NOT EXISTS idx_wallet_ledger_user ON wallet_ledger(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_affiliate_commissions_affiliate ON affiliate_commissions(affiliate_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_course_orders_user ON course_orders(user_id, created_at);`);
+
+function ensureColumn(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some(item => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+ensureColumn('lot_orders', 'affiliate_id', 'INTEGER REFERENCES affiliates(id)');
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
 const CREDIT_PACKAGE = Object.freeze({ amountCents: 1000, feeCents: 30, creditUnits: 970 });
+const COURSE_PRICE_CENTS = 2399;
+const VIDEO_PACKAGE = Object.freeze({ slug: '10-videos-loja', amountCents: 20000, quantity: 10 });
+const REFERRAL_RATE_BPS = 600;
+const VIDEO_CREATOR_RATE_BPS = 8500;
+const COMMISSION_HOLD_MS = 30 * 24 * 60 * 60 * 1000;
+const AFFILIATE_COOKIE = 'vc_ref';
+const AFFILIATE_COOKIE_AGE_SECONDS = 60 * 60 * 24 * 30;
+const COURSES = Object.freeze({
+  'geladinhos-gourmet': Object.freeze({
+    slug: 'geladinhos-gourmet', title: 'Geladinhos Gourmet: produção e vendas',
+    priceCents: COURSE_PRICE_CENTS, modules: 5, available: false,
+    license: 'Venda autorizada somente ao aluno final; direitos PLR não são transferidos.'
+  }),
+  'logo-no-canva': Object.freeze({
+    slug: 'logo-no-canva', title: 'Criação de Logo no Canva',
+    priceCents: COURSE_PRICE_CENTS, modules: 7, available: false,
+    license: 'Venda e inclusão em área paga autorizadas pela licença PLR do produto.'
+  })
+});
 const SESSION_COOKIE = 'vc_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const CREDIT_VALIDITY_MS = 60 * 24 * 60 * 60 * 1000;
@@ -168,6 +258,36 @@ function requireUser(req, res, next) {
   return next();
 }
 
+function referralAffiliate(req, buyerEmail = '', buyerUserId = null) {
+  const code = String(parseCookies(req)[AFFILIATE_COOKIE] || '').trim();
+  if (!code) return null;
+  const affiliate = db.prepare(`SELECT a.id,a.user_id,a.code,u.email
+    FROM affiliates a JOIN users u ON u.id=a.user_id
+    WHERE a.code=? AND a.status='active'`).get(code);
+  if (!affiliate) return null;
+  if (buyerUserId && Number(affiliate.user_id) === Number(buyerUserId)) return null;
+  if (buyerEmail && affiliate.email.toLowerCase() === String(buyerEmail).trim().toLowerCase()) return null;
+  return affiliate;
+}
+
+const syncAffiliateCommission = db.transaction(({ affiliateId, orderType, orderReference, grossAmountCents, rateBps, payment }) => {
+  if (!affiliateId) return;
+  const paymentStatus = String(payment.status || 'unknown');
+  const reversalStatuses = new Set(['refunded', 'charged_back', 'cancelled', 'rejected']);
+  if (paymentStatus !== 'approved' && !reversalStatuses.has(paymentStatus)) return;
+  const status = reversalStatuses.has(paymentStatus) ? 'reversed' : orderType === 'video_package' ? 'awaiting_delivery' : 'pending';
+  const availableAt = status === 'pending' ? Date.now() + COMMISSION_HOLD_MS : null;
+  const commissionCents = Math.round(grossAmountCents * rateBps / 10000);
+  db.prepare(`INSERT INTO affiliate_commissions
+    (affiliate_id,order_type,order_reference,gross_amount_cents,rate_bps,commission_cents,status,available_at,payment_id)
+    VALUES (?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(order_type,order_reference) DO UPDATE SET
+      status=CASE WHEN affiliate_commissions.status='paid' AND excluded.status!='reversed' THEN 'paid' ELSE excluded.status END,
+      available_at=excluded.available_at,payment_id=excluded.payment_id,updated_at=CURRENT_TIMESTAMP`)
+    .run(affiliateId, orderType, orderReference, grossAmountCents, rateBps, commissionCents,
+      status, availableAt, String(payment.id));
+});
+
 const expireCreditBatches = db.transaction((userId) => {
   const now = Date.now();
   const expired = db.prepare(`SELECT * FROM credit_batches
@@ -206,6 +326,26 @@ app.use(express.json({ limit: '30kb' }));
 app.set('trust proxy', 1);
 app.use('/vendor/three', express.static(path.join(dir, 'node_modules/three/build')));
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
+
+app.get('/r/:code', (req, res) => {
+  const affiliate = db.prepare("SELECT code FROM affiliates WHERE code=? AND status='active'").get(String(req.params.code || '').slice(0, 40));
+  if (!affiliate) return res.redirect(302, '/afiliados.html?erro=codigo');
+  const destinations = {
+    lot: '/comprar-lote.html', courses: '/centro-educacional.html',
+    videos: '/pacote-videos.html', affiliate: '/afiliados.html'
+  };
+  let destination = destinations[String(req.query.to || '')] || '/';
+  const slug = String(req.query.slug || '');
+  if (destination === destinations.courses && COURSES[slug]) destination += `#${encodeURIComponent(slug)}`;
+  res.append('Set-Cookie', `${AFFILIATE_COOKIE}=${encodeURIComponent(affiliate.code)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${AFFILIATE_COOKIE_AGE_SECONDS}`);
+  return res.redirect(302, destination);
+});
+
+app.get('/api/courses', (_req, res) => res.json({
+  priceCents: COURSE_PRICE_CENTS,
+  courses: Object.values(COURSES).map(({ slug, title, priceCents, modules, available, license }) =>
+    ({ slug, title, priceCents, modules, available, license }))
+}));
 
 app.post('/api/leads', (req, res) => {
   const { name, email, whatsapp = '', interest = '', consent } = req.body || {};
@@ -272,6 +412,46 @@ app.get('/api/auth/me', (req, res) => {
 
 app.get('/api/wallet', requireUser, (req, res) => res.json(publicWallet(req.user.id)));
 
+app.post('/api/affiliates/register', requireUser, (req, res) => {
+  if (!req.user.adult_confirmed || !req.body?.termsAccepted) {
+    return res.status(400).json({ error: 'Confirme que é maior de 18 anos e aceite os termos do programa.' });
+  }
+  const existing = db.prepare('SELECT code,status FROM affiliates WHERE user_id=?').get(req.user.id);
+  if (existing) return res.json({ ok: true, affiliate: existing });
+  const base = req.user.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '').slice(0, 16) || 'parceiro';
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const code = `${base}${randomBytes(3).toString('hex')}`;
+    try {
+      db.prepare("INSERT INTO affiliates (user_id,code,status) VALUES (?,?,'active')").run(req.user.id, code);
+      return res.status(201).json({ ok: true, affiliate: { code, status: 'active' } });
+    } catch (error) {
+      if (!String(error?.message || '').includes('UNIQUE')) break;
+    }
+  }
+  return res.status(500).json({ error: 'Não foi possível criar seu código agora.' });
+});
+
+app.get('/api/affiliates/me', requireUser, (req, res) => {
+  const affiliate = db.prepare('SELECT id,code,status,created_at FROM affiliates WHERE user_id=?').get(req.user.id);
+  if (!affiliate) return res.status(404).json({ error: 'Você ainda não participa do programa.' });
+  const commissions = db.prepare(`SELECT order_type,order_reference,gross_amount_cents,rate_bps,
+    commission_cents,status,available_at,created_at FROM affiliate_commissions
+    WHERE affiliate_id=? ORDER BY id DESC LIMIT 100`).all(affiliate.id);
+  const totals = db.prepare(`SELECT
+    COALESCE(SUM(CASE WHEN status IN ('pending','approved','awaiting_delivery') THEN commission_cents ELSE 0 END),0) pending_cents,
+    COALESCE(SUM(CASE WHEN status='paid' THEN commission_cents ELSE 0 END),0) paid_cents
+    FROM affiliate_commissions WHERE affiliate_id=?`).get(affiliate.id);
+  return res.json({
+    affiliate: { code: affiliate.code, status: affiliate.status, createdAt: affiliate.created_at },
+    links: {
+      lot: `${SITE_URL}/r/${affiliate.code}?to=lot`,
+      courses: `${SITE_URL}/r/${affiliate.code}?to=courses`,
+      videos: `${SITE_URL}/r/${affiliate.code}?to=videos`
+    }, totals, commissions
+  });
+});
+
 app.post('/api/payments/mercadopago/checkout', async (req, res) => {
   const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
   if (!token || !process.env.MERCADOPAGO_WEBHOOK_SECRET) {
@@ -290,6 +470,7 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
     email: email.trim().toLowerCase().slice(0, 160),
     whatsapp: String(whatsapp).trim().slice(0, 30)
   };
+  const affiliate = referralAffiliate(req, order.email);
   try {
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST',
@@ -306,7 +487,7 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
           failure: `${SITE_URL}/pagamento.html?resultado=falha`
         },
         auto_return: 'approved', statement_descriptor: 'VITRINECITY',
-        metadata: { product: 'founder_lot', customer_whatsapp: order.whatsapp }
+        metadata: { product: 'founder_lot', customer_whatsapp: order.whatsapp, affiliate_code: affiliate?.code || '' }
       }), signal: AbortSignal.timeout(12000)
     });
     const data = await response.json();
@@ -314,8 +495,8 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
       console.error('Mercado Pago preference error', response.status, data?.message || 'unknown');
       return res.status(502).json({ error: 'Não foi possível iniciar o pagamento agora.' });
     }
-    db.prepare(`INSERT INTO lot_orders (reference,name,email,whatsapp,amount_cents,status,mp_preference_id)
-      VALUES (?,?,?,?,?,'pending',?)`).run(reference, order.name, order.email, order.whatsapp, LOT_PRICE_CENTS, data.id);
+    db.prepare(`INSERT INTO lot_orders (reference,name,email,whatsapp,amount_cents,affiliate_id,status,mp_preference_id)
+      VALUES (?,?,?,?,?,?,'pending',?)`).run(reference, order.name, order.email, order.whatsapp, LOT_PRICE_CENTS, affiliate?.id || null, data.id);
     return res.status(201).json({ checkoutUrl: data.init_point });
   } catch (error) {
     console.error('Mercado Pago unavailable', error?.message || 'unknown');
@@ -369,6 +550,102 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
     db.prepare("UPDATE credit_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);
     console.error('Mercado Pago credits unavailable', error?.message || 'unknown');
     return res.status(502).json({ error: 'Não foi possível conectar ao Mercado Pago agora.' });
+  }
+});
+
+app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
+  const course = COURSES[String(req.params.slug || '')];
+  if (!course) return res.status(404).json({ error: 'Curso não encontrado.' });
+  if (!course.available) return res.status(409).json({ error: 'Este curso está em preparação. A compra será liberada quando as aulas estiverem na área privada.' });
+  if (!req.body?.termsAccepted) return res.status(400).json({ error: 'Aceite os termos da compra para continuar.' });
+  if (!process.env.MERCADOPAGO_ACCESS_TOKEN || !process.env.MERCADOPAGO_WEBHOOK_SECRET) {
+    return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
+  }
+  if (!allowAttempt(checkoutAttempts, `course:${req.user.id}`, 5, 10 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
+  }
+  const affiliate = referralAffiliate(req, req.user.email, req.user.id);
+  const reference = `course_${randomUUID()}`;
+  db.prepare(`INSERT INTO course_orders
+    (reference,user_id,course_slug,course_title,amount_cents,affiliate_id,status)
+    VALUES (?,?,?,?,?,?,'created')`).run(reference, req.user.id, course.slug, course.title,
+      course.priceCents, affiliate?.id || null);
+  try {
+    const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
+      method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
+      body: JSON.stringify({
+        items: [{ id: `vitrinecity-${course.slug}`, title: course.title,
+          description: 'Curso digital com acesso individual na área do aluno', category_id: 'services',
+          quantity: 1, currency_id: 'BRL', unit_price: course.priceCents / 100 }],
+        payer: { name: req.user.name, email: req.user.email }, external_reference: reference,
+        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
+        back_urls: {
+          success: `${SITE_URL}/meus-cursos.html?resultado=sucesso&ref=${encodeURIComponent(reference)}`,
+          pending: `${SITE_URL}/meus-cursos.html?resultado=pendente&ref=${encodeURIComponent(reference)}`,
+          failure: `${SITE_URL}/centro-educacional.html?resultado=falha`
+        },
+        auto_return: 'approved', statement_descriptor: 'VITRINECITY',
+        metadata: { product: 'course', course_slug: course.slug, affiliate_code: affiliate?.code || '' }
+      }), signal: AbortSignal.timeout(12000)
+    });
+    const data = await response.json();
+    if (!response.ok || !data.id || !data.init_point) throw new Error(data?.message || 'preference_failed');
+    db.prepare("UPDATE course_orders SET status='pending',mp_preference_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?")
+      .run(data.id, reference);
+    return res.status(201).json({ checkoutUrl: data.init_point, reference });
+  } catch (error) {
+    db.prepare("UPDATE course_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);
+    console.error('Mercado Pago course preference error', error?.message || 'unknown');
+    return res.status(502).json({ error: 'Não foi possível iniciar o pagamento agora.' });
+  }
+});
+
+app.post('/api/services/videos/checkout', async (req, res) => {
+  if (!process.env.MERCADOPAGO_ACCESS_TOKEN || !process.env.MERCADOPAGO_WEBHOOK_SECRET) {
+    return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
+  }
+  if (!allowAttempt(checkoutAttempts, `videos:${req.ip}`, 5, 10 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
+  }
+  const { name, email, whatsapp = '', consent, termsAccepted } = req.body || {};
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!consent || !termsAccepted || typeof name !== 'string' || name.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(normalizedEmail)) {
+    return res.status(400).json({ error: 'Informe seus dados e aceite os termos do pacote.' });
+  }
+  const affiliate = referralAffiliate(req, normalizedEmail);
+  const reference = `video_${randomUUID()}`;
+  db.prepare(`INSERT INTO service_orders
+    (reference,service_slug,name,email,whatsapp,amount_cents,affiliate_id,status,delivery_status)
+    VALUES (?,?,?,?,?,?,?,'created','awaiting_payment')`).run(reference, VIDEO_PACKAGE.slug,
+      name.trim().slice(0, 100), normalizedEmail.slice(0, 160), String(whatsapp).trim().slice(0, 30),
+      VIDEO_PACKAGE.amountCents, affiliate?.id || null);
+  try {
+    const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
+      method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
+      body: JSON.stringify({
+        items: [{ id: 'vitrinecity-pacote-10-videos', title: 'Pacote de 10 vídeos para loja',
+          description: 'Criação e divulgação de 10 vídeos curtos para uma loja VitrineCity', category_id: 'services',
+          quantity: 1, currency_id: 'BRL', unit_price: VIDEO_PACKAGE.amountCents / 100 }],
+        payer: { name: name.trim().slice(0, 100), email: normalizedEmail }, external_reference: reference,
+        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
+        back_urls: {
+          success: `${SITE_URL}/pagamento.html?resultado=sucesso&servico=videos`,
+          pending: `${SITE_URL}/pagamento.html?resultado=pendente&servico=videos`,
+          failure: `${SITE_URL}/pacote-videos.html?resultado=falha`
+        },
+        auto_return: 'approved', statement_descriptor: 'VITRINECITY',
+        metadata: { product: 'video_package', quantity: VIDEO_PACKAGE.quantity, affiliate_code: affiliate?.code || '' }
+      }), signal: AbortSignal.timeout(12000)
+    });
+    const data = await response.json();
+    if (!response.ok || !data.id || !data.init_point) throw new Error(data?.message || 'preference_failed');
+    db.prepare("UPDATE service_orders SET status='pending',mp_preference_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?")
+      .run(data.id, reference);
+    return res.status(201).json({ checkoutUrl: data.init_point, reference });
+  } catch (error) {
+    db.prepare("UPDATE service_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);
+    console.error('Mercado Pago video package error', error?.message || 'unknown');
+    return res.status(502).json({ error: 'Não foi possível iniciar o pagamento agora.' });
   }
 });
 
@@ -436,11 +713,45 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       applyCreditPayment(order, payment);
       return res.sendStatus(200);
     }
+    if (reference.startsWith('course_')) {
+      const order = db.prepare('SELECT * FROM course_orders WHERE reference=?').get(reference);
+      if (!order) return res.sendStatus(200);
+      if (amountCents !== order.amount_cents || payment.currency_id !== 'BRL') return res.sendStatus(400);
+      const status = String(payment.status || 'unknown');
+      db.prepare(`UPDATE course_orders SET status=?,mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?`)
+        .run(status, String(payment.id), order.reference);
+      if (status === 'approved') {
+        db.prepare(`INSERT INTO course_enrollments (user_id,course_slug,order_reference,status)
+          VALUES (?,?,?,'active') ON CONFLICT(order_reference) DO UPDATE SET status='active',updated_at=CURRENT_TIMESTAMP`)
+          .run(order.user_id, order.course_slug, order.reference);
+      } else if (['refunded', 'charged_back', 'cancelled', 'rejected'].includes(status)) {
+        db.prepare("UPDATE course_enrollments SET status='revoked',updated_at=CURRENT_TIMESTAMP WHERE order_reference=?")
+          .run(order.reference);
+      }
+      syncAffiliateCommission({ affiliateId: order.affiliate_id, orderType: 'course', orderReference: order.reference,
+        grossAmountCents: order.amount_cents, rateBps: REFERRAL_RATE_BPS, payment });
+      return res.sendStatus(200);
+    }
+    if (reference.startsWith('video_')) {
+      const order = db.prepare('SELECT * FROM service_orders WHERE reference=?').get(reference);
+      if (!order) return res.sendStatus(200);
+      if (amountCents !== order.amount_cents || payment.currency_id !== 'BRL') return res.sendStatus(400);
+      const status = String(payment.status || 'unknown');
+      const deliveryStatus = status === 'approved' ? 'awaiting_brief' :
+        ['refunded', 'charged_back', 'cancelled', 'rejected'].includes(status) ? 'cancelled' : order.delivery_status;
+      db.prepare(`UPDATE service_orders SET status=?,delivery_status=?,mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?`)
+        .run(status, deliveryStatus, String(payment.id), order.reference);
+      syncAffiliateCommission({ affiliateId: order.affiliate_id, orderType: 'video_package', orderReference: order.reference,
+        grossAmountCents: order.amount_cents, rateBps: VIDEO_CREATOR_RATE_BPS, payment });
+      return res.sendStatus(200);
+    }
     const order = db.prepare('SELECT * FROM lot_orders WHERE reference=?').get(reference);
     if (!order) return res.sendStatus(200);
     if (amountCents !== order.amount_cents || payment.currency_id !== 'BRL') return res.sendStatus(400);
     db.prepare(`UPDATE lot_orders SET status=?,mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?`)
       .run(String(payment.status || 'unknown'), String(payment.id), order.reference);
+    syncAffiliateCommission({ affiliateId: order.affiliate_id, orderType: 'lot', orderReference: order.reference,
+      grossAmountCents: order.amount_cents, rateBps: REFERRAL_RATE_BPS, payment });
     return res.sendStatus(200);
   } catch (error) {
     console.error('Mercado Pago webhook error', error?.message || 'unknown');
@@ -459,6 +770,23 @@ app.get('/api/credits/orders/:reference', requireUser, (req, res) => {
   const order = db.prepare(`SELECT o.reference,o.status,o.credit_units,o.credited_units,o.created_at,o.updated_at,
     b.expires_at FROM credit_orders o LEFT JOIN credit_batches b ON b.order_reference=o.reference
     WHERE o.reference=? AND o.user_id=?`).get(req.params.reference, req.user.id);
+  if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
+  return res.json(order);
+});
+
+app.get('/api/my-courses', requireUser, (req, res) => {
+  const enrollments = db.prepare(`SELECT e.course_slug,e.status,e.created_at,o.course_title
+    FROM course_enrollments e JOIN course_orders o ON o.reference=e.order_reference
+    WHERE e.user_id=? ORDER BY e.id DESC`).all(req.user.id);
+  return res.json({ courses: enrollments.map(item => ({
+    ...item,
+    contentReady: Boolean(COURSES[item.course_slug]?.available)
+  })) });
+});
+
+app.get('/api/courses/orders/:reference', requireUser, (req, res) => {
+  const order = db.prepare(`SELECT reference,course_slug,course_title,status,created_at,updated_at
+    FROM course_orders WHERE reference=? AND user_id=?`).get(req.params.reference, req.user.id);
   if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
   return res.json(order);
 });
