@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Garanta seu lote fundador na VitrineCity por R$15.">
+  <title>Lote Fundador — VitrineCity</title>
+  <style>
+    :root{--navy:#09275d;--blue:#1768e6;--yellow:#ffc628;--muted:#607393;--line:#d8e6f7}*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;color:var(--navy);background:linear-gradient(145deg,#eaf5ff,#f9fcff)}header{height:76px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 6%}.brand{font-size:27px;font-weight:900;text-decoration:none;color:var(--navy)}.brand i{display:inline-block;width:28px;height:28px;background:var(--blue);border-radius:9px 9px 3px 3px;vertical-align:-4px;margin-right:8px}.back{color:var(--blue);font-weight:800;text-decoration:none}main{max-width:1000px;margin:55px auto;padding:0 22px;display:grid;grid-template-columns:1fr .9fr;gap:28px}.offer,.form{background:#fff;border:1px solid var(--line);border-radius:25px;padding:34px;box-shadow:0 24px 60px #123b7014}.tag{display:inline-block;background:#ddecff;color:#1554b4;padding:9px 13px;border-radius:99px;font-size:13px;font-weight:900}.offer h1{font-size:45px;letter-spacing:-2px;line-height:1.05;margin:20px 0 12px}.price{font-size:52px;font-weight:900;color:var(--blue);margin:22px 0}.price small{font-size:15px;color:var(--muted)}.offer p,.offer li{color:var(--muted);line-height:1.55}.offer ul{padding-left:20px}.safe{background:#f0f7ff;border-radius:14px;padding:15px;margin-top:24px;font-size:14px;font-weight:700}.form h2{font-size:27px;margin:0 0 7px}.form>p{color:var(--muted);margin:0 0 20px}label{display:block;font-size:13px;font-weight:800;margin:13px 0 6px}input{width:100%;padding:13px;border:1px solid #bfd3ec;border-radius:11px;font:inherit}.check{display:flex;gap:8px;align-items:flex-start;font-size:12px;line-height:1.4;margin:16px 0}.check input{width:auto;margin-top:2px}.button{width:100%;border:0;border-radius:12px;background:var(--yellow);color:#112c5d;padding:15px;font-size:16px;font-weight:900;cursor:pointer}.button:disabled{opacity:.65;cursor:wait}.message{font-size:13px;min-height:18px;margin-top:12px;color:#b42318}.payments{text-align:center;color:var(--muted);font-size:12px;margin-top:15px}@media(max-width:760px){main{grid-template-columns:1fr;margin:28px auto}.offer h1{font-size:36px}.offer,.form{padding:25px}header{padding:0 20px}}
+  </style>
+</head>
+<body>
+  <header><a class="brand" href="/"><i></i>VitrineCity</a><a class="back" href="/">← Página inicial</a></header>
+  <main>
+    <section class="offer">
+      <span class="tag">OFERTA DE LANÇAMENTO</span>
+      <h1>Garanta seu lote fundador</h1>
+      <p>Reserve um espaço digital para apresentar sua marca dentro da cidade VitrineCity.</p>
+      <div class="price">R$15 <small>pagamento único de lançamento</small></div>
+      <ul>
+        <li>Cadastro inicial da sua loja na cidade.</li>
+        <li>Links para site, Instagram, WhatsApp e localização.</li>
+        <li>Participação na fase de lançamento da plataforma.</li>
+      </ul>
+      <div class="safe">🔒 Pagamento processado no ambiente seguro do Mercado Pago.</div>
+    </section>
+    <form class="form" id="checkout-form">
+      <h2>Dados do lojista</h2>
+      <p>Após o pagamento, entraremos em contato para montar sua vitrine.</p>
+      <label for="name">Nome completo</label>
+      <input id="name" name="name" required maxlength="100" autocomplete="name">
+      <label for="email">E-mail</label>
+      <input id="email" name="email" type="email" required maxlength="160" autocomplete="email">
+      <label for="whatsapp">WhatsApp</label>
+      <input id="whatsapp" name="whatsapp" required maxlength="30" inputmode="tel" autocomplete="tel" placeholder="(00) 00000-0000">
+      <label class="check"><input type="checkbox" name="consent" required><span>Tenho mais de 18 anos e aceito os termos da oferta e a Política de Privacidade da VitrineCity.</span></label>
+      <button class="button" type="submit">Pagar R$15 com Mercado Pago</button>
+      <div class="message" id="message"></div>
+      <div class="payments">Pix, cartão e demais opções disponíveis no Mercado Pago.</div>
+    </form>
+  </main>
+  <script>
+    document.getElementById('checkout-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const form=event.currentTarget,button=form.querySelector('button'),message=document.getElementById('message');
+      button.disabled=true;button.textContent='Abrindo Mercado Pago...';message.textContent='';
+      try{
+        const values=Object.fromEntries(new FormData(form));
+        values.consent=Boolean(values.consent);
+        const response=await fetch('/api/payments/mercadopago/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});
+        const data=await response.json();
+        if(!response.ok||!data.checkoutUrl)throw new Error(data.error||'Não foi possível iniciar o pagamento.');
+        location.href=data.checkoutUrl;
+      }catch(error){message.textContent=error.message;button.disabled=false;button.textContent='Pagar R$15 com Mercado Pago'}
+    });
+  </script>
+</body>
+</html>
