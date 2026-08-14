@@ -8,8 +8,10 @@ services:
       NODE_ENV: production
       PORT: 3000
       DATA_DIR: /data
+      COURSE_FILES_DIR: /private-courses
     volumes:
       - vitrinecity_data:/data
+      - ./private-courses:/private-courses:ro
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
