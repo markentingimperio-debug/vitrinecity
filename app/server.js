@@ -1,5 +1,6 @@
 import express from 'express';
 import Database from 'better-sqlite3';
+import fs from 'node:fs';
 import path from 'node:path';
 import {
   createHash,
@@ -14,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 const app = express();
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.DATA_DIR || '/data';
+const courseFilesDir = path.resolve(process.env.COURSE_FILES_DIR || '/private-courses');
 const db = new Database(path.join(dataDir, 'vitrinecity.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -182,15 +184,16 @@ const AFFILIATE_COOKIE_AGE_SECONDS = 60 * 60 * 24 * 30;
 const COURSES = Object.freeze({
   'geladinhos-gourmet': Object.freeze({
     slug: 'geladinhos-gourmet', title: 'Geladinhos Gourmet: produção e vendas',
-    priceCents: COURSE_PRICE_CENTS, modules: 5, available: false,
+    priceCents: COURSE_PRICE_CENTS, modules: 5,
     license: 'Venda autorizada somente ao aluno final; direitos PLR não são transferidos.'
   }),
   'logo-no-canva': Object.freeze({
     slug: 'logo-no-canva', title: 'Criação de Logo no Canva',
-    priceCents: COURSE_PRICE_CENTS, modules: 7, available: false,
+    priceCents: COURSE_PRICE_CENTS, modules: 7,
     license: 'Venda e inclusão em área paga autorizadas pela licença PLR do produto.'
   })
 });
+const COURSE_FILE_EXTENSIONS = new Set(['.pdf', '.mp4', '.webm', '.m4v', '.mp3', '.jpg', '.jpeg', '.png', '.zip']);
 const SESSION_COOKIE = 'vc_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const CREDIT_VALIDITY_MS = 60 * 24 * 60 * 60 * 1000;
@@ -208,6 +211,42 @@ function allowAttempt(store, key, limit, windowMs) {
   if (recent.length >= limit) return false;
   store.set(key, [...recent, now]);
   return true;
+}
+
+function courseRoot(slug) {
+  if (!COURSES[slug]) return null;
+  return path.join(courseFilesDir, slug);
+}
+
+function listCourseFiles(slug) {
+  const root = courseRoot(slug);
+  if (!root || !fs.existsSync(root)) return [];
+  const files = [];
+  const visit = (directory, relativeDirectory = '', depth = 0) => {
+    if (depth > 4) return;
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue;
+      const relativePath = path.posix.join(relativeDirectory, entry.name);
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolutePath, relativePath, depth + 1);
+      if (entry.isFile() && COURSE_FILE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+        const stat = fs.statSync(absolutePath);
+        files.push({ path: relativePath, name: entry.name, size: stat.size,
+          type: path.extname(entry.name).slice(1).toLowerCase() });
+      }
+    }
+  };
+  visit(root);
+  return files.sort((a, b) => a.path.localeCompare(b.path, 'pt-BR', { numeric: true }));
+}
+
+function courseReady(slug) {
+  return listCourseFiles(slug).length > 0;
+}
+
+function activeEnrollment(userId, slug) {
+  return db.prepare("SELECT 1 FROM course_enrollments WHERE user_id=? AND course_slug=? AND status='active' LIMIT 1")
+    .get(userId, slug);
 }
 
 function hashPassword(password) {
@@ -343,8 +382,8 @@ app.get('/r/:code', (req, res) => {
 
 app.get('/api/courses', (_req, res) => res.json({
   priceCents: COURSE_PRICE_CENTS,
-  courses: Object.values(COURSES).map(({ slug, title, priceCents, modules, available, license }) =>
-    ({ slug, title, priceCents, modules, available, license }))
+  courses: Object.values(COURSES).map(({ slug, title, priceCents, modules, license }) =>
+    ({ slug, title, priceCents, modules, available: courseReady(slug), license }))
 }));
 
 app.post('/api/leads', (req, res) => {
@@ -556,7 +595,7 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
 app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
   const course = COURSES[String(req.params.slug || '')];
   if (!course) return res.status(404).json({ error: 'Curso não encontrado.' });
-  if (!course.available) return res.status(409).json({ error: 'Este curso está em preparação. A compra será liberada quando as aulas estiverem na área privada.' });
+  if (!courseReady(course.slug)) return res.status(409).json({ error: 'Este curso está em preparação. A compra será liberada quando as aulas estiverem na área privada.' });
   if (!req.body?.termsAccepted) return res.status(400).json({ error: 'Aceite os termos da compra para continuar.' });
   if (!process.env.MERCADOPAGO_ACCESS_TOKEN || !process.env.MERCADOPAGO_WEBHOOK_SECRET) {
     return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
@@ -780,8 +819,33 @@ app.get('/api/my-courses', requireUser, (req, res) => {
     WHERE e.user_id=? ORDER BY e.id DESC`).all(req.user.id);
   return res.json({ courses: enrollments.map(item => ({
     ...item,
-    contentReady: Boolean(COURSES[item.course_slug]?.available)
+    contentReady: courseReady(item.course_slug)
   })) });
+});
+
+app.get('/api/my-courses/:slug/materials', requireUser, (req, res) => {
+  const slug = String(req.params.slug || '');
+  if (!COURSES[slug]) return res.status(404).json({ error: 'Curso não encontrado.' });
+  if (!activeEnrollment(req.user.id, slug)) return res.status(403).json({ error: 'Acesso disponível somente para alunos matriculados.' });
+  return res.json({ course: { slug, title: COURSES[slug].title }, files: listCourseFiles(slug) });
+});
+
+app.get('/api/my-courses/:slug/material', requireUser, (req, res) => {
+  const slug = String(req.params.slug || '');
+  const root = courseRoot(slug);
+  if (!root || !activeEnrollment(req.user.id, slug)) return res.status(403).json({ error: 'Acesso não autorizado.' });
+  const requested = String(req.query.path || '').replaceAll('\\', '/');
+  const absolutePath = path.resolve(root, requested);
+  if (!requested || (!absolutePath.startsWith(`${root}${path.sep}`) && absolutePath !== root)) {
+    return res.status(400).json({ error: 'Arquivo inválido.' });
+  }
+  if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile() ||
+      !COURSE_FILE_EXTENSIONS.has(path.extname(absolutePath).toLowerCase())) {
+    return res.status(404).json({ error: 'Arquivo não encontrado.' });
+  }
+  res.set({ 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff',
+    'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(path.basename(absolutePath))}` });
+  return res.sendFile(absolutePath);
 });
 
 app.get('/api/courses/orders/:reference', requireUser, (req, res) => {
