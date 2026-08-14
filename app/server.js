@@ -24,5 +24,20 @@ app.post('/api/leads', (req, res) => {
   db.prepare('INSERT INTO leads (name,email,whatsapp,interest,consent) VALUES (?,?,?,?,1)').run(name.trim().slice(0,100), email.trim().toLowerCase().slice(0,160), String(whatsapp).slice(0,30), String(interest).slice(0,80));
   res.status(201).json({ ok: true });
 });
+// Verifica a conexão com o Asaas sem criar qualquer cobrança nem retornar dados sensíveis.
+app.get('/api/payments/asaas/status', async (_req, res) => {
+  const apiKey = process.env.ASAAS_API_KEY;
+  if (!apiKey) return res.status(503).json({ ok: false, configured: false, message: 'Chave de pagamento não configurada.' });
+  try {
+    const response = await fetch('https://api.asaas.com/v3/myAccount', {
+      headers: { access_token: apiKey, accept: 'application/json' },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!response.ok) return res.status(502).json({ ok: false, configured: true, message: 'Não foi possível validar a conexão com o Asaas.' });
+    return res.json({ ok: true, configured: true, mode: process.env.ASAAS_ENV || 'production' });
+  } catch {
+    return res.status(502).json({ ok: false, configured: true, message: 'Não foi possível conectar ao Asaas agora.' });
+  }
+});
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.listen(process.env.PORT || 3000, () => console.log('VitrineCity online'));
