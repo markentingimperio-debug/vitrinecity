@@ -11,6 +11,7 @@ import {
   timingSafeEqual
 } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { originalCourse } from './course-content.js';
 
 const app = express();
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -191,6 +192,21 @@ const COURSES = Object.freeze({
     slug: 'logo-no-canva', title: 'Criação de Logo no Canva',
     priceCents: COURSE_PRICE_CENTS, modules: 7,
     license: 'Venda e inclusão em área paga autorizadas pela licença PLR do produto.'
+  }),
+  'ia-para-pequenos-negocios': Object.freeze({
+    slug: 'ia-para-pequenos-negocios', title: 'IA para Pequenos Negócios',
+    priceCents: COURSE_PRICE_CENTS, modules: 5,
+    license: 'Conteúdo original VitrineCity. Acesso individual; proibida a redistribuição.'
+  }),
+  'canva-para-lojas': Object.freeze({
+    slug: 'canva-para-lojas', title: 'Canva para Lojas',
+    priceCents: COURSE_PRICE_CENTS, modules: 5,
+    license: 'Conteúdo original VitrineCity. Acesso individual; proibida a redistribuição.'
+  }),
+  'vendas-pelo-whatsapp': Object.freeze({
+    slug: 'vendas-pelo-whatsapp', title: 'Vendas pelo WhatsApp',
+    priceCents: COURSE_PRICE_CENTS, modules: 5,
+    license: 'Conteúdo original VitrineCity. Acesso individual; proibida a redistribuição.'
   })
 });
 const COURSE_FILE_EXTENSIONS = new Set(['.pdf', '.mp4', '.webm', '.m4v', '.mp3', '.jpg', '.jpeg', '.png', '.zip']);
@@ -241,7 +257,7 @@ function listCourseFiles(slug) {
 }
 
 function courseReady(slug) {
-  return listCourseFiles(slug).length > 0;
+  return Boolean(originalCourse(slug)?.lessons?.length) || listCourseFiles(slug).length > 0;
 }
 
 function activeEnrollment(userId, slug) {
@@ -383,7 +399,10 @@ app.get('/r/:code', (req, res) => {
 app.get('/api/courses', (_req, res) => res.json({
   priceCents: COURSE_PRICE_CENTS,
   courses: Object.values(COURSES).map(({ slug, title, priceCents, modules, license }) =>
-    ({ slug, title, priceCents, modules, available: courseReady(slug), license }))
+    ({ slug, title, priceCents, modules, available: courseReady(slug), license,
+      description: originalCourse(slug)?.description || '',
+      audience: originalCourse(slug)?.audience || '',
+      contentType: originalCourse(slug) ? 'original' : 'licensed' }))
 }));
 
 app.post('/api/leads', (req, res) => {
@@ -827,7 +846,24 @@ app.get('/api/my-courses/:slug/materials', requireUser, (req, res) => {
   const slug = String(req.params.slug || '');
   if (!COURSES[slug]) return res.status(404).json({ error: 'Curso não encontrado.' });
   if (!activeEnrollment(req.user.id, slug)) return res.status(403).json({ error: 'Acesso disponível somente para alunos matriculados.' });
-  return res.json({ course: { slug, title: COURSES[slug].title }, files: listCourseFiles(slug) });
+  const original = originalCourse(slug);
+  return res.json({
+    course: { slug, title: COURSES[slug].title },
+    lessons: (original?.lessons || []).map(({ slug: lessonSlug, title, duration, objective }) =>
+      ({ slug: lessonSlug, title, duration, objective })),
+    files: listCourseFiles(slug)
+  });
+});
+
+app.get('/api/my-courses/:slug/lessons/:lessonSlug', requireUser, (req, res) => {
+  const slug = String(req.params.slug || '');
+  const course = originalCourse(slug);
+  if (!COURSES[slug] || !course) return res.status(404).json({ error: 'Curso ou aula não encontrado.' });
+  if (!activeEnrollment(req.user.id, slug)) return res.status(403).json({ error: 'Acesso disponível somente para alunos matriculados.' });
+  const lesson = course.lessons.find(item => item.slug === String(req.params.lessonSlug || ''));
+  if (!lesson) return res.status(404).json({ error: 'Aula não encontrada.' });
+  res.set({ 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
+  return res.json({ course: { slug, title: COURSES[slug].title }, lesson });
 });
 
 app.get('/api/my-courses/:slug/material', requireUser, (req, res) => {
