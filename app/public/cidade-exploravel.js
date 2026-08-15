@@ -96,7 +96,8 @@
     image.src = pin.dataset.image || '';
     image.alt = pin.dataset.image ? `Fachada de ${pin.dataset.name}` : '';
     const isLot = Boolean(pin.dataset.lot);
-    setAction('primaryAction', isLot ? `/comprar-lote.html?lote=${encodeURIComponent(pin.dataset.lot)}` : '', isLot, 'Escolher este lote');
+    const lotAvailable = isLot && (!pin.dataset.lotStatus || pin.dataset.lotStatus === 'available');
+    setAction('primaryAction', lotAvailable ? `/comprar-lote.html?lote=${encodeURIComponent(pin.dataset.lot)}` : '', lotAvailable, 'Escolher este lote');
     setAction('pageAction', pin.dataset.page, Boolean(pin.dataset.page), pin.dataset.category === 'store' ? '🏪 Entrar na loja' : 'Visitar este espaço');
     setAction('walkAction', pin.dataset.walk, Boolean(pin.dataset.walk));
     setAction('siteAction', pin.dataset.site, Boolean(pin.dataset.site));
@@ -214,6 +215,40 @@
   document.getElementById('avatarBtn').onclick = () => avatarShop.classList.add('show');
   document.getElementById('closeAvatar').onclick = () => avatarShop.classList.remove('show');
   avatarShop.addEventListener('click', event => { if (event.target === avatarShop) avatarShop.classList.remove('show'); });
+  async function syncLots() {
+    try {
+      const response = await fetch('/api/lots', { cache: 'no-store' });
+      if (!response.ok) return;
+      const data = await response.json();
+      for (const lot of data.lots || []) {
+        const pin = pins.find(item => item.dataset.lot === lot.code);
+        if (!pin) continue;
+        pin.dataset.lotStatus = lot.status;
+        pin.classList.toggle('reserved', lot.status === 'reserved');
+        pin.classList.toggle('occupied', lot.status === 'occupied');
+        if (lot.status === 'reserved') {
+          pin.dataset.tag = 'RESERVA EM ANDAMENTO';
+          pin.dataset.desc = `${lot.label} está temporariamente reservado enquanto o pagamento é confirmado.`;
+          pin.textContent = 'Reservado';
+        }
+        if (lot.status === 'occupied') {
+          pin.dataset.category = 'store';
+          pin.dataset.tag = 'LOJA EM IMPLANTAÇÃO';
+          pin.dataset.name = lot.businessName || lot.label;
+          pin.dataset.desc = `${lot.place}. Esta vitrine foi adquirida e está sendo preparada para publicação.`;
+          pin.textContent = lot.businessName || 'Loja em implantação';
+        }
+      }
+      filterPins();
+    } catch (_) {
+      // O mapa continua disponível quando a situação dos lotes não puder ser consultada.
+    }
+  }
+
   updateFavoriteUi();
   center();
+  syncLots().finally(() => {
+    const requestedLot = new URLSearchParams(location.search).get('lote');
+    if (requestedLot) requestAnimationFrame(() => focusOnPin(pins.find(item => item.dataset.lot === requestedLot)));
+  });
 })();
