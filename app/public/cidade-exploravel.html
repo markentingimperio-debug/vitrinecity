@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Explore o mapa interativo da VitrineCity e descubra lojas, atrações e lotes.">
+  <meta name="description" content="Explore o mapa interativo da VitrineCity e descubra lojas, atrações e prédios digitais.">
   <title>Mapa interativo — VitrineCity</title>
   <link rel="stylesheet" href="/cidade-exploravel.css">
   <script src="/analytics.js" defer></script>
@@ -12,11 +12,11 @@
 <body>
   <header>
     <a class="brand" href="/"><i></i>VitrineCity <small>MAPA INTERATIVO</small></a>
-    <nav><a href="/">Início</a><a href="/comprar-lote.html" class="header-cta">Escolher lote</a></nav>
+    <nav><a href="/">Início</a><a href="/comprar-lote.html" class="header-cta">Escolher prédio</a></nav>
   </header>
   <section class="discovery" aria-label="Pesquisa e filtros">
     <label class="search"><span>⌕</span><input id="search" type="search" placeholder="Buscar loja, curso ou serviço" aria-label="Buscar na cidade"></label>
-    <div class="filters" id="filters"><button class="active" data-filter="all">Todos</button><button data-filter="store">Lojas</button><button data-filter="district">Bairros</button><button data-filter="attraction">Atrações</button><button data-filter="lot">Lotes</button><button data-filter="favorites">♥ Favoritos <span id="favoriteFilterCount">0</span></button></div>
+    <div class="filters" id="filters"><button class="active" data-filter="all">Todos</button><button data-filter="store">Lojas</button><button data-filter="district">Bairros</button><button data-filter="attraction">Atrações</button><button data-filter="lot">Prédios</button><button data-filter="favorites">♥ Favoritos <span id="favoriteFilterCount">0</span></button></div>
   </section>
   <aside class="hint" id="hint"><button id="closeHint" aria-label="Fechar instruções">×</button><b>Explore a cidade inteira</b><p>Arraste o mapa, use a roda ou os botões de zoom. Selecione um ponto para conhecer a vitrine antes de entrar.</p></aside>
   <button class="avatar-button" id="avatarBtn" aria-label="Configurar avatar"><span>👤</span><b>Avatar grátis</b></button>
@@ -30,9 +30,9 @@
       <button class="pin services" data-category="district" data-tag="SERVIÇOS" data-name="Centro de Serviços" data-desc="Profissionais, empresas e serviços locais em destaque.">Serviços</button>
       <button class="pin featured edu" data-key="centro-educacional" data-category="attraction" data-tag="CENTRO EDUCACIONAL" data-name="Centro Educacional" data-desc="Cursos rápidos, e-books e conteúdos originais com certificado." data-page="/centro-educacional.html"><span class="ticker-window"><span class="ticker">🎓 CENTRO EDUCACIONAL • CURSOS E E-BOOKS</span></span></button>
       <button class="pin outdoor" data-category="attraction" data-tag="MÍDIA DIGITAL" data-name="Outdoor Avenida Norte" data-desc="Espaço publicitário para campanhas e promoções patrocinadas.">Outdoor digital</button>
-      <button class="pin lot lot1" data-category="lot" data-tag="LOTE DISPONÍVEL" data-name="Lote Country 041" data-desc="Avenida de acesso, próximo à Sertaneja. Ideal para moda, acessórios e serviços." data-lot="COUNTRY-041">Lote 041</button>
-      <button class="pin lot lot2" data-category="lot" data-tag="LOTE PREMIUM" data-name="Lote Parque 118" data-desc="Área verde próxima à praça, com posição de destaque." data-lot="PARQUE-118">Lote 118</button>
-      <button class="pin lot lot3" data-category="lot" data-tag="LOTE DISPONÍVEL" data-name="Lote Sul 203" data-desc="Região em expansão, próxima ao centro de serviços." data-lot="SUL-203">Lote 203</button>
+      <button class="pin lot lot1" data-category="lot" data-tag="PRÉDIO DIGITAL DISPONÍVEL" data-name="Prédio Vitrine 041" data-desc="Esquina da Avenida Country, próximo à Sertaneja. Ideal para moda, acessórios e serviços." data-lot="COUNTRY-041">Prédio 041</button>
+      <button class="pin lot lot2" data-category="lot" data-tag="PRÉDIO DIGITAL CENTRAL" data-name="Prédio Vitrine 118" data-desc="Próximo à praça, com posição de destaque e identidade personalizável." data-lot="PARQUE-118">Prédio 118</button>
+      <button class="pin lot lot3" data-category="lot" data-tag="PRÉDIO DIGITAL DISPONÍVEL" data-name="Prédio Vitrine 203" data-desc="Corredor de serviços, próximo ao centro comercial." data-lot="SUL-203">Prédio 203</button>
       <div class="avatar" id="avatar" style="left:48%;top:57%" aria-hidden="true"><span>Visitante</span></div>
     </div>
   </main>
@@ -45,10 +45,10 @@
       <button data-focus="centro-educacional"><span>🎓</span><span><b>Cursos com certificado</b><small>Explore o centro educacional</small></span></button>
     </div>
   </aside>
-  <div class="legend"><span><i class="store-dot"></i> Loja</span><span><i class="place-dot"></i> Bairro/atração</span><span><i class="lot-dot"></i> Lote</span></div>
+  <div class="legend"><span><i class="store-dot"></i> Loja</span><span><i class="place-dot"></i> Bairro/atração</span><span><i class="lot-dot"></i> Prédio disponível</span></div>
   <div class="empty" id="empty">Nenhum ponto encontrado. Tente outro termo.</div>
   <div class="avatar-shop" id="avatarShop" role="dialog" aria-modal="true" aria-labelledby="avatarTitle"><div class="avatar-card"><button class="close-modal" id="closeAvatar" aria-label="Fechar">×</button><h2 id="avatarTitle">Seu avatar</h2><p>O avatar básico é gratuito e pode caminhar pelo mapa. Roupas e estilos especiais serão adicionados depois.</p><div class="choices"><button class="choice active"><span class="mini basic"></span>Básico<small>Grátis</small></button><button class="choice disabled" disabled><span class="mini country-skin"></span>Country<small>Em breve</small></button></div></div></div>
-  <aside class="panel" id="panel" aria-live="polite"><button id="closePanel" aria-label="Fechar">×</button><img id="shopImage" class="shop-image" alt=""><small id="tag"></small><h2 id="name"></h2><p id="desc"></p><button class="favorite-action" id="favoriteAction" type="button">♡ Salvar nos favoritos</button><div class="panel-actions"><a id="primaryAction" class="primary" href="/comprar-lote.html">Escolher este lote</a><a id="pageAction" href="/">Visitar espaço</a><a id="walkAction" href="/passeio-virtual.html">🚶 Passear pela avenida</a><a id="siteAction" target="_blank" rel="noopener">🛍️ Loja online</a><a id="mapsAction" target="_blank" rel="noopener">📍 Como chegar</a><a id="instagramAction" target="_blank" rel="noopener">◎ Instagram</a></div></aside>
+  <aside class="panel" id="panel" aria-live="polite"><button id="closePanel" aria-label="Fechar">×</button><img id="shopImage" class="shop-image" alt=""><small id="tag"></small><h2 id="name"></h2><p id="desc"></p><button class="favorite-action" id="favoriteAction" type="button">♡ Salvar nos favoritos</button><div class="panel-actions"><a id="primaryAction" class="primary" href="/comprar-lote.html">Escolher este prédio</a><a id="pageAction" href="/">Visitar espaço</a><a id="walkAction" href="/passeio-virtual.html">🚶 Passear pela avenida</a><a id="siteAction" target="_blank" rel="noopener">🛍️ Loja online</a><a id="mapsAction" target="_blank" rel="noopener">📍 Como chegar</a><a id="instagramAction" target="_blank" rel="noopener">◎ Instagram</a></div></aside>
   <nav class="mobile-dock" aria-label="Atalhos da cidade">
     <button data-city-action="city" class="active"><span>⌂</span>Cidade</button>
     <button data-city-action="stores"><span>▦</span>Lojas</button>
