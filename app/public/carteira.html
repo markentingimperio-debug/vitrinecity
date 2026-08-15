@@ -19,7 +19,7 @@
     .auth-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:28px}.wallet{display:none}.balance{font-size:50px;font-weight:1000;color:var(--navy)}.small{font-size:13px;line-height:1.5;color:var(--muted)}.history{margin-top:24px}.transaction{display:flex;justify-content:space-between;gap:16px;padding:13px 0;border-bottom:1px solid var(--line)}.positive{color:var(--ok);font-weight:900}.negative{color:var(--danger);font-weight:900}
     @media(max-width:760px){header{height:68px}.brand{font-size:22px}.hero,.auth-grid{grid-template-columns:1fr}.card{padding:22px}main{padding-top:24px}h1{font-size:41px}.package{order:-1}}
   </style>
-</head>
+<script src="/analytics.js" defer></script></head>
 <body>
   <header><a class="brand" href="/">VitrineCity</a><a href="/">← Página inicial</a></header>
   <main>
@@ -44,7 +44,7 @@
 
     <section id="wallet" class="wallet">
       <div class="auth-grid">
-        <div class="card"><div class="eyebrow">SEU SALDO</div><div id="balance" class="balance">0,00 VC</div><p id="expiry" class="small">Sem créditos ativos.</p><p id="identity" class="small"></p><button id="logout" class="secondary">Sair da conta</button></div>
+        <div class="card"><div class="eyebrow">SEU SALDO</div><div id="balance" class="balance">0,00 VC</div><p id="expiry" class="small">Sem créditos ativos.</p><p id="identity" class="small"></p><div class="actions"><a id="adminLink" class="button" href="/admin" hidden>Painel de gestão</a><button id="logout" class="secondary">Sair da conta</button></div></div>
         <div class="card"><h2>Comprar pacote</h2><p>Pague <strong>R$ 10,00</strong> e receba <strong>9,70 Créditos Vitrine</strong>, válidos por 60 dias.</p><label class="check"><input id="purchaseTerms" type="checkbox"><span>Aceito a taxa de conversão de 3%, a validade de 60 dias e os <a href="/termos-creditos.html" target="_blank">termos de uso</a>.</span></label><button id="buy" type="button">Comprar com Mercado Pago</button><p class="small">Você será direcionado ao ambiente seguro do Mercado Pago. O saldo só é liberado após confirmação do pagamento.</p></div>
       </div>
       <div class="card history"><h2>Movimentações</h2><div id="transactions"><p class="small">Nenhuma movimentação ainda.</p></div></div>
@@ -57,7 +57,7 @@
     function message(text,error=false){notice.textContent=text;notice.className='msg'+(error?' error':'');notice.style.display='block'}
     async function json(url,options){const response=await fetch(url,options);const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||'Não foi possível concluir.');return data}
     function renderWallet(data){guest.style.display='none';wallet.style.display='block';document.querySelector('#identity').textContent=`Conta: ${data.user.name} · ${data.user.email}`;const w=data.wallet;document.querySelector('#balance').textContent=`${money(w.balanceUnits)} VC`;document.querySelector('#expiry').textContent=w.nextExpirationAt?`Próximo vencimento: ${date(w.nextExpirationAt)}. Créditos válidos por 60 dias.`:'Sem créditos ativos.';const box=document.querySelector('#transactions');box.textContent='';if(!w.transactions.length){const p=document.createElement('p');p.className='small';p.textContent='Nenhuma movimentação ainda.';box.append(p)}else w.transactions.forEach(t=>{const row=document.createElement('div');row.className='transaction';const left=document.createElement('span');left.textContent=`${t.description} · ${new Date(t.created_at+'Z').toLocaleDateString('pt-BR')}`;const amount=document.createElement('span');amount.className=t.delta_units>=0?'positive':'negative';amount.textContent=`${t.delta_units>=0?'+':''}${money(t.delta_units)} VC`;row.append(left,amount);box.append(row)})}
-    async function load(){try{renderWallet(await json('/api/auth/me'))}catch{guest.style.display='grid';wallet.style.display='none'}}
+    async function load(){try{const data=await json('/api/auth/me');renderWallet(data);document.querySelector('#adminLink').hidden=!data.user.admin}catch{guest.style.display='grid';wallet.style.display='none'}}
     document.querySelector('#register').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{await json('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:f.get('name'),email:f.get('email'),whatsapp:f.get('whatsapp'),password:f.get('password'),adultConfirmed:f.get('adult')==='on',termsAccepted:f.get('terms')==='on'})});message('Conta criada com sucesso.');await load()}catch(err){message(err.message,true)}});
     document.querySelector('#login').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{await json('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:f.get('email'),password:f.get('password')})});message('Entrada realizada.');await load()}catch(err){message(err.message,true)}});
     document.querySelector('#logout').addEventListener('click',async()=>{await json('/api/auth/logout',{method:'POST'});location.reload()});

@@ -12,6 +12,7 @@ import {
 } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { originalCourse } from './course-content.js';
+import { setupAdminAnalytics } from './admin-analytics.js';
 
 const app = express();
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -186,6 +187,7 @@ function ensureColumn(table, column, definition) {
   if (!columns.some(item => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 ensureColumn('lot_orders', 'affiliate_id', 'INTEGER REFERENCES affiliates(id)');
+ensureColumn('users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -349,9 +351,25 @@ function setSession(res, userId) {
 function currentUser(req) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (!token) return null;
-  return db.prepare(`SELECT u.id,u.name,u.email,u.whatsapp,u.adult_confirmed
+  return db.prepare(`SELECT u.id,u.name,u.email,u.whatsapp,u.adult_confirmed,u.is_admin
     FROM sessions s JOIN users u ON u.id=s.user_id
     WHERE s.token_hash=? AND s.expires_at>?`).get(sessionHash(token), Date.now()) || null;
+}
+
+const adminEmails = new Set(String(process.env.ADMIN_EMAILS || '').split(',')
+  .map(email => email.trim().toLowerCase()).filter(Boolean));
+
+function requireAdmin(req, res, next) {
+  const user = currentUser(req);
+  if (!user) {
+    if (req.path === '/admin' || req.path === '/admin.html') return res.redirect(302, '/carteira.html?admin=1');
+    return res.status(401).json({ error: 'Entre na conta administrativa.' });
+  }
+  if (!user.is_admin && !adminEmails.has(String(user.email).toLowerCase())) {
+    return res.status(403).json({ error: 'Acesso restrito à administração.' });
+  }
+  req.user = user;
+  return next();
 }
 
 function requireUser(req, res, next) {
@@ -427,6 +445,7 @@ function publicWallet(userId) {
 
 app.use(express.json({ limit: '30kb' }));
 app.set('trust proxy', 1);
+const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 app.use('/vendor/three', express.static(path.join(dir, 'node_modules/three/build')));
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
 
@@ -460,6 +479,7 @@ app.post('/api/leads', (req, res) => {
   }
   db.prepare('INSERT INTO leads (name,email,whatsapp,interest,consent) VALUES (?,?,?,?,1)')
     .run(name.trim().slice(0, 100), email.trim().toLowerCase().slice(0, 160), String(whatsapp).slice(0, 30), String(interest).slice(0, 80));
+  adminAnalytics.recordLead(req, String(interest).slice(0, 80));
   return res.status(201).json({ ok: true });
 });
 
@@ -513,7 +533,8 @@ app.post('/api/auth/logout', (req, res) => {
 app.get('/api/auth/me', (req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ authenticated: false });
-  return res.json({ authenticated: true, user: { name: user.name, email: user.email }, wallet: publicWallet(user.id) });
+  return res.json({ authenticated: true, user: { name: user.name, email: user.email,
+    admin: Boolean(user.is_admin || adminEmails.has(String(user.email).toLowerCase())) }, wallet: publicWallet(user.id) });
 });
 
 app.get('/api/wallet', requireUser, (req, res) => res.json(publicWallet(req.user.id)));
@@ -603,6 +624,8 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
     }
     db.prepare(`INSERT INTO lot_orders (reference,name,email,whatsapp,amount_cents,affiliate_id,status,mp_preference_id)
       VALUES (?,?,?,?,?,?,'pending',?)`).run(reference, order.name, order.email, order.whatsapp, LOT_PRICE_CENTS, affiliate?.id || null, data.id);
+    adminAnalytics.recordOrderAttribution(req, reference, 'lot');
+    adminAnalytics.recordCheckout(req, reference, 'lot', LOT_PRICE_CENTS);
     return res.status(201).json({ checkoutUrl: data.init_point });
   } catch (error) {
     console.error('Mercado Pago unavailable', error?.message || 'unknown');
@@ -624,6 +647,8 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
     (reference,user_id,amount_cents,fee_cents,credit_units,status,terms_version,terms_accepted_at)
     VALUES (?,?,?,?,?,'created','2026-08-14',CURRENT_TIMESTAMP)`)
     .run(reference, req.user.id, CREDIT_PACKAGE.amountCents, CREDIT_PACKAGE.feeCents, CREDIT_PACKAGE.creditUnits);
+  adminAnalytics.recordOrderAttribution(req, reference, 'credits');
+  adminAnalytics.recordCheckout(req, reference, 'credits', CREDIT_PACKAGE.amountCents);
   try {
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
@@ -676,6 +701,8 @@ app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
     (reference,user_id,course_slug,course_title,amount_cents,affiliate_id,status)
     VALUES (?,?,?,?,?,?,'created')`).run(reference, req.user.id, course.slug, course.title,
       course.priceCents, affiliate?.id || null);
+  adminAnalytics.recordOrderAttribution(req, reference, 'course');
+  adminAnalytics.recordCheckout(req, reference, 'course', course.priceCents);
   try {
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
@@ -725,6 +752,8 @@ app.post('/api/services/videos/checkout', async (req, res) => {
     VALUES (?,?,?,?,?,?,?,'created','awaiting_payment')`).run(reference, VIDEO_PACKAGE.slug,
       name.trim().slice(0, 100), normalizedEmail.slice(0, 160), String(whatsapp).trim().slice(0, 30),
       VIDEO_PACKAGE.amountCents, affiliate?.id || null);
+  adminAnalytics.recordOrderAttribution(req, reference, 'video_package');
+  adminAnalytics.recordCheckout(req, reference, 'video_package', VIDEO_PACKAGE.amountCents);
   try {
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
@@ -817,6 +846,7 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       if (!order) return res.sendStatus(200);
       if (amountCents !== order.amount_cents || payment.currency_id !== 'BRL') return res.sendStatus(400);
       applyCreditPayment(order, payment);
+      if (String(payment.status) === 'approved') adminAnalytics.recordPurchase(order.reference, 'credits', order.amount_cents);
       return res.sendStatus(200);
     }
     if (reference.startsWith('course_')) {
@@ -836,6 +866,7 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       }
       syncAffiliateCommission({ affiliateId: order.affiliate_id, orderType: 'course', orderReference: order.reference,
         grossAmountCents: order.amount_cents, rateBps: COURSE_REFERRAL_RATE_BPS, payment });
+      if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'course', order.amount_cents);
       return res.sendStatus(200);
     }
     if (reference.startsWith('video_')) {
@@ -849,15 +880,18 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
         .run(status, deliveryStatus, String(payment.id), order.reference);
       syncAffiliateCommission({ affiliateId: order.affiliate_id, orderType: 'video_package', orderReference: order.reference,
         grossAmountCents: order.amount_cents, rateBps: VIDEO_CREATOR_RATE_BPS, payment });
+      if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'video_package', order.amount_cents);
       return res.sendStatus(200);
     }
     const order = db.prepare('SELECT * FROM lot_orders WHERE reference=?').get(reference);
     if (!order) return res.sendStatus(200);
     if (amountCents !== order.amount_cents || payment.currency_id !== 'BRL') return res.sendStatus(400);
+    const status = String(payment.status || 'unknown');
     db.prepare(`UPDATE lot_orders SET status=?,mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?`)
-      .run(String(payment.status || 'unknown'), String(payment.id), order.reference);
+      .run(status, String(payment.id), order.reference);
     syncAffiliateCommission({ affiliateId: order.affiliate_id, orderType: 'lot', orderReference: order.reference,
       grossAmountCents: order.amount_cents, rateBps: REFERRAL_RATE_BPS, payment });
+    if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'lot', order.amount_cents);
     return res.sendStatus(200);
   } catch (error) {
     console.error('Mercado Pago webhook error', error?.message || 'unknown');
