@@ -5,7 +5,19 @@
   const avatar = document.getElementById('avatar');
   const hint = document.getElementById('hint');
   const pins = [...document.querySelectorAll('.pin')];
+  const favoriteAction = document.getElementById('favoriteAction');
+  const favoriteFilterCount = document.getElementById('favoriteFilterCount');
+  const dockFavoriteCount = document.getElementById('dockFavoriteCount');
+  const favoriteStorageKey = 'vitrinecity-favorites';
+  let favorites = new Set();
+  let currentPin = null;
   let scale = .72, offsetX = 0, offsetY = 0, dragging = false, moved = false, start, initial, pinchDistance = 0;
+
+  try {
+    favorites = new Set(JSON.parse(localStorage.getItem(favoriteStorageKey) || '[]'));
+  } catch (_) {
+    favorites = new Set();
+  }
 
   function constrain() {
     const width = 2000 * scale, height = 1125 * scale;
@@ -38,6 +50,35 @@
     avatar.style.left = `${pin.offsetLeft}px`;
     avatar.style.top = `${pin.offsetTop + 24}px`;
   }
+  function pinKey(pin) {
+    return pin.dataset.key || (pin.dataset.name || pin.textContent.trim()).toLocaleLowerCase('pt-BR').replace(/[^a-z0-9]+/g, '-');
+  }
+  function updateFavoriteUi() {
+    const count = favorites.size;
+    favoriteFilterCount.textContent = count;
+    dockFavoriteCount.textContent = count;
+    if (!currentPin) return;
+    const saved = favorites.has(pinKey(currentPin));
+    favoriteAction.classList.toggle('saved', saved);
+    favoriteAction.textContent = saved ? '♥ Salvo nos favoritos' : '♡ Salvar nos favoritos';
+    favoriteAction.setAttribute('aria-pressed', String(saved));
+  }
+  function persistFavorites() {
+    try {
+      localStorage.setItem(favoriteStorageKey, JSON.stringify([...favorites]));
+    } catch (_) {
+      // A experiência continua funcionando quando o navegador bloqueia armazenamento local.
+    }
+    updateFavoriteUi();
+  }
+  function focusOnPin(pin, openPanel = true) {
+    if (!pin) return;
+    scale = Math.max(scale, viewport.clientWidth < 760 ? .62 : .78);
+    offsetX = viewport.clientWidth / 2 - pin.offsetLeft * scale;
+    offsetY = viewport.clientHeight / 2 - pin.offsetTop * scale;
+    draw();
+    if (openPanel) showPanel(pin);
+  }
   function setAction(id, href, visible, label) {
     const action = document.getElementById(id);
     action.style.display = visible ? 'block' : 'none';
@@ -45,6 +86,7 @@
     if (label) action.textContent = label;
   }
   function showPanel(pin) {
+    currentPin = pin;
     moveAvatarTo(pin);
     document.getElementById('tag').textContent = pin.dataset.tag || '';
     document.getElementById('name').textContent = pin.dataset.name || pin.textContent.trim();
@@ -60,6 +102,7 @@
     setAction('siteAction', pin.dataset.site, Boolean(pin.dataset.site));
     setAction('mapsAction', pin.dataset.maps, Boolean(pin.dataset.maps));
     setAction('instagramAction', pin.dataset.instagram, Boolean(pin.dataset.instagram));
+    updateFavoriteUi();
     panel.classList.add('show');
   }
 
@@ -113,7 +156,8 @@
     let visible = 0;
     pins.forEach(pin => {
       const text = `${pin.dataset.name || ''} ${pin.dataset.desc || ''} ${pin.dataset.tag || ''}`.toLocaleLowerCase('pt-BR');
-      const show = (activeFilter === 'all' || pin.dataset.category === activeFilter) && (!query || text.includes(query));
+      const matchesFilter = activeFilter === 'all' || pin.dataset.category === activeFilter || (activeFilter === 'favorites' && favorites.has(pinKey(pin)));
+      const show = matchesFilter && (!query || text.includes(query));
       pin.classList.toggle('hidden', !show);
       if (show) visible += 1;
     });
@@ -125,9 +169,51 @@
     button.classList.add('active'); activeFilter = button.dataset.filter; filterPins();
   });
 
+  favoriteAction.onclick = () => {
+    if (!currentPin) return;
+    const key = pinKey(currentPin);
+    if (favorites.has(key)) favorites.delete(key); else favorites.add(key);
+    persistFavorites();
+    if (activeFilter === 'favorites') filterPins();
+  };
+
+  function selectFilter(filter) {
+    const button = filterButtons.find(item => item.dataset.filter === filter);
+    if (!button) return;
+    filterButtons.forEach(item => item.classList.toggle('active', item === button));
+    activeFilter = filter;
+    search.value = '';
+    filterPins();
+  }
+
+  document.querySelectorAll('[data-focus]').forEach(button => button.onclick = () => {
+    const pin = pins.find(item => pinKey(item) === button.dataset.focus);
+    focusOnPin(pin);
+  });
+
+  const cityPulse = document.getElementById('cityPulse');
+  const pulseToggle = document.getElementById('pulseToggle');
+  if (window.matchMedia('(max-width: 760px)').matches) cityPulse.classList.add('collapsed');
+  pulseToggle.setAttribute('aria-expanded', String(!cityPulse.classList.contains('collapsed')));
+  pulseToggle.onclick = () => {
+    cityPulse.classList.toggle('collapsed');
+    pulseToggle.setAttribute('aria-expanded', String(!cityPulse.classList.contains('collapsed')));
+  };
+
+  const dockButtons = [...document.querySelectorAll('[data-city-action]')];
+  dockButtons.forEach(button => button.onclick = () => {
+    dockButtons.forEach(item => item.classList.toggle('active', item === button));
+    const action = button.dataset.cityAction;
+    if (action === 'city') { selectFilter('all'); center(); panel.classList.remove('show'); }
+    if (action === 'stores') selectFilter('store');
+    if (action === 'courses') focusOnPin(pins.find(item => pinKey(item) === 'centro-educacional'));
+    if (action === 'favorites') selectFilter('favorites');
+  });
+
   const avatarShop = document.getElementById('avatarShop');
   document.getElementById('avatarBtn').onclick = () => avatarShop.classList.add('show');
   document.getElementById('closeAvatar').onclick = () => avatarShop.classList.remove('show');
   avatarShop.addEventListener('click', event => { if (event.target === avatarShop) avatarShop.classList.remove('show'); });
+  updateFavoriteUi();
   center();
 })();
