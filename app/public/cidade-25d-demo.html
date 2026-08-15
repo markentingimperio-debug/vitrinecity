@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="description" content="Demonstração do bairro 2.5D navegável da VitrineCity.">
+  <title>Centro Vitrine 2.5D — Demonstração</title>
+  <link rel="stylesheet" href="/cidade-25d-demo.css">
+  <script src="/analytics.js" defer></script>
+  <script src="/cidade-25d-demo.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><i></i><span>VitrineCity</span><small>BAIRRO 2.5D</small></a>
+    <div class="breadcrumb"><span>Cidade</span><b>›</b><strong>Centro Vitrine</strong></div>
+    <nav><a href="/cidade-exploravel.html">Mapa atual</a><a class="cta" href="/comprar-lote.html">Escolher prédio</a></nav>
+  </header>
+
+  <section class="toolbar" aria-label="Ferramentas do bairro">
+    <label class="search"><span>⌕</span><input id="citySearch" type="search" placeholder="Buscar loja, serviço ou prédio" aria-label="Buscar no bairro"></label>
+    <div class="chips" id="cityFilters">
+      <button class="active" data-filter="all">Tudo</button>
+      <button data-filter="store">Lojas</button>
+      <button data-filter="attraction">Atrações</button>
+      <button data-filter="property">Prédios</button>
+    </div>
+  </section>
+
+  <aside class="welcome" id="welcome">
+    <button id="closeWelcome" aria-label="Fechar">×</button>
+    <small>DEMONSTRAÇÃO INTERATIVA</small>
+    <h1>Centro Vitrine</h1>
+    <p>Arraste para explorar. Escolha um prédio pronto e nós aplicamos sua marca, fachada e dados.</p>
+    <div><span>↔ Arrastar</span><span>⊕ Zoom</span><span>● Visitar</span></div>
+  </aside>
+
+  <main class="city-viewport" id="cityViewport" aria-label="Bairro Centro Vitrine em perspectiva 2.5D">
+    <div class="sky-glow"></div>
+    <div class="city-world" id="cityWorld">
+      <div class="ground-grid"></div>
+
+      <div class="road avenue-main"><span>AVENIDA CENTRAL</span></div>
+      <div class="road avenue-cross"><span>RUA DAS VITRINES</span></div>
+      <div class="road avenue-north"></div>
+      <div class="road avenue-south"></div>
+
+      <div class="crosswalk cw1"></div><div class="crosswalk cw2"></div>
+      <div class="crosswalk cw3"></div><div class="crosswalk cw4"></div>
+
+      <section class="park" aria-label="Praça Central">
+        <div class="park-lawn"></div>
+        <div class="park-path p1"></div><div class="park-path p2"></div>
+        <div class="fountain"><i></i><i></i><span></span></div>
+        <div class="tree t1"></div><div class="tree t2"></div><div class="tree t3"></div><div class="tree t4"></div>
+        <button class="place-label" data-category="attraction" data-name="Praça Central" data-desc="O coração do bairro, preparado para eventos, encontros e campanhas." data-page="/praca-central.html">Praça Central</button>
+      </section>
+
+      <button class="building featured sertaneja" data-key="sertaneja" data-category="store" data-name="Sertaneja Moda Country" data-desc="Loja-modelo da VitrineCity com moda country, acessórios e presença digital completa." data-image="/assets/sertaneja-moda-country-premium.jpg" data-page="/passeio-virtual.html" data-instagram="https://www.instagram.com/sertaneja_modacountry?igsh=MXJ6Nm1jZjEzcmdzeg==" data-maps="https://maps.app.goo.gl/Dytp5Axq93xRtnXLA">
+        <span class="building-shadow"></span><span class="face front"><b>SERTANEJA</b><small>MODA COUNTRY</small><i class="door"></i><i class="window w1"></i><i class="window w2"></i><em>ENTRAR</em></span><span class="face side"></span><span class="face roof"></span><span class="promo-screen"><i>★ SERTANEJA • OFERTAS DA SEMANA • ATÉ 50% OFF •</i></span><span class="store-pin">★</span>
+      </button>
+
+      <button class="building featured agrotecnica" data-key="agrotecnica" data-category="store" data-name="Agrotécnica" data-desc="Produtos para jardinagem, plantas e cultivo doméstico. Loja real com site e Instagram oficiais." data-image="/assets/agrotecnica-premium-v2.webp" data-page="/loja-agrotecnica.html" data-site="https://adubonpkparaplantas.com.br" data-instagram="https://www.instagram.com/agrotecniica?igsh=MWo2OWViMzZzZjFhdw==">
+        <span class="building-shadow"></span><span class="face front"><b>AGROTÉCNICA</b><small>PLANTAS &amp; JARDIM</small><i class="door"></i><i class="window w1"></i><i class="window w2"></i><em>VISITAR</em></span><span class="face side"></span><span class="face roof"></span><span class="promo-screen"><i>🌿 TERRA • ADUBOS • NPK • OFERTAS PARA SEU JARDIM •</i></span><span class="store-pin">🌿</span>
+      </button>
+
+      <button class="building featured education" data-key="centro-educacional" data-category="attraction" data-name="Centro Educacional" data-desc="Cursos rápidos, e-books e conteúdos com certificado dentro da cidade." data-page="/centro-educacional.html">
+        <span class="building-shadow"></span><span class="face front"><b>CENTRO EDUCACIONAL</b><small>CURSOS &amp; E-BOOKS</small><i class="door"></i><i class="window w1"></i><i class="window w2"></i><em>VER CURSOS</em></span><span class="face side"></span><span class="face roof"></span><span class="store-pin">🎓</span>
+      </button>
+
+      <button class="building service-bldg" data-category="store" data-name="Centro de Serviços" data-desc="Espaços para profissionais, prestadores de serviços e empresas locais.">
+        <span class="building-shadow"></span><span class="face front"><b>SERVIÇOS</b><i class="door"></i><i class="window w1"></i><i class="window w2"></i></span><span class="face side"></span><span class="face roof"></span>
+      </button>
+
+      <button class="building cafe" data-category="store" data-name="Café da Praça" data-desc="Café, confeitaria e experiências gastronômicas no Centro Vitrine.">
+        <span class="building-shadow"></span><span class="face front"><b>CAFÉ DA PRAÇA</b><i class="door"></i><i class="window w1"></i><i class="window w2"></i><span class="awning"></span></span><span class="face side"></span><span class="face roof"></span>
+      </button>
+
+      <button class="building fashion" data-category="store" data-name="Galeria da Moda" data-desc="Um quarteirão para moda, beleza, calçados e acessórios.">
+        <span class="building-shadow"></span><span class="face front"><b>GALERIA DA MODA</b><i class="door"></i><i class="window w1"></i><i class="window w2"></i></span><span class="face side"></span><span class="face roof"></span>
+      </button>
+
+      <button class="building available property-a" data-category="property" data-lot="CENTRO-014" data-name="Prédio Vitrine 014" data-desc="Prédio de esquina já construído. Após a compra, personalizamos fachada, logo, letreiro e links da empresa.">
+        <span class="building-shadow"></span><span class="face front"><b>SUA MARCA AQUI</b><small>PRÉDIO PRONTO</small><i class="door"></i><i class="window w1"></i><i class="window w2"></i><em>DISPONÍVEL</em></span><span class="face side"></span><span class="face roof"></span><span class="available-ribbon">COMPRAR PRÉDIO</span><span class="store-pin">+</span>
+      </button>
+      <button class="building available property-b" data-category="property" data-lot="CENTRO-027" data-name="Prédio Vitrine 027" data-desc="Prédio comercial pronto próximo à Agrotécnica. Inclui personalização da fachada e cadastro dos canais digitais.">
+        <span class="building-shadow"></span><span class="face front"><b>SUA EMPRESA</b><small>FACHADA PERSONALIZÁVEL</small><i class="door"></i><i class="window w1"></i><i class="window w2"></i><em>DISPONÍVEL</em></span><span class="face side"></span><span class="face roof"></span><span class="available-ribbon">COMPRAR PRÉDIO</span><span class="store-pin">+</span>
+      </button>
+      <button class="building available property-c" data-category="property" data-lot="MODA-052" data-name="Prédio Vitrine 052" data-desc="Loja pronta no corredor da moda. Nós instalamos logo, cores, promoções, WhatsApp, site e redes sociais.">
+        <span class="building-shadow"></span><span class="face front"><b>SUA LOJA AQUI</b><small>VITRINE DIGITAL PRONTA</small><i class="door"></i><i class="window w1"></i><i class="window w2"></i><em>DISPONÍVEL</em></span><span class="face side"></span><span class="face roof"></span><span class="available-ribbon">COMPRAR PRÉDIO</span><span class="store-pin">+</span>
+      </button>
+
+      <div class="streetlight l1"></div><div class="streetlight l2"></div><div class="streetlight l3"></div><div class="streetlight l4"></div><div class="streetlight l5"></div><div class="streetlight l6"></div>
+      <div class="person person-a"></div><div class="person person-b"></div><div class="person person-c"></div>
+      <div class="district-sign"><small>VOCÊ ESTÁ EM</small><b>CENTRO VITRINE</b><span>Distrito 01</span></div>
+      <button class="billboard" data-category="attraction" data-name="Outdoor Avenida Central" data-desc="Painel publicitário premium para campanhas patrocinadas."><span>ANUNCIE<br><b>SUA MARCA</b><small>na avenida mais vista</small></span></button>
+    </div>
+  </main>
+
+  <div class="zoom-tools"><button id="zoomIn" aria-label="Aumentar">+</button><button id="resetView" aria-label="Centralizar">⌂</button><button id="zoomOut" aria-label="Diminuir">−</button></div>
+  <div class="mini-map" aria-hidden="true"><b>Centro Vitrine</b><span id="miniViewport"></span><i></i><i></i></div>
+
+  <aside class="detail-panel" id="detailPanel" aria-live="polite">
+    <button class="panel-close" id="closePanel" aria-label="Fechar">×</button>
+    <img id="detailImage" alt="">
+    <small id="detailType">ESPAÇO DA CIDADE</small>
+    <h2 id="detailName"></h2>
+    <p id="detailDesc"></p>
+    <div class="panel-actions">
+      <a class="primary" id="detailPrimary">Visitar espaço</a>
+      <a id="detailSite" target="_blank" rel="noopener">Loja online</a>
+      <a id="detailInstagram" target="_blank" rel="noopener">Instagram</a>
+      <a id="detailMaps" target="_blank" rel="noopener">Como chegar</a>
+    </div>
+  </aside>
+
+  <div class="demo-badge"><span></span>MODELO DEMONSTRATIVO 2.5D</div>
+  <aside class="ready-note"><b>🏢 Prédios prontos para sua marca</b><span>Compre o espaço e nós personalizamos fachada, logo, letreiro e links.</span></aside>
+</body>
+</html>
