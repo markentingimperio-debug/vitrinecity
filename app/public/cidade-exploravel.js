@@ -97,7 +97,7 @@
     image.alt = pin.dataset.image ? `Fachada de ${pin.dataset.name}` : '';
     const isLot = Boolean(pin.dataset.lot);
     const lotAvailable = isLot && (!pin.dataset.lotStatus || pin.dataset.lotStatus === 'available');
-    setAction('primaryAction', lotAvailable ? `/comprar-lote.html?lote=${encodeURIComponent(pin.dataset.lot)}` : '', lotAvailable, 'Escolher este lote');
+    setAction('primaryAction', lotAvailable ? `/comprar-lote.html?lote=${encodeURIComponent(pin.dataset.lot)}` : '', lotAvailable, 'Escolher este prédio');
     setAction('pageAction', pin.dataset.page, Boolean(pin.dataset.page), pin.dataset.category === 'store' ? '🏪 Entrar na loja' : 'Visitar este espaço');
     setAction('walkAction', pin.dataset.walk, Boolean(pin.dataset.walk));
     setAction('siteAction', pin.dataset.site, Boolean(pin.dataset.site));
