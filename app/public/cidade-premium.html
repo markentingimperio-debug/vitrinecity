@@ -20,7 +20,7 @@
     <button class="hotspot outdoor" data-tag="MÍDIA DIGITAL" data-name="Outdoor da Cidade" data-desc="Espaço para campanhas patrocinadas, lançamentos e promoções especiais.">Outdoor</button>
     <div class="help">Clique nos pontos da cidade para conhecer cada espaço.</div>
   </main>
-  <aside class="panel" id="panel"><button id="close">×</button><small id="tag"></small><h2 id="name"></h2><p id="description"></p><a href="/#cadastro">Tenho interesse</a></aside>
+  <aside class="panel" id="panel"><button id="close">×</button><small id="tag"></small><h2 id="name"></h2><p id="description"></p><a href="/comprar-lote.html">Tenho interesse</a></aside>
   <script>const p=document.getElementById('panel');document.querySelectorAll('.hotspot').forEach(x=>x.onclick=()=>{tag.textContent=x.dataset.tag;name.textContent=x.dataset.name;description.textContent=x.dataset.desc;p.classList.add('show')});close.onclick=()=>p.classList.remove('show');</script>
 </body>
 </html>

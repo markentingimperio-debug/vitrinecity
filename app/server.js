@@ -18,6 +18,7 @@ const app = express();
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.DATA_DIR || '/data';
 const courseFilesDir = path.resolve(process.env.COURSE_FILES_DIR || '/private-courses');
+fs.mkdirSync(dataDir, { recursive: true });
 const db = new Database(path.join(dataDir, 'vitrinecity.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -187,10 +188,14 @@ function ensureColumn(table, column, definition) {
   if (!columns.some(item => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 ensureColumn('lot_orders', 'affiliate_id', 'INTEGER REFERENCES affiliates(id)');
+ensureColumn('lot_orders', 'lot_code', 'TEXT');
+ensureColumn('lot_orders', 'business_name', 'TEXT');
+ensureColumn('lot_orders', 'segment', 'TEXT');
 ensureColumn('users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
+const AVAILABLE_LOTS = new Set(['COUNTRY-041', 'PARQUE-118', 'SUL-203']);
 const CREDIT_PACKAGE = Object.freeze({ amountCents: 1000, feeCents: 30, creditUnits: 970 });
 const COURSE_PRICE_CENTS = 2399;
 const VIDEO_PACKAGE = Object.freeze({ slug: '10-videos-loja', amountCents: 20000, quantity: 10 });
@@ -580,6 +585,12 @@ app.get('/api/affiliates/me', requireUser, (req, res) => {
 });
 
 app.post('/api/payments/mercadopago/checkout', async (req, res) => {
+  const { name, email, whatsapp = '', businessName, segment, lotCode, consent } = req.body || {};
+  if (!consent || typeof name !== 'string' || name.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(email || '') ||
+      typeof businessName !== 'string' || businessName.trim().length < 2 || typeof segment !== 'string' || segment.trim().length < 2 ||
+      !AVAILABLE_LOTS.has(String(lotCode || ''))) {
+    return res.status(400).json({ error: 'Informe a loja, o segmento, um lote disponível e os dados do responsável.' });
+  }
   const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
   if (!token || !process.env.MERCADOPAGO_WEBHOOK_SECRET) {
     return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
@@ -587,15 +598,14 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
   if (!allowAttempt(checkoutAttempts, `lot:${req.ip}`, 5, 10 * 60 * 1000)) {
     return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
   }
-  const { name, email, whatsapp = '', consent } = req.body || {};
-  if (!consent || typeof name !== 'string' || name.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(email || '')) {
-    return res.status(400).json({ error: 'Informe nome, e-mail válido e aceite os termos.' });
-  }
   const reference = `lot_${randomUUID()}`;
   const order = {
     name: name.trim().slice(0, 100),
     email: email.trim().toLowerCase().slice(0, 160),
-    whatsapp: String(whatsapp).trim().slice(0, 30)
+    whatsapp: String(whatsapp).trim().slice(0, 30),
+    businessName: businessName.trim().slice(0, 100),
+    segment: segment.trim().slice(0, 80),
+    lotCode: String(lotCode)
   };
   const affiliate = referralAffiliate(req, order.email);
   try {
@@ -614,7 +624,8 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
           failure: `${SITE_URL}/pagamento.html?resultado=falha`
         },
         auto_return: 'approved', statement_descriptor: 'VITRINECITY',
-        metadata: { product: 'founder_lot', customer_whatsapp: order.whatsapp, affiliate_code: affiliate?.code || '' }
+        metadata: { product: 'founder_lot', lot_code: order.lotCode, business_name: order.businessName,
+          segment: order.segment, customer_whatsapp: order.whatsapp, affiliate_code: affiliate?.code || '' }
       }), signal: AbortSignal.timeout(12000)
     });
     const data = await response.json();
@@ -622,8 +633,10 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
       console.error('Mercado Pago preference error', response.status, data?.message || 'unknown');
       return res.status(502).json({ error: 'Não foi possível iniciar o pagamento agora.' });
     }
-    db.prepare(`INSERT INTO lot_orders (reference,name,email,whatsapp,amount_cents,affiliate_id,status,mp_preference_id)
-      VALUES (?,?,?,?,?,?,'pending',?)`).run(reference, order.name, order.email, order.whatsapp, LOT_PRICE_CENTS, affiliate?.id || null, data.id);
+    db.prepare(`INSERT INTO lot_orders
+      (reference,name,email,whatsapp,lot_code,business_name,segment,amount_cents,affiliate_id,status,mp_preference_id)
+      VALUES (?,?,?,?,?,?,?,?,?,'pending',?)`).run(reference, order.name, order.email, order.whatsapp,
+      order.lotCode, order.businessName, order.segment, LOT_PRICE_CENTS, affiliate?.id || null, data.id);
     adminAnalytics.recordOrderAttribution(req, reference, 'lot');
     adminAnalytics.recordCheckout(req, reference, 'lot', LOT_PRICE_CENTS);
     return res.status(201).json({ checkoutUrl: data.init_point });
