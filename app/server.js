@@ -259,6 +259,18 @@ const mpHeaders = () => ({
   'Content-Type': 'application/json'
 });
 
+function validCpf(value) {
+  const cpf = String(value || '').replace(/\D/g, '');
+  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
+  const digit = size => {
+    let sum = 0;
+    for (let index = 0; index < size; index += 1) sum += Number(cpf[index]) * (size + 1 - index);
+    const result = (sum * 10) % 11;
+    return result === 10 ? 0 : result;
+  };
+  return digit(9) === Number(cpf[9]) && digit(10) === Number(cpf[10]);
+}
+
 function allowAttempt(store, key, limit, windowMs) {
   const now = Date.now();
   const recent = (store.get(key) || []).filter(time => now - time < windowMs);
@@ -643,6 +655,82 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
   } catch (error) {
     console.error('Mercado Pago unavailable', error?.message || 'unknown');
     return res.status(502).json({ error: 'Não foi possível conectar ao Mercado Pago agora.' });
+  }
+});
+
+app.post('/api/payments/mercadopago/pix', async (req, res) => {
+  const { name, email, whatsapp = '', businessName, segment, lotCode, cpf, consent } = req.body || {};
+  if (!consent || typeof name !== 'string' || name.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(email || '') ||
+      typeof businessName !== 'string' || businessName.trim().length < 2 || typeof segment !== 'string' || segment.trim().length < 2 ||
+      !AVAILABLE_LOTS.has(String(lotCode || '')) || !validCpf(cpf)) {
+    return res.status(400).json({ error: 'Informe os dados da vitrine e um CPF válido para gerar o Pix.' });
+  }
+  if (!process.env.MERCADOPAGO_ACCESS_TOKEN || !process.env.MERCADOPAGO_WEBHOOK_SECRET) {
+    return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
+  }
+  if (!allowAttempt(checkoutAttempts, `lot-pix:${req.ip}`, 5, 10 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
+  }
+  const reference = `lot_${randomUUID()}`;
+  const cleanName = name.trim().slice(0, 100);
+  const nameParts = cleanName.split(/\s+/);
+  const order = {
+    name: cleanName,
+    email: email.trim().toLowerCase().slice(0, 160),
+    whatsapp: String(whatsapp).trim().slice(0, 30),
+    businessName: businessName.trim().slice(0, 100),
+    segment: segment.trim().slice(0, 80),
+    lotCode: String(lotCode)
+  };
+  const affiliate = referralAffiliate(req, order.email);
+  db.prepare(`INSERT INTO lot_orders
+    (reference,name,email,whatsapp,lot_code,business_name,segment,amount_cents,affiliate_id,status)
+    VALUES (?,?,?,?,?,?,?,?,?,'created')`).run(reference, order.name, order.email, order.whatsapp,
+    order.lotCode, order.businessName, order.segment, LOT_PRICE_CENTS, affiliate?.id || null);
+  adminAnalytics.recordOrderAttribution(req, reference, 'lot');
+  adminAnalytics.recordCheckout(req, reference, 'lot', LOT_PRICE_CENTS);
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  try {
+    const response = await fetch('https://api.mercadopago.com/v1/payments', {
+      method: 'POST',
+      headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
+      body: JSON.stringify({
+        transaction_amount: LOT_PRICE_CENTS / 100,
+        description: 'Lote Fundador VitrineCity',
+        payment_method_id: 'pix',
+        external_reference: reference,
+        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
+        date_of_expiration: expiresAt,
+        payer: {
+          email: order.email,
+          first_name: nameParts.shift(),
+          last_name: nameParts.join(' ') || 'Cliente',
+          identification: { type: 'CPF', number: String(cpf).replace(/\D/g, '') }
+        },
+        metadata: { product: 'founder_lot', lot_code: order.lotCode, business_name: order.businessName,
+          segment: order.segment, customer_whatsapp: order.whatsapp, affiliate_code: affiliate?.code || '' }
+      }),
+      signal: AbortSignal.timeout(12000)
+    });
+    const data = await response.json();
+    const transaction = data?.point_of_interaction?.transaction_data;
+    if (!response.ok || !data.id || !transaction?.qr_code) {
+      db.prepare("UPDATE lot_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);
+      console.error('Mercado Pago Pix error', response.status, data?.message || 'pix_unavailable');
+      const unavailable = response.status === 400 || response.status === 403;
+      return res.status(unavailable ? 409 : 502).json({ error: unavailable ?
+        'O Pix direto ainda não está habilitado na conta Mercado Pago. Use cartão/boleto ou fale com o suporte.' :
+        'Não foi possível gerar o Pix agora.' });
+    }
+    db.prepare("UPDATE lot_orders SET status=?,mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?")
+      .run(String(data.status || 'pending'), String(data.id), reference);
+    return res.status(201).json({ reference, status: String(data.status || 'pending'),
+      qrCode: transaction.qr_code, qrCodeBase64: transaction.qr_code_base64 || '',
+      ticketUrl: transaction.ticket_url || '', expiresAt });
+  } catch (error) {
+    db.prepare("UPDATE lot_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);
+    console.error('Mercado Pago Pix unavailable', error?.message || 'unknown');
+    return res.status(502).json({ error: 'Não foi possível conectar ao Pix agora.' });
   }
 });
 
