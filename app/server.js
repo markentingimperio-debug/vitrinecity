@@ -254,22 +254,13 @@ const CREDIT_VALIDITY_MS = 60 * 24 * 60 * 60 * 1000;
 const checkoutAttempts = new Map();
 const authAttempts = new Map();
 
-const mpHeaders = () => ({
-  Authorization: `Bearer ${process.env.MERCADOPAGO_ACCESS_TOKEN}`,
+const mpHeaders = (token = process.env.MERCADOPAGO_ACCESS_TOKEN) => ({
+  Authorization: `Bearer ${token}`,
   'Content-Type': 'application/json'
 });
 
-function validCpf(value) {
-  const cpf = String(value || '').replace(/\D/g, '');
-  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
-  const digit = size => {
-    let sum = 0;
-    for (let index = 0; index < size; index += 1) sum += Number(cpf[index]) * (size + 1 - index);
-    const result = (sum * 10) % 11;
-    return result === 10 ? 0 : result;
-  };
-  return digit(9) === Number(cpf[9]) && digit(10) === Number(cpf[10]);
-}
+const pixAccessToken = () => process.env.MERCADOPAGO_PIX_ACCESS_TOKEN || '';
+const pixHeaders = () => mpHeaders(pixAccessToken());
 
 function allowAttempt(store, key, limit, windowMs) {
   const now = Date.now();
@@ -425,6 +416,36 @@ const syncAffiliateCommission = db.transaction(({ affiliateId, orderType, orderR
     .run(affiliateId, orderType, orderReference, grossAmountCents, rateBps, commissionCents,
       status, availableAt, String(payment.id));
 });
+
+function internalPixStatus(mpOrder) {
+  const status = String(mpOrder?.status || 'unknown');
+  const detail = String(mpOrder?.status_detail || '');
+  if (status === 'processed' && detail === 'accredited') return 'approved';
+  if (status === 'canceled' || status === 'expired') return 'cancelled';
+  if (status === 'refunded') return 'refunded';
+  if (status === 'charged_back') return 'charged_back';
+  if (status === 'failed') return 'failed';
+  return 'pending';
+}
+
+function updateLotFromPixOrder(mpOrder) {
+  const reference = String(mpOrder?.external_reference || '');
+  const order = db.prepare('SELECT * FROM lot_orders WHERE reference=?').get(reference);
+  if (!order) return null;
+  const amountCents = Math.round(Number(mpOrder?.total_amount) * 100);
+  if (amountCents !== order.amount_cents) throw new Error('pix_order_amount_mismatch');
+  const status = internalPixStatus(mpOrder);
+  const mpOrderId = String(mpOrder?.id || order.mp_payment_id || '');
+  const statusChanged = order.status !== status;
+  db.prepare(`UPDATE lot_orders SET status=?,mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?`)
+    .run(status, mpOrderId, order.reference);
+  if (statusChanged) {
+    syncAffiliateCommission({ affiliateId: order.affiliate_id, orderType: 'lot', orderReference: order.reference,
+      grossAmountCents: order.amount_cents, rateBps: REFERRAL_RATE_BPS, payment: { id: mpOrderId, status } });
+    if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'lot', order.amount_cents);
+  }
+  return { ...order, status, mp_payment_id: mpOrderId };
+}
 
 const expireCreditBatches = db.transaction((userId) => {
   const now = Date.now();
@@ -659,21 +680,20 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
 });
 
 app.post('/api/payments/mercadopago/pix', async (req, res) => {
-  const { name, email, whatsapp = '', businessName, segment, lotCode, cpf, consent } = req.body || {};
+  const { name, email, whatsapp = '', businessName, segment, lotCode, consent } = req.body || {};
   if (!consent || typeof name !== 'string' || name.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(email || '') ||
       typeof businessName !== 'string' || businessName.trim().length < 2 || typeof segment !== 'string' || segment.trim().length < 2 ||
-      !AVAILABLE_LOTS.has(String(lotCode || '')) || !validCpf(cpf)) {
-    return res.status(400).json({ error: 'Informe os dados da vitrine e um CPF válido para gerar o Pix.' });
+      !AVAILABLE_LOTS.has(String(lotCode || ''))) {
+    return res.status(400).json({ error: 'Informe corretamente os dados da vitrine para gerar o Pix.' });
   }
-  if (!process.env.MERCADOPAGO_ACCESS_TOKEN || !process.env.MERCADOPAGO_WEBHOOK_SECRET) {
-    return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
+  if (!pixAccessToken()) {
+    return res.status(503).json({ error: 'O Pix ainda não foi configurado no servidor.' });
   }
   if (!allowAttempt(checkoutAttempts, `lot-pix:${req.ip}`, 5, 10 * 60 * 1000)) {
     return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
   }
   const reference = `lot_${randomUUID()}`;
   const cleanName = name.trim().slice(0, 100);
-  const nameParts = cleanName.split(/\s+/);
   const order = {
     name: cleanName,
     email: email.trim().toLowerCase().slice(0, 160),
@@ -691,42 +711,41 @@ app.post('/api/payments/mercadopago/pix', async (req, res) => {
   adminAnalytics.recordCheckout(req, reference, 'lot', LOT_PRICE_CENTS);
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
   try {
-    const response = await fetch('https://api.mercadopago.com/v1/payments', {
+    const response = await fetch('https://api.mercadopago.com/v1/orders', {
       method: 'POST',
-      headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
+      headers: { ...pixHeaders(), 'X-Idempotency-Key': reference },
       body: JSON.stringify({
-        transaction_amount: LOT_PRICE_CENTS / 100,
-        description: 'Lote Fundador VitrineCity',
-        payment_method_id: 'pix',
+        type: 'online',
+        total_amount: (LOT_PRICE_CENTS / 100).toFixed(2),
         external_reference: reference,
-        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
-        date_of_expiration: expiresAt,
-        payer: {
-          email: order.email,
-          first_name: nameParts.shift(),
-          last_name: nameParts.join(' ') || 'Cliente',
-          identification: { type: 'CPF', number: String(cpf).replace(/\D/g, '') }
-        },
-        metadata: { product: 'founder_lot', lot_code: order.lotCode, business_name: order.businessName,
-          segment: order.segment, customer_whatsapp: order.whatsapp, affiliate_code: affiliate?.code || '' }
+        processing_mode: 'automatic',
+        payer: { email: order.email },
+        transactions: {
+          payments: [{
+            amount: (LOT_PRICE_CENTS / 100).toFixed(2),
+            payment_method: { id: 'pix', type: 'bank_transfer' },
+            expiration_time: 'PT30M'
+          }]
+        }
       }),
       signal: AbortSignal.timeout(12000)
     });
     const data = await response.json();
-    const transaction = data?.point_of_interaction?.transaction_data;
-    if (!response.ok || !data.id || !transaction?.qr_code) {
+    const paymentMethod = data?.transactions?.payments?.[0]?.payment_method;
+    if (!response.ok || !data.id || !paymentMethod?.qr_code) {
       db.prepare("UPDATE lot_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);
-      console.error('Mercado Pago Pix error', response.status, data?.message || 'pix_unavailable');
-      const unavailable = response.status === 400 || response.status === 403;
-      return res.status(unavailable ? 409 : 502).json({ error: unavailable ?
-        'O Pix direto ainda não está habilitado na conta Mercado Pago. Use cartão/boleto ou fale com o suporte.' :
-        'Não foi possível gerar o Pix agora.' });
+      console.error('Mercado Pago Pix Orders error', response.status, data?.message || data?.error || 'pix_unavailable');
+      if (response.status === 401 || response.status === 403) {
+        return res.status(409).json({ error: 'A credencial do Pix não está autorizada. Confira o Access Token do Checkout Transparente.' });
+      }
+      return res.status(response.status === 400 ? 409 : 502).json({ error:
+        data?.message ? `Mercado Pago recusou o Pix: ${String(data.message).slice(0, 140)}` : 'Não foi possível gerar o Pix agora.' });
     }
     db.prepare("UPDATE lot_orders SET status=?,mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?")
-      .run(String(data.status || 'pending'), String(data.id), reference);
-    return res.status(201).json({ reference, status: String(data.status || 'pending'),
-      qrCode: transaction.qr_code, qrCodeBase64: transaction.qr_code_base64 || '',
-      ticketUrl: transaction.ticket_url || '', expiresAt });
+      .run('pending', String(data.id), reference);
+    return res.status(201).json({ reference, status: 'pending',
+      qrCode: paymentMethod.qr_code, qrCodeBase64: paymentMethod.qr_code_base64 || '',
+      ticketUrl: paymentMethod.ticket_url || '', expiresAt });
   } catch (error) {
     db.prepare("UPDATE lot_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);
     console.error('Mercado Pago Pix unavailable', error?.message || 'unknown');
@@ -885,8 +904,7 @@ app.post('/api/services/videos/checkout', async (req, res) => {
   }
 });
 
-function validMercadoPagoSignature(req, dataId) {
-  const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
+function validMercadoPagoSignature(req, dataId, secret = process.env.MERCADOPAGO_WEBHOOK_SECRET) {
   const signature = String(req.get('x-signature') || '');
   const requestId = String(req.get('x-request-id') || '');
   if (!secret || !signature || !requestId || !dataId) return false;
@@ -932,9 +950,21 @@ const applyCreditPayment = db.transaction((order, payment) => {
 
 app.post('/api/payments/mercadopago/webhook', async (req, res) => {
   const dataId = req.body?.data?.id || req.query['data.id'];
-  if (!validMercadoPagoSignature(req, dataId)) return res.sendStatus(401);
-  if (req.body?.type !== 'payment' && req.query.type !== 'payment') return res.sendStatus(200);
+  const eventType = String(req.body?.type || req.query.type || req.body?.topic || req.query.topic || '');
+  const isOrderEvent = eventType === 'order' || eventType === 'orders';
+  const webhookSecret = isOrderEvent ? process.env.MERCADOPAGO_PIX_WEBHOOK_SECRET : process.env.MERCADOPAGO_WEBHOOK_SECRET;
+  if (!validMercadoPagoSignature(req, dataId, webhookSecret)) return res.sendStatus(401);
   try {
+    if (isOrderEvent) {
+      if (!pixAccessToken()) return res.sendStatus(503);
+      const response = await fetch(`https://api.mercadopago.com/v1/orders/${encodeURIComponent(dataId)}`, {
+        headers: pixHeaders(), signal: AbortSignal.timeout(10000)
+      });
+      if (!response.ok) return res.sendStatus(502);
+      updateLotFromPixOrder(await response.json());
+      return res.sendStatus(200);
+    }
+    if (eventType !== 'payment') return res.sendStatus(200);
     const response = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(dataId)}`, {
       headers: mpHeaders(), signal: AbortSignal.timeout(10000)
     });
@@ -1000,10 +1030,21 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
   }
 });
 
-app.get('/api/orders/:reference', (req, res) => {
-  const order = db.prepare('SELECT reference,status,created_at,updated_at FROM lot_orders WHERE reference=?').get(req.params.reference);
+app.get('/api/orders/:reference', async (req, res) => {
+  let order = db.prepare('SELECT * FROM lot_orders WHERE reference=?').get(req.params.reference);
   if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
-  return res.json(order);
+  if (order.status === 'pending' && String(order.mp_payment_id || '').startsWith('ORD') && pixAccessToken()) {
+    try {
+      const response = await fetch(`https://api.mercadopago.com/v1/orders/${encodeURIComponent(order.mp_payment_id)}`, {
+        headers: pixHeaders(), signal: AbortSignal.timeout(8000)
+      });
+      if (response.ok) order = updateLotFromPixOrder(await response.json()) || order;
+    } catch (error) {
+      console.error('Mercado Pago Pix status unavailable', error?.message || 'unknown');
+    }
+  }
+  return res.json({ reference: order.reference, status: order.status,
+    created_at: order.created_at, updated_at: order.updated_at });
 });
 
 app.get('/api/credits/orders/:reference', requireUser, (req, res) => {
@@ -1144,7 +1185,8 @@ app.get('/api/courses/orders/:reference', requireUser, (req, res) => {
 
 app.get('/api/payments/mercadopago/status', (_req, res) => {
   const configured = Boolean(process.env.MERCADOPAGO_ACCESS_TOKEN && process.env.MERCADOPAGO_WEBHOOK_SECRET);
-  return res.status(configured ? 200 : 503).json({ ok: configured, configured, mode: 'production' });
+  return res.status(configured ? 200 : 503).json({ ok: configured, configured,
+    pixConfigured: Boolean(pixAccessToken()), mode: 'production' });
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
