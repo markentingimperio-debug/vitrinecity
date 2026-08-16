@@ -50,7 +50,21 @@
     if (visible) element.href = href;
     if (label) element.textContent = label;
   }
+  function focusOn(target) {
+    const rect = viewport.getBoundingClientRect();
+    const centerX = (target.offsetLeft + target.offsetWidth / 2) * scale;
+    const centerY = (target.offsetTop + target.offsetHeight * .72) * scale;
+    const panelReserve = rect.width > 920 ? 175 : 0;
+
+    offsetX = rect.width / 2 - panelReserve - centerX;
+    offsetY = rect.height * .56 - centerY;
+    world.style.transition = 'transform .55s cubic-bezier(.2,.75,.2,1)';
+    draw();
+    window.setTimeout(() => { world.style.transition = ''; }, 580);
+    interactive.forEach(item => item.classList.toggle('is-selected', item === target));
+  }
   function showDetails(target) {
+    focusOn(target);
     const isProperty = target.dataset.category === 'property';
     const image = document.getElementById('detailImage');
     image.style.display = target.dataset.image ? 'block' : 'none';
@@ -100,7 +114,10 @@
   }, { passive: false });
 
   interactive.forEach(item => item.addEventListener('click', event => { event.stopPropagation(); showDetails(item); }));
-  document.getElementById('closePanel').onclick = () => panel.classList.remove('show');
+  document.getElementById('closePanel').onclick = () => {
+    panel.classList.remove('show');
+    interactive.forEach(item => item.classList.remove('is-selected'));
+  };
   document.getElementById('closeWelcome').onclick = () => document.getElementById('welcome').remove();
   document.getElementById('zoomIn').onclick = () => zoom(.13);
   document.getElementById('zoomOut').onclick = () => zoom(-.13);
