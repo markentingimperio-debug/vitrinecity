@@ -857,6 +857,35 @@ app.get('/api/lots', (req, res) => {
   return res.json({ holdMinutes: LOT_HOLD_MINUTES, lots: Object.keys(LOT_CATALOG).map(publicLot) });
 });
 
+const BRAZILIAN_STATES = new Set([
+  'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG',
+  'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
+]);
+
+function mercadoPagoPayer(reqBody, name, email) {
+  const zipCode = String(reqBody?.zipCode || '').replace(/\D/g, '');
+  const state = String(reqBody?.state || '').trim().toUpperCase();
+  const city = String(reqBody?.city || '').trim().slice(0, 80);
+  const neighborhood = String(reqBody?.neighborhood || '').trim().slice(0, 100);
+  const streetName = String(reqBody?.streetName || '').trim().slice(0, 120);
+  const streetNumber = String(reqBody?.streetNumber || '').trim().slice(0, 20);
+  if (zipCode.length !== 8 || !BRAZILIAN_STATES.has(state) || city.length < 2 ||
+      neighborhood.length < 2 || streetName.length < 2 || streetNumber.length < 1) return null;
+  const parts = String(name).trim().split(/\s+/);
+  return {
+    email,
+    first_name: parts.shift() || String(name).trim(),
+    last_name: parts.join(' ') || String(name).trim(),
+    address: { zip_code: zipCode, street_name: streetName, street_number: streetNumber,
+      neighborhood, city, state }
+  };
+}
+
+app.get('/api/payments/mercadopago/config', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  return res.json({ publicKey: String(process.env.MERCADOPAGO_PUBLIC_KEY || '').trim() });
+});
+
 app.post('/api/payments/mercadopago/checkout', async (req, res) => {
   const { name, email, whatsapp = '', businessName, segment, lotCode, consent, planCode = 'founder' } = req.body || {};
   const plan = LOT_PLANS[String(planCode)] || LOT_PLANS.founder;
@@ -885,6 +914,8 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
     segment: segment.trim().slice(0, 80),
     lotCode: String(lotCode)
   };
+  const payer = mercadoPagoPayer(req.body, order.name, order.email);
+  if (!payer) return res.status(400).json({ error: 'Informe o endereço completo do pagador, incluindo CEP, rua, número, cidade e estado.' });
   const affiliate = referralAffiliate(req, order.email);
   try {
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
@@ -894,7 +925,7 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
         items: [{ id: 'vitrinecity-lote-fundador', title: 'Lote Fundador VitrineCity',
           description: 'Espaço digital para divulgar sua loja na VitrineCity', category_id: 'services',
           quantity: 1, currency_id: 'BRL', unit_price: plan.amountCents / 100 }],
-        payer: { name: order.name, email: order.email }, external_reference: reference,
+        payer, external_reference: reference,
         notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
         back_urls: {
           success: `${SITE_URL}/pagamento.html?resultado=sucesso`,
@@ -1000,6 +1031,8 @@ app.post('/api/payments/mercadopago/pix', async (req, res) => {
     segment: segment.trim().slice(0, 80),
     lotCode: String(lotCode)
   };
+  const payer = mercadoPagoPayer(req.body, order.name, order.email);
+  if (!payer) return res.status(400).json({ error: 'Informe o endereço completo do pagador, incluindo CEP, rua, número, cidade e estado.' });
   const affiliate = referralAffiliate(req, order.email);
   db.prepare(`INSERT INTO lot_orders
     (reference,name,email,whatsapp,lot_code,business_name,segment,amount_cents,affiliate_id,status)
@@ -1017,7 +1050,7 @@ app.post('/api/payments/mercadopago/pix', async (req, res) => {
         total_amount: (LOT_PRICE_CENTS / 100).toFixed(2),
         external_reference: reference,
         processing_mode: 'automatic',
-        payer: { email: order.email },
+        payer,
         transactions: {
           payments: [{
             amount: (LOT_PRICE_CENTS / 100).toFixed(2),
