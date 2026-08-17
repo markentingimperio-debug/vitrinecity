@@ -30,5 +30,16 @@
     pixButton.addEventListener('click',startPix);document.getElementById('copy-pix').addEventListener('click',async event=>{try{await navigator.clipboard.writeText(pixCode.value)}catch{pixCode.focus();pixCode.select();document.execCommand('copy')}event.currentTarget.textContent='Código copiado!'});
     form.addEventListener('submit',async event=>{event.preventDefault();if(!form.reportValidity())return;busy(true);checkoutButton.textContent='Abrindo Mercado Pago...';message.textContent='';try{const response=await fetch('/api/payments/mercadopago/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values())}),data=await response.json();if(!response.ok||!data.checkoutUrl)throw new Error(data.error||'Não foi possível iniciar o pagamento.');location.href=data.checkoutUrl}catch(error){message.textContent=error.message;busy(false);checkoutButton.textContent='Cartão ou boleto'}});
   </script>
+<script>
+  (()=>{
+    const price=document.querySelector('.price'),consent=document.querySelector('.check');
+    const wrap=document.createElement('div');wrap.innerHTML='<label for="planCode">Plano do prédio digital</label><select id="planCode" name="planCode"><option value="basic_monthly">Essencial — R$ 10 por mês</option><option value="founder">Fundador — R$ 15 pagamento único</option></select>';
+    price.before(wrap);const plan=document.getElementById('planCode');
+    function refresh(){const monthly=plan.value==='basic_monthly';price.innerHTML=monthly?'R$10 <small>por mês · renovação automática</small>':'R$15 <small>pagamento único de lançamento</small>';pixButton.hidden=monthly;checkoutButton.textContent=monthly?'Assinar por R$ 10/mês':'Cartão ou boleto'}
+    plan.addEventListener('change',refresh);refresh();
+    form.addEventListener('submit',async event=>{if(plan.value!=='basic_monthly')return;event.preventDefault();event.stopImmediatePropagation();if(!form.reportValidity())return;busy(true);checkoutButton.textContent='Abrindo assinatura...';message.textContent='';try{const body=values();body.planCode=plan.value;const response=await fetch('/api/payments/mercadopago/subscription',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),data=await response.json();if(!response.ok||!data.checkoutUrl)throw new Error(data.error||'Não foi possível iniciar a assinatura.');if(data.manageToken)localStorage.setItem('vc_store_'+data.reference,data.manageToken);location.href=data.checkoutUrl}catch(error){message.textContent=error.message;busy(false);refresh()}},true);
+    const oldFetch=window.fetch;window.fetch=async function(input,init){const response=await oldFetch(input,init);if(typeof input==='string'&&input.includes('/api/payments/mercadopago/')&&init?.method==='POST'){response.clone().json().then(data=>{if(data.reference&&data.manageToken)localStorage.setItem('vc_store_'+data.reference,data.manageToken)}).catch(()=>{})}return response};
+  })();
+</script>
 </body>
 </html>

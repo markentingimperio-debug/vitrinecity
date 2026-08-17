@@ -178,6 +178,29 @@ CREATE TABLE IF NOT EXISTS service_orders (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS store_profiles (
+  id INTEGER PRIMARY KEY,
+  order_reference TEXT NOT NULL UNIQUE REFERENCES lot_orders(reference) ON DELETE CASCADE,
+  business_name TEXT NOT NULL,
+  description TEXT,
+  logo_url TEXT,
+  facade_url TEXT,
+  whatsapp TEXT,
+  website_url TEXT,
+  instagram_url TEXT,
+  tiktok_url TEXT,
+  google_maps_url TEXT,
+  promotion_text TEXT,
+  wants_website INTEGER NOT NULL DEFAULT 0,
+  wants_brand_art INTEGER NOT NULL DEFAULT 0,
+  review_status TEXT NOT NULL DEFAULT 'draft',
+  admin_notes TEXT,
+  submitted_at TEXT,
+  reviewed_at TEXT,
+  published_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_credit_orders_user ON credit_orders(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_wallet_ledger_user ON wallet_ledger(user_id, created_at);
@@ -197,10 +220,17 @@ ensureColumn('lot_orders', 'reserved_at', 'TEXT');
 ensureColumn('lot_orders', 'confirmation_status', "TEXT NOT NULL DEFAULT 'pending'");
 ensureColumn('lot_orders', 'confirmation_sent_at', 'TEXT');
 ensureColumn('lot_orders', 'confirmation_error', 'TEXT');
+ensureColumn('lot_orders', 'plan_code', "TEXT NOT NULL DEFAULT 'founder'");
+ensureColumn('lot_orders', 'billing_type', "TEXT NOT NULL DEFAULT 'one_time'");
+ensureColumn('lot_orders', 'mp_subscription_id', 'TEXT');
 ensureColumn('users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
+const LOT_PLANS = Object.freeze({
+  founder: Object.freeze({ code: 'founder', name: 'Prédio Fundador', amountCents: 1500, billingType: 'one_time' }),
+  basic_monthly: Object.freeze({ code: 'basic_monthly', name: 'Prédio Essencial Mensal', amountCents: 1000, billingType: 'recurring' })
+});
 const LOT_CATALOG = Object.freeze({
   'COUNTRY-041': Object.freeze({ code: 'COUNTRY-041', label: 'Lote Country 041', place: 'Avenida Country' }),
   'PARQUE-118': Object.freeze({ code: 'PARQUE-118', label: 'Lote Parque 118', place: 'Região da Praça Central' }),
@@ -431,6 +461,90 @@ function escapeHtml(value) {
   })[character]);
 }
 
+function managementSecret() {
+  return String(process.env.STORE_PORTAL_SECRET || process.env.MERCADOPAGO_WEBHOOK_SECRET || '').trim();
+}
+
+function storeManagementToken(reference) {
+  const secret = managementSecret();
+  if (!secret) return '';
+  return createHmac('sha256', secret).update(`store:${reference}`).digest('base64url');
+}
+
+function validStoreManagementToken(reference, provided) {
+  const expected = storeManagementToken(reference);
+  if (!expected || !provided) return false;
+  const actualBuffer = Buffer.from(String(provided));
+  const expectedBuffer = Buffer.from(expected);
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function safeExternalUrl(value, max = 500) {
+  const text = String(value || '').trim().slice(0, max);
+  if (!text) return '';
+  try {
+    const parsed = new URL(text);
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : '';
+  } catch { return ''; }
+}
+
+function publicStoreProfile(reference) {
+  const order = db.prepare(`SELECT reference,business_name,segment,lot_code,status,fulfillment_status,
+    plan_code,billing_type FROM lot_orders WHERE reference=?`).get(reference);
+  if (!order) return null;
+  const profile = db.prepare('SELECT * FROM store_profiles WHERE order_reference=?').get(reference);
+  return {
+    order: { reference: order.reference, businessName: order.business_name, segment: order.segment,
+      lotCode: order.lot_code, paymentStatus: order.status, fulfillmentStatus: order.fulfillment_status,
+      planCode: order.plan_code, billingType: order.billing_type },
+    profile: profile ? {
+      businessName: profile.business_name, description: profile.description || '', logoUrl: profile.logo_url || '',
+      facadeUrl: profile.facade_url || '', whatsapp: profile.whatsapp || '', websiteUrl: profile.website_url || '',
+      instagramUrl: profile.instagram_url || '', tiktokUrl: profile.tiktok_url || '',
+      googleMapsUrl: profile.google_maps_url || '', promotionText: profile.promotion_text || '',
+      wantsWebsite: Boolean(profile.wants_website), wantsBrandArt: Boolean(profile.wants_brand_art),
+      reviewStatus: profile.review_status, adminNotes: profile.admin_notes || '',
+      submittedAt: profile.submitted_at, publishedAt: profile.published_at
+    } : null
+  };
+}
+
+function saveStoreImage(reference, kind, value, currentUrl = '') {
+  const text = String(value || '').trim();
+  if (!text) return currentUrl || '';
+  if (!text.startsWith('data:')) return safeExternalUrl(text) || currentUrl || '';
+  const match = text.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) throw new Error('Imagem inválida. Envie JPG, PNG ou WebP.');
+  const buffer = Buffer.from(match[2], 'base64');
+  if (!buffer.length || buffer.length > 2 * 1024 * 1024) throw new Error('A imagem deve ter no máximo 2 MB.');
+  const extension = match[1] === 'jpeg' ? 'jpg' : match[1];
+  const safeReference = String(reference).replace(/[^a-zA-Z0-9_-]/g, '');
+  const folder = path.join(dataDir, 'store-assets');
+  fs.mkdirSync(folder, { recursive: true });
+  const filename = `${safeReference}-${kind}-${Date.now()}.${extension}`;
+  fs.writeFileSync(path.join(folder, filename), buffer, { mode: 0o640 });
+  return `/uploads/store-assets/${filename}`;
+}
+
+function storePortalAccess(req, res) {
+  const reference = String(req.params.reference || '');
+  const token = String(req.query.token || req.body?.token || req.get('x-store-token') || '');
+  if (!validStoreManagementToken(reference, token)) {
+    res.status(403).json({ error: 'Link de acesso inválido ou incompleto.' });
+    return null;
+  }
+  const order = db.prepare('SELECT * FROM lot_orders WHERE reference=?').get(reference);
+  if (!order) {
+    res.status(404).json({ error: 'Pedido não encontrado.' });
+    return null;
+  }
+  if (order.status !== 'approved') {
+    res.status(409).json({ error: 'O painel será liberado após a confirmação do pagamento.' });
+    return null;
+  }
+  return { order, token };
+}
+
 const SMTP_USER = String(process.env.SMTP_USER || '').trim();
 const SMTP_PASS = String(process.env.SMTP_PASS || '').trim();
 const LOT_ADMIN_EMAIL = String(process.env.LOT_ADMIN_EMAIL || 'agrotecnica362@gmail.com').trim();
@@ -455,17 +569,19 @@ async function deliverLotConfirmation(reference) {
   const order = db.prepare('SELECT * FROM lot_orders WHERE reference=?').get(reference);
   const lot = LOT_CATALOG[order.lot_code] || { label: order.lot_code, place: 'VitrineCity' };
   const mapUrl = `${SITE_URL}/cidade-exploravel.html?lote=${encodeURIComponent(order.lot_code)}`;
+  const portalUrl = `${SITE_URL}/painel-lojista.html?ref=${encodeURIComponent(order.reference)}&token=${encodeURIComponent(storeManagementToken(order.reference))}`;
   const replyEmail = LOT_ADMIN_EMAIL || SMTP_USER;
   const customerText = `Olá, ${order.name}!\n\nPagamento aprovado e lote reservado na VitrineCity.\n\n` +
     `Loja: ${order.business_name}\nLote: ${lot.label}\nLocalização: ${lot.place}\nReferência: ${order.reference}\n` +
-    `Ver no mapa: ${mapUrl}\n\nPróxima etapa: responda este e-mail enviando logotipo, descrição, WhatsApp, Instagram, site e promoção. ` +
+    `Ver no mapa: ${mapUrl}\nConfigurar minha loja: ${portalUrl}\n\nPróxima etapa: acesse seu painel e envie logotipo, fachada, descrição, WhatsApp, Instagram, TikTok, site, Google Maps e promoção. ` +
     `Nossa equipe revisará o material antes da publicação.\n\nVitrineCity`;
   const customerHtml = `<h2>Seu lote está reservado!</h2><p>Olá, ${escapeHtml(order.name)}.</p>` +
     `<p>Recebemos seu pagamento e reservamos o endereço digital da <strong>${escapeHtml(order.business_name)}</strong>.</p>` +
     `<ul><li><strong>Lote:</strong> ${escapeHtml(lot.label)}</li><li><strong>Localização:</strong> ${escapeHtml(lot.place)}</li>` +
     `<li><strong>Referência:</strong> ${escapeHtml(order.reference)}</li></ul>` +
     `<p><a href="${escapeHtml(mapUrl)}">Ver meu lote no mapa da VitrineCity</a></p>` +
-    `<h3>Como colocar sua loja no ar</h3><p>Responda este e-mail com logotipo, descrição, WhatsApp, Instagram, site e a promoção que deseja mostrar no letreiro. Nossa equipe revisará o material antes da publicação.</p>`;
+    `<p><a style="display:inline-block;background:#1768e6;color:#fff;text-decoration:none;padding:13px 18px;border-radius:10px;font-weight:bold" href="${escapeHtml(portalUrl)}">Configurar minha loja</a></p>` +
+    `<h3>Como colocar sua loja no ar</h3><p>Preencha o painel com logotipo, fachada, descrição, WhatsApp, Instagram, TikTok, site, Google Maps e a promoção do letreiro. Nossa equipe revisará o material antes da publicação.</p>`;
   try {
     await mailTransport.sendMail({
       from: process.env.EMAIL_FROM || `VitrineCity <${SMTP_USER}>`,
@@ -597,10 +713,13 @@ function publicWallet(userId) {
   };
 }
 
-app.use(express.json({ limit: '30kb' }));
+app.use(express.json({ limit: '5mb' }));
 app.set('trust proxy', 1);
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 app.use('/vendor/three', express.static(path.join(dir, 'node_modules/three/build')));
+app.use('/uploads/store-assets', express.static(path.join(dataDir, 'store-assets'), {
+  immutable: true, maxAge: '30d', fallthrough: false
+}));
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
 
 app.get('/r/:code', (req, res) => {
@@ -739,7 +858,9 @@ app.get('/api/lots', (req, res) => {
 });
 
 app.post('/api/payments/mercadopago/checkout', async (req, res) => {
-  const { name, email, whatsapp = '', businessName, segment, lotCode, consent } = req.body || {};
+  const { name, email, whatsapp = '', businessName, segment, lotCode, consent, planCode = 'founder' } = req.body || {};
+  const plan = LOT_PLANS[String(planCode)] || LOT_PLANS.founder;
+  if (plan.billingType === 'recurring') return res.status(400).json({ error: 'Use o botão de assinatura para o plano mensal.' });
   if (!consent || typeof name !== 'string' || name.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(email || '') ||
       typeof businessName !== 'string' || businessName.trim().length < 2 || typeof segment !== 'string' || segment.trim().length < 2 ||
       !AVAILABLE_LOTS.has(String(lotCode || ''))) {
@@ -772,7 +893,7 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
       body: JSON.stringify({
         items: [{ id: 'vitrinecity-lote-fundador', title: 'Lote Fundador VitrineCity',
           description: 'Espaço digital para divulgar sua loja na VitrineCity', category_id: 'services',
-          quantity: 1, currency_id: 'BRL', unit_price: LOT_PRICE_CENTS / 100 }],
+          quantity: 1, currency_id: 'BRL', unit_price: plan.amountCents / 100 }],
         payer: { name: order.name, email: order.email }, external_reference: reference,
         notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
         back_urls: {
@@ -782,7 +903,7 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
         },
         auto_return: 'approved', statement_descriptor: 'VITRINECITY',
         metadata: { product: 'founder_lot', lot_code: order.lotCode, business_name: order.businessName,
-          segment: order.segment, customer_whatsapp: order.whatsapp, affiliate_code: affiliate?.code || '' }
+          segment: order.segment, customer_whatsapp: order.whatsapp, plan_code: plan.code, affiliate_code: affiliate?.code || '' }
       }), signal: AbortSignal.timeout(12000)
     });
     const data = await response.json();
@@ -791,20 +912,70 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
       return res.status(502).json({ error: 'Não foi possível iniciar o pagamento agora.' });
     }
     db.prepare(`INSERT INTO lot_orders
-      (reference,name,email,whatsapp,lot_code,business_name,segment,amount_cents,affiliate_id,status,mp_preference_id)
-      VALUES (?,?,?,?,?,?,?,?,?,'pending',?)`).run(reference, order.name, order.email, order.whatsapp,
-      order.lotCode, order.businessName, order.segment, LOT_PRICE_CENTS, affiliate?.id || null, data.id);
+      (reference,name,email,whatsapp,lot_code,business_name,segment,amount_cents,affiliate_id,status,mp_preference_id,plan_code,billing_type)
+      VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?,?)`).run(reference, order.name, order.email, order.whatsapp,
+      order.lotCode, order.businessName, order.segment, plan.amountCents, affiliate?.id || null, data.id, plan.code, plan.billingType);
     adminAnalytics.recordOrderAttribution(req, reference, 'lot');
-    adminAnalytics.recordCheckout(req, reference, 'lot', LOT_PRICE_CENTS);
-    return res.status(201).json({ checkoutUrl: data.init_point });
+    adminAnalytics.recordCheckout(req, reference, 'lot', plan.amountCents);
+    return res.status(201).json({ checkoutUrl: data.init_point, reference, manageToken: storeManagementToken(reference) });
   } catch (error) {
     console.error('Mercado Pago unavailable', error?.message || 'unknown');
     return res.status(502).json({ error: 'Não foi possível conectar ao Mercado Pago agora.' });
   }
 });
 
-app.post('/api/payments/mercadopago/pix', async (req, res) => {
+app.post('/api/payments/mercadopago/subscription', async (req, res) => {
   const { name, email, whatsapp = '', businessName, segment, lotCode, consent } = req.body || {};
+  const plan = LOT_PLANS.basic_monthly;
+  if (!consent || typeof name !== 'string' || name.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(email || '') ||
+      typeof businessName !== 'string' || businessName.trim().length < 2 || typeof segment !== 'string' || segment.trim().length < 2 ||
+      !AVAILABLE_LOTS.has(String(lotCode || ''))) {
+    return res.status(400).json({ error: 'Informe corretamente os dados da loja para iniciar a assinatura.' });
+  }
+  const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
+  if (!token || !process.env.MERCADOPAGO_WEBHOOK_SECRET || !managementSecret()) {
+    return res.status(503).json({ error: 'A assinatura ainda não está disponível no servidor.' });
+  }
+  if (!lotIsAvailable(String(lotCode))) return res.status(409).json({ error: 'Este prédio já foi reservado.' });
+  if (!allowAttempt(checkoutAttempts, `subscription:${req.ip}`, 5, 10 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
+  }
+  const reference = `sub_${randomUUID()}`;
+  const order = { name: name.trim().slice(0, 100), email: email.trim().toLowerCase().slice(0, 160),
+    whatsapp: String(whatsapp).trim().slice(0, 30), businessName: businessName.trim().slice(0, 100),
+    segment: segment.trim().slice(0, 80), lotCode: String(lotCode) };
+  const affiliate = referralAffiliate(req, order.email);
+  try {
+    const response = await fetch('https://api.mercadopago.com/preapproval', {
+      method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
+      body: JSON.stringify({ reason: `${plan.name} — ${order.businessName}`, external_reference: reference,
+        payer_email: order.email, back_url: `${SITE_URL}/pagamento.html?resultado=pendente&ref=${encodeURIComponent(reference)}`,
+        auto_recurring: { frequency: 1, frequency_type: 'months', transaction_amount: plan.amountCents / 100,
+          currency_id: 'BRL' }, status: 'pending' }), signal: AbortSignal.timeout(12000)
+    });
+    const data = await response.json();
+    if (!response.ok || !data.id || !data.init_point) {
+      console.error('Mercado Pago subscription error', response.status, data?.message || 'unknown');
+      return res.status(502).json({ error: 'Não foi possível iniciar a assinatura agora.' });
+    }
+    db.prepare(`INSERT INTO lot_orders
+      (reference,name,email,whatsapp,lot_code,business_name,segment,amount_cents,affiliate_id,status,
+       mp_subscription_id,plan_code,billing_type)
+      VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?,?)`).run(reference, order.name, order.email, order.whatsapp,
+      order.lotCode, order.businessName, order.segment, plan.amountCents, affiliate?.id || null,
+      String(data.id), plan.code, plan.billingType);
+    adminAnalytics.recordOrderAttribution(req, reference, 'lot_subscription');
+    adminAnalytics.recordCheckout(req, reference, 'lot_subscription', plan.amountCents);
+    return res.status(201).json({ checkoutUrl: data.init_point, reference, manageToken: storeManagementToken(reference) });
+  } catch (error) {
+    console.error('Mercado Pago subscription unavailable', error?.message || 'unknown');
+    return res.status(502).json({ error: 'Não foi possível conectar ao serviço de assinatura.' });
+  }
+});
+
+app.post('/api/payments/mercadopago/pix', async (req, res) => {
+  const { name, email, whatsapp = '', businessName, segment, lotCode, consent, planCode = 'founder' } = req.body || {};
+  if (planCode === 'basic_monthly') return res.status(400).json({ error: 'A assinatura mensal deve ser feita pelo botão de assinatura.' });
   if (!consent || typeof name !== 'string' || name.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(email || '') ||
       typeof businessName !== 'string' || businessName.trim().length < 2 || typeof segment !== 'string' || segment.trim().length < 2 ||
       !AVAILABLE_LOTS.has(String(lotCode || ''))) {
@@ -870,7 +1041,7 @@ app.post('/api/payments/mercadopago/pix', async (req, res) => {
     }
     db.prepare("UPDATE lot_orders SET status=?,mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?")
       .run('pending', String(data.id), reference);
-    return res.status(201).json({ reference, status: 'pending',
+    return res.status(201).json({ reference, status: 'pending', manageToken: storeManagementToken(reference),
       qrCode: paymentMethod.qr_code, qrCodeBase64: paymentMethod.qr_code_base64 || '',
       ticketUrl: paymentMethod.ticket_url || '', expiresAt });
   } catch (error) {
@@ -1079,6 +1250,7 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
   const dataId = req.body?.data?.id || req.query['data.id'];
   const eventType = String(req.body?.type || req.query.type || req.body?.topic || req.query.topic || '');
   const isOrderEvent = eventType === 'order' || eventType === 'orders';
+  const isSubscriptionEvent = ['subscription_preapproval', 'preapproval'].includes(eventType);
   const webhookSecret = isOrderEvent ? process.env.MERCADOPAGO_PIX_WEBHOOK_SECRET : process.env.MERCADOPAGO_WEBHOOK_SECRET;
   if (!validMercadoPagoSignature(req, dataId, webhookSecret)) return res.sendStatus(401);
   try {
@@ -1089,6 +1261,29 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       });
       if (!response.ok) return res.sendStatus(502);
       updateLotFromPixOrder(await response.json());
+      return res.sendStatus(200);
+    }
+    if (isSubscriptionEvent) {
+      const response = await fetch(`https://api.mercadopago.com/preapproval/${encodeURIComponent(dataId)}`, {
+        headers: mpHeaders(), signal: AbortSignal.timeout(10000)
+      });
+      if (!response.ok) return res.sendStatus(502);
+      const subscription = await response.json();
+      const reference = String(subscription.external_reference || '');
+      const order = db.prepare("SELECT * FROM lot_orders WHERE reference=? AND billing_type='recurring'").get(reference);
+      if (!order) return res.sendStatus(200);
+      const mappedStatus = subscription.status === 'authorized' ? 'approved' :
+        subscription.status === 'cancelled' ? 'cancelled' :
+        subscription.status === 'paused' ? 'paused' : 'pending';
+      db.prepare(`UPDATE lot_orders SET status=?,mp_subscription_id=?,
+        fulfillment_status=CASE WHEN ?='approved' THEN 'awaiting_assets' ELSE fulfillment_status END,
+        reserved_at=CASE WHEN ?='approved' THEN COALESCE(reserved_at,CURRENT_TIMESTAMP) ELSE reserved_at END,
+        updated_at=CURRENT_TIMESTAMP WHERE reference=?`)
+        .run(mappedStatus, String(subscription.id || dataId), mappedStatus, mappedStatus, reference);
+      if (mappedStatus === 'approved' && order.status !== 'approved') {
+        adminAnalytics.recordPurchase(reference, 'lot_subscription', order.amount_cents);
+        scheduleLotConfirmation(reference);
+      }
       return res.sendStatus(200);
     }
     if (eventType !== 'payment') return res.sendStatus(200);
@@ -1166,6 +1361,26 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
 app.get('/api/orders/:reference', async (req, res) => {
   let order = db.prepare('SELECT * FROM lot_orders WHERE reference=?').get(req.params.reference);
   if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
+  if (order.billing_type === 'recurring' && order.status === 'pending' && order.mp_subscription_id) {
+    try {
+      const response = await fetch(`https://api.mercadopago.com/preapproval/${encodeURIComponent(order.mp_subscription_id)}`, {
+        headers: mpHeaders(), signal: AbortSignal.timeout(8000)
+      });
+      if (response.ok) {
+        const subscription = await response.json();
+        const status = subscription.status === 'authorized' ? 'approved' :
+          subscription.status === 'cancelled' ? 'cancelled' :
+          subscription.status === 'paused' ? 'paused' : 'pending';
+        db.prepare(`UPDATE lot_orders SET status=?,fulfillment_status=CASE WHEN ?='approved' THEN 'awaiting_assets'
+          ELSE fulfillment_status END,reserved_at=CASE WHEN ?='approved' THEN COALESCE(reserved_at,CURRENT_TIMESTAMP)
+          ELSE reserved_at END,updated_at=CURRENT_TIMESTAMP WHERE reference=?`)
+          .run(status, status, status, order.reference);
+        order = db.prepare('SELECT * FROM lot_orders WHERE reference=?').get(order.reference);
+      }
+    } catch (error) {
+      console.error('Mercado Pago subscription status unavailable', error?.message || 'unknown');
+    }
+  }
   if (order.status === 'pending' && String(order.mp_payment_id || '').startsWith('ORD') && pixAccessToken()) {
     try {
       const response = await fetch(`https://api.mercadopago.com/v1/orders/${encodeURIComponent(order.mp_payment_id)}`, {
@@ -1186,9 +1401,126 @@ app.get('/api/orders/:reference', async (req, res) => {
     lot: { ...lot, mapUrl: `${SITE_URL}/cidade-exploravel.html?lote=${encodeURIComponent(order.lot_code || '')}` },
     fulfillmentStatus: order.fulfillment_status,
     confirmationStatus: order.confirmation_status,
+    billingType: order.billing_type,
+    planCode: order.plan_code,
+    manageToken: order.status === 'approved' ? storeManagementToken(order.reference) : '',
     created_at: order.created_at,
     updated_at: order.updated_at
   });
+});
+
+app.get('/api/store-portal/:reference', (req, res) => {
+  const access = storePortalAccess(req, res);
+  if (!access) return;
+  return res.json(publicStoreProfile(access.order.reference));
+});
+
+app.put('/api/store-portal/:reference', async (req, res) => {
+  const access = storePortalAccess(req, res);
+  if (!access) return;
+  const body = req.body || {};
+  const businessName = String(body.businessName || '').trim().slice(0, 100);
+  if (businessName.length < 2) return res.status(400).json({ error: 'Informe o nome da loja.' });
+  const current = db.prepare('SELECT * FROM store_profiles WHERE order_reference=?').get(access.order.reference);
+  let logoUrl;
+  let facadeUrl;
+  try {
+    logoUrl = saveStoreImage(access.order.reference, 'logo', body.logo, current?.logo_url);
+    facadeUrl = saveStoreImage(access.order.reference, 'facade', body.facade, current?.facade_url);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+  const values = {
+    description: String(body.description || '').trim().slice(0, 1200),
+    whatsapp: String(body.whatsapp || '').trim().slice(0, 30),
+    websiteUrl: safeExternalUrl(body.websiteUrl), instagramUrl: safeExternalUrl(body.instagramUrl),
+    tiktokUrl: safeExternalUrl(body.tiktokUrl), googleMapsUrl: safeExternalUrl(body.googleMapsUrl),
+    promotionText: String(body.promotionText || '').trim().slice(0, 120),
+    wantsWebsite: body.wantsWebsite ? 1 : 0, wantsBrandArt: body.wantsBrandArt ? 1 : 0
+  };
+  db.prepare(`INSERT INTO store_profiles
+    (order_reference,business_name,description,logo_url,facade_url,whatsapp,website_url,instagram_url,
+     tiktok_url,google_maps_url,promotion_text,wants_website,wants_brand_art,review_status,submitted_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',CURRENT_TIMESTAMP)
+    ON CONFLICT(order_reference) DO UPDATE SET business_name=excluded.business_name,
+      description=excluded.description,logo_url=excluded.logo_url,facade_url=excluded.facade_url,
+      whatsapp=excluded.whatsapp,website_url=excluded.website_url,instagram_url=excluded.instagram_url,
+      tiktok_url=excluded.tiktok_url,google_maps_url=excluded.google_maps_url,
+      promotion_text=excluded.promotion_text,wants_website=excluded.wants_website,
+      wants_brand_art=excluded.wants_brand_art,review_status='pending',admin_notes=NULL,
+      submitted_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP`)
+    .run(access.order.reference, businessName, values.description, logoUrl, facadeUrl, values.whatsapp,
+      values.websiteUrl, values.instagramUrl, values.tiktokUrl, values.googleMapsUrl, values.promotionText,
+      values.wantsWebsite, values.wantsBrandArt);
+  db.prepare(`UPDATE lot_orders SET business_name=?,whatsapp=?,fulfillment_status='pending_review',
+    updated_at=CURRENT_TIMESTAMP WHERE reference=?`).run(businessName, values.whatsapp, access.order.reference);
+  if (mailTransport) {
+    mailTransport.sendMail({ from: process.env.EMAIL_FROM || SMTP_USER, to: LOT_ADMIN_EMAIL,
+      subject: `Vitrine pendente de aprovação: ${businessName}`,
+      text: `A loja ${businessName} enviou os dados do prédio ${access.order.lot_code}. Acesse ${SITE_URL}/admin.html para revisar.`
+    }).catch(error => console.error('Store review email error', error?.message || 'unknown'));
+  }
+  return res.json({ ok: true, message: 'Dados enviados para aprovação.', ...publicStoreProfile(access.order.reference) });
+});
+
+app.post('/api/store-portal/:reference/cancel-subscription', async (req, res) => {
+  const access = storePortalAccess(req, res);
+  if (!access) return;
+  if (access.order.billing_type !== 'recurring' || !access.order.mp_subscription_id) {
+    return res.status(409).json({ error: 'Este pedido não possui assinatura recorrente.' });
+  }
+  try {
+    const response = await fetch(`https://api.mercadopago.com/preapproval/${encodeURIComponent(access.order.mp_subscription_id)}`, {
+      method: 'PUT', headers: mpHeaders(), body: JSON.stringify({ status: 'cancelled' }),
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!response.ok) throw new Error(`status_${response.status}`);
+    db.prepare("UPDATE lot_orders SET status='cancelled',fulfillment_status='subscription_cancelled',updated_at=CURRENT_TIMESTAMP WHERE reference=?")
+      .run(access.order.reference);
+    return res.json({ ok: true, message: 'Assinatura cancelada. Não haverá nova cobrança.' });
+  } catch (error) {
+    console.error('Subscription cancellation error', error?.message || 'unknown');
+    return res.status(502).json({ error: 'Não foi possível cancelar automaticamente. Fale com o suporte.' });
+  }
+});
+
+app.get('/api/admin/store-submissions', requireAdmin, (req, res) => {
+  const status = String(req.query.status || '').trim();
+  const rows = db.prepare(`SELECT p.*,o.email,o.name AS customer_name,o.lot_code,o.segment,o.plan_code,o.billing_type
+    FROM store_profiles p JOIN lot_orders o ON o.reference=p.order_reference
+    WHERE (?='' OR p.review_status=?) ORDER BY COALESCE(p.submitted_at,p.created_at) DESC LIMIT 200`).all(status, status);
+  return res.json({ submissions: rows });
+});
+
+app.patch('/api/admin/store-submissions/:reference', requireAdmin, async (req, res) => {
+  const action = String(req.body?.action || '');
+  if (!['approve', 'request_changes', 'publish'].includes(action)) return res.status(400).json({ error: 'Ação inválida.' });
+  const profile = db.prepare(`SELECT p.*,o.email,o.lot_code FROM store_profiles p JOIN lot_orders o
+    ON o.reference=p.order_reference WHERE p.order_reference=?`).get(req.params.reference);
+  if (!profile) return res.status(404).json({ error: 'Loja não encontrada.' });
+  const reviewStatus = action === 'approve' ? 'approved' : action === 'publish' ? 'published' : 'changes_requested';
+  const fulfillmentStatus = action === 'publish' ? 'published' : action === 'approve' ? 'approved' : 'changes_requested';
+  const notes = String(req.body?.notes || '').trim().slice(0, 1000);
+  db.prepare(`UPDATE store_profiles SET review_status=?,admin_notes=?,reviewed_at=CURRENT_TIMESTAMP,
+    published_at=CASE WHEN ?='published' THEN CURRENT_TIMESTAMP ELSE published_at END,updated_at=CURRENT_TIMESTAMP
+    WHERE order_reference=?`).run(reviewStatus, notes, reviewStatus, profile.order_reference);
+  db.prepare('UPDATE lot_orders SET fulfillment_status=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?')
+    .run(fulfillmentStatus, profile.order_reference);
+  if (mailTransport) {
+    const portalUrl = `${SITE_URL}/painel-lojista.html?ref=${encodeURIComponent(profile.order_reference)}&token=${encodeURIComponent(storeManagementToken(profile.order_reference))}`;
+    const label = reviewStatus === 'published' ? 'publicada' : reviewStatus === 'approved' ? 'aprovada' : 'devolvida para ajustes';
+    mailTransport.sendMail({ from: process.env.EMAIL_FROM || SMTP_USER, to: profile.email,
+      subject: `Sua loja foi ${label} na VitrineCity`,
+      text: `Olá! Sua loja ${profile.business_name} foi ${label}. ${notes ? `Observação: ${notes}\n` : ''}Acompanhe em ${portalUrl}`
+    }).catch(error => console.error('Store decision email error', error?.message || 'unknown'));
+  }
+  return res.json({ ok: true, status: reviewStatus });
+});
+
+app.get('/api/public/stores/:reference', (req, res) => {
+  const data = publicStoreProfile(req.params.reference);
+  if (!data?.profile || data.profile.reviewStatus !== 'published') return res.status(404).json({ error: 'Loja não publicada.' });
+  return res.json(data);
 });
 
 app.post('/api/admin/lot-orders/:reference/resend-confirmation', requireAdmin, (req, res) => {
