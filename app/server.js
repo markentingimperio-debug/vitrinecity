@@ -1205,10 +1205,16 @@ app.post('/api/services/videos/checkout', async (req, res) => {
 function validMercadoPagoSignature(req, dataId, secret = process.env.MERCADOPAGO_WEBHOOK_SECRET) {
   const signature = String(req.get('x-signature') || '');
   const requestId = String(req.get('x-request-id') || '');
-  if (!secret || !signature || !requestId || !dataId) return false;
+  if (!secret || !signature) return false;
   const parts = Object.fromEntries(signature.split(',').map(part => part.trim().split('=')));
   if (!parts.ts || !parts.v1) return false;
-  const manifest = `id:${String(dataId).toLowerCase()};request-id:${requestId};ts:${parts.ts};`;
+  // O Mercado Pago orienta omitir do manifesto qualquer campo ausente. Isso
+  // também cobre o simulador, que pode mandar o ID apenas no corpo do POST.
+  const manifest = [
+    dataId ? `id:${String(dataId).toLowerCase()};` : '',
+    requestId ? `request-id:${requestId};` : '',
+    `ts:${parts.ts};`
+  ].join('');
   const expected = createHmac('sha256', secret).update(manifest).digest('hex');
   const received = String(parts.v1);
   return expected.length === received.length && timingSafeEqual(Buffer.from(expected), Buffer.from(received));
@@ -1247,9 +1253,10 @@ const applyCreditPayment = db.transaction((order, payment) => {
 });
 
 app.post('/api/payments/mercadopago/webhook', async (req, res) => {
-  // A assinatura do Mercado Pago é calculada com o data.id da URL. O corpo
-  // normalmente contém o mesmo valor, mas não deve ter prioridade aqui.
-  const dataId = req.query['data.id'] || req.body?.data?.id;
+  // Somente o ID da URL participa da assinatura; o ID do corpo serve para
+  // consultar o pagamento depois que a autenticidade já foi confirmada.
+  const signatureDataId = req.query['data.id'] || req.query.data_id || '';
+  const dataId = signatureDataId || req.body?.data?.id;
   const eventType = String(req.body?.type || req.query.type || req.body?.topic || req.query.topic || '');
   const isOrderEvent = eventType === 'order' || eventType === 'orders';
   const isSubscriptionEvent = ['subscription_preapproval', 'preapproval'].includes(eventType);
@@ -1261,7 +1268,7 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
     process.env.MERCADOPAGO_WEBHOOK_SECRET,
     process.env.MERCADOPAGO_PIX_WEBHOOK_SECRET
   ].map(value => String(value || '').trim()).filter((value, index, values) => value && values.indexOf(value) === index);
-  if (!webhookSecrets.some(secret => validMercadoPagoSignature(req, dataId, secret))) return res.sendStatus(401);
+  if (!webhookSecrets.some(secret => validMercadoPagoSignature(req, signatureDataId, secret))) return res.sendStatus(401);
   try {
     if (isOrderEvent) {
       if (!pixAccessToken()) return res.sendStatus(503);
