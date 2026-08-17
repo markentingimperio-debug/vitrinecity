@@ -11,6 +11,24 @@
   let start = { x: 0, y: 0 };
   let initial = { x: 0, y: 0 };
   let pinchDistance = 0;
+  let tourEnabled = true;
+  let tourFrame = 0;
+  let tourIndex = 0;
+  let tourStartedAt = 0;
+  const tourButton = document.getElementById('cityTour');
+  const billboard = document.querySelector('.billboard');
+  const billboardCopy = document.getElementById('billboardCopy');
+  const adCampaigns = [
+    'ANUNCIE<br><b>SUA MARCA</b><small>na avenida mais vista</small>',
+    'SERTANEJA<br><b>ATÉ 50% OFF</b><small>moda country em destaque</small>',
+    'AGROTÉCNICA<br><b>JARDIM VIVO</b><small>adubos e soluções para plantas</small>',
+    'PRÉDIO PRONTO<br><b>R$ 15</b><small>sua fachada dentro da cidade</small>'
+  ];
+  const tourStops = [
+    { x: 360, y: 360, scale: .78 }, { x: 650, y: 315, scale: .82 },
+    { x: 1170, y: 660, scale: .8 }, { x: 1010, y: 780, scale: .77 },
+    { x: 300, y: 760, scale: .76 }
+  ];
 
   function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
   function bounds() {
@@ -35,6 +53,52 @@
     offsetX = (rect.width - world.offsetWidth * scale) / 2;
     offsetY = (rect.height - world.offsetHeight * scale) / 2;
     draw();
+  }
+  function stopTour() {
+    if (!tourEnabled) return;
+    tourEnabled = false;
+    cancelAnimationFrame(tourFrame);
+    world.classList.remove('tour-mode');
+    tourButton.setAttribute('aria-pressed', 'false');
+    tourButton.textContent = '▶ Iniciar passeio';
+  }
+  function changeAd(index) {
+    if (!billboardCopy) return;
+    billboard.classList.remove('is-changing');
+    window.requestAnimationFrame(() => {
+      billboardCopy.innerHTML = adCampaigns[index % adCampaigns.length];
+      billboard.classList.add('is-changing');
+    });
+  }
+  function runTour(now) {
+    if (!tourEnabled) return;
+    if (!tourStartedAt) tourStartedAt = now;
+    const progress = Math.min((now - tourStartedAt) / 6200, 1);
+    const eased = progress < .5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+    const from = tourStops[tourIndex];
+    const to = tourStops[(tourIndex + 1) % tourStops.length];
+    const rect = viewport.getBoundingClientRect();
+    scale = from.scale + (to.scale - from.scale) * eased;
+    const targetX = from.x + (to.x - from.x) * eased;
+    const targetY = from.y + (to.y - from.y) * eased;
+    offsetX = rect.width / 2 - targetX * scale;
+    offsetY = rect.height * .58 - targetY * scale;
+    draw();
+    if (progress === 1) {
+      tourIndex = (tourIndex + 1) % tourStops.length;
+      tourStartedAt = now;
+      changeAd(tourIndex);
+    }
+    tourFrame = requestAnimationFrame(runTour);
+  }
+  function startTour() {
+    tourEnabled = true;
+    tourStartedAt = 0;
+    world.classList.add('tour-mode');
+    tourButton.setAttribute('aria-pressed', 'true');
+    tourButton.textContent = '❚❚ Pausar passeio';
+    cancelAnimationFrame(tourFrame);
+    tourFrame = requestAnimationFrame(runTour);
   }
   function zoom(delta, anchorX = viewport.clientWidth / 2, anchorY = viewport.clientHeight / 2) {
     const oldScale = scale;
@@ -81,6 +145,7 @@
 
   viewport.addEventListener('pointerdown', event => {
     if (event.target.closest('[data-category]')) return;
+    stopTour();
     dragging = true; moved = false;
     start = { x: event.clientX, y: event.clientY };
     initial = { x: offsetX, y: offsetY };
@@ -98,6 +163,7 @@
   });
   viewport.addEventListener('pointerup', () => { dragging = false; viewport.classList.remove('dragging'); });
   viewport.addEventListener('wheel', event => {
+    stopTour();
     event.preventDefault();
     const rect = viewport.getBoundingClientRect();
     zoom(event.deltaY > 0 ? -.08 : .08, event.clientX - rect.left, event.clientY - rect.top);
@@ -113,15 +179,16 @@
     pinchDistance = distance;
   }, { passive: false });
 
-  interactive.forEach(item => item.addEventListener('click', event => { event.stopPropagation(); showDetails(item); }));
+  interactive.forEach(item => item.addEventListener('click', event => { event.stopPropagation(); stopTour(); showDetails(item); }));
   document.getElementById('closePanel').onclick = () => {
     panel.classList.remove('show');
     interactive.forEach(item => item.classList.remove('is-selected'));
   };
   document.getElementById('closeWelcome').onclick = () => document.getElementById('welcome').remove();
-  document.getElementById('zoomIn').onclick = () => zoom(.13);
-  document.getElementById('zoomOut').onclick = () => zoom(-.13);
-  document.getElementById('resetView').onclick = reset;
+  document.getElementById('zoomIn').onclick = () => { stopTour(); zoom(.13); };
+  document.getElementById('zoomOut').onclick = () => { stopTour(); zoom(-.13); };
+  document.getElementById('resetView').onclick = () => { stopTour(); reset(); };
+  tourButton.onclick = () => tourEnabled ? stopTour() : startTour();
 
   const search = document.getElementById('citySearch');
   const filters = [...document.querySelectorAll('#cityFilters button')];
@@ -143,4 +210,5 @@
 
   window.addEventListener('resize', reset);
   reset();
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) startTour();
 })();
