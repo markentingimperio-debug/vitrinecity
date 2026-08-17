@@ -1247,12 +1247,21 @@ const applyCreditPayment = db.transaction((order, payment) => {
 });
 
 app.post('/api/payments/mercadopago/webhook', async (req, res) => {
-  const dataId = req.body?.data?.id || req.query['data.id'];
+  // A assinatura do Mercado Pago é calculada com o data.id da URL. O corpo
+  // normalmente contém o mesmo valor, mas não deve ter prioridade aqui.
+  const dataId = req.query['data.id'] || req.body?.data?.id;
   const eventType = String(req.body?.type || req.query.type || req.body?.topic || req.query.topic || '');
   const isOrderEvent = eventType === 'order' || eventType === 'orders';
   const isSubscriptionEvent = ['subscription_preapproval', 'preapproval'].includes(eventType);
-  const webhookSecret = isOrderEvent ? process.env.MERCADOPAGO_PIX_WEBHOOK_SECRET : process.env.MERCADOPAGO_WEBHOOK_SECRET;
-  if (!validMercadoPagoSignature(req, dataId, webhookSecret)) return res.sendStatus(401);
+  // O mesmo endpoint atende mais de uma aplicação do Mercado Pago. Cada
+  // aplicação possui sua própria assinatura secreta, inclusive quando ambas
+  // enviam eventos do tipo payment. A notificação continua sendo aceita
+  // somente quando o HMAC confere com uma das chaves configuradas.
+  const webhookSecrets = [
+    process.env.MERCADOPAGO_WEBHOOK_SECRET,
+    process.env.MERCADOPAGO_PIX_WEBHOOK_SECRET
+  ].map(value => String(value || '').trim()).filter((value, index, values) => value && values.indexOf(value) === index);
+  if (!webhookSecrets.some(secret => validMercadoPagoSignature(req, dataId, secret))) return res.sendStatus(401);
   try {
     if (isOrderEvent) {
       if (!pixAccessToken()) return res.sendStatus(503);
