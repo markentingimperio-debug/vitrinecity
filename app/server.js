@@ -863,7 +863,7 @@ const BRAZILIAN_STATES = new Set([
 ]);
 
 function mercadoPagoPayer(reqBody, name, email) {
-  const zipCode = String(reqBody?.zipCode || '').replace(/\\D/g, '');
+  const zipCode = String(reqBody?.zipCode || '').replace(/\D/g, '');
   const state = String(reqBody?.state || '').trim().toUpperCase();
   const city = String(reqBody?.city || '').trim().slice(0, 80);
   const neighborhood = String(reqBody?.neighborhood || '').trim().slice(0, 100);
@@ -871,7 +871,7 @@ function mercadoPagoPayer(reqBody, name, email) {
   const streetNumber = String(reqBody?.streetNumber || '').trim().slice(0, 20);
   if (zipCode.length !== 8 || !BRAZILIAN_STATES.has(state) || city.length < 2 ||
       neighborhood.length < 2 || streetName.length < 2 || streetNumber.length < 1) return null;
-  const parts = String(name).trim().split(/\\s+/);
+  const parts = String(name).trim().split(/\s+/);
   return {
     email,
     first_name: parts.shift() || String(name).trim(),
