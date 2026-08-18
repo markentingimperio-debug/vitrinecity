@@ -140,6 +140,7 @@
     setLink('detailSite', target.dataset.site, Boolean(target.dataset.site));
     setLink('detailInstagram', target.dataset.instagram, Boolean(target.dataset.instagram));
     setLink('detailMaps', target.dataset.maps, Boolean(target.dataset.maps));
+    setLink('detailWhatsapp', target.dataset.whatsapp, Boolean(target.dataset.whatsapp), '💬 Falar no WhatsApp');
     panel.classList.add('show');
   }
 

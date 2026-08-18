@@ -50,3 +50,30 @@ button,input{font:inherit}
 
 /* Passeio automático: uma cena viva, sem depender de vídeo pesado. */
 .city-status button{border:0;border-radius:7px;padding:5px 7px;background:#092c62;color:#fff;font-size:9px;font-weight:900;cursor:pointer}.status-dot{animation:pulse 1.7s infinite}.city-world.tour-mode:before{background:linear-gradient(130deg,#17054f91,#8d21e645 48%,#f3a64629),url('/assets/centro-vitrine-premium-aereo.png') center/cover;opacity:.68;filter:saturate(1.24) contrast(1.08)}.city-world.tour-mode:after{background:radial-gradient(ellipse at 48% 26%,#d04dff27,transparent 42%),radial-gradient(ellipse at 50% 46%,transparent 15%,#08001b78 100%)}.city-world.tour-mode .skyline{filter:drop-shadow(0 14px 13px #24084f88) saturate(1.4)}.city-world.tour-mode .building{filter:drop-shadow(0 18px 14px #16052b88) saturate(1.15)}.city-world.tour-mode .building .front{box-shadow:inset 0 0 0 2px #ffe2ff45,inset 0 -28px 28px #2601338a,0 0 19px #ad44ff38}.city-world.tour-mode .promo-screen{animation:neonPulse 2.4s ease-in-out infinite alternate}.city-world.tour-mode .billboard{animation:billboardGlow 2.8s ease-in-out infinite alternate}.city-world.tour-mode .road{box-shadow:inset 0 0 0 2px #e8e4d5,0 0 19px #b246ff45}.city-world.tour-mode .streetlight:before{box-shadow:0 0 24px #ff91ef,0 0 45px #6747ff99}.billboard.is-changing span{animation:adSwap .45s ease both}@keyframes neonPulse{to{filter:brightness(1.38);box-shadow:0 0 13px #fff2a1,0 0 31px #d345ff}}@keyframes billboardGlow{to{filter:brightness(1.25);box-shadow:0 16px 18px #240053aa,0 0 35px #bd4cff}}@keyframes adSwap{0%{opacity:0;transform:translateY(9px)}100%{opacity:1;transform:none}}
+
+
+/* Distrito Neon Premium: vitrines luminosas inspiradas na campanha Cidade Digital. */
+.city-viewport{background:radial-gradient(circle at 50% 5%,#253e8e 0,#10173f 34%,#070c25 72%,#030718 100%)}
+.city-world:before{opacity:.7;filter:saturate(1.28) contrast(1.12) brightness(.82)}
+.city-world:after{background:linear-gradient(180deg,#0a0e3924 0,#42156d2e 44%,#05091f79 100%),radial-gradient(ellipse at 50% 45%,transparent 18%,#0306178a 100%)}
+.road{background:linear-gradient(90deg,#162033,#26334a 48%,#141d2e);border-color:#343650;box-shadow:inset 0 0 0 2px #9edfff34,0 0 12px #35bfff75,0 0 31px #774cff3b}
+.road:before{border-color:#ffc94a;filter:drop-shadow(0 0 5px #ffc94a)}
+.city-block{border-color:#2c3150;background:linear-gradient(135deg,#191d35,#313a52 50%,#171d31);box-shadow:0 18px 28px #020515b8,inset 0 0 0 2px #7fd9ff25}
+.city-block:before{background:linear-gradient(135deg,#153d3f 0 18%,#292a3d 19% 81%,#153d3f 82%);border-color:#55d4ff4f}
+.building{transition:filter .25s ease,transform .25s ease}
+.building .front{background:linear-gradient(105deg,#171a29,#393142 46%,#151c2c);border:1px solid #8fe7ff45;box-shadow:inset 0 0 0 2px #ffffff12,inset 0 -31px 38px #080713cc,0 0 16px #3fc8ff45}
+.building .side{background:linear-gradient(110deg,#20243a,#0e1424)}
+.building .roof{background:linear-gradient(145deg,#48536f,#111628);box-shadow:0 -4px 15px #844cff55}
+.building .front b{background:#080d22eb;border:1px solid #ffd36b99;color:#fff8dc;text-shadow:0 0 7px #fff,0 0 16px #ffb42c;box-shadow:0 0 10px #ffb62b66,0 0 24px #7554ff44}
+.building .front small{color:#c9edff;text-shadow:0 0 8px #49c8ff}
+.building .window{background:linear-gradient(145deg,#fff3b5,#f4ab48 45%,#8735a2);box-shadow:inset 0 0 0 2px #fff8c8aa,0 0 10px #ffb54a,0 0 20px #8b3fff88}
+.building .door{background:linear-gradient(90deg,#ffd88d,#fff9d0 49%,#f2b356 51%,#7842b0);box-shadow:0 0 12px #ffd05f}
+.building .front em{background:linear-gradient(90deg,#0c64e8,#5ecaff);color:#fff;box-shadow:0 0 12px #50bfff,0 0 26px #4d4dff}
+.building:hover,.building.is-selected{filter:drop-shadow(0 22px 20px #02030bbd) saturate(1.28) brightness(1.15)}
+.building:hover .front,.building.is-selected .front{box-shadow:inset 0 0 0 2px #fff4b788,inset 0 -31px 38px #080713cc,0 0 21px #ffbd43,0 0 42px #613eff}
+.available .front{border-color:#ffce64aa}.available-ribbon{background:linear-gradient(90deg,#f4a900,#ffd566);color:#111d3c;box-shadow:0 0 16px #ffc13f}
+.promo-screen{background:#07122a;border-color:#53cfff;box-shadow:0 0 10px #54d5ff,0 0 27px #7a40ff}.promo-screen i{color:#fff6b4;text-shadow:0 0 7px #ffcf4b}
+.streetlight:before{background:#fff2b7;box-shadow:0 0 22px #ffd463,0 0 47px #7d55ff}
+.billboard{border-color:#50d6ff;background:linear-gradient(145deg,#0b1640,#4f167c);box-shadow:0 16px 22px #02030eaa,0 0 20px #4edbff,0 0 44px #9d48ff}
+.park{background:radial-gradient(circle at 50% 50%,#267b6c,#123e43 58%,#152b3d);box-shadow:0 0 25px #46cfff3f}
+@media(max-width:760px){.building .front b{font-size:10px}.city-world{filter:saturate(1.08)}}
