@@ -9,6 +9,7 @@
   const favoriteFilterCount = document.getElementById('favoriteFilterCount');
   const dockFavoriteCount = document.getElementById('dockFavoriteCount');
   const favoriteStorageKey = 'vitrinecity-favorites';
+  const WORLD_WIDTH = 5000, WORLD_HEIGHT = 2250;
   let favorites = new Set();
   let currentPin = null;
   let scale = .72, offsetX = 0, offsetY = 0, dragging = false, moved = false, start, initial, pinchDistance = 0;
@@ -20,7 +21,7 @@
   }
 
   function constrain() {
-    const width = 2000 * scale, height = 1125 * scale;
+    const width = WORLD_WIDTH * scale, height = WORLD_HEIGHT * scale;
     offsetX = Math.min(34, Math.max(viewport.clientWidth - width - 34, offsetX));
     offsetY = Math.min(34, Math.max(viewport.clientHeight - height - 34, offsetY));
   }
@@ -29,14 +30,14 @@
     world.style.transform = `translate(${offsetX}px,${offsetY}px) scale(${scale})`;
   }
   function center() {
-    scale = Math.max(.5, Math.min(1, Math.min(viewport.clientWidth / 2000, viewport.clientHeight / 1125) * 1.25));
-    offsetX = (viewport.clientWidth - 2000 * scale) / 2;
-    offsetY = (viewport.clientHeight - 1125 * scale) / 2;
+    scale = Math.max(.22, Math.min(.62, Math.min(viewport.clientWidth / WORLD_WIDTH, viewport.clientHeight / WORLD_HEIGHT) * 1.25));
+    offsetX = (viewport.clientWidth - WORLD_WIDTH * scale) / 2;
+    offsetY = (viewport.clientHeight - WORLD_HEIGHT * scale) / 2;
     draw();
   }
   function zoom(delta, x = viewport.clientWidth / 2, y = viewport.clientHeight / 2) {
     const previous = scale;
-    scale = Math.max(.45, Math.min(1.65, scale + delta));
+    scale = Math.max(.18, Math.min(1.65, scale + delta));
     offsetX = x - (x - offsetX) * scale / previous;
     offsetY = y - (y - offsetY) * scale / previous;
     draw();
