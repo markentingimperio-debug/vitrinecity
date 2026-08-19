@@ -247,6 +247,17 @@ ensureColumn('ad_campaigns', 'admin_notes', 'TEXT');
 ensureColumn('ad_campaigns', 'reviewed_at', 'TEXT');
 ensureColumn('ad_campaigns', 'activated_at', 'TEXT');
 ensureColumn('ad_campaigns', 'completed_at', 'TEXT');
+db.exec(`CREATE TABLE IF NOT EXISTS admin_ai_messages (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+  content TEXT NOT NULL,
+  model TEXT,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_admin_ai_messages_user ON admin_ai_messages(user_id,id);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -321,6 +332,7 @@ const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const CREDIT_VALIDITY_MS = 90 * 24 * 60 * 60 * 1000;
 const checkoutAttempts = new Map();
 const authAttempts = new Map();
+const aiAttempts = new Map();
 
 const mpHeaders = (token = process.env.MERCADOPAGO_ACCESS_TOKEN) => ({
   Authorization: `Bearer ${token}`,
@@ -870,6 +882,114 @@ const AD_CAMPAIGN_ACTIONS = Object.freeze({
   activate: Object.freeze({ from: ['funded', 'in_review', 'paused'], to: 'active' }),
   pause: Object.freeze({ from: ['active'], to: 'paused' }),
   complete: Object.freeze({ from: ['funded', 'in_review', 'active', 'paused'], to: 'completed' })
+});
+
+const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
+const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
+
+function aiOperationalSnapshot() {
+  const campaigns = db.prepare(`SELECT status,COUNT(*) AS total,SUM(net_credits) AS credits
+    FROM ad_campaigns GROUP BY status`).all();
+  const lots = db.prepare(`SELECT status,COUNT(*) AS total,SUM(amount_cents) AS value_cents
+    FROM lot_orders GROUP BY status`).all();
+  const creditRevenue = db.prepare(`SELECT COUNT(*) AS orders,COALESCE(SUM(amount_cents),0) AS value_cents
+    FROM credit_orders WHERE status='approved'`).get();
+  const lotRevenue = db.prepare(`SELECT COUNT(*) AS orders,COALESCE(SUM(amount_cents),0) AS value_cents
+    FROM lot_orders WHERE status='approved'`).get();
+  const wallet = db.prepare('SELECT COUNT(*) AS wallets,COALESCE(SUM(balance_units),0) AS credits FROM wallets').get();
+  return {
+    generatedAt: new Date().toISOString(),
+    registeredUsers: Number(db.prepare('SELECT COUNT(*) AS total FROM users').get().total || 0),
+    leads: Number(db.prepare('SELECT COUNT(*) AS total FROM leads').get().total || 0),
+    campaigns: campaigns.map(row => ({ status: row.status, total: Number(row.total || 0), credits: Number(row.credits || 0) / 100 })),
+    buildings: lots.map(row => ({ status: row.status, total: Number(row.total || 0), valueBRL: Number(row.value_cents || 0) / 100 })),
+    approvedRevenue: {
+      adsOrders: Number(creditRevenue.orders || 0),
+      adsBRL: Number(creditRevenue.value_cents || 0) / 100,
+      buildingOrders: Number(lotRevenue.orders || 0),
+      buildingsBRL: Number(lotRevenue.value_cents || 0) / 100
+    },
+    walletBalance: { accounts: Number(wallet.wallets || 0), credits: Number(wallet.credits || 0) / 100 }
+  };
+}
+
+function responseOutputText(payload) {
+  return (payload?.output || []).flatMap(item => item?.content || [])
+    .filter(item => item?.type === 'output_text' && typeof item.text === 'string')
+    .map(item => item.text).join('\n').trim();
+}
+
+app.get('/api/admin/ai', requireAdmin, (req, res) => {
+  const messages = db.prepare(`SELECT id,role,content,model,created_at FROM admin_ai_messages
+    WHERE user_id=? ORDER BY id DESC LIMIT 60`).all(req.user.id).reverse();
+  return res.json({
+    configured: Boolean(process.env.OPENAI_API_KEY),
+    model: OPENAI_MODEL,
+    readOnly: true,
+    messages
+  });
+});
+
+app.post('/api/admin/ai/chat', requireAdmin, async (req, res) => {
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ error: 'A IA ainda precisa da chave OPENAI_API_KEY configurada na VPS.' });
+  }
+  if (!allowAttempt(aiAttempts, `admin-ai:${req.user.id}`, 20, 10 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Limite temporário de mensagens atingido. Aguarde alguns minutos.' });
+  }
+  const message = String(req.body?.message || '').trim();
+  if (message.length < 2 || message.length > 6000) {
+    return res.status(400).json({ error: 'Escreva uma mensagem entre 2 e 6.000 caracteres.' });
+  }
+  db.prepare(`INSERT INTO admin_ai_messages (user_id,role,content) VALUES (?,'user',?)`).run(req.user.id, message);
+  const history = db.prepare(`SELECT role,content FROM admin_ai_messages
+    WHERE user_id=? ORDER BY id DESC LIMIT 20`).all(req.user.id).reverse();
+  const snapshot = aiOperationalSnapshot();
+  const instructions = `Você é a IA Gestora privada da VitrineCity, uma cidade digital brasileira de negócios.
+Responda sempre em português do Brasil, com linguagem clara, prática e orientada a decisões.
+Use os indicadores operacionais fornecidos como fonte atual da plataforma.
+Esta versão é SOMENTE LEITURA: nunca afirme que ativou, pausou, cobrou, enviou mensagem ou alterou dados.
+Quando o administrador pedir uma ação, explique o plano e diga que a execução exige confirmação no painel.
+Não invente números, clientes ou integrações. Diferencie fato, cálculo, hipótese e recomendação.
+Indicadores agregados atuais (valores monetários em BRL e créditos Ads líquidos):
+${JSON.stringify(snapshot)}`;
+  try {
+    const response = await fetch(OPENAI_RESPONSES_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        instructions,
+        input: history.map(item => ({ role: item.role, content: item.content })),
+        max_output_tokens: 1200,
+        store: false
+      }),
+      signal: AbortSignal.timeout(60000)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = String(data?.error?.message || `OpenAI status ${response.status}`).slice(0, 300);
+      console.error('OpenAI admin assistant error', detail);
+      return res.status(502).json({ error: 'A OpenAI não respondeu. Verifique a chave, os créditos e o modelo configurado.' });
+    }
+    const answer = responseOutputText(data);
+    if (!answer) return res.status(502).json({ error: 'A IA retornou uma resposta vazia. Tente novamente.' });
+    const usage = data.usage || {};
+    const result = db.prepare(`INSERT INTO admin_ai_messages
+      (user_id,role,content,model,input_tokens,output_tokens) VALUES (?,'assistant',?,?,?,?)`)
+      .run(req.user.id, answer.slice(0, 30000), OPENAI_MODEL,
+        Number(usage.input_tokens || 0), Number(usage.output_tokens || 0));
+    return res.json({
+      message: { id: Number(result.lastInsertRowid), role: 'assistant', content: answer,
+        model: OPENAI_MODEL, created_at: new Date().toISOString() }
+    });
+  } catch (error) {
+    console.error('OpenAI admin assistant unavailable', error?.message || 'unknown');
+    return res.status(502).json({ error: 'Não foi possível falar com a IA agora. Tente novamente em instantes.' });
+  }
 });
 
 app.get('/api/admin/ad-campaigns', requireAdmin, (req, res) => {
