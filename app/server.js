@@ -224,6 +224,25 @@ ensureColumn('lot_orders', 'plan_code', "TEXT NOT NULL DEFAULT 'founder'");
 ensureColumn('lot_orders', 'billing_type', "TEXT NOT NULL DEFAULT 'one_time'");
 ensureColumn('lot_orders', 'mp_subscription_id', 'TEXT');
 ensureColumn('users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
+db.exec(`
+CREATE TABLE IF NOT EXISTS ad_campaigns (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  order_reference TEXT NOT NULL UNIQUE REFERENCES credit_orders(reference),
+  objective TEXT NOT NULL,
+  destination_type TEXT NOT NULL,
+  destination_url TEXT NOT NULL,
+  daily_budget_cents INTEGER NOT NULL,
+  duration_days INTEGER NOT NULL,
+  gross_credits INTEGER NOT NULL,
+  management_credits INTEGER NOT NULL,
+  net_credits INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'awaiting_payment',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ad_campaigns_user ON ad_campaigns(user_id, created_at);
+`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -238,7 +257,10 @@ const LOT_CATALOG = Object.freeze({
 });
 const AVAILABLE_LOTS = new Set(Object.keys(LOT_CATALOG));
 const LOT_HOLD_MINUTES = 45;
-const CREDIT_PACKAGE = Object.freeze({ amountCents: 1000, feeCents: 30, creditUnits: 970 });
+const ADS_CREDITS_PER_REAL = 9.6;
+const ADS_MANAGEMENT_RATE = 0.15;
+const ADS_MIN_TOPUP_CENTS = 3000;
+const ADS_MAX_TOPUP_CENTS = 500000;
 const COURSE_PRICE_CENTS = 2399;
 const VIDEO_PACKAGE = Object.freeze({ slug: '10-videos-loja', amountCents: 20000, quantity: 10 });
 const REFERRAL_RATE_BPS = 600;
@@ -292,7 +314,7 @@ const COURSES = Object.freeze({
 const COURSE_FILE_EXTENSIONS = new Set(['.pdf', '.mp4', '.webm', '.m4v', '.mp3', '.jpg', '.jpeg', '.png', '.zip']);
 const SESSION_COOKIE = 'vc_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
-const CREDIT_VALIDITY_MS = 60 * 24 * 60 * 60 * 1000;
+const CREDIT_VALIDITY_MS = 90 * 24 * 60 * 60 * 1000;
 const checkoutAttempts = new Map();
 const authAttempts = new Map();
 
@@ -811,6 +833,23 @@ app.get('/api/auth/me', (req, res) => {
 });
 
 app.get('/api/wallet', requireUser, (req, res) => res.json(publicWallet(req.user.id)));
+app.get('/api/ads/campaigns', requireUser, (req, res) => {
+  const objectiveLabels = { messages: 'Receber mensagens', visits: 'Visitas ao site',
+    sales: 'Oportunidades de venda', followers: 'Atrair seguidores' };
+  const destinationLabels = { whatsapp: 'WhatsApp', site: 'Site', instagram: 'Instagram' };
+  const statusLabels = { awaiting_payment: 'Aguardando pagamento', funded: 'Financiada · aguardando ativação',
+    payment_failed: 'Pagamento não concluído', reversed: 'Estornada', active: 'Em veiculação',
+    paused: 'Pausada', completed: 'Concluída' };
+  const campaigns = db.prepare(`SELECT id,objective,destination_type,destination_url,daily_budget_cents,
+    duration_days,gross_credits,management_credits,net_credits,status,created_at,updated_at
+    FROM ad_campaigns WHERE user_id=? ORDER BY id DESC LIMIT 30`).all(req.user.id);
+  return res.json({ campaigns: campaigns.map(item => ({
+    ...item,
+    objectiveLabel: objectiveLabels[item.objective] || item.objective,
+    destinationLabel: destinationLabels[item.destination_type] || item.destination_type,
+    statusLabel: statusLabels[item.status] || item.status
+  })) });
+});
 
 app.post('/api/affiliates/register', requireUser, (req, res) => {
   if (!req.user.adult_confirmed || !req.body?.termsAccepted) {
@@ -1089,24 +1128,71 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
     return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
   }
   if (!req.user.adult_confirmed) return res.status(403).json({ error: 'Disponível somente para maiores de 18 anos.' });
-  if (!req.body?.termsAccepted) return res.status(400).json({ error: 'Aceite os termos dos Créditos Vitrine.' });
+  if (!req.body?.termsAccepted) return res.status(400).json({ error: 'Aceite os termos dos Créditos Ads.' });
   if (!allowAttempt(checkoutAttempts, `credits:${req.user.id}`, 5, 10 * 60 * 1000)) {
     return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
   }
-  const reference = `coin_${randomUUID()}`;
-  db.prepare(`INSERT INTO credit_orders
-    (reference,user_id,amount_cents,fee_cents,credit_units,status,terms_version,terms_accepted_at)
-    VALUES (?,?,?,?,?,'created','2026-08-14',CURRENT_TIMESTAMP)`)
-    .run(reference, req.user.id, CREDIT_PACKAGE.amountCents, CREDIT_PACKAGE.feeCents, CREDIT_PACKAGE.creditUnits);
+  const amountCents = Math.round(Number(req.body?.amountCents));
+  const dailyBudgetCents = Math.round(Number(req.body?.dailyBudgetCents));
+  const durationDays = Math.round(Number(req.body?.durationDays));
+  const objective = String(req.body?.objective || '');
+  const destinationType = String(req.body?.destinationType || '');
+  const destinationUrl = String(req.body?.destinationUrl || '').trim();
+  if (!Number.isInteger(amountCents) || amountCents < ADS_MIN_TOPUP_CENTS || amountCents > ADS_MAX_TOPUP_CENTS) {
+    return res.status(400).json({ error: 'A recarga deve ficar entre R$ 30,00 e R$ 5.000,00.' });
+  }
+  if (!Number.isInteger(dailyBudgetCents) || dailyBudgetCents < 500 || dailyBudgetCents > 500000) {
+    return res.status(400).json({ error: 'Informe um orçamento diário entre R$ 5,00 e R$ 5.000,00.' });
+  }
+  if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 60) {
+    return res.status(400).json({ error: 'A duração deve ficar entre 1 e 60 dias.' });
+  }
+  if (!['messages','visits','sales','followers'].includes(objective)) {
+    return res.status(400).json({ error: 'Escolha um objetivo válido.' });
+  }
+  if (!['site','whatsapp','instagram'].includes(destinationType)) {
+    return res.status(400).json({ error: 'Escolha site, WhatsApp ou Instagram como destino.' });
+  }
+  let parsedDestination;
+  try { parsedDestination = new URL(destinationUrl); } catch (_) {
+    return res.status(400).json({ error: 'Informe um link de destino completo e válido.' });
+  }
+  if (!['http:','https:'].includes(parsedDestination.protocol)) {
+    return res.status(400).json({ error: 'O destino deve usar um link HTTP ou HTTPS.' });
+  }
+  const feeCents = Math.round(amountCents * ADS_MANAGEMENT_RATE);
+  const mediaCents = amountCents - feeCents;
+  const requiredMediaCents = dailyBudgetCents * durationDays;
+  if (requiredMediaCents > mediaCents) {
+    const minimumTopupCents = Math.ceil(requiredMediaCents / (1 - ADS_MANAGEMENT_RATE));
+    return res.status(400).json({ error: `Para este orçamento e período, faça uma recarga mínima de R$ ${(minimumTopupCents / 100).toFixed(2).replace('.', ',')}.` });
+  }
+  const grossCredits = Math.round(amountCents * ADS_CREDITS_PER_REAL);
+  const managementCredits = Math.round(grossCredits * ADS_MANAGEMENT_RATE);
+  const netCredits = grossCredits - managementCredits;
+  const reference = `ads_${randomUUID()}`;
+  const createOrder = db.transaction(() => {
+    db.prepare(`INSERT INTO credit_orders
+      (reference,user_id,amount_cents,fee_cents,credit_units,status,terms_version,terms_accepted_at)
+      VALUES (?,?,?,?,?,'created','2026-08-19-ads',CURRENT_TIMESTAMP)`)
+      .run(reference, req.user.id, amountCents, feeCents, netCredits);
+    db.prepare(`INSERT INTO ad_campaigns
+      (user_id,order_reference,objective,destination_type,destination_url,daily_budget_cents,duration_days,
+       gross_credits,management_credits,net_credits,status)
+      VALUES (?,?,?,?,?,?,?,?,?,?,'awaiting_payment')`)
+      .run(req.user.id, reference, objective, destinationType, destinationUrl, dailyBudgetCents, durationDays,
+        grossCredits, managementCredits, netCredits);
+  });
+  createOrder();
   adminAnalytics.recordOrderAttribution(req, reference, 'credits');
-  adminAnalytics.recordCheckout(req, reference, 'credits', CREDIT_PACKAGE.amountCents);
+  adminAnalytics.recordCheckout(req, reference, 'credits', amountCents);
   try {
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
       body: JSON.stringify({
-        items: [{ id: 'vitrinecity-creditos-970', title: '9,70 Créditos Vitrine',
-          description: 'Uso interno; validade de 60 dias; taxa de conversão de 3% incluída',
-          category_id: 'services', quantity: 1, currency_id: 'BRL', unit_price: CREDIT_PACKAGE.amountCents / 100 }],
+        items: [{ id: 'vitrinecity-ads-credits', title: `${(netCredits / 100).toFixed(2)} Créditos Ads líquidos`,
+          description: '1 real = 9,6 créditos brutos; gestão de 15%; validade de 90 dias',
+          category_id: 'services', quantity: 1, currency_id: 'BRL', unit_price: amountCents / 100 }],
         payer: { name: req.user.name, email: req.user.email },
         external_reference: reference,
         notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
@@ -1116,21 +1202,24 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
           failure: `${SITE_URL}/carteira.html?resultado=falha&ref=${encodeURIComponent(reference)}`
         },
         auto_return: 'approved', statement_descriptor: 'VITRINECITY',
-        metadata: { product: 'internal_credits', user_id: req.user.id, credit_units: CREDIT_PACKAGE.creditUnits }
+        metadata: { product: 'ads_credits', user_id: req.user.id, net_credits: netCredits }
       }), signal: AbortSignal.timeout(12000)
     });
     const data = await response.json();
     if (!response.ok || !data.id || !data.init_point) {
       db.prepare("UPDATE credit_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);
-      console.error('Mercado Pago credits preference error', response.status, data?.message || 'unknown');
+      db.prepare("UPDATE ad_campaigns SET status='payment_failed',updated_at=CURRENT_TIMESTAMP WHERE order_reference=?").run(reference);
+      console.error('Mercado Pago Ads preference error', response.status, data?.message || 'unknown');
       return res.status(502).json({ error: 'Não foi possível iniciar o pagamento agora.' });
     }
     db.prepare("UPDATE credit_orders SET status='pending',mp_preference_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?")
       .run(data.id, reference);
-    return res.status(201).json({ checkoutUrl: data.init_point, reference });
+    return res.status(201).json({ checkoutUrl: data.init_point, reference,
+      breakdown: { amountCents, feeCents, grossCredits, managementCredits, netCredits, expiresInDays: 90 } });
   } catch (error) {
     db.prepare("UPDATE credit_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);
-    console.error('Mercado Pago credits unavailable', error?.message || 'unknown');
+    db.prepare("UPDATE ad_campaigns SET status='payment_failed',updated_at=CURRENT_TIMESTAMP WHERE order_reference=?").run(reference);
+    console.error('Mercado Pago Ads unavailable', error?.message || 'unknown');
     return res.status(502).json({ error: 'Não foi possível conectar ao Mercado Pago agora.' });
   }
 });
@@ -1265,7 +1354,7 @@ const applyCreditPayment = db.transaction((order, payment) => {
     db.prepare(`INSERT INTO wallet_ledger
       (user_id,delta_units,balance_after_units,kind,description,order_reference,payment_id)
       VALUES (?,?,?,?,?,?,?)`).run(order.user_id, delta, balanceAfter, delta > 0 ? 'purchase' : 'reversal',
-        delta > 0 ? 'Compra de Créditos Vitrine aprovada' : 'Ajuste por cancelamento ou estorno',
+        delta > 0 ? 'Compra de Créditos Ads aprovada (gestão de 15% já descontada)' : 'Ajuste de Créditos Ads por cancelamento ou estorno',
         order.reference, String(payment.id));
     if (delta > 0) {
       const expiresAt = Date.now() + CREDIT_VALIDITY_MS;
@@ -1283,6 +1372,13 @@ const applyCreditPayment = db.transaction((order, payment) => {
   }
   db.prepare(`UPDATE credit_orders SET status=?,credited_units=?,mp_payment_id=?,updated_at=CURRENT_TIMESTAMP
     WHERE reference=?`).run(status, desiredUnits, String(payment.id), order.reference);
+  if (status === 'approved') {
+    db.prepare("UPDATE ad_campaigns SET status='funded',updated_at=CURRENT_TIMESTAMP WHERE order_reference=?")
+      .run(order.reference);
+  } else if (reversalStatuses.has(status)) {
+    db.prepare("UPDATE ad_campaigns SET status='reversed',updated_at=CURRENT_TIMESTAMP WHERE order_reference=?")
+      .run(order.reference);
+  }
 });
 
 app.post('/api/payments/mercadopago/webhook', async (req, res) => {
@@ -1584,7 +1680,7 @@ app.post('/api/admin/lot-orders/:reference/resend-confirmation', requireAdmin, (
 
 app.get('/api/credits/orders/:reference', requireUser, (req, res) => {
   expireCreditBatches(req.user.id);
-  const order = db.prepare(`SELECT o.reference,o.status,o.credit_units,o.credited_units,o.created_at,o.updated_at,
+  const order = db.prepare(`SELECT o.reference,o.status,o.amount_cents,o.fee_cents,o.credit_units,o.credited_units,o.created_at,o.updated_at,
     b.expires_at FROM credit_orders o LEFT JOIN credit_batches b ON b.order_reference=o.reference
     WHERE o.reference=? AND o.user_id=?`).get(req.params.reference, req.user.id);
   if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
