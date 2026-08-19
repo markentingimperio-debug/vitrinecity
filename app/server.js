@@ -914,7 +914,52 @@ app.get('/api/auth/me', (req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ authenticated: false });
   return res.json({ authenticated: true, user: { name: user.name, email: user.email,
-    admin: Boolean(user.is_admin || adminEmails.has(String(user.email).toLowerCase())) }, wallet: publicWallet(user.id) });
+    whatsapp: user.whatsapp || '', admin: Boolean(user.is_admin || adminEmails.has(String(user.email).toLowerCase())) }, wallet: publicWallet(user.id) });
+});
+
+app.patch('/api/manual-assistant/profile', requireUser, (req, res) => {
+  const whatsapp = String(req.body?.whatsapp || '').replace(/\D/g, '').slice(0, 15);
+  if (whatsapp.length < 10 || whatsapp.length > 15) {
+    return res.status(400).json({ error: 'Informe o WhatsApp com DDI e DDD. Exemplo: 5562999999999.' });
+  }
+  db.prepare('UPDATE users SET whatsapp=? WHERE id=?').run(whatsapp, req.user.id);
+  return res.json({ ok: true, whatsapp, chatUrl: 'https://wa.me/' + whatsapp });
+});
+
+app.post('/api/manual-assistant/suggest', requireUser, async (req, res) => {
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ error: 'A IA ainda precisa da chave OPENAI_API_KEY configurada.' });
+  }
+  if (!allowAttempt(aiAttempts, `manual-support:${req.user.id}`, 30, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Limite temporário de sugestões atingido. Aguarde um pouco.' });
+  }
+  const customerMessage = String(req.body?.customerMessage || '').trim().slice(0, 4000);
+  const businessContext = String(req.body?.businessContext || '').trim().slice(0, 8000);
+  const tone = String(req.body?.tone || 'cordial').trim().slice(0, 40);
+  if (customerMessage.length < 2) {
+    return res.status(400).json({ error: 'Cole a mensagem recebida do cliente.' });
+  }
+  try {
+    const data = await requestOpenAI({
+      model: OPENAI_MODEL,
+      input: [
+        { role: 'system', content: [{ type: 'input_text', text:
+          'Você sugere respostas para atendimento comercial em português do Brasil. ' +
+          'Responda somente com a mensagem pronta para copiar. Seja breve, cordial e útil. ' +
+          'Não invente preço, estoque, prazo, desconto, política ou informação ausente. ' +
+          'Quando faltar um dado, diga que confirmará com a equipe. Nunca peça senha, token, código ou cartão.' }] },
+        { role: 'user', content: [{ type: 'input_text', text:
+          `Tom desejado: ${tone}\nInformações confirmadas da empresa:\n${businessContext || 'Nenhuma informação adicional.'}\n\nMensagem do cliente:\n${customerMessage}` }] }
+      ],
+      max_output_tokens: 500
+    });
+    const suggestion = responseOutputText(data);
+    if (!suggestion) throw new Error('EMPTY_AI_RESPONSE');
+    return res.json({ suggestion, manualOnly: true });
+  } catch (error) {
+    console.error('Manual assistant suggestion error', String(error?.message || error).slice(0, 200));
+    return res.status(502).json({ error: 'A IA não conseguiu preparar a resposta agora. Tente novamente.' });
+  }
 });
 
 app.get('/api/wallet', requireUser, (req, res) => res.json(publicWallet(req.user.id)));
