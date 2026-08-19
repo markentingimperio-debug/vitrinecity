@@ -1016,11 +1016,13 @@ app.get('/api/social/login', requireUser, (req, res) => {
 
 app.get('/api/social/callback', requireUser, async (req, res) => {
   const state = verifySocialOauthState(req.query.state,req.user.id);
-  const destination = state?.returnTo === 'admin' ? '/admin#admin-social' : '/carteira.html#socialConnectArea';
-  if (!state) return res.redirect(302,destination + '?social=invalid_state');
-  if (req.query.error) return res.redirect(302,destination + '?social=cancelled');
+  const destinationBase = state?.returnTo === 'admin' ? '/admin' : '/carteira.html';
+  const destinationHash = state?.returnTo === 'admin' ? '#admin-social' : '#socialConnectArea';
+  const destination = status => destinationBase + '?social=' + encodeURIComponent(status) + destinationHash;
+  if (!state) return res.redirect(302,destination('invalid_state'));
+  if (req.query.error) return res.redirect(302,destination('cancelled'));
   const code = String(req.query.code || '');
-  if (!code) return res.redirect(302,destination + '?social=missing_code');
+  if (!code) return res.redirect(302,destination('missing_code'));
   try {
     const redirectUri = SITE_URL + '/api/social/callback';
     const tokenUrl = new URL(`https://graph.facebook.com/${socialApiVersion()}/oauth/access_token`);
@@ -1032,12 +1034,12 @@ app.get('/api/social/callback', requireUser, async (req, res) => {
     const tokenData = await tokenResponse.json().catch(()=>({}));
     if (!tokenResponse.ok || !tokenData.access_token) throw new Error(String(tokenData?.error?.message || 'Falha ao validar o login.'));
     const pages = await socialPagesFromToken(tokenData.access_token);
-    if (!pages.length) return res.redirect(302,destination + '?social=no_pages');
+    if (!pages.length) return res.redirect(302,destination('no_pages'));
     saveSocialPages(req.user.id,pages,tokenData.access_token);
-    return res.redirect(302,destination + '?social=connected');
+    return res.redirect(302,destination('connected'));
   } catch (error) {
     console.error('Meta social OAuth callback error',String(error?.message||error).slice(0,250));
-    return res.redirect(302,destination + '?social=error');
+    return res.redirect(302,destination('error'));
   }
 });
 
