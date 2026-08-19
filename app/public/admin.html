@@ -170,10 +170,7 @@ async function loadAdminSocial(){
   $('#adminSocialStatus').innerHTML=adminSocialData.configured?'<span class="status ok">PRONTO PARA CONECTAR</span>':'<span class="status off">AGUARDANDO CREDENCIAIS NA VPS</span>';
   $('#adminSocialAccounts').innerHTML=(adminSocialData.accounts||[]).map(a=>`<article class="card connector"><div><strong>${esc(a.page_name||'Página do Facebook')}</strong><small>${a.instagram_username?'Instagram @'+esc(a.instagram_username):'Sem Instagram profissional vinculado'}</small></div><span class="status ok">${esc(a.status)}</span></article>`).join('');
 }
-$('#adminSocialConnect').onclick=async()=>{
-  const b=$('#adminSocialConnect');b.disabled=true;
-  try{await loadAdminMetaSdk(adminSocialData.appId,adminSocialData.apiVersion);FB.login(async response=>{try{const token=response.authResponse?.accessToken;if(!token)throw Error('Login não concluído.');await api('/api/social/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accessToken:token})});await loadAdminSocial()}catch(e){$('#error').textContent=e.message;$('#error').style.display='block'}finally{b.disabled=false}},{scope:'pages_show_list,pages_read_engagement,pages_manage_metadata,pages_messaging,instagram_basic,instagram_manage_messages',return_scopes:true})}catch(e){$('#error').textContent=e.message;$('#error').style.display='block';b.disabled=false}
-};
+$('#adminSocialConnect').onclick=()=>{location.href='/api/social/login?returnTo=admin'};
 
 let adminWaPhone='';
 const cleanWa=value=>String(value||'').replace(/\D/g,'').slice(0,15);
