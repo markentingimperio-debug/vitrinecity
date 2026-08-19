@@ -957,6 +957,90 @@ app.get('/api/social/status', requireUser, (req, res) => {
   });
 });
 
+function socialOauthState(userId, returnTo) {
+  const payload = Buffer.from(JSON.stringify({ userId, returnTo, issuedAt: Date.now(), nonce: randomBytes(12).toString('hex') })).toString('base64url');
+  const signature = createHmac('sha256', String(process.env.META_SOCIAL_APP_SECRET || '')).update(payload).digest('base64url');
+  return payload + '.' + signature;
+}
+function verifySocialOauthState(value, userId) {
+  const [payload, signature] = String(value || '').split('.');
+  if (!payload || !signature) return null;
+  const expected = createHmac('sha256', String(process.env.META_SOCIAL_APP_SECRET || '')).update(payload).digest('base64url');
+  const actualBuffer = Buffer.from(signature), expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length || !timingSafeEqual(actualBuffer, expectedBuffer)) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (Number(data.userId) !== Number(userId) || Date.now() - Number(data.issuedAt) > 10 * 60 * 1000) return null;
+    return data;
+  } catch { return null; }
+}
+function saveSocialPages(userId, pages, fallbackToken) {
+  const save = db.prepare(`INSERT INTO social_accounts
+    (user_id,page_id,page_name,instagram_id,instagram_username,token_encrypted,status,updated_at)
+    VALUES (?,?,?,?,?,?,'connected',CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id,page_id) DO UPDATE SET page_name=excluded.page_name,
+    instagram_id=excluded.instagram_id,instagram_username=excluded.instagram_username,
+    token_encrypted=excluded.token_encrypted,status='connected',updated_at=CURRENT_TIMESTAMP`);
+  db.transaction(items => {
+    for (const page of items) save.run(userId,String(page.id),String(page.name||'Página'),
+      page.instagram_business_account?.id ? String(page.instagram_business_account.id) : null,
+      page.instagram_business_account?.username ? String(page.instagram_business_account.username) : null,
+      encryptSocialToken(String(page.access_token || fallbackToken)));
+  })(pages);
+}
+async function socialPagesFromToken(accessToken) {
+  const accountsUrl = new URL(`https://graph.facebook.com/${socialApiVersion()}/me/accounts`);
+  accountsUrl.searchParams.set('fields','id,name,access_token,instagram_business_account{id,username,name,profile_picture_url}');
+  accountsUrl.searchParams.set('access_token',accessToken);
+  const response = await fetch(accountsUrl,{signal:AbortSignal.timeout(30000)});
+  const data = await response.json().catch(()=>({}));
+  if (!response.ok) throw new Error(String(data?.error?.message || 'Não foi possível listar as páginas.'));
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+app.get('/api/social/login', requireUser, (req, res) => {
+  if (!process.env.META_SOCIAL_APP_ID || !process.env.META_SOCIAL_APP_SECRET) {
+    return res.status(503).send('Integração da Meta ainda não configurada.');
+  }
+  const isAdmin = Boolean(req.user.is_admin || adminEmails.has(String(req.user.email).toLowerCase()));
+  const returnTo = req.query.returnTo === 'admin' && isAdmin ? 'admin' : 'carteira';
+  const redirectUri = SITE_URL + '/api/social/callback';
+  const login = new URL(`https://www.facebook.com/${socialApiVersion()}/dialog/oauth`);
+  login.searchParams.set('client_id',String(process.env.META_SOCIAL_APP_ID));
+  login.searchParams.set('redirect_uri',redirectUri);
+  login.searchParams.set('state',socialOauthState(req.user.id,returnTo));
+  login.searchParams.set('response_type','code');
+  login.searchParams.set('scope','pages_show_list,pages_read_engagement,pages_manage_metadata,pages_messaging,instagram_basic,instagram_manage_messages');
+  return res.redirect(302,login.toString());
+});
+
+app.get('/api/social/callback', requireUser, async (req, res) => {
+  const state = verifySocialOauthState(req.query.state,req.user.id);
+  const destination = state?.returnTo === 'admin' ? '/admin#admin-social' : '/carteira.html#socialConnectArea';
+  if (!state) return res.redirect(302,destination + '?social=invalid_state');
+  if (req.query.error) return res.redirect(302,destination + '?social=cancelled');
+  const code = String(req.query.code || '');
+  if (!code) return res.redirect(302,destination + '?social=missing_code');
+  try {
+    const redirectUri = SITE_URL + '/api/social/callback';
+    const tokenUrl = new URL(`https://graph.facebook.com/${socialApiVersion()}/oauth/access_token`);
+    tokenUrl.searchParams.set('client_id',String(process.env.META_SOCIAL_APP_ID));
+    tokenUrl.searchParams.set('client_secret',String(process.env.META_SOCIAL_APP_SECRET));
+    tokenUrl.searchParams.set('redirect_uri',redirectUri);
+    tokenUrl.searchParams.set('code',code);
+    const tokenResponse = await fetch(tokenUrl,{signal:AbortSignal.timeout(30000)});
+    const tokenData = await tokenResponse.json().catch(()=>({}));
+    if (!tokenResponse.ok || !tokenData.access_token) throw new Error(String(tokenData?.error?.message || 'Falha ao validar o login.'));
+    const pages = await socialPagesFromToken(tokenData.access_token);
+    if (!pages.length) return res.redirect(302,destination + '?social=no_pages');
+    saveSocialPages(req.user.id,pages,tokenData.access_token);
+    return res.redirect(302,destination + '?social=connected');
+  } catch (error) {
+    console.error('Meta social OAuth callback error',String(error?.message||error).slice(0,250));
+    return res.redirect(302,destination + '?social=error');
+  }
+});
+
 app.post('/api/social/connect', requireUser, async (req, res) => {
   const accessToken = String(req.body?.accessToken || '').trim();
   if (!process.env.META_SOCIAL_APP_ID || !process.env.META_SOCIAL_APP_SECRET ||
