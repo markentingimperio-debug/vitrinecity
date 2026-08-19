@@ -341,6 +341,18 @@ db.exec(`CREATE TABLE IF NOT EXISTS social_accounts (
   UNIQUE(user_id,page_id)
 );
 CREATE INDEX IF NOT EXISTS idx_social_accounts_user ON social_accounts(user_id,id);`);
+db.exec(`CREATE TABLE IF NOT EXISTS social_webhook_events (
+  id INTEGER PRIMARY KEY,
+  object_type TEXT NOT NULL,
+  object_id TEXT,
+  field_name TEXT,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'received' CHECK(status IN ('received','processed','ignored','error')),
+  received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  processed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_social_webhook_events_received
+  ON social_webhook_events(received_at,id);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -953,8 +965,51 @@ app.get('/api/social/status', requireUser, (req, res) => {
       (process.env.META_SOCIAL_TOKEN_ENCRYPTION_KEY || process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY)),
     appId: String(process.env.META_SOCIAL_APP_ID || ''),
     apiVersion: socialApiVersion(),
+    webhookConfigured: Boolean(process.env.META_SOCIAL_WEBHOOK_VERIFY_TOKEN && process.env.META_SOCIAL_APP_SECRET),
     accounts
   });
+});
+
+app.get('/api/webhooks/social', (req, res) => {
+  const mode = String(req.query['hub.mode'] || '');
+  const token = String(req.query['hub.verify_token'] || '');
+  const challenge = String(req.query['hub.challenge'] || '');
+  const configuredToken = String(process.env.META_SOCIAL_WEBHOOK_VERIFY_TOKEN || '');
+  if (mode === 'subscribe' && configuredToken && token === configuredToken) {
+    return res.status(200).type('text/plain').send(challenge);
+  }
+  return res.sendStatus(403);
+});
+
+app.post('/api/webhooks/social', (req, res) => {
+  const signature = String(req.get('x-hub-signature-256') || '');
+  const secret = String(process.env.META_SOCIAL_APP_SECRET || '');
+  const expected = secret && req.rawBody
+    ? 'sha256=' + createHmac('sha256', secret).update(req.rawBody).digest('hex')
+    : '';
+  const signatureBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (!expected || signatureBuffer.length !== expectedBuffer.length ||
+      !timingSafeEqual(signatureBuffer, expectedBuffer)) return res.sendStatus(401);
+  try {
+    const objectType = String(req.body?.object || 'unknown').slice(0, 80);
+    const insert = db.prepare(`INSERT INTO social_webhook_events
+      (object_type,object_id,field_name,payload_json) VALUES (?,?,?,?)`);
+    const entries = Array.isArray(req.body?.entry) ? req.body.entry : [];
+    db.transaction(items => {
+      for (const entry of items) {
+        const objectId = String(entry?.id || '').slice(0, 160);
+        const changes = Array.isArray(entry?.changes) && entry.changes.length ? entry.changes : [entry];
+        for (const change of changes) {
+          const field = String(change?.field || (objectType === 'instagram' ? 'messaging' : 'event')).slice(0, 100);
+          insert.run(objectType, objectId, field, JSON.stringify({ entry, change }).slice(0, 500000));
+        }
+      }
+    })(entries);
+  } catch (error) {
+    console.error('Meta social webhook processing error', String(error?.message || error).slice(0, 250));
+  }
+  return res.sendStatus(200);
 });
 
 function socialOauthState(userId, returnTo) {
