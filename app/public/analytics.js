@@ -16,12 +16,37 @@
     sessionStorage.setItem(SESSION_KEY, sid);
   }
   const allowed = () => localStorage.getItem(CONSENT_KEY) === 'accepted';
+  let activeExperiment = null;
   const send = (eventName, detail = {}) => {
     if (!allowed()) return;
+    const metadata = { ...(detail.metadata || {}) };
+    if (activeExperiment) {
+      metadata.experimentKey = activeExperiment.key;
+      metadata.variantKey = activeExperiment.variant;
+    }
     fetch('/api/analytics/events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-VC-Session': sid },
       keepalive: true, body: JSON.stringify({ sessionId: sid, eventName, path: location.pathname,
-        landingPath: sessionStorage.getItem('vc_landing') || location.pathname, referrer: document.referrer, ...campaign, ...detail })
+        landingPath: sessionStorage.getItem('vc_landing') || location.pathname, referrer: document.referrer,
+        ...campaign, ...detail, metadata })
     }).catch(() => {});
+  };
+  const applyExperiment = experiment => {
+    for (const change of experiment?.config?.changes || []) {
+      if (!change || typeof change.selector !== 'string' || typeof change.text !== 'string') continue;
+      const element = document.querySelector(change.selector);
+      if (element) element.textContent = change.text.slice(0, 180);
+    }
+  };
+  const loadExperiment = async () => {
+    if (!allowed()) return send('page_view');
+    try {
+      const response = await fetch('/api/experiments/assignment?path=' + encodeURIComponent(location.pathname),
+        { headers: { 'X-VC-Session': sid } });
+      const data = await response.json();
+      activeExperiment = data.experiment || null;
+      if (activeExperiment) applyExperiment(activeExperiment);
+    } catch {}
+    send('page_view');
   };
   if (!sessionStorage.getItem('vc_landing')) sessionStorage.setItem('vc_landing', `${location.pathname}${location.search}`);
   const nativeFetch = window.fetch.bind(window);
@@ -40,9 +65,9 @@
     document.head.appendChild(style);document.body.appendChild(banner);
     banner.addEventListener('click', event => {
       const choice = event.target.dataset.choice;if (!choice) return;
-      localStorage.setItem(CONSENT_KEY, choice);banner.remove();if (choice === 'accepted') send('page_view');
+      localStorage.setItem(CONSENT_KEY, choice);banner.remove();if (choice === 'accepted') loadExperiment();
     });
-  } else if (consent === 'accepted') send('page_view');
+  } else if (consent === 'accepted') loadExperiment();
   document.addEventListener('click', event => {
     const link = event.target.closest('a,button');if (!link) return;
     const href = link.getAttribute('href') || '';

@@ -162,8 +162,34 @@ export function setupAdminAnalytics({ app, db, requireAdmin, publicDir }) {
     id INTEGER PRIMARY KEY,platform TEXT NOT NULL,status TEXT NOT NULL,rows_synced INTEGER NOT NULL DEFAULT 0,
     message TEXT,started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,finished_at TEXT
   );
+  CREATE TABLE IF NOT EXISTS optimization_experiments (
+    id INTEGER PRIMARY KEY,experiment_key TEXT NOT NULL UNIQUE,name TEXT NOT NULL,page_path TEXT NOT NULL,
+    primary_event TEXT NOT NULL,conversion_asset TEXT,status TEXT NOT NULL DEFAULT 'active',
+    min_sessions INTEGER NOT NULL DEFAULT 100,min_conversions INTEGER NOT NULL DEFAULT 10,
+    winner_variant TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS optimization_variants (
+    id INTEGER PRIMARY KEY,experiment_id INTEGER NOT NULL REFERENCES optimization_experiments(id) ON DELETE CASCADE,
+    variant_key TEXT NOT NULL,label TEXT NOT NULL,config_json TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(experiment_id,variant_key)
+  );
+  CREATE TABLE IF NOT EXISTS optimization_assignments (
+    id INTEGER PRIMARY KEY,experiment_id INTEGER NOT NULL REFERENCES optimization_experiments(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL,variant_key TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(experiment_id,session_id)
+  );
   CREATE INDEX IF NOT EXISTS idx_analytics_events_date ON analytics_events(created_at,event_name);
-  CREATE INDEX IF NOT EXISTS idx_ad_metrics_date ON ad_metrics_daily(date,platform);`);
+  CREATE INDEX IF NOT EXISTS idx_ad_metrics_date ON ad_metrics_daily(date,platform);
+  CREATE INDEX IF NOT EXISTS idx_optimization_assignments ON optimization_assignments(experiment_id,variant_key);`);
+  const experiment = db.prepare(`INSERT OR IGNORE INTO optimization_experiments
+    (experiment_key,name,page_path,primary_event,conversion_asset,status,min_sessions,min_conversions)
+    VALUES ('home_primary_cta_2026_08','Botão principal da página inicial','/','click','/cidade-exploravel.html','active',100,10)`).run();
+  const experimentId = db.prepare("SELECT id FROM optimization_experiments WHERE experiment_key='home_primary_cta_2026_08'").get().id;
+  db.prepare(`INSERT OR IGNORE INTO optimization_variants
+    (experiment_id,variant_key,label,config_json) VALUES (?,?,?,?)`).run(experimentId, 'control', 'Original', JSON.stringify({ changes: [] }));
+  db.prepare(`INSERT OR IGNORE INTO optimization_variants
+    (experiment_id,variant_key,label,config_json) VALUES (?,?,?,?)`).run(experimentId, 'challenger', 'Chamada direta',
+      JSON.stringify({ changes: [{ selector: '.hero .actions .button', text: '🧭 Entrar agora na cidade' }] }));
 
   app.get(['/admin','/admin.html'], requireAdmin, (_req, res) => res.sendFile(path.join(publicDir, 'admin.html')));
 
@@ -193,6 +219,96 @@ export function setupAdminAnalytics({ app, db, requireAdmin, publicDir }) {
       .run(sid, values.userId, eventName, clean(req.body?.path, 300), clean(req.body?.assetType, 40),
         clean(req.body?.assetId, 120), Math.max(0, Number(req.body?.valueCents || 0)), metadata);
     return res.status(201).json({ ok: true });
+  });
+
+  const experimentHash = value => {
+    let hash = 2166136261;
+    for (const char of String(value)) { hash ^= char.charCodeAt(0);hash = Math.imul(hash, 16777619); }
+    return hash >>> 0;
+  };
+
+  app.get('/api/experiments/assignment', (req, res) => {
+    const sid = sessionId(req);
+    const requestedPathRaw = clean(req.query.path || '/', 300);
+    const requestedPath = requestedPathRaw === '/index.html' ? '/' : requestedPathRaw;
+    if (!sid) return res.status(400).json({ error: 'Sessão inválida.' });
+    const experiment = db.prepare(`SELECT * FROM optimization_experiments
+      WHERE page_path=? AND status IN ('active','winner_found','adopted') ORDER BY id LIMIT 1`).get(requestedPath);
+    if (!experiment) return res.json({ experiment: null });
+    let assignment = db.prepare(`SELECT variant_key FROM optimization_assignments
+      WHERE experiment_id=? AND session_id=?`).get(experiment.id, sid);
+    if (!assignment) {
+      const variants = db.prepare(`SELECT variant_key FROM optimization_variants
+        WHERE experiment_id=? ORDER BY id`).all(experiment.id);
+      let variantKey = variants[experimentHash(`${sid}:${experiment.experiment_key}`) % variants.length]?.variant_key;
+      if (experiment.status === 'adopted' && experiment.winner_variant) {
+        variantKey = experiment.winner_variant;
+      } else if (experiment.status === 'winner_found' && experiment.winner_variant) {
+        variantKey = experimentHash(`${sid}:winner`) % 100 < 90
+          ? experiment.winner_variant
+          : variants.find(item => item.variant_key !== experiment.winner_variant)?.variant_key || experiment.winner_variant;
+      }
+      db.prepare(`INSERT OR IGNORE INTO optimization_assignments
+        (experiment_id,session_id,variant_key) VALUES (?,?,?)`).run(experiment.id, sid, variantKey);
+      assignment = { variant_key: variantKey };
+    }
+    const variant = db.prepare(`SELECT variant_key,label,config_json FROM optimization_variants
+      WHERE experiment_id=? AND variant_key=?`).get(experiment.id, assignment.variant_key);
+    let config = {};
+    try { config = JSON.parse(variant?.config_json || '{}'); } catch {}
+    return res.json({ experiment: { key: experiment.experiment_key, name: experiment.name,
+      variant: variant?.variant_key, label: variant?.label, config } });
+  });
+
+  function experimentReport(experiment) {
+    const variants = db.prepare(`SELECT v.variant_key,v.label,
+      COUNT(DISTINCT a.session_id) sessions,
+      COUNT(DISTINCT CASE WHEN e.event_name=x.primary_event AND
+        (x.conversion_asset IS NULL OR e.asset_id=x.conversion_asset) THEN a.session_id END) conversions,
+      COALESCE(SUM(CASE WHEN e.event_name='purchase' THEN e.value_cents ELSE 0 END),0) revenue_cents
+      FROM optimization_variants v
+      JOIN optimization_experiments x ON x.id=v.experiment_id
+      LEFT JOIN optimization_assignments a ON a.experiment_id=v.experiment_id AND a.variant_key=v.variant_key
+      LEFT JOIN analytics_events e ON e.session_id=a.session_id AND e.created_at>=a.created_at
+      WHERE v.experiment_id=? GROUP BY v.id ORDER BY v.id`).all(experiment.id)
+      .map(row => ({ ...row, sessions: Number(row.sessions || 0), conversions: Number(row.conversions || 0),
+        revenue_cents: Number(row.revenue_cents || 0),
+        conversion_rate: row.sessions ? Number(row.conversions || 0) / Number(row.sessions) : 0 }));
+    if (experiment.status === 'active' && variants.length > 1 &&
+        variants.every(item => item.sessions >= experiment.min_sessions) &&
+        variants.reduce((sum, item) => sum + item.conversions, 0) >= experiment.min_conversions) {
+      const ranked = [...variants].sort((a, b) => b.conversion_rate - a.conversion_rate);
+      const enoughLift = ranked[0].conversion_rate >= ranked[1].conversion_rate * 1.15 &&
+        ranked[0].conversions >= ranked[1].conversions + 3;
+      if (enoughLift) {
+        db.prepare(`UPDATE optimization_experiments SET status='winner_found',winner_variant=?,
+          updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'`).run(ranked[0].variant_key, experiment.id);
+        experiment.status = 'winner_found';experiment.winner_variant = ranked[0].variant_key;
+      }
+    }
+    return { ...experiment, variants };
+  }
+
+  app.get('/api/admin/experiments', requireAdmin, (_req, res) => {
+    const experiments = db.prepare(`SELECT id,experiment_key,name,page_path,primary_event,conversion_asset,
+      status,min_sessions,min_conversions,winner_variant,created_at,updated_at
+      FROM optimization_experiments ORDER BY id DESC`).all().map(experimentReport);
+    return res.json({ algorithm: { active: experiments.some(item => ['active','winner_found','adopted'].includes(item.status)),
+      method: 'Teste A/B com distribuição determinística, mínimo de amostra e vantagem de 15%',
+      safety: 'Sem alteração de preço ou investimento automático' }, experiments });
+  });
+
+  app.patch('/api/admin/experiments/:id', requireAdmin, (req, res) => {
+    const id = Number(req.params.id);
+    const action = clean(req.body?.action, 30);
+    const experiment = db.prepare('SELECT * FROM optimization_experiments WHERE id=?').get(id);
+    if (!experiment) return res.status(404).json({ error: 'Experimento não encontrado.' });
+    if (action === 'pause') db.prepare("UPDATE optimization_experiments SET status='paused',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
+    else if (action === 'resume') db.prepare("UPDATE optimization_experiments SET status='active',winner_variant=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
+    else if (action === 'adopt_winner' && experiment.winner_variant) {
+      db.prepare("UPDATE optimization_experiments SET status='adopted',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
+    } else return res.status(400).json({ error: 'Ação indisponível.' });
+    return res.json({ ok: true });
   });
 
   app.get('/api/admin/connectors', requireAdmin, (_req, res) => {

@@ -19,6 +19,11 @@
   <h2>Propostas da IA</h2>
   <div class="table-scroll"><table><thead><tr><th>Melhoria</th><th>Página</th><th>Risco</th><th>Impacto esperado</th><th>Status</th><th>Ação</th></tr></thead><tbody id="aiProposals"></tbody></table></div>
 </section>
+<section class="card" id="experiments" style="margin-top:16px">
+  <div class="hero" style="margin-bottom:15px"><div><h2 style="font-size:24px">Algoritmo de aprendizagem</h2><p>Testa versões para públicos diferentes, mede conversões e aumenta a distribuição da vencedora somente depois de dados suficientes.</p></div><span id="algorithmStatus" class="status ok">ATIVO</span></div>
+  <div id="experimentCards" class="grid kpis"></div>
+  <div class="table-scroll" style="margin-top:16px"><table><thead><tr><th>Experimento</th><th>Versão</th><th>Visitantes</th><th>Conversões</th><th>Taxa</th><th>Receita</th><th>Decisão</th></tr></thead><tbody id="experimentRows"></tbody></table></div>
+</section>
 <section class="grid kpis" id="kpis"></section>
 <section id="operacao-ads" class="card" style="margin-top:16px">
   <div class="hero" style="margin-bottom:14px"><div><h2 style="font-size:24px">Operação VitrineCity Ads</h2><p>Compras e campanhas que precisam da sua atenção.</p></div><div class="filters"><select id="campaignStatus"><option value="">Todos os status</option><option value="funded">Pendente de ativação</option><option value="in_review">Em configuração</option><option value="active">Em veiculação</option><option value="paused">Pausada</option><option value="completed">Concluída</option><option value="awaiting_payment">Aguardando pagamento</option></select><button id="refreshCampaigns">Atualizar campanhas</button></div></div>
@@ -53,6 +58,30 @@ async function loadAi(){
   renderAiMessages(data.messages||[]);
 }
 
+async function loadExperiments(){
+  const data=await api('/api/admin/experiments');
+  $('#algorithmStatus').textContent=data.algorithm.active?'ALGORITMO ATIVO':'PAUSADO';
+  $('#algorithmStatus').className='status '+(data.algorithm.active?'ok':'off');
+  const experiments=data.experiments||[];
+  const totalSessions=experiments.flatMap(x=>x.variants).reduce((s,x)=>s+x.sessions,0);
+  const totalConversions=experiments.flatMap(x=>x.variants).reduce((s,x)=>s+x.conversions,0);
+  $('#experimentCards').innerHTML=[
+    ['Testes ativos',num(experiments.filter(x=>x.status==='active').length),'Aprendendo'],
+    ['Participantes',num(totalSessions),'Distribuição determinística'],
+    ['Conversões',num(totalConversions),'Evento principal'],
+    ['Confiança mínima','100/versão','Antes de escolher']
+  ].map(x=>`<article class="card kpi"><span>${x[0]}</span><strong>${x[1]}</strong><em>${x[2]}</em></article>`).join('');
+  const rowsData=experiments.flatMap(experiment=>experiment.variants.map((variant,index)=>({experiment,variant,index})));
+  rows('#experimentRows',rowsData,item=>{
+    const e=item.experiment,v=item.variant;
+    const action=item.index===0?(e.status==='paused'?'<button data-exp="resume">Reativar</button>':e.status==='winner_found'?'<button data-exp="adopt_winner">Adotar vencedora</button>':'<button class="secondary" data-exp="pause">Pausar</button>'):'';
+    return `<tr data-id="${e.id}"><td><strong>${esc(e.name)}</strong><br><small>${esc(e.status)}${e.winner_variant?' · vencedora: '+esc(e.winner_variant):''}</small></td><td>${esc(v.label)}</td><td class="num">${num(v.sessions)}</td><td class="num">${num(v.conversions)}</td><td class="num"><strong>${pct(v.conversion_rate)}</strong></td><td class="num">${money(v.revenue_cents)}</td><td>${action}</td></tr>`;
+  },7);
+  $('#experimentRows').querySelectorAll('[data-exp]').forEach(button=>button.onclick=async()=>{
+    button.disabled=true;
+    try{await api('/api/admin/experiments/'+button.closest('tr').dataset.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:button.dataset.exp})});await loadExperiments()}catch(e){$('#error').textContent=e.message;$('#error').style.display='block';button.disabled=false}
+  });
+}
 async function loadAiControl(){
   const data=await api('/api/admin/ai/control');
   const f=data.finance;
@@ -121,5 +150,5 @@ $('#aiForm').addEventListener('submit',async e=>{
   try{const data=await api('/api/admin/ai/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});$('#aiThinking')?.remove();box.insertAdjacentHTML('beforeend',`<div class="ai-message assistant">${esc(data.message.content)}<small>IA Gestora · agora</small></div>`);box.scrollTop=box.scrollHeight;await loadAiControl()}catch(e){$('#aiThinking')?.remove();input.value=message;$('#error').textContent=e.message;$('#error').style.display='block'}finally{button.disabled=!aiConfigured;button.textContent='Enviar para a IA'}
 });
 document.querySelectorAll('[data-prompt]').forEach(button=>button.onclick=()=>{$('#aiInput').value=button.dataset.prompt;$('#aiInput').focus()});
-$('#apply').onclick=load;$('#campaignStatus').onchange=loadManagedCampaigns;$('#refreshCampaigns').onclick=loadManagedCampaigns;$('#sync').onclick=async()=>{const b=$('#sync');b.disabled=true;b.textContent='Sincronizando…';try{await api('/api/admin/ads/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:$('#from').value,to:$('#to').value})});await load()}catch(e){$('#error').textContent=e.message;$('#error').style.display='block'}finally{b.disabled=false;b.textContent='Sincronizar Ads'}};Promise.all([load(),loadManagedCampaigns(),loadAi(),loadAiControl()]).catch(e=>{$('#error').textContent=e.message;$('#error').style.display='block'});
+$('#apply').onclick=load;$('#campaignStatus').onchange=loadManagedCampaigns;$('#refreshCampaigns').onclick=loadManagedCampaigns;$('#sync').onclick=async()=>{const b=$('#sync');b.disabled=true;b.textContent='Sincronizando…';try{await api('/api/admin/ads/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:$('#from').value,to:$('#to').value})});await load()}catch(e){$('#error').textContent=e.message;$('#error').style.display='block'}finally{b.disabled=false;b.textContent='Sincronizar Ads'}};Promise.all([load(),loadManagedCampaigns(),loadAi(),loadAiControl(),loadExperiments()]).catch(e=>{$('#error').textContent=e.message;$('#error').style.display='block'});
 </script></body></html>
