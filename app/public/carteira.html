@@ -18,6 +18,7 @@
     @media(max-width:760px){header{height:68px}.brand{font-size:22px}.hero,.auth-grid,.grid,.wa-grid{grid-template-columns:1fr}.card{padding:22px}main{padding-top:24px}h1{font-size:41px}.package{order:-1}}
   </style>
   <script src="/analytics.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js" defer></script>
 </head>
 <body>
   <header><a class="brand" href="/">VitrineCity Ads</a><a class="back" href="/para-empresas.html">Para empresas</a></header>
@@ -28,10 +29,30 @@
     <section id="wallet" class="wallet"><div class="auth-grid"><div class="card"><div class="eyebrow">SEU SALDO ADS</div><div id="balance" class="balance">0,00 créditos</div><div id="equivalent" class="equivalent">Saldo disponível para campanhas</div><p id="expiry" class="small">Sem créditos ativos.</p><p id="identity" class="small"></p><div class="actions"><a id="adminLink" class="button" href="/admin" hidden>Painel de gestão</a><button id="logout" class="secondary">Sair</button></div></div><div class="card"><h2>O que a gestão inclui</h2><p class="small">Configuração da campanha, organização do público e destino, acompanhamento do saldo e otimizações operacionais. A conexão e ativação nas plataformas de anúncios dependem das contas de publicidade autorizadas.</p><p class="small"><strong>Não garantimos vendas ou conversão.</strong> Os resultados variam conforme oferta, público, criativo, página e atendimento.</p></div></div>
       <div class="card campaign-form"><div class="eyebrow">NOVA CAMPANHA</div><h2>Defina seu orçamento em Créditos Ads</h2><p class="small">Nesta etapa você escolhe somente os créditos que deseja usar diariamente. A conversão para reais será mostrada apenas antes do pagamento.</p><div class="grid"><label>Objetivo<select id="objective"><option value="messages">Receber mensagens</option><option value="visits">Levar visitas ao site</option><option value="sales">Gerar oportunidades de venda</option><option value="followers">Atrair seguidores</option></select></label><label>Destino<select id="destinationType"><option value="whatsapp">WhatsApp</option><option value="site">Site</option><option value="instagram">Instagram</option></select></label></div><label>Link de destino<input id="destinationUrl" type="url" required placeholder="https://wa.me/5562999999999"></label><div class="grid"><label>Créditos Ads por dia<input id="dailyCredits" type="number" min="48" max="48000" step="0.01" value="288"></label><label>Período da campanha<select id="durationDays"><option value="7">7 dias</option><option value="15">15 dias</option><option value="30" selected>30 dias</option><option value="60">60 dias</option></select></label></div><div class="quick"><button type="button" data-daily-credits="96">96/dia</button><button type="button" data-daily-credits="288">288/dia</button><button type="button" data-daily-credits="480">480/dia</button><button type="button" data-daily-credits="960">960/dia</button></div><div class="preview"><div class="row"><span>Orçamento diário</span><strong id="dailyCreditsPreview">288 Créditos Ads</strong></div><div class="row"><span>Total para o período</span><strong id="periodCredits">8.640 Créditos Ads</strong></div><div class="row"><span>Duração</span><strong id="periodPreview">30 dias</strong></div></div><button id="reviewPayment" type="button">Continuar para pagamento</button><div id="paymentSummary" class="preview" hidden><div class="eyebrow">RESUMO DO PAGAMENTO</div><p class="small">Agora mostramos a conversão para reais e o desconto da gestão.</p><div class="row"><span>Saldo líquido solicitado</span><strong id="requestedNet">8.640 créditos</strong></div><div class="row"><span>Créditos brutos necessários</span><strong id="grossCredits">10.164,71</strong></div><div class="row"><span>Gestão VitrineCity (15%)</span><strong id="managementCredits">−1.524,71</strong></div><div class="row"><span>Valor a pagar no Mercado Pago</span><strong id="paymentValue">R$1.058,83</strong></div><label class="check"><input id="purchaseTerms" type="checkbox"><span>Aceito a conversão de 9,6 créditos por real, a taxa de gestão de 15%, a validade de 90 dias e os <a href="/termos-creditos.html" target="_blank">termos dos Créditos Ads</a>.</span></label><button id="buy" type="button">Pagar com Mercado Pago</button><p class="small">A VitrineCity não armazena os dados do seu cartão.</p></div></div>
       <section class="card wa-area">
-        <div class="wa-head"><div><div class="eyebrow">WHATSAPP + IA GESTORA</div><h2>Central de atendimento</h2><p class="small">Conecte pela autorização oficial da Meta. Mensagens recebidas são gratuitas; cada mensagem enviada utiliza 1 Crédito. A conta administrativa não é cobrada.</p></div><button id="waConnect" type="button">Conectar WhatsApp</button></div>
-        <div id="waConnection" class="small">Verificando conexão…</div>
-        <div id="waSettings" hidden><label>Informações que a IA pode usar<textarea id="waContext" style="width:100%;min-height:100px;border:1px solid #cbd8eb;border-radius:12px;padding:13px;font:inherit" placeholder="Produtos, preços confirmados, horários, formas de entrega e regras da empresa."></textarea></label><label>Limite diário de mensagens em créditos<input id="waDailyLimit" type="number" min="1" max="10000" value="100"></label><button id="waSaveSettings" type="button" class="secondary">Salvar informações</button></div>
-        <div class="wa-grid" style="margin-top:18px"><div id="waContacts" class="wa-list"><p class="small">Nenhuma conversa.</p></div><div class="wa-chat"><div id="waChatTitle"><strong>Selecione uma conversa</strong></div><div id="waMessages" class="wa-messages"></div><div class="wa-compose"><input id="waReply" maxlength="4000" placeholder="Escreva ou peça uma sugestão à IA"><button id="waSuggest" type="button" class="secondary">Sugerir</button><button id="waSend" type="button">Enviar · 1 crédito</button></div></div></div>
+        <div class="wa-head"><div><div class="eyebrow">WHATSAPP + IA GESTORA</div><h2>Atendimento manual assistido</h2><p class="small">Sem conexão com a API: o QR Code apenas abre a conversa oficial. Cole a mensagem recebida, peça uma sugestão à IA, copie e envie manualmente pelo seu WhatsApp.</p></div><span class="connected">● MODO SEGURO MANUAL</span></div>
+        <div class="wa-grid" style="margin-top:18px;grid-template-columns:minmax(250px,.75fr) minmax(320px,1.25fr)">
+          <div class="card" style="box-shadow:none">
+            <h3>1. Cadastre seu número</h3>
+            <label>WhatsApp com DDI e DDD<input id="manualWaNumber" inputmode="numeric" placeholder="5562999999999"></label>
+            <label>Mensagem inicial do QR Code<input id="manualWaGreeting" maxlength="300" value="Olá! Vim pela VitrineCity e gostaria de mais informações."></label>
+            <button id="manualWaSave" type="button">Salvar e gerar QR Code</button>
+            <div id="manualQrBox" style="margin-top:16px;text-align:center" hidden>
+              <canvas id="manualQr" width="220" height="220" style="max-width:100%;background:#fff;border:12px solid #fff;border-radius:15px"></canvas>
+              <div class="actions" style="justify-content:center;margin-top:10px"><a id="manualWaOpen" class="button" target="_blank" rel="noopener">Abrir WhatsApp</a></div>
+              <p class="small">O QR não conecta nem libera acesso às conversas.</p>
+            </div>
+          </div>
+          <div>
+            <h3>2. Peça uma resposta à IA</h3>
+            <label>Informações confirmadas da sua empresa<textarea id="manualBusinessContext" style="width:100%;min-height:100px;border:1px solid #cbd8eb;border-radius:12px;padding:13px;font:inherit" placeholder="Produtos, preços confirmados, horários, entregas e regras. Ficam salvas somente neste navegador."></textarea></label>
+            <label>Mensagem recebida do cliente<textarea id="manualCustomerMessage" style="width:100%;min-height:100px;border:1px solid #cbd8eb;border-radius:12px;padding:13px;font:inherit" placeholder="Cole aqui a mensagem que chegou no WhatsApp ou Instagram."></textarea></label>
+            <label>Tom da resposta<select id="manualTone"><option value="cordial">Cordial</option><option value="objetivo">Objetivo</option><option value="vendedor sem pressão">Vendedor sem pressão</option><option value="acolhedor">Acolhedor</option></select></label>
+            <button id="manualSuggest" type="button" class="secondary">Gerar sugestão com IA</button>
+            <label>Resposta sugerida<textarea id="manualSuggestedReply" style="width:100%;min-height:120px;border:1px solid #cbd8eb;border-radius:12px;padding:13px;font:inherit" placeholder="A resposta aparecerá aqui para sua revisão."></textarea></label>
+            <div class="actions"><button id="manualCopy" type="button">Copiar resposta</button><a id="manualSend" class="button secondary" target="_blank" rel="noopener">Abrir WhatsApp para enviar</a></div>
+            <p class="small"><strong>Você sempre revisa e envia.</strong> A IA não lê conversas, não envia mensagens e não acessa sua conta.</p>
+          </div>
+        </div>
       </section>
       <div class="auth-grid"><div class="card history"><h2>Campanhas</h2><div id="campaigns"><p class="small">Nenhuma campanha configurada.</p></div></div><div class="card history"><h2>Movimentações</h2><div id="transactions"><p class="small">Nenhuma movimentação ainda.</p></div></div></div>
     </section>
@@ -45,74 +66,59 @@
     async function json(url,options){const response=await fetch(url,options);const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||'Não foi possível concluir.');return data}
     function renderWallet(data){guest.style.display='none';wallet.style.display='block';document.querySelector('#identity').textContent=`Conta: ${data.user.name} · ${data.user.email}`;const w=data.wallet;document.querySelector('#balance').textContent=`${money(w.balanceUnits)} Créditos Ads`;document.querySelector('#equivalent').textContent='Saldo disponível para campanhas';document.querySelector('#expiry').textContent=w.nextExpirationAt?`Próximo vencimento: ${date(w.nextExpirationAt)}. Créditos válidos por 90 dias.`:'Sem créditos ativos.';const box=document.querySelector('#transactions');box.textContent='';if(!w.transactions.length){box.innerHTML='<p class="small">Nenhuma movimentação ainda.</p>'}else w.transactions.forEach(t=>{const row=document.createElement('div');row.className='transaction';const left=document.createElement('span');left.textContent=`${t.description} · ${new Date(t.created_at+'Z').toLocaleDateString('pt-BR')}`;const amount=document.createElement('span');amount.className=t.delta_units>=0?'positive':'negative';amount.textContent=`${t.delta_units>=0?'+':''}${money(t.delta_units)}`;row.append(left,amount);box.append(row)})}
     async function renderCampaigns(){try{const data=await json('/api/ads/campaigns');const box=document.querySelector('#campaigns');box.textContent='';if(!data.campaigns.length){box.innerHTML='<p class="small">Nenhuma campanha configurada.</p>';return}data.campaigns.forEach(c=>{const row=document.createElement('div');row.className='campaign';const title=document.createElement('b');title.textContent=`${c.objectiveLabel} → ${c.destinationLabel}`;const detail=document.createElement('span');detail.textContent=`${number((c.daily_budget_cents/100)*9.6)} créditos/dia · ${c.duration_days} dias · total planejado ${number((c.daily_budget_cents/100)*9.6*c.duration_days)} créditos`;const status=document.createElement('span');status.className='status';status.textContent=c.statusLabel;row.append(title,detail,status);box.append(row)})}catch{}}
-    let waContactId=null,waMetaSession=null,waStatus=null;
-    function loadFacebookSdk(appId,version){
-      return new Promise(resolve=>{
-        if(window.FB)return resolve();
-        window.fbAsyncInit=()=>{FB.init({appId,cookie:true,xfbml:false,version});resolve()};
-        const script=document.createElement('script');script.async=true;script.defer=true;script.crossOrigin='anonymous';
-        script.src='https://connect.facebook.net/pt_BR/sdk.js';document.head.appendChild(script);
-      });
+    let manualPhone='',manualChatUrl='';
+    function normalizedPhone(value){return String(value||'').replace(/\D/g,'').slice(0,15)}
+    function manualUrl(message=''){
+      if(!manualPhone)return '';
+      return 'https://wa.me/'+manualPhone+(message?'?text='+encodeURIComponent(message):'');
     }
-    window.addEventListener('message',event=>{
-      if(!/facebook\.com$/.test(new URL(event.origin).hostname))return;
-      try{const data=typeof event.data==='string'?JSON.parse(event.data):event.data;
-        if(data?.type==='WA_EMBEDDED_SIGNUP'&&data?.event==='FINISH')waMetaSession=data.data||null;
-      }catch{}
-    });
-    async function connectWhatsApp(){
-      if(!waStatus?.configured)return message('A integração da Meta ainda precisa das credenciais na VPS.',true);
-      const button=document.querySelector('#waConnect');button.disabled=true;
+    async function drawManualQr(){
+      const greeting=document.querySelector('#manualWaGreeting').value.trim();
+      manualChatUrl=manualUrl(greeting);
+      const box=document.querySelector('#manualQrBox');
+      if(!manualChatUrl){box.hidden=true;return}
+      box.hidden=false;document.querySelector('#manualWaOpen').href=manualChatUrl;
+      if(window.QRCode?.toCanvas){
+        await QRCode.toCanvas(document.querySelector('#manualQr'),manualChatUrl,{width:220,margin:1,color:{dark:'#071f4b',light:'#ffffff'}});
+      }
+      const reply=document.querySelector('#manualSuggestedReply').value.trim();
+      document.querySelector('#manualSend').href=manualUrl(reply);
+    }
+    async function loadManualAssistant(user){
+      manualPhone=normalizedPhone(user?.whatsapp||'');
+      document.querySelector('#manualWaNumber').value=manualPhone;
+      document.querySelector('#manualBusinessContext').value=localStorage.getItem('vc_manual_business_context')||'';
+      await drawManualQr().catch(()=>{});
+    }
+    document.querySelector('#manualWaSave').onclick=async()=>{
+      const whatsapp=normalizedPhone(document.querySelector('#manualWaNumber').value);
       try{
-        await loadFacebookSdk(waStatus.appId,waStatus.apiVersion);
-        FB.login(async response=>{
-          try{
-            if(!response.authResponse?.code||!waMetaSession)throw new Error('Conclua todas as etapas da autorização do WhatsApp.');
-            await json('/api/whatsapp/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-              code:response.authResponse.code,wabaId:waMetaSession.waba_id,phoneNumberId:waMetaSession.phone_number_id
-            })});message('WhatsApp conectado com segurança.');await loadWhatsApp();
-          }catch(error){message(error.message,true)}finally{button.disabled=false}
-        },{config_id:waStatus.configId,response_type:'code',override_default_response_type:true,extras:{setup:{}}});
-      }catch(error){message(error.message,true);button.disabled=false}
-    }
-    function renderWaMessages(data){
-      document.querySelector('#waChatTitle').innerHTML=`<strong>${data.contact.name||data.contact.wa_id}</strong><div class="small">${data.contact.wa_id}</div>`;
-      const box=document.querySelector('#waMessages');box.innerHTML=data.messages.map(item=>`<div class="wa-message ${item.direction}">${String(item.body).replace(/[&<>]/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[x]))}<div class="small">${item.status}</div></div>`).join('');box.scrollTop=box.scrollHeight;
-    }
-    async function openWaContact(id,button){
-      waContactId=id;document.querySelectorAll('.wa-contact').forEach(x=>x.classList.remove('active'));button?.classList.add('active');
-      renderWaMessages(await json('/api/whatsapp/conversations/'+id));
-    }
-    async function loadWhatsApp(){
+        const data=await json('/api/manual-assistant/profile',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({whatsapp})});
+        manualPhone=data.whatsapp;document.querySelector('#manualWaNumber').value=manualPhone;await drawManualQr();
+        message('Número salvo e QR Code gerado com segurança.');
+      }catch(error){message(error.message,true)}
+    };
+    document.querySelector('#manualWaGreeting').addEventListener('input',()=>drawManualQr().catch(()=>{}));
+    document.querySelector('#manualBusinessContext').addEventListener('input',event=>localStorage.setItem('vc_manual_business_context',event.target.value.slice(0,8000)));
+    document.querySelector('#manualSuggestedReply').addEventListener('input',()=>{document.querySelector('#manualSend').href=manualUrl(document.querySelector('#manualSuggestedReply').value.trim())});
+    document.querySelector('#manualSuggest').onclick=async()=>{
+      const button=document.querySelector('#manualSuggest');button.disabled=true;button.textContent='Preparando resposta…';
       try{
-        waStatus=await json('/api/whatsapp/status');
-        const account=waStatus.account,connection=document.querySelector('#waConnection');
-        document.querySelector('#waConnect').textContent=account?'Reconectar WhatsApp':'Conectar WhatsApp';
-        if(!account){connection.textContent=waStatus.configured?'Pronto para conectar sua conta oficial.':'Aguardando configuração das credenciais da Meta na VPS.';document.querySelector('#waSettings').hidden=true;return}
-        connection.innerHTML=`<span class="connected">● CONECTADO</span> · ${account.verified_name||'Empresa'} · ${account.display_phone||''}`;
-        document.querySelector('#waSettings').hidden=false;document.querySelector('#waContext').value=account.business_context||'';
-        document.querySelector('#waDailyLimit').value=Math.max(1,Number(account.daily_credit_limit||10000)/100);
-        const data=await json('/api/whatsapp/conversations'),box=document.querySelector('#waContacts');
-        box.innerHTML=data.contacts.length?'':'<p class="small">Nenhuma conversa recebida.</p>';
-        data.contacts.forEach(contact=>{const button=document.createElement('button');button.className='wa-contact';button.innerHTML=`<strong>${contact.name||contact.wa_id}</strong><span class="small">${contact.last_message||''}</span>`;button.onclick=()=>openWaContact(contact.id,button);box.append(button)});
-      }catch(error){document.querySelector('#waConnection').textContent=error.message}
-    }
-    document.querySelector('#waConnect').onclick=connectWhatsApp;
-    document.querySelector('#waSaveSettings').onclick=async()=>{
-      try{await json('/api/whatsapp/settings',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({businessContext:document.querySelector('#waContext').value,dailyLimitCredits:Number(document.querySelector('#waDailyLimit').value),autoReply:false})});message('Informações da IA salvas.')}catch(error){message(error.message,true)}
+        const data=await json('/api/manual-assistant/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+          customerMessage:document.querySelector('#manualCustomerMessage').value,
+          businessContext:document.querySelector('#manualBusinessContext').value,
+          tone:document.querySelector('#manualTone').value
+        })});
+        document.querySelector('#manualSuggestedReply').value=data.suggestion;
+        document.querySelector('#manualSend').href=manualUrl(data.suggestion);
+      }catch(error){message(error.message,true)}finally{button.disabled=false;button.textContent='Gerar sugestão com IA'}
     };
-    document.querySelector('#waSuggest').onclick=async()=>{
-      if(!waContactId)return message('Selecione uma conversa.',true);
-      const button=document.querySelector('#waSuggest');button.disabled=true;button.textContent='Pensando…';
-      try{const data=await json('/api/whatsapp/conversations/'+waContactId+'/suggest',{method:'POST'});document.querySelector('#waReply').value=data.suggestion}catch(error){message(error.message,true)}finally{button.disabled=false;button.textContent='Sugerir'}
+    document.querySelector('#manualCopy').onclick=async()=>{
+      const text=document.querySelector('#manualSuggestedReply').value.trim();
+      if(!text)return message('Gere ou escreva uma resposta primeiro.',true);
+      try{await navigator.clipboard.writeText(text);message('Resposta copiada. Agora revise e envie pelo WhatsApp.')}catch{message('Selecione e copie a resposta manualmente.',true)}
     };
-    document.querySelector('#waSend').onclick=async()=>{
-      if(!waContactId)return message('Selecione uma conversa.',true);
-      const input=document.querySelector('#waReply'),text=input.value.trim();if(!text)return;
-      const button=document.querySelector('#waSend');button.disabled=true;
-      try{await json('/api/whatsapp/conversations/'+waContactId+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text})});input.value='';await openWaContact(waContactId);await load()}catch(error){message(error.message,true)}finally{button.disabled=false}
-    };
-        async function load(){try{const data=await json('/api/auth/me');renderWallet(data);document.querySelector('#adminLink').hidden=!data.user.admin;await Promise.all([renderCampaigns(),loadWhatsApp()])}catch{guest.style.display='grid';wallet.style.display='none'}}
+        async function load(){try{const data=await json('/api/auth/me');renderWallet(data);document.querySelector('#adminLink').hidden=!data.user.admin;await Promise.all([renderCampaigns(),loadManualAssistant(data.user)])}catch{guest.style.display='grid';wallet.style.display='none'}}
     document.querySelector('#register').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{await json('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:f.get('name'),email:f.get('email'),whatsapp:f.get('whatsapp'),password:f.get('password'),adultConfirmed:f.get('adult')==='on',termsAccepted:f.get('terms')==='on'})});message('Conta criada com sucesso.');await load()}catch(err){message(err.message,true)}});
     document.querySelector('#login').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{await json('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:f.get('email'),password:f.get('password')})});message('Entrada realizada.');await load()}catch(err){message(err.message,true)}});
     document.querySelector('#logout').addEventListener('click',async()=>{await json('/api/auth/logout',{method:'POST'});location.reload()});
