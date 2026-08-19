@@ -9,7 +9,7 @@
   const favoriteFilterCount = document.getElementById('favoriteFilterCount');
   const dockFavoriteCount = document.getElementById('dockFavoriteCount');
   const favoriteStorageKey = 'vitrinecity-favorites';
-  const WORLD_WIDTH = 5000, WORLD_HEIGHT = 2250;
+  const WORLD_WIDTH = 3000, WORLD_HEIGHT = 1688;
   let favorites = new Set();
   let currentPin = null;
   let scale = .72, offsetX = 0, offsetY = 0, dragging = false, moved = false, start, initial, pinchDistance = 0;
@@ -30,7 +30,7 @@
     world.style.transform = `translate(${offsetX}px,${offsetY}px) scale(${scale})`;
   }
   function center() {
-    scale = Math.max(.22, Math.min(.62, Math.min(viewport.clientWidth / WORLD_WIDTH, viewport.clientHeight / WORLD_HEIGHT) * 1.25));
+    scale = Math.max(.38, Math.min(.72, Math.min(viewport.clientWidth / WORLD_WIDTH, viewport.clientHeight / WORLD_HEIGHT) * 1.25));
     offsetX = (viewport.clientWidth - WORLD_WIDTH * scale) / 2;
     offsetY = (viewport.clientHeight - WORLD_HEIGHT * scale) / 2;
     draw();

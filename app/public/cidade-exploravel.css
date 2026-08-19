@@ -17,11 +17,7 @@ header nav a{color:var(--blue);font-size:13px;font-weight:900;text-decoration:no
 .filters button.active{background:var(--blue);color:#fff}
 .viewport{position:fixed;inset:68px 0 0;overflow:hidden;cursor:grab;background:#0a1930}
 .viewport.drag{cursor:grabbing}
-.world{position:absolute;width:5000px;height:2250px;transform-origin:0 0;background:#071b32;will-change:transform}
-.district{position:absolute;width:2000px;height:1125px;pointer-events:none;background:center/cover no-repeat;box-shadow:inset 0 0 0 1px #ffffff08}
-.district-north{left:1500px;top:0;background-image:linear-gradient(#061b3628,#061b3628),url('/assets/vitriny-city-norte.jpg')}
-.district-center{left:1500px;top:750px;background-image:linear-gradient(#061b3628,#061b3628),url('/assets/vitriny-city-base.jpg')}
-.district-east{left:3000px;top:750px;background-image:linear-gradient(#061b3628,#061b3628),url('/assets/vitriny-city-leste.jpg')}
+.world{position:absolute;width:3000px;height:1688px;transform-origin:0 0;background:linear-gradient(#061b3622,#061b3622),url('/assets/vitriny-city-master.jpg') center/cover no-repeat;will-change:transform}
 .pin{position:absolute;z-index:2;transform:translate(-50%,-100%);border:3px solid #fff;border-radius:99px;color:#fff;padding:10px 14px;background:#1768e6f2;font-weight:950;font-size:15px;line-height:1.1;white-space:nowrap;cursor:pointer;text-shadow:0 1px 2px #001a42;box-shadow:0 8px 20px #06152db5,0 0 0 3px #061b4230;transition:transform .16s,filter .16s,opacity .2s}
 .pin:hover,.pin:focus-visible{transform:translate(-50%,-100%) scale(1.07);filter:brightness(1.08);outline:0}
 .pin:after{content:'';position:absolute;top:100%;left:50%;height:17px;border-left:3px dotted #fff;filter:drop-shadow(0 1px 1px #001a42)}
@@ -33,21 +29,21 @@ header nav a{color:var(--blue);font-size:13px;font-weight:900;text-decoration:no
 .pin.hidden{display:none}
 .pin.lot.reserved{background:#9a6a18;color:#fff5d2}
 .pin.lot.occupied{background:#26724a;color:#fff;box-shadow:0 8px 20px #06152db5,0 0 0 5px #46bd7b55}
-.country{left:2120px;top:1425px}
-.agro{left:2800px;top:1132px}
-.praca{left:2500px;top:1290px}
-.moda{left:2020px;top:1076px}
-.food{left:2860px;top:1490px}
-.services{left:3060px;top:1300px}
-.edu{left:2600px;top:1595px}
-.outdoor{left:1860px;top:1222px}
+.country{left:950px;top:1310px}
+.agro{left:1900px;top:930px}
+.praca{left:1500px;top:800px}
+.moda{left:700px;top:1040px}
+.food{left:2300px;top:1240px}
+.services{left:2430px;top:900px}
+.edu{left:1700px;top:1190px}
+.outdoor{left:500px;top:980px}
 .lot{background:#d89000}
-.lot1{left:1900px;top:1570px}
-.lot2{left:3100px;top:1065px}
-.lot3{left:3080px;top:1605px}
-.north-hub{left:2500px;top:470px;background:#4159a7}
-.boulevard{left:3800px;top:1290px;background:#b65c3d}
-.lot4{left:4140px;top:1580px}
+.lot1{left:820px;top:1430px}
+.lot2{left:2160px;top:680px}
+.lot3{left:2500px;top:1400px}
+.north-hub{left:1500px;top:350px;background:#4159a7}
+.boulevard{left:2600px;top:1050px;background:#b65c3d}
+.lot4{left:2750px;top:1320px}
 .avatar{position:absolute;z-index:5;width:48px;height:54px;border-radius:50% 50% 42% 42%;background:linear-gradient(145deg,#ffd1a3 0 35%,#4d2b1c 36% 46%,#1768e6 47%);border:3px solid #fff;box-shadow:0 5px 15px #06152d99;transform:translate(-50%,-90%);transition:left 1.05s ease,top 1.05s ease}
 .avatar:before{content:"";position:absolute;width:40px;height:14px;border-radius:50%;background:#6b3c20;left:1px;top:-8px}
 .avatar:after{content:"";position:absolute;bottom:-14px;left:12px;width:8px;height:16px;background:#1c3659;box-shadow:15px 0 #1c3659}
