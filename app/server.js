@@ -327,6 +327,20 @@ CREATE TABLE IF NOT EXISTS whatsapp_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_contact ON whatsapp_messages(contact_id,id);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_account ON whatsapp_contacts(account_id,last_message_at);`);
+db.exec(`CREATE TABLE IF NOT EXISTS social_accounts (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  page_id TEXT NOT NULL,
+  page_name TEXT,
+  instagram_id TEXT,
+  instagram_username TEXT,
+  token_encrypted TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'connected' CHECK(status IN ('connected','expired','disconnected','error')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id,page_id)
+);
+CREATE INDEX IF NOT EXISTS idx_social_accounts_user ON social_accounts(user_id,id);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -915,6 +929,78 @@ app.get('/api/auth/me', (req, res) => {
   if (!user) return res.status(401).json({ authenticated: false });
   return res.json({ authenticated: true, user: { name: user.name, email: user.email,
     whatsapp: user.whatsapp || '', admin: Boolean(user.is_admin || adminEmails.has(String(user.email).toLowerCase())) }, wallet: publicWallet(user.id) });
+});
+
+function socialApiVersion() {
+  return String(process.env.META_SOCIAL_API_VERSION || process.env.META_API_VERSION || 'v26.0').trim();
+}
+function socialEncryptionKey() {
+  const secret = String(process.env.META_SOCIAL_TOKEN_ENCRYPTION_KEY || process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY || '');
+  if (secret.length < 24) throw new Error('Configure META_SOCIAL_TOKEN_ENCRYPTION_KEY com uma chave segura.');
+  return createHash('sha256').update('social:' + secret).digest();
+}
+function encryptSocialToken(token) {
+  const iv = randomBytes(12),cipher = createCipheriv('aes-256-gcm', socialEncryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(String(token), 'utf8'), cipher.final()]);
+  return [iv.toString('base64url'),cipher.getAuthTag().toString('base64url'),encrypted.toString('base64url')].join('.');
+}
+
+app.get('/api/social/status', requireUser, (req, res) => {
+  const accounts = db.prepare(`SELECT id,page_id,page_name,instagram_id,instagram_username,status,created_at,updated_at
+    FROM social_accounts WHERE user_id=? ORDER BY id`).all(req.user.id);
+  return res.json({
+    configured: Boolean(process.env.META_SOCIAL_APP_ID && process.env.META_SOCIAL_APP_SECRET &&
+      (process.env.META_SOCIAL_TOKEN_ENCRYPTION_KEY || process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY)),
+    appId: String(process.env.META_SOCIAL_APP_ID || ''),
+    apiVersion: socialApiVersion(),
+    accounts
+  });
+});
+
+app.post('/api/social/connect', requireUser, async (req, res) => {
+  const accessToken = String(req.body?.accessToken || '').trim();
+  if (!process.env.META_SOCIAL_APP_ID || !process.env.META_SOCIAL_APP_SECRET ||
+      !(process.env.META_SOCIAL_TOKEN_ENCRYPTION_KEY || process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY)) {
+    return res.status(503).json({ error: 'A integração Facebook/Instagram ainda precisa das credenciais na VPS.' });
+  }
+  if (accessToken.length < 20 || accessToken.length > 3000) return res.status(400).json({ error: 'Autorização da Meta inválida.' });
+  try {
+    const version = socialApiVersion();
+    const exchange = new URL(`https://graph.facebook.com/${version}/oauth/access_token`);
+    exchange.searchParams.set('grant_type','fb_exchange_token');
+    exchange.searchParams.set('client_id',String(process.env.META_SOCIAL_APP_ID));
+    exchange.searchParams.set('client_secret',String(process.env.META_SOCIAL_APP_SECRET));
+    exchange.searchParams.set('fb_exchange_token',accessToken);
+    const tokenResponse = await fetch(exchange,{signal:AbortSignal.timeout(30000)});
+    const tokenData = await tokenResponse.json().catch(()=>({}));
+    if (!tokenResponse.ok || !tokenData.access_token) throw new Error(String(tokenData?.error?.message || 'Não foi possível validar o login.'));
+    const accountsUrl = new URL(`https://graph.facebook.com/${version}/me/accounts`);
+    accountsUrl.searchParams.set('fields','id,name,access_token,instagram_business_account{id,username,name,profile_picture_url}');
+    accountsUrl.searchParams.set('access_token',tokenData.access_token);
+    const accountsResponse = await fetch(accountsUrl,{signal:AbortSignal.timeout(30000)});
+    const accountsData = await accountsResponse.json().catch(()=>({}));
+    if (!accountsResponse.ok) throw new Error(String(accountsData?.error?.message || 'Não foi possível listar as páginas.'));
+    const pages = Array.isArray(accountsData.data) ? accountsData.data : [];
+    if (!pages.length) return res.status(400).json({ error: 'Nenhuma Página profissional autorizada foi encontrada.' });
+    const save = db.prepare(`INSERT INTO social_accounts
+      (user_id,page_id,page_name,instagram_id,instagram_username,token_encrypted,status,updated_at)
+      VALUES (?,?,?,?,?,?,'connected',CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id,page_id) DO UPDATE SET page_name=excluded.page_name,
+      instagram_id=excluded.instagram_id,instagram_username=excluded.instagram_username,
+      token_encrypted=excluded.token_encrypted,status='connected',updated_at=CURRENT_TIMESTAMP`);
+    const transaction = db.transaction(items => {
+      for (const page of items) save.run(req.user.id,String(page.id),String(page.name||'Página'),
+        page.instagram_business_account?.id ? String(page.instagram_business_account.id) : null,
+        page.instagram_business_account?.username ? String(page.instagram_business_account.username) : null,
+        encryptSocialToken(String(page.access_token || tokenData.access_token)));
+    });
+    transaction(pages);
+    return res.json({ ok:true, connected:pages.length,
+      instagram:pages.filter(page=>page.instagram_business_account?.id).length });
+  } catch (error) {
+    console.error('Meta social connect error',String(error?.message||error).slice(0,250));
+    return res.status(502).json({ error: String(error?.message || 'Não foi possível concluir a conexão.').slice(0,250) });
+  }
 });
 
 app.patch('/api/manual-assistant/profile', requireUser, (req, res) => {
