@@ -243,6 +243,10 @@ CREATE TABLE IF NOT EXISTS ad_campaigns (
 );
 CREATE INDEX IF NOT EXISTS idx_ad_campaigns_user ON ad_campaigns(user_id, created_at);
 `);
+ensureColumn('ad_campaigns', 'admin_notes', 'TEXT');
+ensureColumn('ad_campaigns', 'reviewed_at', 'TEXT');
+ensureColumn('ad_campaigns', 'activated_at', 'TEXT');
+ensureColumn('ad_campaigns', 'completed_at', 'TEXT');
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -837,9 +841,9 @@ app.get('/api/ads/campaigns', requireUser, (req, res) => {
   const objectiveLabels = { messages: 'Receber mensagens', visits: 'Visitas ao site',
     sales: 'Oportunidades de venda', followers: 'Atrair seguidores' };
   const destinationLabels = { whatsapp: 'WhatsApp', site: 'Site', instagram: 'Instagram' };
-  const statusLabels = { awaiting_payment: 'Aguardando pagamento', funded: 'Financiada · aguardando ativação',
-    payment_failed: 'Pagamento não concluído', reversed: 'Estornada', active: 'Em veiculação',
-    paused: 'Pausada', completed: 'Concluída' };
+  const statusLabels = { awaiting_payment: 'Aguardando pagamento', funded: 'Pendente de ativação',
+    in_review: 'Em configuração', payment_failed: 'Pagamento não concluído', reversed: 'Estornada',
+    active: 'Em veiculação', paused: 'Pausada', completed: 'Concluída' };
   const campaigns = db.prepare(`SELECT id,objective,destination_type,destination_url,daily_budget_cents,
     duration_days,gross_credits,management_credits,net_credits,status,created_at,updated_at
     FROM ad_campaigns WHERE user_id=? ORDER BY id DESC LIMIT 30`).all(req.user.id);
@@ -849,6 +853,76 @@ app.get('/api/ads/campaigns', requireUser, (req, res) => {
     destinationLabel: destinationLabels[item.destination_type] || item.destination_type,
     statusLabel: statusLabels[item.status] || item.status
   })) });
+});
+
+const AD_CAMPAIGN_STATUS_LABELS = Object.freeze({
+  awaiting_payment: 'Aguardando pagamento',
+  funded: 'Pendente de ativação',
+  in_review: 'Em configuração',
+  active: 'Em veiculação',
+  paused: 'Pausada',
+  completed: 'Concluída',
+  payment_failed: 'Pagamento não concluído',
+  reversed: 'Estornada'
+});
+const AD_CAMPAIGN_ACTIONS = Object.freeze({
+  review: Object.freeze({ from: ['funded'], to: 'in_review' }),
+  activate: Object.freeze({ from: ['funded', 'in_review', 'paused'], to: 'active' }),
+  pause: Object.freeze({ from: ['active'], to: 'paused' }),
+  complete: Object.freeze({ from: ['funded', 'in_review', 'active', 'paused'], to: 'completed' })
+});
+
+app.get('/api/admin/ad-campaigns', requireAdmin, (req, res) => {
+  const status = String(req.query.status || '').trim();
+  const allowedStatuses = new Set(Object.keys(AD_CAMPAIGN_STATUS_LABELS));
+  if (status && !allowedStatuses.has(status)) return res.status(400).json({ error: 'Filtro de status inválido.' });
+  const campaigns = db.prepare(`SELECT c.id,c.order_reference,c.objective,c.destination_type,c.destination_url,
+    c.daily_budget_cents,c.duration_days,c.gross_credits,c.management_credits,c.net_credits,c.status,
+    c.admin_notes,c.reviewed_at,c.activated_at,c.completed_at,c.created_at,c.updated_at,
+    u.name AS customer_name,u.email,u.whatsapp,o.amount_cents,o.fee_cents,o.status AS payment_status,
+    w.balance_units
+    FROM ad_campaigns c
+    JOIN users u ON u.id=c.user_id
+    JOIN credit_orders o ON o.reference=c.order_reference
+    LEFT JOIN wallets w ON w.user_id=c.user_id
+    WHERE (?='' OR c.status=?)
+    ORDER BY CASE c.status
+      WHEN 'funded' THEN 0 WHEN 'in_review' THEN 1 WHEN 'active' THEN 2
+      WHEN 'awaiting_payment' THEN 3 WHEN 'paused' THEN 4 ELSE 5 END,
+      c.id DESC LIMIT 300`).all(status, status);
+  const totals = db.prepare(`SELECT
+    COUNT(*) AS total,
+    SUM(CASE WHEN status='funded' THEN 1 ELSE 0 END) AS pending_activation,
+    SUM(CASE WHEN status='in_review' THEN 1 ELSE 0 END) AS in_review,
+    SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active,
+    SUM(CASE WHEN status='paused' THEN 1 ELSE 0 END) AS paused,
+    SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed
+    FROM ad_campaigns`).get();
+  return res.json({
+    summary: Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, Number(value || 0)])),
+    campaigns: campaigns.map(item => ({ ...item, status_label: AD_CAMPAIGN_STATUS_LABELS[item.status] || item.status }))
+  });
+});
+
+app.patch('/api/admin/ad-campaigns/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const action = String(req.body?.action || '').trim();
+  const rule = AD_CAMPAIGN_ACTIONS[action];
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Campanha inválida.' });
+  if (!rule) return res.status(400).json({ error: 'Ação administrativa inválida.' });
+  const campaign = db.prepare('SELECT id,status FROM ad_campaigns WHERE id=?').get(id);
+  if (!campaign) return res.status(404).json({ error: 'Campanha não encontrada.' });
+  if (!rule.from.includes(campaign.status)) {
+    return res.status(409).json({ error: `Não é possível executar esta ação quando a campanha está: ${AD_CAMPAIGN_STATUS_LABELS[campaign.status] || campaign.status}.` });
+  }
+  const notes = String(req.body?.notes || '').trim().slice(0, 1200);
+  db.prepare(`UPDATE ad_campaigns SET status=?,admin_notes=?,
+    reviewed_at=CASE WHEN ?='in_review' THEN CURRENT_TIMESTAMP ELSE reviewed_at END,
+    activated_at=CASE WHEN ?='active' THEN COALESCE(activated_at,CURRENT_TIMESTAMP) ELSE activated_at END,
+    completed_at=CASE WHEN ?='completed' THEN CURRENT_TIMESTAMP ELSE completed_at END,
+    updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .run(rule.to, notes, rule.to, rule.to, rule.to, id);
+  return res.json({ ok: true, id, status: rule.to, statusLabel: AD_CAMPAIGN_STATUS_LABELS[rule.to] });
 });
 
 app.post('/api/affiliates/register', requireUser, (req, res) => {
