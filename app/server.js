@@ -4,6 +4,8 @@ import nodemailer from 'nodemailer';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  createCipheriv,
+  createDecipheriv,
   createHash,
   createHmac,
   randomBytes,
@@ -285,6 +287,46 @@ CREATE TABLE IF NOT EXISTS ai_profit_allocations (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_ai_profit_allocations_user ON ai_profit_allocations(user_id,id);`);
+db.exec(`CREATE TABLE IF NOT EXISTS whatsapp_accounts (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  waba_id TEXT NOT NULL,
+  phone_number_id TEXT NOT NULL UNIQUE,
+  display_phone TEXT,
+  verified_name TEXT,
+  token_encrypted TEXT NOT NULL,
+  business_context TEXT,
+  status TEXT NOT NULL DEFAULT 'connected' CHECK(status IN ('pending','connected','disconnected','error')),
+  auto_reply INTEGER NOT NULL DEFAULT 0,
+  daily_credit_limit INTEGER NOT NULL DEFAULT 10000,
+  credits_used_today INTEGER NOT NULL DEFAULT 0,
+  usage_day TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS whatsapp_contacts (
+  id INTEGER PRIMARY KEY,
+  account_id INTEGER NOT NULL REFERENCES whatsapp_accounts(id) ON DELETE CASCADE,
+  wa_id TEXT NOT NULL,
+  name TEXT,
+  last_message_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(account_id,wa_id)
+);
+CREATE TABLE IF NOT EXISTS whatsapp_messages (
+  id INTEGER PRIMARY KEY,
+  account_id INTEGER NOT NULL REFERENCES whatsapp_accounts(id) ON DELETE CASCADE,
+  contact_id INTEGER NOT NULL REFERENCES whatsapp_contacts(id) ON DELETE CASCADE,
+  meta_message_id TEXT UNIQUE,
+  direction TEXT NOT NULL CHECK(direction IN ('inbound','outbound')),
+  body TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'received',
+  credit_units INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_contact ON whatsapp_messages(contact_id,id);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_account ON whatsapp_contacts(account_id,last_message_at);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -778,7 +820,7 @@ function publicWallet(userId) {
   };
 }
 
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '5mb', verify: (req, _res, buffer) => { req.rawBody = Buffer.from(buffer); } }));
 app.set('trust proxy', 1);
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 app.use('/vendor/three', express.static(path.join(dir, 'node_modules/three/build')));
@@ -1103,6 +1145,266 @@ async function requestOpenAI(body) {
   }
   return data;
 }
+
+const WHATSAPP_MESSAGE_CREDIT_UNITS = 100;
+const whatsappVersion = () => String(process.env.META_API_VERSION || 'v24.0').trim();
+
+function whatsappEncryptionKey() {
+  const secret = String(process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY || '');
+  if (secret.length < 24) throw new Error('Configure WHATSAPP_TOKEN_ENCRYPTION_KEY com uma chave segura.');
+  return createHash('sha256').update(secret).digest();
+}
+
+function encryptWhatsAppToken(token) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', whatsappEncryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(String(token), 'utf8'), cipher.final()]);
+  return [iv.toString('base64url'), cipher.getAuthTag().toString('base64url'), encrypted.toString('base64url')].join('.');
+}
+
+function decryptWhatsAppToken(value) {
+  const [ivText, tagText, encryptedText] = String(value || '').split('.');
+  const decipher = createDecipheriv('aes-256-gcm', whatsappEncryptionKey(), Buffer.from(ivText, 'base64url'));
+  decipher.setAuthTag(Buffer.from(tagText, 'base64url'));
+  return Buffer.concat([decipher.update(Buffer.from(encryptedText, 'base64url')), decipher.final()]).toString('utf8');
+}
+
+const consumeMessageCredits = db.transaction((userId, units, description) => {
+  expireCreditBatches(userId);
+  const wallet = db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId);
+  if (!wallet || wallet.balance_units < units) throw new Error('Saldo insuficiente para enviar a mensagem.');
+  let remaining = units;
+  const batches = db.prepare(`SELECT id,remaining_units FROM credit_batches
+    WHERE user_id=? AND status='active' AND remaining_units>0 ORDER BY expires_at,id`).all(userId);
+  for (const batch of batches) {
+    if (remaining <= 0) break;
+    const used = Math.min(remaining, batch.remaining_units);
+    const next = batch.remaining_units - used;
+    db.prepare(`UPDATE credit_batches SET remaining_units=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(next, next > 0 ? 'active' : 'used', batch.id);
+    remaining -= used;
+  }
+  if (remaining > 0) throw new Error('Créditos ativos insuficientes.');
+  const balanceAfter = wallet.balance_units - units;
+  db.prepare('UPDATE wallets SET balance_units=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(balanceAfter, userId);
+  db.prepare(`INSERT INTO wallet_ledger
+    (user_id,delta_units,balance_after_units,kind,description) VALUES (?,?,?,?,?)`)
+    .run(userId, -units, balanceAfter, 'whatsapp_message', description);
+  return balanceAfter;
+});
+
+async function metaJson(url, options = {}) {
+  const response = await fetch(url, { ...options, signal: AbortSignal.timeout(30000) });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(String(data?.error?.message || `Meta respondeu ${response.status}`).slice(0, 300));
+  return data;
+}
+
+function isAdminUser(user) {
+  return Boolean(user?.is_admin || adminEmails.has(String(user?.email || '').toLowerCase()));
+}
+
+app.get('/api/whatsapp/status', requireUser, (req, res) => {
+  const account = db.prepare(`SELECT id,waba_id,phone_number_id,display_phone,verified_name,business_context,
+    status,auto_reply,daily_credit_limit,credits_used_today,usage_day,created_at,updated_at
+    FROM whatsapp_accounts WHERE user_id=?`).get(req.user.id) || null;
+  return res.json({
+    configured: Boolean(process.env.META_APP_ID && process.env.META_APP_SECRET &&
+      process.env.META_WHATSAPP_CONFIG_ID && process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY),
+    appId: process.env.META_APP_ID || '',
+    configId: process.env.META_WHATSAPP_CONFIG_ID || '',
+    apiVersion: whatsappVersion(),
+    messageCreditUnits: WHATSAPP_MESSAGE_CREDIT_UNITS,
+    adminFreeMessages: isAdminUser(req.user),
+    account
+  });
+});
+
+app.post('/api/whatsapp/connect', requireUser, async (req, res) => {
+  const code = String(req.body?.code || '').trim();
+  const wabaId = String(req.body?.wabaId || '').replace(/\D/g, '').slice(0, 40);
+  const phoneNumberId = String(req.body?.phoneNumberId || '').replace(/\D/g, '').slice(0, 40);
+  if (!process.env.META_APP_ID || !process.env.META_APP_SECRET || !process.env.META_WHATSAPP_CONFIG_ID ||
+      !process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY) {
+    return res.status(503).json({ error: 'A integração oficial da Meta ainda precisa das credenciais na VPS.' });
+  }
+  if (!code || !wabaId || !phoneNumberId) return res.status(400).json({ error: 'A autorização da Meta está incompleta.' });
+  try {
+    const tokenUrl = new URL(`https://graph.facebook.com/${whatsappVersion()}/oauth/access_token`);
+    tokenUrl.searchParams.set('client_id', process.env.META_APP_ID);
+    tokenUrl.searchParams.set('client_secret', process.env.META_APP_SECRET);
+    tokenUrl.searchParams.set('code', code);
+    const tokenData = await metaJson(tokenUrl);
+    const accessToken = String(tokenData.access_token || '');
+    if (!accessToken) throw new Error('A Meta não forneceu o token da conta.');
+    const phone = await metaJson(`https://graph.facebook.com/${whatsappVersion()}/${phoneNumberId}?fields=display_phone_number,verified_name`,
+      { headers: { Authorization: `Bearer ${accessToken}` } });
+    db.prepare(`INSERT INTO whatsapp_accounts
+      (user_id,waba_id,phone_number_id,display_phone,verified_name,token_encrypted,status)
+      VALUES (?,?,?,?,?,?,'connected')
+      ON CONFLICT(user_id) DO UPDATE SET waba_id=excluded.waba_id,phone_number_id=excluded.phone_number_id,
+        display_phone=excluded.display_phone,verified_name=excluded.verified_name,
+        token_encrypted=excluded.token_encrypted,status='connected',updated_at=CURRENT_TIMESTAMP`)
+      .run(req.user.id, wabaId, phoneNumberId, String(phone.display_phone_number || ''),
+        String(phone.verified_name || ''), encryptWhatsAppToken(accessToken));
+    return res.json({ ok: true, displayPhone: phone.display_phone_number || '', verifiedName: phone.verified_name || '' });
+  } catch (error) {
+    console.error('WhatsApp connect error', error?.message || 'unknown');
+    return res.status(502).json({ error: 'Não foi possível concluir a conexão com a Meta: ' + String(error?.message || '').slice(0, 180) });
+  }
+});
+
+app.patch('/api/whatsapp/settings', requireUser, (req, res) => {
+  const context = String(req.body?.businessContext || '').trim().slice(0, 8000);
+  const autoReply = req.body?.autoReply === true ? 1 : 0;
+  const dailyLimitCredits = Math.max(1, Math.min(10000, Math.round(Number(req.body?.dailyLimitCredits || 100))));
+  const result = db.prepare(`UPDATE whatsapp_accounts SET business_context=?,auto_reply=?,
+    daily_credit_limit=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?`)
+    .run(context, autoReply, dailyLimitCredits * 100, req.user.id);
+  if (!result.changes) return res.status(404).json({ error: 'Conecte seu WhatsApp primeiro.' });
+  return res.json({ ok: true });
+});
+
+app.get('/api/whatsapp/conversations', requireUser, (req, res) => {
+  const account = db.prepare('SELECT id FROM whatsapp_accounts WHERE user_id=?').get(req.user.id);
+  if (!account) return res.json({ contacts: [] });
+  const contacts = db.prepare(`SELECT c.id,c.wa_id,c.name,c.last_message_at,
+    (SELECT body FROM whatsapp_messages m WHERE m.contact_id=c.id ORDER BY m.id DESC LIMIT 1) last_message,
+    (SELECT direction FROM whatsapp_messages m WHERE m.contact_id=c.id ORDER BY m.id DESC LIMIT 1) last_direction
+    FROM whatsapp_contacts c WHERE c.account_id=? ORDER BY c.last_message_at DESC LIMIT 100`).all(account.id);
+  return res.json({ contacts });
+});
+
+app.get('/api/whatsapp/conversations/:contactId', requireUser, (req, res) => {
+  const contact = db.prepare(`SELECT c.id,c.wa_id,c.name FROM whatsapp_contacts c
+    JOIN whatsapp_accounts a ON a.id=c.account_id WHERE c.id=? AND a.user_id=?`)
+    .get(Number(req.params.contactId), req.user.id);
+  if (!contact) return res.status(404).json({ error: 'Conversa não encontrada.' });
+  const messages = db.prepare(`SELECT id,direction,body,status,credit_units,created_at
+    FROM whatsapp_messages WHERE contact_id=? ORDER BY id DESC LIMIT 100`).all(contact.id).reverse();
+  return res.json({ contact, messages });
+});
+
+app.post('/api/whatsapp/conversations/:contactId/suggest', requireUser, async (req, res) => {
+  if (!process.env.OPENAI_API_KEY) return res.status(503).json({ error: 'A IA de atendimento ainda não está configurada.' });
+  if (!allowAttempt(aiAttempts, `whatsapp-suggest:${req.user.id}`, 30, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Limite temporário de sugestões atingido.' });
+  }
+  const account = db.prepare(`SELECT a.* FROM whatsapp_accounts a
+    JOIN whatsapp_contacts c ON c.account_id=a.id WHERE a.user_id=? AND c.id=?`)
+    .get(req.user.id, Number(req.params.contactId));
+  if (!account) return res.status(404).json({ error: 'Conversa não encontrada.' });
+  const messages = db.prepare(`SELECT direction,body FROM whatsapp_messages
+    WHERE contact_id=? ORDER BY id DESC LIMIT 20`).all(Number(req.params.contactId)).reverse();
+  if (!messages.length) return res.status(400).json({ error: 'Ainda não existem mensagens nessa conversa.' });
+  try {
+    const data = await requestOpenAI({
+      model: OPENAI_MODEL,
+      instructions: `Você é a assistente comercial da empresa dentro da VitrineCity.
+Escreva apenas uma sugestão curta de resposta em português do Brasil.
+Use somente informações confirmadas no contexto da empresa e na conversa.
+Nunca invente preço, estoque, prazo, desconto, garantia ou característica de produto.
+Quando faltar informação, faça uma pergunta objetiva ou ofereça atendimento humano.
+Não peça dados sensíveis. Não diga que a mensagem já foi enviada.
+Contexto cadastrado pela empresa:
+${String(account.business_context || 'Nenhum contexto cadastrado.').slice(0, 8000)}`,
+      input: messages.map(item => ({ role: item.direction === 'inbound' ? 'user' : 'assistant', content: item.body })),
+      max_output_tokens: 300,
+      store: false
+    });
+    const suggestion = responseOutputText(data);
+    if (!suggestion) throw new Error('Resposta vazia.');
+    return res.json({ suggestion });
+  } catch (error) {
+    console.error('WhatsApp AI suggestion error', error?.message || 'unknown');
+    return res.status(502).json({ error: 'A IA não conseguiu preparar a resposta agora.' });
+  }
+});
+
+app.post('/api/whatsapp/conversations/:contactId/send', requireUser, async (req, res) => {
+  const body = String(req.body?.message || '').trim().slice(0, 4000);
+  if (!body) return res.status(400).json({ error: 'Escreva uma mensagem.' });
+  const account = db.prepare(`SELECT a.*,c.wa_id,c.id contact_id FROM whatsapp_accounts a
+    JOIN whatsapp_contacts c ON c.account_id=a.id WHERE a.user_id=? AND c.id=?`)
+    .get(req.user.id, Number(req.params.contactId));
+  if (!account || account.status !== 'connected') return res.status(404).json({ error: 'WhatsApp conectado não encontrado.' });
+  const today = new Date().toISOString().slice(0, 10);
+  const usedToday = account.usage_day === today ? Number(account.credits_used_today || 0) : 0;
+  const chargeUnits = isAdminUser(req.user) ? 0 : WHATSAPP_MESSAGE_CREDIT_UNITS;
+  if (usedToday + chargeUnits > Number(account.daily_credit_limit || 0)) {
+    return res.status(409).json({ error: 'O limite diário de créditos para mensagens foi atingido.' });
+  }
+  if (chargeUnits && (db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(req.user.id)?.balance_units || 0) < chargeUnits) {
+    return res.status(402).json({ error: 'Saldo insuficiente. Cada mensagem enviada utiliza 1 Crédito.' });
+  }
+  try {
+    const token = decryptWhatsAppToken(account.token_encrypted);
+    const data = await metaJson(`https://graph.facebook.com/${whatsappVersion()}/${account.phone_number_id}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual',
+        to: account.wa_id, type: 'text', text: { preview_url: false, body } })
+    });
+    const messageId = String(data?.messages?.[0]?.id || '');
+    if (!messageId) throw new Error('A Meta não confirmou o envio.');
+    if (chargeUnits) consumeMessageCredits(req.user.id, chargeUnits, 'Mensagem enviada pelo WhatsApp VitrineCity');
+    db.prepare(`INSERT INTO whatsapp_messages
+      (account_id,contact_id,meta_message_id,direction,body,status,credit_units)
+      VALUES (?,?,?,'outbound',?,'sent',?)`).run(account.id, account.contact_id, messageId, body, chargeUnits);
+    db.prepare(`UPDATE whatsapp_accounts SET credits_used_today=?,usage_day=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(usedToday + chargeUnits, today, account.id);
+    db.prepare('UPDATE whatsapp_contacts SET last_message_at=CURRENT_TIMESTAMP WHERE id=?').run(account.contact_id);
+    return res.status(201).json({ ok: true, messageId, chargedCredits: chargeUnits / 100 });
+  } catch (error) {
+    console.error('WhatsApp send error', error?.message || 'unknown');
+    return res.status(502).json({ error: 'Mensagem não enviada: ' + String(error?.message || '').slice(0, 180) });
+  }
+});
+
+app.get('/api/webhooks/whatsapp', (req, res) => {
+  if (String(req.query['hub.mode'] || '') === 'subscribe' &&
+      String(req.query['hub.verify_token'] || '') === String(process.env.WHATSAPP_VERIFY_TOKEN || '')) {
+    return res.status(200).send(String(req.query['hub.challenge'] || ''));
+  }
+  return res.sendStatus(403);
+});
+
+app.post('/api/webhooks/whatsapp', (req, res) => {
+  const signature = String(req.get('x-hub-signature-256') || '');
+  const secret = String(process.env.META_APP_SECRET || '');
+  const expected = secret && req.rawBody ? 'sha256=' + createHmac('sha256', secret).update(req.rawBody).digest('hex') : '';
+  if (!expected || signature.length !== expected.length ||
+      !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return res.sendStatus(401);
+  try {
+    for (const entry of req.body?.entry || []) for (const change of entry.changes || []) {
+      const value = change.value || {};
+      const account = db.prepare('SELECT id FROM whatsapp_accounts WHERE phone_number_id=?')
+        .get(String(value.metadata?.phone_number_id || ''));
+      if (!account) continue;
+      for (const item of value.messages || []) {
+        const waId = String(item.from || '').slice(0, 40);
+        if (!waId || item.type !== 'text') continue;
+        const profile = (value.contacts || []).find(contact => String(contact.wa_id) === waId);
+        db.prepare(`INSERT INTO whatsapp_contacts (account_id,wa_id,name,last_message_at)
+          VALUES (?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(account_id,wa_id)
+          DO UPDATE SET name=COALESCE(NULLIF(excluded.name,''),name),last_message_at=CURRENT_TIMESTAMP`)
+          .run(account.id, waId, String(profile?.profile?.name || '').slice(0, 160));
+        const contact = db.prepare('SELECT id FROM whatsapp_contacts WHERE account_id=? AND wa_id=?').get(account.id, waId);
+        db.prepare(`INSERT OR IGNORE INTO whatsapp_messages
+          (account_id,contact_id,meta_message_id,direction,body,status)
+          VALUES (?,?,?,'inbound',?,'received')`).run(account.id, contact.id, String(item.id || ''),
+            String(item.text?.body || '').slice(0, 4000));
+      }
+      for (const status of value.statuses || []) {
+        db.prepare(`UPDATE whatsapp_messages SET status=?,updated_at=CURRENT_TIMESTAMP WHERE meta_message_id=?`)
+          .run(String(status.status || '').slice(0, 40), String(status.id || ''));
+      }
+    }
+  } catch (error) {
+    console.error('WhatsApp webhook processing error', error?.message || 'unknown');
+  }
+  return res.sendStatus(200);
+});
 
 app.get('/api/admin/ai', requireAdmin, (req, res) => {
   const messages = db.prepare(`SELECT id,role,content,model,created_at FROM admin_ai_messages
