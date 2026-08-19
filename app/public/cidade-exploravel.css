@@ -17,7 +17,7 @@ header nav a{color:var(--blue);font-size:13px;font-weight:900;text-decoration:no
 .filters button.active{background:var(--blue);color:#fff}
 .viewport{position:fixed;inset:68px 0 0;overflow:hidden;cursor:grab;background:#0a1930}
 .viewport.drag{cursor:grabbing}
-.world{position:absolute;width:2000px;height:1125px;transform-origin:0 0;background:linear-gradient(#061b3622,#061b3622),url('/assets/mapa-mestre.jpg') center/100% 100% no-repeat;will-change:transform}
+.world{position:absolute;width:2000px;height:1125px;transform-origin:0 0;background:linear-gradient(#061b3640,#061b3640),url('/assets/vitriny-city-base.jpg') center/cover no-repeat;will-change:transform}
 .pin{position:absolute;z-index:2;transform:translate(-50%,-100%);border:3px solid #fff;border-radius:99px;color:#fff;padding:10px 14px;background:#1768e6f2;font-weight:950;font-size:15px;line-height:1.1;white-space:nowrap;cursor:pointer;text-shadow:0 1px 2px #001a42;box-shadow:0 8px 20px #06152db5,0 0 0 3px #061b4230;transition:transform .16s,filter .16s,opacity .2s}
 .pin:hover,.pin:focus-visible{transform:translate(-50%,-100%) scale(1.07);filter:brightness(1.08);outline:0}
 .pin:after{content:'';position:absolute;top:100%;left:50%;height:17px;border-left:3px dotted #fff;filter:drop-shadow(0 1px 1px #001a42)}
