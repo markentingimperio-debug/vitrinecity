@@ -4,8 +4,20 @@
 </style></head><body><header class="top"><div class="brand">▰ VitrineCity <small>GESTÃO PRIVADA</small></div><div><a href="#ia-gestora">IA Gestora</a> · <a href="#operacao-ads">Operação Ads</a> · <a href="/admin-lojas.html">Aprovar lojas</a> · <a href="/">Ver cidade →</a></div></header><main class="wrap">
 <section class="hero"><div><h1>Painel de crescimento</h1><p>Vendas confirmadas, leads e desempenho das campanhas em um só lugar.</p></div><div class="filters"><input id="from" type="date"><input id="to" type="date"><button id="apply">Atualizar</button><button class="secondary" id="sync">Sincronizar Ads</button></div></section><div id="error" class="error"></div>
 <section id="ia-gestora" class="ai-shell">
-  <article class="card ai-info"><span id="aiStatus" class="ai-status">VERIFICANDO API</span><h2 style="font-size:27px;margin-top:17px">IA Gestora VitrineCity</h2><p>Converse com a inteligência administrativa da plataforma. Ela consulta indicadores internos e analisa as páginas públicas, textos, links, navegação, SEO e conversão diretamente de dentro do site.</p><p><strong>Modo seguro:</strong> esta primeira versão consulta e recomenda. Nenhuma campanha, saldo ou cadastro será alterado sem uma confirmação futura.</p><div class="ai-prompts"><button class="ai-prompt" data-prompt="Faça um resumo executivo da VitrineCity agora e indique as três prioridades.">Resumo executivo</button><button class="ai-prompt" data-prompt="Analise a operação de Créditos Ads e diga o que precisa de atenção.">Analisar Ads</button><button class="ai-prompt" data-prompt="Audite a página inicial e as principais páginas públicas da VitrineCity. Aponte problemas de navegação, clareza, SEO e conversão, cite as páginas consultadas e priorize as melhorias.">Auditar site</button><button class="ai-prompt" data-prompt="Avalie os números atuais e sugira ações para aumentar a receita.">Aumentar receita</button></div></article>
+  <article class="card ai-info"><span id="aiStatus" class="ai-status">VERIFICANDO API</span><h2 style="font-size:27px;margin-top:17px">IA Gestora VitrineCity</h2><p>Converse com a inteligência administrativa da plataforma. Ela consulta indicadores internos e analisa as páginas públicas, textos, links, navegação, SEO e conversão diretamente de dentro do site.</p><p><strong>Modo seguro:</strong> esta primeira versão consulta e recomenda. Nenhuma campanha, saldo ou cadastro será alterado sem uma confirmação futura.</p><div class="ai-prompts"><button class="ai-prompt" data-prompt="Faça um resumo executivo da VitrineCity agora e indique as três prioridades.">Resumo executivo</button><button class="ai-prompt" data-prompt="Analise a operação de Créditos Ads e diga o que precisa de atenção.">Analisar Ads</button><button class="ai-prompt" data-prompt="Audite a página inicial e as principais páginas públicas da VitrineCity. Registre no painel até cinco propostas concretas de maior impacto em navegação, clareza, SEO e conversão e cite as páginas consultadas.">Auditar site</button><button class="ai-prompt" data-prompt="Avalie os números atuais e sugira ações para aumentar a receita.">Aumentar receita</button></div></article>
   <article class="card ai-chat"><div id="aiMessages" class="ai-messages"><div class="ai-empty">Carregando a memória da IA Gestora…</div></div><form id="aiForm" class="ai-compose"><textarea id="aiInput" maxlength="6000" placeholder="Exemplo: quais são as prioridades da VitrineCity hoje?" required></textarea><div class="ai-compose-actions"><span id="aiHint" class="ai-warning">Leitura interna do site ativa. Apenas administradores têm acesso.</span><button id="aiSend" type="submit">Enviar para a IA</button></div></form></article>
+</section>
+<section class="card" id="ai-control" style="margin-top:16px">
+  <div class="hero" style="margin-bottom:15px"><div><h2 style="font-size:24px">Motor de otimização</h2><p>A IA registra melhorias; você aprova antes de qualquer implantação. Reserva automática contábil: 5% do lucro líquido confirmado.</p></div><span class="status ok">MODO SUPERVISIONADO</span></div>
+  <div class="grid kpis" id="aiFinance"></div>
+  <form id="profitForm" class="filters" style="margin:18px 0;align-items:end">
+    <label><small>Período</small><br><input id="profitPeriod" placeholder="Ex.: agosto de 2026" required></label>
+    <label><small>Lucro líquido confirmado</small><br><input id="profitValue" type="number" min="1" step="0.01" placeholder="R$ 0,00" required></label>
+    <label><small>Origem</small><br><input id="profitSource" value="VitrineCity"></label>
+    <button type="submit">Reservar 5% para IA</button>
+  </form>
+  <h2>Propostas da IA</h2>
+  <div class="table-scroll"><table><thead><tr><th>Melhoria</th><th>Página</th><th>Risco</th><th>Impacto esperado</th><th>Status</th><th>Ação</th></tr></thead><tbody id="aiProposals"></tbody></table></div>
 </section>
 <section class="grid kpis" id="kpis"></section>
 <section id="operacao-ads" class="card" style="margin-top:16px">
@@ -37,10 +49,36 @@ async function loadAi(){
   status.className='ai-status'+(data.configured?' ready':'');
   $('#aiInput').disabled=!data.configured;
   $('#aiSend').disabled=!data.configured;
-  $('#aiHint').textContent=data.configured?'Memória privada ativa · modo somente leitura':'Configure OPENAI_API_KEY na VPS para ativar a conversa.';
+  $('#aiHint').textContent=data.configured?'Memória privada ativa · propostas supervisionadas':'Configure OPENAI_API_KEY na VPS para ativar a conversa.';
   renderAiMessages(data.messages||[]);
 }
 
+async function loadAiControl(){
+  const data=await api('/api/admin/ai/control');
+  const f=data.finance;
+  $('#aiFinance').innerHTML=[
+    ['Lucro confirmado',money(f.confirmedNetProfitCents),'Base informada'],
+    ['Reserva da IA',money(f.reservedCents),'5% do lucro líquido'],
+    ['Disponível',money(f.availableCents),'Sem cobrança automática'],
+    ['Propostas pendentes',num(data.proposals.filter(x=>x.status==='pending').length),'Aguardando decisão']
+  ].map(x=>`<article class="card kpi"><span>${x[0]}</span><strong>${x[1]}</strong><em>${x[2]}</em></article>`).join('');
+  rows('#aiProposals',data.proposals,p=>`<tr data-id="${p.id}"><td><strong>${esc(p.title)}</strong><br><small>${esc(p.current_issue)}</small></td><td>${esc(p.page_path)}<br><small>${esc(p.category)}</small></td><td><span class="status ${p.risk==='low'?'ok':'off'}">${esc(p.risk)}</span></td><td>${esc(p.expected_impact)}<br><small>${esc(p.proposed_change)}</small></td><td><strong>${esc(p.status)}</strong></td><td>${p.status==='pending'?'<button data-proposal="approve">Aprovar</button> <button class="secondary" data-proposal="reject">Rejeitar</button>':'—'}</td></tr>`,6);
+  $('#aiProposals').querySelectorAll('[data-proposal]').forEach(button=>button.onclick=async()=>{
+    button.disabled=true;
+    try{await api('/api/admin/ai/proposals/'+button.closest('tr').dataset.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:button.dataset.proposal})});await loadAiControl()}catch(e){$('#error').textContent=e.message;$('#error').style.display='block';button.disabled=false}
+  });
+}
+$('#profitForm').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const button=e.submitter;button.disabled=true;
+  try{
+    await api('/api/admin/ai/profit-reserve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      periodLabel:$('#profitPeriod').value,source:$('#profitSource').value,
+      netProfitCents:Math.round(Number($('#profitValue').value)*100)
+    })});
+    $('#profitValue').value='';await loadAiControl();
+  }catch(error){$('#error').textContent=error.message;$('#error').style.display='block'}finally{button.disabled=false}
+});
 function campaignActions(c){
   if(c.status==='funded')return `<button data-action="review">Configurar</button><button class="activate" data-action="activate">Ativar</button>`;
   if(c.status==='in_review')return `<button class="activate" data-action="activate">Ativar</button><button class="finish" data-action="complete">Concluir</button>`;
@@ -80,8 +118,8 @@ $('#aiForm').addEventListener('submit',async e=>{
   if(box.querySelector('.ai-empty'))box.innerHTML='';
   box.insertAdjacentHTML('beforeend',`<div class="ai-message user">${esc(message)}<small>Você · agora</small></div><div id="aiThinking" class="ai-message assistant">Analisando a operação…</div>`);
   box.scrollTop=box.scrollHeight;input.value='';
-  try{const data=await api('/api/admin/ai/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});$('#aiThinking')?.remove();box.insertAdjacentHTML('beforeend',`<div class="ai-message assistant">${esc(data.message.content)}<small>IA Gestora · agora</small></div>`);box.scrollTop=box.scrollHeight}catch(e){$('#aiThinking')?.remove();input.value=message;$('#error').textContent=e.message;$('#error').style.display='block'}finally{button.disabled=!aiConfigured;button.textContent='Enviar para a IA'}
+  try{const data=await api('/api/admin/ai/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});$('#aiThinking')?.remove();box.insertAdjacentHTML('beforeend',`<div class="ai-message assistant">${esc(data.message.content)}<small>IA Gestora · agora</small></div>`);box.scrollTop=box.scrollHeight;await loadAiControl()}catch(e){$('#aiThinking')?.remove();input.value=message;$('#error').textContent=e.message;$('#error').style.display='block'}finally{button.disabled=!aiConfigured;button.textContent='Enviar para a IA'}
 });
 document.querySelectorAll('[data-prompt]').forEach(button=>button.onclick=()=>{$('#aiInput').value=button.dataset.prompt;$('#aiInput').focus()});
-$('#apply').onclick=load;$('#campaignStatus').onchange=loadManagedCampaigns;$('#refreshCampaigns').onclick=loadManagedCampaigns;$('#sync').onclick=async()=>{const b=$('#sync');b.disabled=true;b.textContent='Sincronizando…';try{await api('/api/admin/ads/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:$('#from').value,to:$('#to').value})});await load()}catch(e){$('#error').textContent=e.message;$('#error').style.display='block'}finally{b.disabled=false;b.textContent='Sincronizar Ads'}};Promise.all([load(),loadManagedCampaigns(),loadAi()]).catch(e=>{$('#error').textContent=e.message;$('#error').style.display='block'});
+$('#apply').onclick=load;$('#campaignStatus').onchange=loadManagedCampaigns;$('#refreshCampaigns').onclick=loadManagedCampaigns;$('#sync').onclick=async()=>{const b=$('#sync');b.disabled=true;b.textContent='Sincronizando…';try{await api('/api/admin/ads/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:$('#from').value,to:$('#to').value})});await load()}catch(e){$('#error').textContent=e.message;$('#error').style.display='block'}finally{b.disabled=false;b.textContent='Sincronizar Ads'}};Promise.all([load(),loadManagedCampaigns(),loadAi(),loadAiControl()]).catch(e=>{$('#error').textContent=e.message;$('#error').style.display='block'});
 </script></body></html>
