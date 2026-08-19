@@ -54,6 +54,12 @@
           </div>
         </div>
       </section>
+      <section class="card" id="socialConnectArea">
+        <div class="wa-head"><div><div class="eyebrow">FACEBOOK + INSTAGRAM</div><h2>Conectar contas profissionais</h2><p class="small">Entre com o Facebook, autorize sua Página e o Instagram profissional vinculado. Cada cliente conecta somente as próprias contas.</p></div><button id="socialConnect" type="button">Entrar com Facebook</button></div>
+        <div id="socialStatus" class="small">Verificando configuração…</div>
+        <div id="socialAccounts" class="grid" style="margin-top:14px"></div>
+        <p class="small"><strong>Mensagens e respostas pela IA:</strong> o painel fica preparado, mas a Meta precisa liberar as permissões de mensagens e o aplicativo precisa estar publicado.</p>
+      </section>
       <div class="auth-grid"><div class="card history"><h2>Campanhas</h2><div id="campaigns"><p class="small">Nenhuma campanha configurada.</p></div></div><div class="card history"><h2>Movimentações</h2><div id="transactions"><p class="small">Nenhuma movimentação ainda.</p></div></div></div>
     </section>
   </main>
@@ -118,7 +124,38 @@
       if(!text)return message('Gere ou escreva uma resposta primeiro.',true);
       try{await navigator.clipboard.writeText(text);message('Resposta copiada. Agora revise e envie pelo WhatsApp.')}catch{message('Selecione e copie a resposta manualmente.',true)}
     };
-        async function load(){try{const data=await json('/api/auth/me');renderWallet(data);document.querySelector('#adminLink').hidden=!data.user.admin;await Promise.all([renderCampaigns(),loadManualAssistant(data.user)])}catch{guest.style.display='grid';wallet.style.display='none'}}
+    let socialStatusData=null;
+    function loadMetaSocialSdk(appId,version){
+      return new Promise(resolve=>{
+        if(window.FB)return resolve();
+        window.fbAsyncInit=()=>{FB.init({appId,cookie:true,xfbml:false,version});resolve()};
+        const script=document.createElement('script');script.async=true;script.defer=true;script.crossOrigin='anonymous';
+        script.src='https://connect.facebook.net/pt_BR/sdk.js';document.head.appendChild(script);
+      });
+    }
+    async function loadSocialAccounts(){
+      try{
+        socialStatusData=await json('/api/social/status');
+        const box=document.querySelector('#socialAccounts'),status=document.querySelector('#socialStatus');
+        document.querySelector('#socialConnect').disabled=!socialStatusData.configured;
+        status.textContent=socialStatusData.configured?'Integração pronta para autorização.':'Aguardando credenciais do aplicativo Facebook/Instagram na VPS.';
+        box.innerHTML=(socialStatusData.accounts||[]).map(account=>`<div class="card" style="box-shadow:none"><strong>${account.page_name||'Página do Facebook'}</strong><div class="small">Facebook: ${account.page_id}</div><div class="small">${account.instagram_username?'Instagram: @'+account.instagram_username:'Instagram profissional não vinculado'}</div><span class="connected">● ${account.status.toUpperCase()}</span></div>`).join('');
+      }catch(error){document.querySelector('#socialStatus').textContent=error.message}
+    }
+    document.querySelector('#socialConnect').onclick=async()=>{
+      const button=document.querySelector('#socialConnect');button.disabled=true;
+      try{
+        await loadMetaSocialSdk(socialStatusData.appId,socialStatusData.apiVersion);
+        FB.login(async response=>{
+          try{
+            const token=response.authResponse?.accessToken;if(!token)throw new Error('Login ou autorização não concluídos.');
+            const result=await json('/api/social/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accessToken:token})});
+            message(`Conectadas ${result.connected} Página(s) e ${result.instagram} conta(s) do Instagram.`);await loadSocialAccounts();
+          }catch(error){message(error.message,true)}finally{button.disabled=false}
+        },{scope:'pages_show_list,pages_read_engagement,pages_manage_metadata,pages_messaging,instagram_basic,instagram_manage_messages',return_scopes:true});
+      }catch(error){message(error.message,true);button.disabled=false}
+    };
+        async function load(){try{const data=await json('/api/auth/me');renderWallet(data);document.querySelector('#adminLink').hidden=!data.user.admin;await Promise.all([renderCampaigns(),loadManualAssistant(data.user),loadSocialAccounts()])}catch{guest.style.display='grid';wallet.style.display='none'}}
     document.querySelector('#register').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{await json('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:f.get('name'),email:f.get('email'),whatsapp:f.get('whatsapp'),password:f.get('password'),adultConfirmed:f.get('adult')==='on',termsAccepted:f.get('terms')==='on'})});message('Conta criada com sucesso.');await load()}catch(err){message(err.message,true)}});
     document.querySelector('#login').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{await json('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:f.get('email'),password:f.get('password')})});message('Entrada realizada.');await load()}catch(err){message(err.message,true)}});
     document.querySelector('#logout').addEventListener('click',async()=>{await json('/api/auth/logout',{method:'POST'});location.reload()});
