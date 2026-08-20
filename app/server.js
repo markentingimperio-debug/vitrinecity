@@ -249,6 +249,28 @@ ensureColumn('ad_campaigns', 'admin_notes', 'TEXT');
 ensureColumn('ad_campaigns', 'reviewed_at', 'TEXT');
 ensureColumn('ad_campaigns', 'activated_at', 'TEXT');
 ensureColumn('ad_campaigns', 'completed_at', 'TEXT');
+ensureColumn('ad_campaigns', 'creative_title', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('ad_campaigns', 'creative_text', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('ad_campaigns', 'image_url', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('ad_campaigns', 'keywords', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('ad_campaigns', 'category', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('ad_campaigns', 'target_city', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('ad_campaigns', 'placement', "TEXT NOT NULL DEFAULT 'search'");
+db.exec(`CREATE TABLE IF NOT EXISTS ad_delivery_events (
+  id INTEGER PRIMARY KEY,
+  campaign_id INTEGER NOT NULL REFERENCES ad_campaigns(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL CHECK(event_type IN ('impression','click')),
+  event_token TEXT NOT NULL,
+  visitor_key TEXT NOT NULL,
+  query_text TEXT,
+  cost_units INTEGER NOT NULL DEFAULT 0,
+  event_day TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(event_token,event_type),
+  UNIQUE(campaign_id,visitor_key,event_type,event_day)
+);
+CREATE INDEX IF NOT EXISTS idx_ad_delivery_campaign ON ad_delivery_events(campaign_id,event_type,event_day);
+CREATE INDEX IF NOT EXISTS idx_ad_delivery_token ON ad_delivery_events(event_token);`);
 db.exec(`CREATE TABLE IF NOT EXISTS admin_ai_messages (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -439,6 +461,7 @@ const ADS_CREDITS_PER_REAL = 9.6;
 const ADS_MANAGEMENT_RATE = 0.15;
 const ADS_MIN_TOPUP_CENTS = 3000;
 const ADS_MAX_TOPUP_CENTS = 500000;
+const ADS_INTERNAL_CLICK_COST_UNITS = 480;
 const COURSE_PRICE_CENTS = 2399;
 const VIDEO_PACKAGE = Object.freeze({ slug: '10-videos-loja', amountCents: 20000, quantity: 10 });
 const REFERRAL_RATE_BPS = 600;
@@ -1056,6 +1079,88 @@ app.get('/api/search', (req, res) => {
   return res.json({ query, stores, products });
 });
 
+function adVisitorKey(req) {
+  const day = new Date().toISOString().slice(0, 10);
+  return createHash('sha256').update(`${day}|${req.ip}|${String(req.get('user-agent') || '').slice(0, 240)}`).digest('hex').slice(0, 32);
+}
+
+function normalizedAdTerms(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .split(/[^a-z0-9]+/).filter(term => term.length > 1).slice(0, 20);
+}
+
+function adCampaignScore(campaign, query) {
+  const queryTerms = new Set(normalizedAdTerms(query));
+  const targetTerms = normalizedAdTerms(`${campaign.keywords} ${campaign.category} ${campaign.creative_title} ${campaign.creative_text}`);
+  const matches = targetTerms.reduce((total, term) => total + (queryTerms.has(term) ? 1 : 0), 0);
+  const impressions = Number(campaign.impressions || 0);
+  const clicks = Number(campaign.clicks || 0);
+  const ctrBoost = impressions >= 10 ? Math.min(3, (clicks / impressions) * 20) : 1;
+  return matches * 10 + ctrBoost + Math.random();
+}
+
+app.get('/api/ads/serve', (req, res) => {
+  const query = String(req.query.q || '').trim().slice(0, 80);
+  const city = String(req.query.city || '').trim().slice(0, 80).toLowerCase();
+  if (query.length < 2) return res.json({ ads: [] });
+  const today = new Date().toISOString().slice(0, 10);
+  const visitorKey = adVisitorKey(req);
+  const candidates = db.prepare(`SELECT c.*,
+      SUM(CASE WHEN e.event_type='impression' THEN 1 ELSE 0 END) AS impressions,
+      SUM(CASE WHEN e.event_type='click' THEN 1 ELSE 0 END) AS clicks,
+      SUM(CASE WHEN e.event_type='click' THEN e.cost_units ELSE 0 END) AS spent_units,
+      SUM(CASE WHEN e.event_type='click' AND e.event_day=? THEN e.cost_units ELSE 0 END) AS spent_today,
+      w.balance_units
+    FROM ad_campaigns c LEFT JOIN ad_delivery_events e ON e.campaign_id=c.id
+    LEFT JOIN wallets w ON w.user_id=c.user_id
+    WHERE c.status='active' AND c.placement IN ('search','all')
+      AND (c.target_city='' OR ?='' OR LOWER(c.target_city)=?)
+    GROUP BY c.id HAVING COALESCE(spent_units,0)<c.net_credits
+      AND COALESCE(spent_today,0)<ROUND(c.daily_budget_cents*?)
+      AND COALESCE(w.balance_units,0)>=?
+    LIMIT 80`).all(today, city, city, ADS_CREDITS_PER_REAL, ADS_INTERNAL_CLICK_COST_UNITS)
+    .filter(campaign => {
+      const targets = normalizedAdTerms(`${campaign.keywords} ${campaign.category} ${campaign.creative_title} ${campaign.creative_text}`);
+      const queryTerms = normalizedAdTerms(query);
+      return queryTerms.some(term => targets.some(target => target.includes(term) || term.includes(target)));
+    })
+    .sort((a, b) => adCampaignScore(b, query) - adCampaignScore(a, query)).slice(0, 3);
+  const record = db.prepare(`INSERT OR IGNORE INTO ad_delivery_events
+    (campaign_id,event_type,event_token,visitor_key,query_text,cost_units,event_day)
+    VALUES (?,'impression',?,?,?,0,?)`);
+  const ads = [];
+  for (const campaign of candidates) {
+    const token = randomBytes(18).toString('base64url');
+    const inserted = record.run(campaign.id, token, visitorKey, query, today);
+    if (!inserted.changes) continue;
+    ads.push({ id: campaign.id, title: campaign.creative_title || 'Oferta em destaque',
+      text: campaign.creative_text || 'Conheça esta empresa na VitrineCity.', imageUrl: campaign.image_url || '',
+      destinationType: campaign.destination_type, clickUrl: `/api/ads/${campaign.id}/click?token=${encodeURIComponent(token)}` });
+  }
+  return res.json({ ads, sponsored: true });
+});
+
+app.get('/api/ads/:id/click', (req, res) => {
+  const id = Number(req.params.id);
+  const token = String(req.query.token || '').slice(0, 80);
+  const visitorKey = adVisitorKey(req);
+  const impression = db.prepare(`SELECT e.id,c.* FROM ad_delivery_events e JOIN ad_campaigns c ON c.id=e.campaign_id
+    WHERE e.campaign_id=? AND e.event_token=? AND e.event_type='impression' AND c.status='active'`).get(id, token);
+  if (!impression) return res.redirect(302, '/buscar.html');
+  try {
+    const chargeClick = db.transaction(() => {
+      const result = db.prepare(`INSERT OR IGNORE INTO ad_delivery_events
+        (campaign_id,event_type,event_token,visitor_key,query_text,cost_units,event_day)
+        VALUES (?,'click',?,?,?,?,?)`).run(id, token, visitorKey, '', ADS_INTERNAL_CLICK_COST_UNITS, new Date().toISOString().slice(0, 10));
+      if (result.changes) consumeMessageCredits(impression.user_id, ADS_INTERNAL_CLICK_COST_UNITS, `Clique patrocinado — campanha ${id}`, 'sponsored_click');
+    });
+    chargeClick();
+  } catch (_) {
+    db.prepare("UPDATE ad_campaigns SET status='paused',admin_notes='Pausada automaticamente por saldo insuficiente.',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
+  }
+  return res.redirect(302, impression.destination_url);
+});
+
 app.get('/api/customer/profile', requireUser, (req, res) => {
   const addresses = db.prepare('SELECT * FROM customer_addresses WHERE user_id=? ORDER BY is_default DESC,id DESC')
     .all(req.user.id).map(publicAddress);
@@ -1380,7 +1485,11 @@ app.get('/api/ads/campaigns', requireUser, (req, res) => {
     in_review: 'Em configuração', payment_failed: 'Pagamento não concluído', reversed: 'Estornada',
     active: 'Em veiculação', paused: 'Pausada', completed: 'Concluída' };
   const campaigns = db.prepare(`SELECT id,objective,destination_type,destination_url,daily_budget_cents,
-    duration_days,gross_credits,management_credits,net_credits,status,created_at,updated_at
+    duration_days,gross_credits,management_credits,net_credits,status,creative_title,creative_text,
+    image_url,keywords,category,target_city,placement,created_at,updated_at,
+    (SELECT COUNT(*) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='impression') impressions,
+    (SELECT COUNT(*) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='click') clicks,
+    (SELECT COALESCE(SUM(cost_units),0) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='click') spent_units
     FROM ad_campaigns WHERE user_id=? ORDER BY id DESC LIMIT 30`).all(req.user.id);
   return res.json({ campaigns: campaigns.map(item => ({
     ...item,
@@ -1623,7 +1732,7 @@ function decryptWhatsAppToken(value) {
   return Buffer.concat([decipher.update(Buffer.from(encryptedText, 'base64url')), decipher.final()]).toString('utf8');
 }
 
-const consumeMessageCredits = db.transaction((userId, units, description) => {
+const consumeMessageCredits = db.transaction((userId, units, description, kind = 'whatsapp_message') => {
   expireCreditBatches(userId);
   const wallet = db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId);
   if (!wallet || wallet.balance_units < units) throw new Error('Saldo insuficiente para enviar a mensagem.');
@@ -1643,7 +1752,7 @@ const consumeMessageCredits = db.transaction((userId, units, description) => {
   db.prepare('UPDATE wallets SET balance_units=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(balanceAfter, userId);
   db.prepare(`INSERT INTO wallet_ledger
     (user_id,delta_units,balance_after_units,kind,description) VALUES (?,?,?,?,?)`)
-    .run(userId, -units, balanceAfter, 'whatsapp_message', description);
+    .run(userId, -units, balanceAfter, kind, description);
   return balanceAfter;
 });
 
@@ -2394,6 +2503,12 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   const objective = String(req.body?.objective || '');
   const destinationType = String(req.body?.destinationType || '');
   const destinationUrl = String(req.body?.destinationUrl || '').trim();
+  const creativeTitle = String(req.body?.creativeTitle || '').trim().slice(0, 80);
+  const creativeText = String(req.body?.creativeText || '').trim().slice(0, 220);
+  const imageUrl = String(req.body?.imageUrl || '').trim().slice(0, 500);
+  const keywords = String(req.body?.keywords || '').trim().slice(0, 300);
+  const category = String(req.body?.category || '').trim().slice(0, 80);
+  const targetCity = String(req.body?.targetCity || '').trim().slice(0, 80);
   if (!Number.isInteger(amountCents) || amountCents < ADS_MIN_TOPUP_CENTS || amountCents > ADS_MAX_TOPUP_CENTS) {
     return res.status(400).json({ error: 'A recarga deve ficar entre R$ 30,00 e R$ 5.000,00.' });
   }
@@ -2408,6 +2523,13 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   }
   if (!['site','whatsapp','instagram'].includes(destinationType)) {
     return res.status(400).json({ error: 'Escolha site, WhatsApp ou Instagram como destino.' });
+  }
+  if (creativeTitle.length < 4 || creativeText.length < 10 || normalizedAdTerms(keywords).length < 1) {
+    return res.status(400).json({ error: 'Informe título, texto e palavras-chave do anúncio.' });
+  }
+  if (imageUrl) {
+    try { const parsedImage = new URL(imageUrl); if (!['http:','https:'].includes(parsedImage.protocol)) throw new Error(); }
+    catch (_) { return res.status(400).json({ error: 'Informe uma URL de imagem válida ou deixe o campo vazio.' }); }
   }
   let parsedDestination;
   try { parsedDestination = new URL(destinationUrl); } catch (_) {
@@ -2434,10 +2556,10 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
       .run(reference, req.user.id, amountCents, feeCents, netCredits);
     db.prepare(`INSERT INTO ad_campaigns
       (user_id,order_reference,objective,destination_type,destination_url,daily_budget_cents,duration_days,
-       gross_credits,management_credits,net_credits,status)
-      VALUES (?,?,?,?,?,?,?,?,?,?,'awaiting_payment')`)
+       gross_credits,management_credits,net_credits,creative_title,creative_text,image_url,keywords,category,target_city,placement,status)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'search','awaiting_payment')`)
       .run(req.user.id, reference, objective, destinationType, destinationUrl, dailyBudgetCents, durationDays,
-        grossCredits, managementCredits, netCredits);
+        grossCredits, managementCredits, netCredits, creativeTitle, creativeText, imageUrl, keywords, category, targetCity);
   });
   createOrder();
   adminAnalytics.recordOrderAttribution(req, reference, 'credits');
