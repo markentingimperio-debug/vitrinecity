@@ -256,6 +256,57 @@ ensureColumn('ad_campaigns', 'keywords', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('ad_campaigns', 'category', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('ad_campaigns', 'target_city', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('ad_campaigns', 'placement', "TEXT NOT NULL DEFAULT 'search'");
+db.exec(`
+CREATE TABLE IF NOT EXISTS social_profiles (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  handle TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  bio TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL DEFAULT '',
+  avatar_url TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS social_posts (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  video_uid TEXT NOT NULL UNIQUE,
+  caption TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL DEFAULT 'geral',
+  city TEXT NOT NULL DEFAULT '',
+  cta_label TEXT NOT NULL DEFAULT '',
+  cta_url TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'uploading',
+  duration_seconds REAL,
+  error_message TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS social_likes (
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (post_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS social_comments (
+  id INTEGER PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'published',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS social_follows (
+  follower_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  followed_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (follower_id, followed_id),
+  CHECK (follower_id != followed_id)
+);
+CREATE INDEX IF NOT EXISTS idx_social_posts_feed ON social_posts(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_posts_user ON social_posts(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_comments_post ON social_comments(post_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_follows_followed ON social_follows(followed_id);
+`);
 db.exec(`CREATE TABLE IF NOT EXISTS ad_delivery_events (
   id INTEGER PRIMARY KEY,
   campaign_id INTEGER NOT NULL REFERENCES ad_campaigns(id) ON DELETE CASCADE,
@@ -3198,5 +3249,224 @@ app.get('/api/payments/mercadopago/status', (_req, res) => {
     pixConfigured: Boolean(pixAccessToken()), mode: 'production' });
 });
 
+const SOCIAL_CATEGORIES = new Set(['geral', 'produtos', 'servicos', 'estudos', 'trabalho', 'ofertas']);
+const socialAttempts = new Map();
+
+function socialHandle(user) {
+  const base = String(user.name || user.email?.split('@')[0] || 'usuario')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '').slice(0, 22) || 'usuario';
+  let handle = base;
+  let suffix = 1;
+  while (db.prepare('SELECT 1 FROM social_profiles WHERE handle=? AND user_id!=?').get(handle, user.id)) {
+    handle = `${base.slice(0, 18)}${suffix++}`;
+  }
+  db.prepare(`INSERT INTO social_profiles (user_id,handle) VALUES (?,?)
+    ON CONFLICT(user_id) DO NOTHING`).run(user.id, handle);
+  return db.prepare('SELECT * FROM social_profiles WHERE user_id=?').get(user.id);
+}
+
+function sameOriginOnly(req, res, next) {
+  const origin = String(req.headers.origin || '');
+  if (!origin) return next();
+  try {
+    const expected = new URL(process.env.SITE_URL || `${req.protocol}://${req.get('host')}`).origin;
+    if (new URL(origin).origin !== expected) return res.status(403).json({ error: 'Origem não autorizada.' });
+    return next();
+  } catch {
+    return res.status(403).json({ error: 'Origem não autorizada.' });
+  }
+}
+
+function socialPost(row, viewerId) {
+  return {
+    id: row.id,
+    videoUid: row.video_uid,
+    playerUrl: `https://iframe.videodelivery.net/${encodeURIComponent(row.video_uid)}?autoplay=true&muted=true&loop=true&controls=true`,
+    caption: row.caption,
+    category: row.category,
+    city: row.city,
+    ctaLabel: row.cta_label,
+    ctaUrl: row.cta_url,
+    status: row.status,
+    createdAt: row.created_at,
+    author: { id: row.user_id, name: row.author_name, handle: row.handle, avatarUrl: row.avatar_url || '' },
+    likes: Number(row.likes_count || 0),
+    comments: Number(row.comments_count || 0),
+    liked: Boolean(row.viewer_liked),
+    following: Boolean(row.viewer_following),
+    mine: Number(row.user_id) === Number(viewerId)
+  };
+}
+
+app.get('/api/social/feed', (req, res) => {
+  const viewer = currentUser(req);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 30);
+  const before = String(req.query.before || '');
+  const category = SOCIAL_CATEGORIES.has(String(req.query.category || '')) ? String(req.query.category) : '';
+  const rows = db.prepare(`SELECT p.*,u.name author_name,COALESCE(sp.handle,'usuario') handle,
+      COALESCE(sp.avatar_url,'') avatar_url,
+      (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) likes_count,
+      (SELECT COUNT(*) FROM social_comments c WHERE c.post_id=p.id AND c.status='published') comments_count,
+      EXISTS(SELECT 1 FROM social_likes l WHERE l.post_id=p.id AND l.user_id=?) viewer_liked,
+      EXISTS(SELECT 1 FROM social_follows f WHERE f.followed_id=p.user_id AND f.follower_id=?) viewer_following
+    FROM social_posts p
+    JOIN users u ON u.id=p.user_id
+    LEFT JOIN social_profiles sp ON sp.user_id=p.user_id
+    WHERE p.status='ready'
+      AND (?='' OR p.created_at<?)
+      AND (?='' OR p.category=?)
+    ORDER BY p.created_at DESC LIMIT ?`).all(viewer?.id || 0, viewer?.id || 0,
+      before, before, category, category, limit + 1);
+  const hasMore = rows.length > limit;
+  const items = rows.slice(0, limit).map(row => socialPost(row, viewer?.id));
+  return res.json({ items, nextCursor: hasMore ? items.at(-1)?.createdAt : null });
+});
+
+app.get('/api/social/profile/me', requireUser, (req, res) => {
+  const profile = socialHandle(req.user);
+  const counts = db.prepare(`SELECT
+    (SELECT COUNT(*) FROM social_follows WHERE followed_id=?) followers,
+    (SELECT COUNT(*) FROM social_follows WHERE follower_id=?) following,
+    (SELECT COUNT(*) FROM social_posts WHERE user_id=? AND status!='deleted') posts`)
+    .get(req.user.id, req.user.id, req.user.id);
+  return res.json({ profile: { name: req.user.name, handle: profile.handle, bio: profile.bio,
+    city: profile.city, avatarUrl: profile.avatar_url, ...counts } });
+});
+
+app.patch('/api/social/profile/me', requireUser, sameOriginOnly, (req, res) => {
+  const current = socialHandle(req.user);
+  const handle = String(req.body?.handle || current.handle).trim().toLowerCase().replace(/[^a-z0-9._]/g, '').slice(0, 24);
+  if (handle.length < 3) return res.status(400).json({ error: 'Escolha um nome de usuário com pelo menos 3 caracteres.' });
+  try {
+    db.prepare(`UPDATE social_profiles SET handle=?,bio=?,city=?,avatar_url=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?`)
+      .run(handle, String(req.body?.bio || '').trim().slice(0, 240), String(req.body?.city || '').trim().slice(0, 80),
+        String(req.body?.avatarUrl || '').trim().slice(0, 500), req.user.id);
+    return res.json({ ok: true });
+  } catch (error) {
+    if (String(error?.message || '').includes('UNIQUE')) return res.status(409).json({ error: 'Este nome de usuário já está em uso.' });
+    return res.status(500).json({ error: 'Não foi possível atualizar o perfil.' });
+  }
+});
+
+app.post('/api/social/uploads', requireUser, sameOriginOnly, async (req, res) => {
+  if (!allowAttempt(socialAttempts, `upload:${req.user.id}`, 8, 24 * 60 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Limite diário de vídeos atingido para esta conta.' });
+  }
+  const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+  const apiToken = String(process.env.CLOUDFLARE_STREAM_API_TOKEN || '').trim();
+  if (!accountId || !apiToken) return res.status(503).json({ error: 'O envio de vídeos está sendo configurado.' });
+  const caption = String(req.body?.caption || '').trim().slice(0, 500);
+  const category = SOCIAL_CATEGORIES.has(String(req.body?.category || '')) ? String(req.body.category) : 'geral';
+  const city = String(req.body?.city || '').trim().slice(0, 80);
+  const ctaLabel = String(req.body?.ctaLabel || '').trim().slice(0, 40);
+  const ctaUrl = String(req.body?.ctaUrl || '').trim().slice(0, 500);
+  if (ctaUrl && !/^https?:\/\//i.test(ctaUrl)) return res.status(400).json({ error: 'O link precisa começar com http:// ou https://.' });
+  socialHandle(req.user);
+  try {
+    const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/direct_upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        maxDurationSeconds: 60,
+        expiry: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        creator: String(req.user.id),
+        allowedOrigins: [new URL(process.env.SITE_URL || 'https://vitrinecity.com').hostname],
+        meta: { userId: String(req.user.id), category }
+      })
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload?.result?.uploadURL || !payload?.result?.uid) {
+      console.error('Cloudflare Stream direct upload error', payload?.errors || response.status);
+      return res.status(502).json({ error: 'Não foi possível preparar o envio do vídeo.' });
+    }
+    const postId = randomUUID();
+    db.prepare(`INSERT INTO social_posts
+      (id,user_id,video_uid,caption,category,city,cta_label,cta_url,status)
+      VALUES (?,?,?,?,?,?,?,?, 'uploading')`).run(postId, req.user.id, payload.result.uid,
+        caption, category, city, ctaLabel, ctaUrl);
+    return res.status(201).json({ postId, uploadUrl: payload.result.uploadURL, videoUid: payload.result.uid,
+      maxBytes: 200 * 1024 * 1024, maxDurationSeconds: 60 });
+  } catch (error) {
+    console.error('Cloudflare Stream request failed', error);
+    return res.status(502).json({ error: 'Serviço de vídeo indisponível no momento.' });
+  }
+});
+
+app.get('/api/social/posts/:id/status', requireUser, (req, res) => {
+  const post = db.prepare('SELECT id,status,error_message FROM social_posts WHERE id=? AND user_id=?')
+    .get(req.params.id, req.user.id);
+  if (!post) return res.status(404).json({ error: 'Publicação não encontrada.' });
+  return res.json({ id: post.id, status: post.status, error: post.error_message || '' });
+});
+
+app.post('/api/social/posts/:id/like', requireUser, sameOriginOnly, (req, res) => {
+  const post = db.prepare("SELECT id FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
+  if (!post) return res.status(404).json({ error: 'Publicação não encontrada.' });
+  const liked = db.prepare('SELECT 1 FROM social_likes WHERE post_id=? AND user_id=?').get(post.id, req.user.id);
+  if (liked) db.prepare('DELETE FROM social_likes WHERE post_id=? AND user_id=?').run(post.id, req.user.id);
+  else db.prepare('INSERT INTO social_likes (post_id,user_id) VALUES (?,?)').run(post.id, req.user.id);
+  const count = db.prepare('SELECT COUNT(*) count FROM social_likes WHERE post_id=?').get(post.id).count;
+  return res.json({ liked: !liked, likes: count });
+});
+
+app.get('/api/social/posts/:id/comments', (req, res) => {
+  const items = db.prepare(`SELECT c.id,c.body,c.created_at,u.name,COALESCE(p.handle,'usuario') handle
+    FROM social_comments c JOIN users u ON u.id=c.user_id
+    LEFT JOIN social_profiles p ON p.user_id=c.user_id
+    WHERE c.post_id=? AND c.status='published' ORDER BY c.id DESC LIMIT 100`).all(req.params.id);
+  return res.json({ items });
+});
+
+app.post('/api/social/posts/:id/comments', requireUser, sameOriginOnly, (req, res) => {
+  if (!allowAttempt(socialAttempts, `comment:${req.user.id}`, 30, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Muitos comentários em pouco tempo.' });
+  }
+  const body = String(req.body?.body || '').trim().slice(0, 500);
+  if (!body) return res.status(400).json({ error: 'Escreva um comentário.' });
+  if (!db.prepare("SELECT 1 FROM social_posts WHERE id=? AND status='ready'").get(req.params.id)) {
+    return res.status(404).json({ error: 'Publicação não encontrada.' });
+  }
+  const result = db.prepare('INSERT INTO social_comments (post_id,user_id,body) VALUES (?,?,?)')
+    .run(req.params.id, req.user.id, body);
+  return res.status(201).json({ id: Number(result.lastInsertRowid), body, name: req.user.name });
+});
+
+app.post('/api/social/users/:id/follow', requireUser, sameOriginOnly, (req, res) => {
+  const followedId = Number(req.params.id);
+  if (!Number.isInteger(followedId) || followedId === req.user.id ||
+      !db.prepare('SELECT 1 FROM users WHERE id=?').get(followedId)) {
+    return res.status(400).json({ error: 'Perfil inválido.' });
+  }
+  const exists = db.prepare('SELECT 1 FROM social_follows WHERE follower_id=? AND followed_id=?')
+    .get(req.user.id, followedId);
+  if (exists) db.prepare('DELETE FROM social_follows WHERE follower_id=? AND followed_id=?').run(req.user.id, followedId);
+  else db.prepare('INSERT INTO social_follows (follower_id,followed_id) VALUES (?,?)').run(req.user.id, followedId);
+  return res.json({ following: !exists });
+});
+
+app.post('/api/webhooks/cloudflare-stream', (req, res) => {
+  const secret = String(process.env.CLOUDFLARE_STREAM_WEBHOOK_SECRET || '').trim();
+  const signature = String(req.headers['webhook-signature'] || '');
+  const values = Object.fromEntries(signature.split(',').map(part => part.trim().split('=')));
+  const timestamp = Number(values.time);
+  const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
+  if (!secret || !timestamp || Math.abs(Date.now() / 1000 - timestamp) > 300 || !values.sig1) {
+    return res.status(401).json({ error: 'Assinatura inválida.' });
+  }
+  const expected = createHmac('sha256', secret).update(`${timestamp}.`).update(rawBody).digest('hex');
+  const actual = Buffer.from(values.sig1, 'hex');
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  if (actual.length !== expectedBuffer.length || !timingSafeEqual(actual, expectedBuffer)) {
+    return res.status(401).json({ error: 'Assinatura inválida.' });
+  }
+  const video = req.body || {};
+  const status = video.readyToStream || video.readytoStream || video.status?.state === 'ready'
+    ? 'ready' : video.status?.state === 'error' ? 'error' : 'processing';
+  db.prepare(`UPDATE social_posts SET status=?,duration_seconds=?,error_message=?,updated_at=CURRENT_TIMESTAMP
+    WHERE video_uid=?`).run(status, Number(video.duration) || null,
+      String(video.status?.errorReasonText || '').slice(0, 500), String(video.uid || ''));
+  return res.json({ ok: true });
+});
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.listen(process.env.PORT || 3000, () => console.log('VitrineCity online'));
