@@ -22,6 +22,8 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.DATA_DIR || '/data';
 const courseFilesDir = path.resolve(process.env.COURSE_FILES_DIR || '/private-courses');
 fs.mkdirSync(dataDir, { recursive: true });
+const socialMediaDir = path.join(dataDir, 'social-media');
+fs.mkdirSync(socialMediaDir, { recursive: true });
 const db = new Database(path.join(dataDir, 'vitrinecity.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -295,6 +297,48 @@ CREATE TABLE IF NOT EXISTS social_posts (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS social_stories (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  media_type TEXT NOT NULL DEFAULT 'image',
+  media_url TEXT NOT NULL,
+  caption TEXT NOT NULL DEFAULT '',
+  cta_label TEXT NOT NULL DEFAULT '',
+  cta_url TEXT NOT NULL DEFAULT '',
+  cta_charge_units INTEGER NOT NULL DEFAULT 0,
+  cta_charge_status TEXT NOT NULL DEFAULT 'not_required',
+  status TEXT NOT NULL DEFAULT 'pending_review',
+  moderation_reason TEXT NOT NULL DEFAULT '',
+  moderated_by INTEGER REFERENCES users(id),
+  moderated_at TEXT,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS social_story_credit_allocations (
+  story_id TEXT NOT NULL REFERENCES social_stories(id) ON DELETE CASCADE,
+  batch_id INTEGER NOT NULL REFERENCES credit_batches(id),
+  units INTEGER NOT NULL,
+  PRIMARY KEY (story_id,batch_id)
+);
+CREATE TABLE IF NOT EXISTS social_story_views (
+  story_id TEXT NOT NULL REFERENCES social_stories(id) ON DELETE CASCADE,
+  visitor_key TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (story_id,visitor_key)
+);
+CREATE TABLE IF NOT EXISTS social_notifications (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  actor_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  type TEXT NOT NULL,
+  post_id TEXT REFERENCES social_posts(id) ON DELETE CASCADE,
+  story_id TEXT REFERENCES social_stories(id) ON DELETE CASCADE,
+  message TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL UNIQUE,
+  read_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS social_likes (
   post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -368,6 +412,9 @@ CREATE INDEX IF NOT EXISTS idx_social_comments_post ON social_comments(post_id, 
 CREATE INDEX IF NOT EXISTS idx_social_follows_followed ON social_follows(followed_id);
 CREATE INDEX IF NOT EXISTS idx_social_reports_status ON social_reports(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_views_post ON social_post_views(post_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_stories_active ON social_stories(status,expires_at,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_stories_user ON social_stories(user_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_notifications_user ON social_notifications(user_id,read_at,created_at DESC);
 `);
 ensureColumn('social_posts', 'moderation_status', "TEXT NOT NULL DEFAULT 'pending'");
 ensureColumn('social_posts', 'moderation_reason', "TEXT NOT NULL DEFAULT ''");
@@ -375,6 +422,11 @@ ensureColumn('social_posts', 'moderated_by', 'INTEGER');
 ensureColumn('social_posts', 'moderated_at', 'TEXT');
 ensureColumn('social_posts', 'cta_charge_units', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('social_posts', 'cta_charge_status', "TEXT NOT NULL DEFAULT 'not_required'");
+ensureColumn('social_posts', 'media_type', "TEXT NOT NULL DEFAULT 'video'");
+ensureColumn('social_posts', 'image_url', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('social_posts', 'seo_title', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('social_posts', 'seo_description', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('social_posts', 'seo_keywords', "TEXT NOT NULL DEFAULT ''");
 db.exec(`CREATE TABLE IF NOT EXISTS ad_delivery_events (
   id INTEGER PRIMARY KEY,
   campaign_id INTEGER NOT NULL REFERENCES ad_campaigns(id) ON DELETE CASCADE,
@@ -1060,6 +1112,7 @@ app.use(express.json({ limit: '5mb', verify: (req, _res, buffer) => { req.rawBod
 app.set('trust proxy', 1);
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 app.use('/vendor/three', express.static(path.join(dir, 'node_modules/three/build')));
+app.use('/uploads/social-media', express.static(socialMediaDir, { maxAge: '30d', immutable: true, fallthrough: false }));
 app.use('/uploads/store-assets', express.static(path.join(dataDir, 'store-assets'), {
   immutable: true, maxAge: '30d', fallthrough: false
 }));
@@ -3456,8 +3509,10 @@ function socialVisitorKey(req) {
 function socialPost(row, viewerId) {
   return {
     id: row.id,
-    videoUid: row.video_uid,
-    playerUrl: `https://iframe.videodelivery.net/${encodeURIComponent(row.video_uid)}?autoplay=true&muted=true&loop=true&controls=true`,
+    videoUid: row.media_type === 'video' ? row.video_uid : '',
+    mediaType: row.media_type || 'video',
+    imageUrl: row.image_url || '',
+    playerUrl: row.media_type === 'image' ? '' : `https://iframe.videodelivery.net/${encodeURIComponent(row.video_uid)}?autoplay=true&muted=true&loop=true&controls=true`,
     caption: row.caption,
     category: row.category,
     city: row.city,
@@ -3485,6 +3540,7 @@ app.get('/api/social/feed', (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 30);
   const before = String(req.query.before || '');
   const category = SOCIAL_CATEGORIES.has(String(req.query.category || '')) ? String(req.query.category) : '';
+  const followingOnly = String(req.query.following || '') === '1' && viewer;
   const rows = db.prepare(`SELECT p.*,u.name author_name,COALESCE(sp.handle,'usuario') handle,
       COALESCE(sp.avatar_url,'') avatar_url,
       (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) likes_count,
@@ -3503,6 +3559,7 @@ app.get('/api/social/feed', (req, res) => {
     WHERE p.status='ready'
       AND (?='' OR p.created_at<?)
       AND (?='' OR p.category=?)
+      AND (?=0 OR EXISTS(SELECT 1 FROM social_follows ff WHERE ff.follower_id=? AND ff.followed_id=p.user_id))
     ORDER BY ((20
       + (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) * 3
       + (SELECT COUNT(*) FROM social_comments c WHERE c.post_id=p.id AND c.status='published') * 5
@@ -3511,7 +3568,7 @@ app.get('/api/social/feed', (req, res) => {
       + (SELECT COUNT(*) FROM social_shares h WHERE h.post_id=p.id) * 2)
       / (1 + MAX(0,julianday('now')-julianday(p.created_at)) * 0.35)) DESC,p.created_at DESC LIMIT ?`).all(
       viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, viewer?.id || 0,
-      before, before, category, category, limit + 1);
+      before, before, category, category, followingOnly ? 1 : 0, viewer?.id || 0, limit + 1);
   const hasMore = rows.length > limit;
   const items = rows.slice(0, limit).map(row => socialPost(row, viewer?.id));
   return res.json({ items, nextCursor: hasMore ? items.at(-1)?.createdAt : null });
@@ -3738,6 +3795,7 @@ app.patch('/api/admin/social/posts/:id/moderation', requireAdmin, sameOriginOnly
   if (action === 'approve') {
     db.prepare(`UPDATE social_posts SET status='ready',moderation_status='approved',moderation_reason=?,moderated_by=?,moderated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
       .run(note, req.user.id, post.id);
+    notifyFollowers(post.user_id, 'new_post', post.media_type === 'image' ? 'publicou uma nova foto' : 'publicou um novo vídeo', post.id);
   } else if (action === 'reject') {
     refundSocialLink(post.id, note || 'conteúdo não aprovado');
     db.prepare(`UPDATE social_posts SET status='rejected',moderation_status='rejected',moderation_reason=?,moderated_by=?,moderated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
@@ -3756,8 +3814,152 @@ app.post('/api/social/users/:id/follow', requireUser, sameOriginOnly, (req, res)
   const exists = db.prepare('SELECT 1 FROM social_follows WHERE follower_id=? AND followed_id=?')
     .get(req.user.id, followedId);
   if (exists) db.prepare('DELETE FROM social_follows WHERE follower_id=? AND followed_id=?').run(req.user.id, followedId);
-  else db.prepare('INSERT INTO social_follows (follower_id,followed_id) VALUES (?,?)').run(req.user.id, followedId);
+  else { db.prepare('INSERT INTO social_follows (follower_id,followed_id) VALUES (?,?)').run(req.user.id, followedId);
+    createSocialNotification(followedId,req.user.id,'new_follower','começou a seguir você',`follow:${req.user.id}:${followedId}`); }
   return res.json({ following: !exists });
+});
+
+function createSocialNotification(userId, actorId, type, message, dedupeKey, postId = null, storyId = null) {
+  if (Number(userId) === Number(actorId)) return;
+  db.prepare(`INSERT OR IGNORE INTO social_notifications
+    (user_id,actor_id,type,post_id,story_id,message,dedupe_key) VALUES (?,?,?,?,?,?,?)`)
+    .run(userId,actorId,type,postId,storyId,message,dedupeKey);
+}
+
+function notifyFollowers(actorId, type, message, contentId) {
+  const followers = db.prepare('SELECT follower_id FROM social_follows WHERE followed_id=?').all(actorId);
+  for (const follower of followers) createSocialNotification(follower.follower_id,actorId,type,message,`${type}:${contentId}:${follower.follower_id}`,
+    type === 'new_post' ? contentId : null, type === 'new_story' ? contentId : null);
+}
+
+const chargeStoryLink = db.transaction((storyId,userId) => {
+  expireCreditBatches(userId);
+  const wallet = db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId);
+  if (!wallet || wallet.balance_units < SOCIAL_LINK_PRICE_UNITS) throw new Error('Saldo insuficiente. Um Story com link custa 5 moedas.');
+  let remaining = SOCIAL_LINK_PRICE_UNITS;
+  for (const batch of db.prepare(`SELECT id,remaining_units FROM credit_batches WHERE user_id=? AND status='active' AND remaining_units>0 ORDER BY expires_at,id`).all(userId)) {
+    if (!remaining) break;
+    const used=Math.min(remaining,batch.remaining_units),next=batch.remaining_units-used;
+    db.prepare(`UPDATE credit_batches SET remaining_units=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(next,next?'active':'used',batch.id);
+    db.prepare('INSERT INTO social_story_credit_allocations (story_id,batch_id,units) VALUES (?,?,?)').run(storyId,batch.id,used);
+    remaining-=used;
+  }
+  if (remaining) throw new Error('Créditos ativos insuficientes.');
+  const balanceAfter=wallet.balance_units-SOCIAL_LINK_PRICE_UNITS;
+  db.prepare('UPDATE wallets SET balance_units=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(balanceAfter,userId);
+  db.prepare(`INSERT INTO wallet_ledger (user_id,delta_units,balance_after_units,kind,description) VALUES (?,?,?,?,?)`)
+    .run(userId,-SOCIAL_LINK_PRICE_UNITS,balanceAfter,'social_story_link',`Link comercial no Story ${storyId}`);
+  db.prepare("UPDATE social_stories SET cta_charge_status='paid' WHERE id=?").run(storyId);
+});
+
+const refundStoryLink = db.transaction((storyId,reason) => {
+  const story=db.prepare('SELECT * FROM social_stories WHERE id=?').get(storyId);
+  if(!story||story.cta_charge_status!=='paid'||!story.cta_charge_units)return;
+  for(const item of db.prepare('SELECT batch_id,units FROM social_story_credit_allocations WHERE story_id=?').all(storyId))
+    db.prepare("UPDATE credit_batches SET remaining_units=remaining_units+?,status='active',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(item.units,item.batch_id);
+  const current=db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(story.user_id)?.balance_units||0;
+  const balanceAfter=current+story.cta_charge_units;
+  db.prepare('UPDATE wallets SET balance_units=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(balanceAfter,story.user_id);
+  db.prepare(`INSERT INTO wallet_ledger (user_id,delta_units,balance_after_units,kind,description) VALUES (?,?,?,?,?)`)
+    .run(story.user_id,story.cta_charge_units,balanceAfter,'social_story_refund',`Devolução do Story ${storyId}: ${reason}`);
+  db.prepare("UPDATE social_stories SET cta_charge_status='refunded' WHERE id=?").run(storyId);
+});
+
+app.post('/api/social/media/photo', requireUser, sameOriginOnly,
+  express.raw({type:['image/jpeg','image/png','image/webp'],limit:'10mb'}), (req,res) => {
+    if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({error:'Selecione uma foto válida.'});
+    const ext={'image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[String(req.get('content-type')).split(';')[0]];
+    if(!ext)return res.status(415).json({error:'Use uma imagem JPG, PNG ou WebP.'});
+    const name=`${randomUUID()}.${ext}`;
+    fs.writeFileSync(path.join(socialMediaDir,name),req.body,{flag:'wx'});
+    return res.status(201).json({url:`/uploads/social-media/${name}`});
+  });
+
+app.post('/api/social/photo-posts', requireUser, sameOriginOnly, (req,res) => {
+  const imageUrl=String(req.body?.imageUrl||'');
+  if(!/^\/uploads\/social-media\/[a-f0-9-]+\.(jpg|png|webp)$/i.test(imageUrl))return res.status(400).json({error:'Foto inválida.'});
+  const caption=String(req.body?.caption||'').trim().slice(0,500);
+  const category=SOCIAL_CATEGORIES.has(String(req.body?.category||''))?String(req.body.category):'geral';
+  const city=String(req.body?.city||'').trim().slice(0,80);
+  const id=randomUUID(); socialHandle(req.user);
+  db.prepare(`INSERT INTO social_posts
+    (id,user_id,video_uid,media_type,image_url,caption,category,city,status,moderation_status,moderation_reason)
+    VALUES (?,?,?,'image',?,?,?,?,'pending_review','pending',?)`)
+    .run(id,req.user.id,`photo:${id}`,imageUrl,caption,category,city,socialModerationReason(caption));
+  return res.status(201).json({id,status:'pending_review'});
+});
+
+app.get('/api/social/stories', (req,res) => {
+  const viewer=currentUser(req); const viewerId=viewer?.id||0;
+  const items=db.prepare(`SELECT s.*,u.name,COALESCE(p.handle,'usuario') handle,COALESCE(p.avatar_url,'') avatar_url,
+    EXISTS(SELECT 1 FROM social_follows f WHERE f.follower_id=? AND f.followed_id=s.user_id) following
+    FROM social_stories s JOIN users u ON u.id=s.user_id LEFT JOIN social_profiles p ON p.user_id=s.user_id
+    WHERE s.status='ready' AND s.expires_at>CURRENT_TIMESTAMP
+    ORDER BY (s.user_id=? ) DESC,following DESC,s.created_at DESC LIMIT 100`).all(viewerId,viewerId);
+  return res.json({items:items.map(s=>({id:s.id,mediaType:s.media_type,mediaUrl:s.media_url,caption:s.caption,
+    ctaLabel:s.cta_label,ctaUrl:s.cta_url,createdAt:s.created_at,author:{id:s.user_id,name:s.name,handle:s.handle,avatarUrl:s.avatar_url},mine:s.user_id===viewerId}))});
+});
+
+app.post('/api/social/stories', requireUser, sameOriginOnly, (req,res) => {
+  if(!allowAttempt(socialAttempts,`story:${req.user.id}`,12,24*60*60*1000))return res.status(429).json({error:'Limite diário de Stories atingido.'});
+  const mediaUrl=String(req.body?.mediaUrl||'');
+  if(!/^\/uploads\/social-media\/[a-f0-9-]+\.(jpg|png|webp)$/i.test(mediaUrl))return res.status(400).json({error:'Foto inválida.'});
+  const caption=String(req.body?.caption||'').trim().slice(0,300),ctaUrl=String(req.body?.ctaUrl||'').trim().slice(0,500);
+  const ctaLabel=String(req.body?.ctaLabel||'').trim().slice(0,40);
+  if(ctaUrl&&!validSocialUrl(ctaUrl))return res.status(400).json({error:'Informe um link público e seguro.'});
+  if(ctaUrl){expireCreditBatches(req.user.id);const balance=db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(req.user.id)?.balance_units||0;
+    if(balance<SOCIAL_LINK_PRICE_UNITS)return res.status(402).json({error:'Saldo insuficiente. O link no Story custa 5 moedas.',requiredCoins:5,balanceCoins:balance/100});}
+  const id=randomUUID(),charge=ctaUrl?SOCIAL_LINK_PRICE_UNITS:0; socialHandle(req.user);
+  db.transaction(()=>{db.prepare(`INSERT INTO social_stories
+    (id,user_id,media_url,caption,cta_label,cta_url,cta_charge_units,cta_charge_status,moderation_reason,expires_at)
+    VALUES (?,?,?,?,?,?,?,?,?,datetime('now','+24 hours'))`).run(id,req.user.id,mediaUrl,caption,ctaUrl?(ctaLabel||'Saiba mais'):'',ctaUrl,charge,charge?'reserved':'not_required',socialModerationReason(caption,ctaUrl));
+    if(charge)chargeStoryLink(id,req.user.id);})();
+  return res.status(201).json({id,status:'pending_review',chargeCoins:charge/100});
+});
+
+app.post('/api/social/stories/:id/view', sameOriginOnly, (req,res) => {
+  if(!db.prepare("SELECT 1 FROM social_stories WHERE id=? AND status='ready' AND expires_at>CURRENT_TIMESTAMP").get(req.params.id))return res.status(404).json({error:'Story não encontrado.'});
+  db.prepare('INSERT OR IGNORE INTO social_story_views (story_id,visitor_key) VALUES (?,?)').run(req.params.id,socialVisitorKey(req));
+  return res.json({ok:true});
+});
+
+app.get('/api/social/notifications', requireUser, (req,res) => {
+  const items=db.prepare(`SELECT n.*,u.name actor_name,COALESCE(p.handle,'usuario') actor_handle FROM social_notifications n
+    LEFT JOIN users u ON u.id=n.actor_id LEFT JOIN social_profiles p ON p.user_id=n.actor_id
+    WHERE n.user_id=? ORDER BY n.id DESC LIMIT 60`).all(req.user.id);
+  const unread=db.prepare('SELECT COUNT(*) total FROM social_notifications WHERE user_id=? AND read_at IS NULL').get(req.user.id).total;
+  return res.json({items,unread:Number(unread)});
+});
+app.post('/api/social/notifications/read', requireUser, sameOriginOnly, (req,res) => {
+  db.prepare('UPDATE social_notifications SET read_at=CURRENT_TIMESTAMP WHERE user_id=? AND read_at IS NULL').run(req.user.id);
+  return res.json({ok:true});
+});
+
+function localSeoSuggestion(caption,category,city) {
+  const subject=caption.replace(/[#@][\wÀ-ÿ]+/g,'').trim().slice(0,90)||'Novidade na Vitriny City';
+  const where=city?` em ${city}`:''; const title=`${subject}${where} | Vitriny City`.slice(0,60);
+  const description=`${subject}${where}. Veja fotos, vídeos, produtos, serviços e novidades na Vitriny Social.`.slice(0,155);
+  const keywords=[category,city,'Vitriny City','Vitriny Social',...caption.toLowerCase().match(/[a-zà-ÿ]{4,}/g)||[]].filter(Boolean);
+  return {title,description,keywords:[...new Set(keywords)].slice(0,8),optimizedCaption:`${caption||subject}${city?` · ${city}`:''} #vitrinycity #${category}`};
+}
+app.post('/api/social/seo-suggestion', requireUser, sameOriginOnly, async (req,res) => {
+  const caption=String(req.body?.caption||'').trim().slice(0,500),category=SOCIAL_CATEGORIES.has(String(req.body?.category||''))?String(req.body.category):'geral';
+  const city=String(req.body?.city||'').trim().slice(0,80),fallback=localSeoSuggestion(caption,category,city);
+  if(!process.env.OPENAI_API_KEY)return res.json({...fallback,source:'automatic'});
+  if(!allowAttempt(aiAttempts,`social-seo:${req.user.id}`,30,60*60*1000))return res.json({...fallback,source:'automatic'});
+  try {const data=await requestOpenAI({model:OPENAI_MODEL,instructions:'Você é especialista em SEO local brasileiro. Responda somente JSON válido com title (até 60), description (até 155), keywords (array de até 8) e optimizedCaption (até 500). Não invente dados.',input:`Categoria: ${category}\nCidade: ${city||'não informada'}\nConteúdo: ${caption||'sem legenda'}`,max_output_tokens:400});
+    const raw=responseOutputText(data).replace(/^```json\s*|```$/g,'').trim(),ai=JSON.parse(raw);
+    return res.json({title:String(ai.title||fallback.title).slice(0,60),description:String(ai.description||fallback.description).slice(0,155),keywords:Array.isArray(ai.keywords)?ai.keywords.map(String).slice(0,8):fallback.keywords,optimizedCaption:String(ai.optimizedCaption||fallback.optimizedCaption).slice(0,500),source:'ai'});
+  } catch {return res.json({...fallback,source:'automatic'});}
+});
+
+app.get('/api/admin/social/stories', requireAdmin, (_req,res) => res.json({items:db.prepare(`SELECT s.*,u.name,u.email FROM social_stories s JOIN users u ON u.id=s.user_id WHERE s.status='pending_review' ORDER BY s.created_at LIMIT 200`).all()}));
+app.patch('/api/admin/social/stories/:id/moderation', requireAdmin, sameOriginOnly, (req,res) => {
+  const story=db.prepare('SELECT * FROM social_stories WHERE id=?').get(req.params.id); if(!story)return res.status(404).json({error:'Story não encontrado.'});
+  const action=String(req.body?.action||''),note=String(req.body?.note||'').trim().slice(0,500);
+  if(action==='approve'){db.prepare("UPDATE social_stories SET status='ready',moderation_reason=?,moderated_by=?,moderated_at=CURRENT_TIMESTAMP WHERE id=?").run(note,req.user.id,story.id);notifyFollowers(story.user_id,'new_story','publicou um novo Story',story.id);}
+  else if(action==='reject'){refundStoryLink(story.id,note||'conteúdo não aprovado');db.prepare("UPDATE social_stories SET status='rejected',moderation_reason=?,moderated_by=?,moderated_at=CURRENT_TIMESTAMP WHERE id=?").run(note||'Conteúdo não aprovado.',req.user.id,story.id);}
+  else return res.status(400).json({error:'Ação inválida.'}); return res.json({ok:true});
 });
 
 app.post('/api/webhooks/cloudflare-stream', (req, res) => {
@@ -3787,5 +3989,14 @@ app.post('/api/webhooks/cloudflare-stream', (req, res) => {
       Number(video.duration) || null, String(video.status?.errorReasonText || '').slice(0, 500), String(video.uid || ''));
   return res.json({ ok: true });
 });
+app.get('/social/post/:id', (req,res) => {
+  const p=db.prepare(`SELECT p.*,u.name,COALESCE(sp.handle,'usuario') handle FROM social_posts p JOIN users u ON u.id=p.user_id LEFT JOIN social_profiles sp ON sp.user_id=p.user_id WHERE p.id=? AND p.status='ready'`).get(req.params.id);
+  if(!p)return res.status(404).send('Publicação não encontrada.');
+  const esc=v=>String(v||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const title=esc(p.seo_title||p.caption||'Publicação na Vitriny Social'),description=esc(p.seo_description||p.caption||'Veja esta publicação na Vitriny Social');
+  const origin=new URL(process.env.SITE_URL||'https://vitrinecity.com').origin,image=p.media_type==='image'?origin+p.image_url:'';
+  res.set('Cache-Control','public,max-age=60').send('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>'+title+'</title><meta name="description" content="'+description+'"><meta property="og:title" content="'+title+'"><meta property="og:description" content="'+description+'"><meta property="og:type" content="article">'+(image?'<meta property="og:image" content="'+esc(image)+'">':'')+'<link rel="canonical" href="'+origin+'/social/post/'+encodeURIComponent(p.id)+'"></head><body style="font-family:Arial;max-width:680px;margin:40px auto;padding:20px"><h1>'+title+'</h1>'+(image?'<img src="'+esc(p.image_url)+'" style="max-width:100%;border-radius:18px">':'')+'<p>'+esc(p.caption)+'</p><p>Por @'+esc(p.handle)+'</p><a href="/social.html?post='+encodeURIComponent(p.id)+'">Abrir na Vitriny Social</a></body></html>');
+});
+
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.listen(process.env.PORT || 3000, () => console.log('VitrineCity online'));
