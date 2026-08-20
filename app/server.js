@@ -287,6 +287,42 @@ CREATE TABLE IF NOT EXISTS ai_profit_allocations (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_ai_profit_allocations_user ON ai_profit_allocations(user_id,id);`);
+db.exec(`CREATE TABLE IF NOT EXISTS admin_specialist_agents (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  specialty TEXT NOT NULL,
+  description TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused')),
+  approval_required INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS admin_agent_tasks (
+  id INTEGER PRIMARY KEY,
+  agent_id INTEGER NOT NULL REFERENCES admin_specialist_agents(id) ON DELETE CASCADE,
+  created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  instructions TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','high')),
+  status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','in_progress','awaiting_approval','completed','cancelled')),
+  result_summary TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_admin_agent_tasks_agent_status ON admin_agent_tasks(agent_id,status,id);`);
+const defaultSpecialistAgents = [
+  ['gestora','IA Gestora','Coordenação','Define prioridades, delega e consolida o resumo executivo.'],
+  ['atendimento','Agente de Atendimento','Relacionamento','Prepara respostas e identifica casos que precisam de atenção humana.'],
+  ['lojistas','Agente de Lojistas','Cadastro e qualidade','Orienta cadastros, revisa informações e aponta pendências de lojas.'],
+  ['marketing','Agente de Marketing','Conteúdo e campanhas','Cria pautas, ofertas e propostas de comunicação para aprovação.'],
+  ['vendas','Agente de Vendas','Conversão','Analisa oportunidades, funil e ações para aumentar vendas.'],
+  ['tecnico','Agente Técnico','Site e integrações','Monitora integrações, erros e melhorias técnicas seguras.']
+];
+const upsertSpecialistAgent = db.prepare(`INSERT INTO admin_specialist_agents (code,name,specialty,description)
+  VALUES (?,?,?,?) ON CONFLICT(code) DO NOTHING`);
+for (const agent of defaultSpecialistAgents) upsertSpecialistAgent.run(...agent);
 db.exec(`CREATE TABLE IF NOT EXISTS whatsapp_accounts (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -1889,6 +1925,56 @@ app.patch('/api/admin/ai/proposals/:id', requireAdmin, (req, res) => {
     message: nextStatus === 'approved'
       ? 'Proposta aprovada e pronta para uma implementação controlada.'
       : 'Proposta rejeitada.' });
+});
+
+app.get('/api/admin/agents', requireAdmin, (_req, res) => {
+  const agents = db.prepare(`SELECT a.id,a.code,a.name,a.specialty,a.description,a.status,a.approval_required,
+    (SELECT COUNT(*) FROM admin_agent_tasks t WHERE t.agent_id=a.id AND t.status IN ('queued','in_progress','awaiting_approval')) AS open_tasks,
+    (SELECT MAX(updated_at) FROM admin_agent_tasks t WHERE t.agent_id=a.id) AS last_activity
+    FROM admin_specialist_agents a ORDER BY CASE a.code WHEN 'gestora' THEN 0 ELSE 1 END,a.id`).all()
+    .map(item => ({ ...item, approval_required: Boolean(item.approval_required), open_tasks: Number(item.open_tasks || 0) }));
+  const tasks = db.prepare(`SELECT t.id,t.agent_id,t.title,t.instructions,t.priority,t.status,t.result_summary,t.created_at,t.updated_at,
+    a.name AS agent_name,a.code AS agent_code FROM admin_agent_tasks t JOIN admin_specialist_agents a ON a.id=t.agent_id
+    ORDER BY CASE t.status WHEN 'awaiting_approval' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END,t.id DESC LIMIT 80`).all();
+  return res.json({ mode: 'supervised', agents, tasks });
+});
+
+app.post('/api/admin/agents/tasks', requireAdmin, (req, res) => {
+  const agentId = Number(req.body?.agentId);
+  const title = String(req.body?.title || '').trim().slice(0, 180);
+  const instructions = String(req.body?.instructions || '').trim().slice(0, 4000);
+  const priority = String(req.body?.priority || 'normal');
+  if (!Number.isInteger(agentId) || !title || !instructions || !['low','normal','high'].includes(priority)) {
+    return res.status(400).json({ error: 'Informe o agente, a tarefa e as instruções.' });
+  }
+  const agent = db.prepare(`SELECT id,status FROM admin_specialist_agents WHERE id=?`).get(agentId);
+  if (!agent) return res.status(404).json({ error: 'Agente não encontrado.' });
+  if (agent.status !== 'active') return res.status(409).json({ error: 'Este agente está pausado.' });
+  const result = db.prepare(`INSERT INTO admin_agent_tasks (agent_id,created_by_user_id,title,instructions,priority)
+    VALUES (?,?,?,?,?)`).run(agentId, req.user.id, title, instructions, priority);
+  return res.status(201).json({ id: Number(result.lastInsertRowid), status: 'queued',
+    message: 'Tarefa registrada. A execução permanece supervisionada e qualquer ação externa exige aprovação.' });
+});
+
+app.patch('/api/admin/agents/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const status = String(req.body?.status || '');
+  if (!Number.isInteger(id) || !['active','paused'].includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+  const result = db.prepare(`UPDATE admin_specialist_agents SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(status, id);
+  if (!result.changes) return res.status(404).json({ error: 'Agente não encontrado.' });
+  return res.json({ ok: true, status });
+});
+
+app.patch('/api/admin/agent-tasks/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const action = String(req.body?.action || '');
+  const next = { start: 'in_progress', request_approval: 'awaiting_approval', complete: 'completed', cancel: 'cancelled' }[action];
+  if (!Number.isInteger(id) || !next) return res.status(400).json({ error: 'Ação inválida.' });
+  const result = db.prepare(`UPDATE admin_agent_tasks SET status=?,updated_at=CURRENT_TIMESTAMP,
+    completed_at=CASE WHEN ?='completed' THEN CURRENT_TIMESTAMP ELSE completed_at END WHERE id=? AND status NOT IN ('completed','cancelled')`)
+    .run(next, next, id);
+  if (!result.changes) return res.status(404).json({ error: 'Tarefa não encontrada ou já encerrada.' });
+  return res.json({ ok: true, status: next });
 });
 
 app.post('/api/admin/ai/chat', requireAdmin, async (req, res) => {
