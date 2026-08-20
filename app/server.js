@@ -302,11 +302,44 @@ CREATE TABLE IF NOT EXISTS social_follows (
   PRIMARY KEY (follower_id, followed_id),
   CHECK (follower_id != followed_id)
 );
+CREATE TABLE IF NOT EXISTS social_reports (
+  id INTEGER PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reason TEXT NOT NULL,
+  details TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open',
+  reviewed_by INTEGER REFERENCES users(id),
+  reviewed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(post_id, reporter_id)
+);
+CREATE TABLE IF NOT EXISTS social_post_views (
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  visitor_key TEXT NOT NULL,
+  view_day TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (post_id, visitor_key, view_day)
+);
+CREATE TABLE IF NOT EXISTS social_credit_allocations (
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  batch_id INTEGER NOT NULL REFERENCES credit_batches(id),
+  units INTEGER NOT NULL,
+  PRIMARY KEY (post_id, batch_id)
+);
 CREATE INDEX IF NOT EXISTS idx_social_posts_feed ON social_posts(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_posts_user ON social_posts(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_comments_post ON social_comments(post_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_follows_followed ON social_follows(followed_id);
+CREATE INDEX IF NOT EXISTS idx_social_reports_status ON social_reports(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_views_post ON social_post_views(post_id, created_at DESC);
 `);
+ensureColumn('social_posts', 'moderation_status', "TEXT NOT NULL DEFAULT 'pending'");
+ensureColumn('social_posts', 'moderation_reason', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('social_posts', 'moderated_by', 'INTEGER');
+ensureColumn('social_posts', 'moderated_at', 'TEXT');
+ensureColumn('social_posts', 'cta_charge_units', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('social_posts', 'cta_charge_status', "TEXT NOT NULL DEFAULT 'not_required'");
 db.exec(`CREATE TABLE IF NOT EXISTS ad_delivery_events (
   id INTEGER PRIMARY KEY,
   campaign_id INTEGER NOT NULL REFERENCES ad_campaigns(id) ON DELETE CASCADE,
@@ -3278,6 +3311,73 @@ function sameOriginOnly(req, res, next) {
   }
 }
 
+const SOCIAL_LINK_PRICE_UNITS = 500;
+const SOCIAL_REPORT_REASONS = new Set(['pornografia','nudez','violencia','odio','golpe','direitos_autorais','outro']);
+const SOCIAL_RISK_TERMS = [
+  ['pornografia', /\b(porn|porno|pornografia|sexo explicito|nudez|nudes?)\b/i],
+  ['violencia', /\b(decapit|tortura|massacre|sangue real|violencia grafica|mutila)\w*/i],
+  ['odio', /\b(exterminar|supremacia|ataque racial)\b/i]
+];
+
+function socialModerationReason(...values) {
+  const text = values.map(value => String(value || '')).join(' ');
+  return SOCIAL_RISK_TERMS.filter(([, pattern]) => pattern.test(text)).map(([name]) => name).join(', ');
+}
+
+function validSocialUrl(value) {
+  try {
+    const parsed = new URL(String(value || '').trim());
+    if (!['http:','https:'].includes(parsed.protocol) || parsed.username || parsed.password) return false;
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'localhost' || host.endsWith('.local') || /^(127\.|10\.|192\.168\.|169\.254\.)/.test(host)) return false;
+    return true;
+  } catch { return false; }
+}
+
+const chargeSocialLink = db.transaction((postId, userId) => {
+  expireCreditBatches(userId);
+  const wallet = db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId);
+  if (!wallet || wallet.balance_units < SOCIAL_LINK_PRICE_UNITS) throw new Error('Saldo insuficiente. Um vídeo com link custa 5 moedas.');
+  let remaining = SOCIAL_LINK_PRICE_UNITS;
+  const batches = db.prepare(`SELECT id,remaining_units FROM credit_batches
+    WHERE user_id=? AND status='active' AND remaining_units>0 ORDER BY expires_at,id`).all(userId);
+  for (const batch of batches) {
+    if (!remaining) break;
+    const used = Math.min(remaining, batch.remaining_units);
+    const next = batch.remaining_units - used;
+    db.prepare(`UPDATE credit_batches SET remaining_units=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(next, next ? 'active' : 'used', batch.id);
+    db.prepare('INSERT INTO social_credit_allocations (post_id,batch_id,units) VALUES (?,?,?)').run(postId, batch.id, used);
+    remaining -= used;
+  }
+  if (remaining) throw new Error('Créditos ativos insuficientes.');
+  const balanceAfter = wallet.balance_units - SOCIAL_LINK_PRICE_UNITS;
+  db.prepare('UPDATE wallets SET balance_units=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(balanceAfter, userId);
+  db.prepare(`INSERT INTO wallet_ledger (user_id,delta_units,balance_after_units,kind,description)
+    VALUES (?,?,?,?,?)`).run(userId, -SOCIAL_LINK_PRICE_UNITS, balanceAfter, 'social_video_link', `Link comercial no vídeo ${postId}`);
+  db.prepare("UPDATE social_posts SET cta_charge_status='paid' WHERE id=?").run(postId);
+});
+
+const refundSocialLink = db.transaction((postId, reason) => {
+  const post = db.prepare("SELECT user_id,cta_charge_units,cta_charge_status FROM social_posts WHERE id=?").get(postId);
+  if (!post || post.cta_charge_status !== 'paid' || !post.cta_charge_units) return;
+  const allocations = db.prepare('SELECT batch_id,units FROM social_credit_allocations WHERE post_id=?').all(postId);
+  for (const allocation of allocations) {
+    db.prepare(`UPDATE credit_batches SET remaining_units=remaining_units+?,status='active',updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(allocation.units, allocation.batch_id);
+  }
+  const current = db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(post.user_id)?.balance_units || 0;
+  const balanceAfter = current + post.cta_charge_units;
+  db.prepare('UPDATE wallets SET balance_units=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(balanceAfter, post.user_id);
+  db.prepare(`INSERT INTO wallet_ledger (user_id,delta_units,balance_after_units,kind,description)
+    VALUES (?,?,?,?,?)`).run(post.user_id, post.cta_charge_units, balanceAfter, 'social_video_refund', `Devolução do vídeo ${postId}: ${reason}`);
+  db.prepare("UPDATE social_posts SET cta_charge_status='refunded' WHERE id=?").run(postId);
+});
+
+function socialVisitorKey(req) {
+  return createHash('sha256').update(`${req.ip}|${String(req.get('user-agent') || '').slice(0, 240)}`).digest('hex').slice(0, 32);
+}
+
 function socialPost(row, viewerId) {
   return {
     id: row.id,
@@ -3293,6 +3393,7 @@ function socialPost(row, viewerId) {
     author: { id: row.user_id, name: row.author_name, handle: row.handle, avatarUrl: row.avatar_url || '' },
     likes: Number(row.likes_count || 0),
     comments: Number(row.comments_count || 0),
+    views: Number(row.views_count || 0),
     liked: Boolean(row.viewer_liked),
     following: Boolean(row.viewer_following),
     mine: Number(row.user_id) === Number(viewerId)
@@ -3308,6 +3409,7 @@ app.get('/api/social/feed', (req, res) => {
       COALESCE(sp.avatar_url,'') avatar_url,
       (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) likes_count,
       (SELECT COUNT(*) FROM social_comments c WHERE c.post_id=p.id AND c.status='published') comments_count,
+      (SELECT COUNT(*) FROM social_post_views v WHERE v.post_id=p.id) views_count,
       EXISTS(SELECT 1 FROM social_likes l WHERE l.post_id=p.id AND l.user_id=?) viewer_liked,
       EXISTS(SELECT 1 FROM social_follows f WHERE f.followed_id=p.user_id AND f.follower_id=?) viewer_following
     FROM social_posts p
@@ -3332,6 +3434,20 @@ app.get('/api/social/profile/me', requireUser, (req, res) => {
     .get(req.user.id, req.user.id, req.user.id);
   return res.json({ profile: { name: req.user.name, handle: profile.handle, bio: profile.bio,
     city: profile.city, avatarUrl: profile.avatar_url, ...counts } });
+});
+
+app.get('/api/social/posts/me', requireUser, (req, res) => {
+  const items = db.prepare(`SELECT p.*,
+      (SELECT COUNT(*) FROM social_likes WHERE post_id=p.id) likes,
+      (SELECT COUNT(*) FROM social_comments WHERE post_id=p.id AND status='published') comments,
+      (SELECT COUNT(*) FROM social_post_views WHERE post_id=p.id) views,
+      (SELECT COUNT(*) FROM social_reports WHERE post_id=p.id AND status='open') reports
+    FROM social_posts p WHERE p.user_id=? AND p.status!='deleted' ORDER BY p.created_at DESC LIMIT 100`).all(req.user.id);
+  return res.json({ items: items.map(p => ({ id:p.id, videoUid:p.video_uid, caption:p.caption, category:p.category,
+    city:p.city, ctaLabel:p.cta_label, ctaUrl:p.cta_url, status:p.status, moderationStatus:p.moderation_status,
+    moderationReason:p.moderation_reason, chargeCoins:Number(p.cta_charge_units || 0)/100,
+    chargeStatus:p.cta_charge_status, likes:Number(p.likes), comments:Number(p.comments), views:Number(p.views),
+    reports:Number(p.reports), createdAt:p.created_at })) });
 });
 
 app.patch('/api/social/profile/me', requireUser, sameOriginOnly, (req, res) => {
@@ -3361,7 +3477,13 @@ app.post('/api/social/uploads', requireUser, sameOriginOnly, async (req, res) =>
   const city = String(req.body?.city || '').trim().slice(0, 80);
   const ctaLabel = String(req.body?.ctaLabel || '').trim().slice(0, 40);
   const ctaUrl = String(req.body?.ctaUrl || '').trim().slice(0, 500);
-  if (ctaUrl && !/^https?:\/\//i.test(ctaUrl)) return res.status(400).json({ error: 'O link precisa começar com http:// ou https://.' });
+  if (ctaUrl && !validSocialUrl(ctaUrl)) return res.status(400).json({ error: 'Informe um link público e seguro usando http:// ou https://.' });
+  const chargeUnits = ctaUrl ? SOCIAL_LINK_PRICE_UNITS : 0;
+  if (chargeUnits) {
+    expireCreditBatches(req.user.id);
+    const balance = db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(req.user.id)?.balance_units || 0;
+    if (balance < chargeUnits) return res.status(402).json({ error: 'Saldo insuficiente. Adicionar link ao vídeo custa 5 moedas.', requiredCoins: 5, balanceCoins: balance / 100 });
+  }
   socialHandle(req.user);
   try {
     const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/direct_upload`, {
@@ -3381,10 +3503,16 @@ app.post('/api/social/uploads', requireUser, sameOriginOnly, async (req, res) =>
       return res.status(502).json({ error: 'Não foi possível preparar o envio do vídeo.' });
     }
     const postId = randomUUID();
-    db.prepare(`INSERT INTO social_posts
-      (id,user_id,video_uid,caption,category,city,cta_label,cta_url,status)
-      VALUES (?,?,?,?,?,?,?,?, 'uploading')`).run(postId, req.user.id, payload.result.uid,
-        caption, category, city, ctaLabel, ctaUrl);
+    const riskReason = socialModerationReason(caption, ctaLabel, ctaUrl);
+    const createPost = db.transaction(() => {
+      db.prepare(`INSERT INTO social_posts
+        (id,user_id,video_uid,caption,category,city,cta_label,cta_url,status,moderation_status,moderation_reason,cta_charge_units,cta_charge_status)
+        VALUES (?,?,?,?,?,?,?,?, 'uploading','pending',?,?,?)`).run(postId, req.user.id, payload.result.uid,
+          caption, category, city, ctaUrl ? (ctaLabel || 'Saiba mais') : '', ctaUrl, riskReason, chargeUnits,
+          chargeUnits ? 'reserved' : 'not_required');
+      if (chargeUnits) chargeSocialLink(postId, req.user.id);
+    });
+    createPost();
     return res.status(201).json({ postId, uploadUrl: payload.result.uploadURL, videoUid: payload.result.uid,
       maxBytes: 200 * 1024 * 1024, maxDurationSeconds: 60 });
   } catch (error) {
@@ -3432,6 +3560,54 @@ app.post('/api/social/posts/:id/comments', requireUser, sameOriginOnly, (req, re
   return res.status(201).json({ id: Number(result.lastInsertRowid), body, name: req.user.name });
 });
 
+app.post('/api/social/posts/:id/view', sameOriginOnly, (req, res) => {
+  const post = db.prepare("SELECT id FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
+  if (!post) return res.status(404).json({ error: 'Publicação não encontrada.' });
+  db.prepare(`INSERT OR IGNORE INTO social_post_views (post_id,visitor_key,view_day) VALUES (?,?,?)`)
+    .run(post.id, socialVisitorKey(req), new Date().toISOString().slice(0,10));
+  return res.json({ ok:true });
+});
+
+app.post('/api/social/posts/:id/report', requireUser, sameOriginOnly, (req, res) => {
+  const reason = String(req.body?.reason || 'outro');
+  const details = String(req.body?.details || '').trim().slice(0,500);
+  if (!SOCIAL_REPORT_REASONS.has(reason)) return res.status(400).json({ error:'Escolha um motivo válido.' });
+  const post = db.prepare("SELECT id,user_id FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
+  if (!post || post.user_id === req.user.id) return res.status(400).json({ error:'Publicação inválida.' });
+  db.prepare(`INSERT INTO social_reports (post_id,reporter_id,reason,details) VALUES (?,?,?,?)
+    ON CONFLICT(post_id,reporter_id) DO UPDATE SET reason=excluded.reason,details=excluded.details,status='open',created_at=CURRENT_TIMESTAMP`)
+    .run(post.id, req.user.id, reason, details);
+  const openReports = db.prepare("SELECT COUNT(*) total FROM social_reports WHERE post_id=? AND status='open'").get(post.id).total;
+  if (openReports >= 3) db.prepare("UPDATE social_posts SET status='pending_review',moderation_status='reported',moderation_reason='Ocultado após denúncias' WHERE id=?").run(post.id);
+  return res.status(201).json({ ok:true, hiddenForReview: openReports >= 3 });
+});
+
+app.get('/api/admin/social/moderation', requireAdmin, (_req, res) => {
+  const items = db.prepare(`SELECT p.*,u.name,u.email,
+      (SELECT COUNT(*) FROM social_reports r WHERE r.post_id=p.id AND r.status='open') reports
+    FROM social_posts p JOIN users u ON u.id=p.user_id
+    WHERE p.status IN ('pending_review','processing') OR p.moderation_status IN ('pending','flagged','reported')
+    ORDER BY CASE WHEN p.moderation_status='reported' THEN 0 ELSE 1 END,p.created_at ASC LIMIT 200`).all();
+  return res.json({ items, linkPriceCoins:SOCIAL_LINK_PRICE_UNITS/100 });
+});
+
+app.patch('/api/admin/social/posts/:id/moderation', requireAdmin, sameOriginOnly, (req, res) => {
+  const action = String(req.body?.action || '');
+  const note = String(req.body?.note || '').trim().slice(0,500);
+  const post = db.prepare('SELECT * FROM social_posts WHERE id=?').get(req.params.id);
+  if (!post) return res.status(404).json({ error:'Vídeo não encontrado.' });
+  if (action === 'approve') {
+    db.prepare(`UPDATE social_posts SET status='ready',moderation_status='approved',moderation_reason=?,moderated_by=?,moderated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(note, req.user.id, post.id);
+  } else if (action === 'reject') {
+    refundSocialLink(post.id, note || 'conteúdo não aprovado');
+    db.prepare(`UPDATE social_posts SET status='rejected',moderation_status='rejected',moderation_reason=?,moderated_by=?,moderated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(note || 'Conteúdo proibido ou fora das regras.', req.user.id, post.id);
+  } else return res.status(400).json({ error:'Ação inválida.' });
+  db.prepare("UPDATE social_reports SET status='reviewed',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE post_id=? AND status='open'").run(req.user.id, post.id);
+  return res.json({ ok:true });
+});
+
 app.post('/api/social/users/:id/follow', requireUser, sameOriginOnly, (req, res) => {
   const followedId = Number(req.params.id);
   if (!Number.isInteger(followedId) || followedId === req.user.id ||
@@ -3461,11 +3637,15 @@ app.post('/api/webhooks/cloudflare-stream', (req, res) => {
     return res.status(401).json({ error: 'Assinatura inválida.' });
   }
   const video = req.body || {};
-  const status = video.readyToStream || video.readytoStream || video.status?.state === 'ready'
-    ? 'ready' : video.status?.state === 'error' ? 'error' : 'processing';
-  db.prepare(`UPDATE social_posts SET status=?,duration_seconds=?,error_message=?,updated_at=CURRENT_TIMESTAMP
-    WHERE video_uid=?`).run(status, Number(video.duration) || null,
-      String(video.status?.errorReasonText || '').slice(0, 500), String(video.uid || ''));
+  const state = video.status?.state;
+  const status = video.readyToStream || video.readytoStream || state === 'ready'
+    ? 'pending_review' : state === 'error' ? 'error' : 'processing';
+  const post = db.prepare('SELECT id FROM social_posts WHERE video_uid=?').get(String(video.uid || ''));
+  if (post && status === 'error') refundSocialLink(post.id, 'falha no processamento do vídeo');
+  db.prepare(`UPDATE social_posts SET status=?,moderation_status=CASE WHEN ?='pending_review' THEN
+      CASE WHEN moderation_reason='' THEN 'pending' ELSE 'flagged' END ELSE moderation_status END,
+      duration_seconds=?,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE video_uid=?`).run(status, status,
+      Number(video.duration) || null, String(video.status?.errorReasonText || '').slice(0, 500), String(video.uid || ''));
   return res.json({ ok: true });
 });
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
