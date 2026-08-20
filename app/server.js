@@ -353,6 +353,38 @@ db.exec(`CREATE TABLE IF NOT EXISTS social_webhook_events (
 );
 CREATE INDEX IF NOT EXISTS idx_social_webhook_events_received
   ON social_webhook_events(received_at,id);`);
+db.exec(`CREATE TABLE IF NOT EXISTS customer_addresses (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  label TEXT NOT NULL DEFAULT 'Casa',
+  recipient_name TEXT NOT NULL,
+  postal_code TEXT NOT NULL,
+  street TEXT NOT NULL,
+  number TEXT NOT NULL,
+  complement TEXT,
+  neighborhood TEXT NOT NULL,
+  city TEXT NOT NULL,
+  state TEXT NOT NULL,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_customer_addresses_user ON customer_addresses(user_id,is_default,id);
+CREATE TABLE IF NOT EXISTS store_products (
+  id INTEGER PRIMARY KEY,
+  store_reference TEXT NOT NULL REFERENCES store_profiles(order_reference) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  category TEXT,
+  price_cents INTEGER,
+  image_url TEXT,
+  product_url TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_store_products_store ON store_products(store_reference,active,id);
+CREATE INDEX IF NOT EXISTS idx_store_products_name ON store_products(name);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -941,6 +973,120 @@ app.get('/api/auth/me', (req, res) => {
   if (!user) return res.status(401).json({ authenticated: false });
   return res.json({ authenticated: true, user: { name: user.name, email: user.email,
     whatsapp: user.whatsapp || '', admin: Boolean(user.is_admin || adminEmails.has(String(user.email).toLowerCase())) }, wallet: publicWallet(user.id) });
+});
+
+function publicAddress(row) {
+  return { id: row.id, label: row.label, recipientName: row.recipient_name, postalCode: row.postal_code,
+    street: row.street, number: row.number, complement: row.complement || '', neighborhood: row.neighborhood,
+    city: row.city, state: row.state, isDefault: Boolean(row.is_default) };
+}
+
+app.get('/api/search/suggestions', (req, res) => {
+  const query = String(req.query.q || '').trim().slice(0, 80);
+  if (query.length < 2) return res.json({ suggestions: [] });
+  const like = `%${query}%`;
+  const stores = db.prepare(`SELECT business_name AS label,segment AS category FROM store_profiles p
+    JOIN lot_orders o ON o.reference=p.order_reference
+    WHERE p.review_status='published' AND (p.business_name LIKE ? OR p.description LIKE ? OR o.segment LIKE ?)
+    ORDER BY CASE WHEN p.business_name LIKE ? THEN 0 ELSE 1 END,p.business_name LIMIT 6`)
+    .all(like, like, like, `${query}%`).map(row => ({ ...row, type: 'store' }));
+  const products = db.prepare(`SELECT DISTINCT name AS label,category FROM store_products
+    WHERE active=1 AND (name LIKE ? OR description LIKE ? OR category LIKE ?) ORDER BY name LIMIT 6`)
+    .all(like, like, like).map(row => ({ ...row, type: 'product' }));
+  const seen = new Set();
+  return res.json({ suggestions: [...stores, ...products].filter(item => {
+    const key = item.label.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true;
+  }).slice(0, 8) });
+});
+
+app.get('/api/search', (req, res) => {
+  const query = String(req.query.q || '').trim().slice(0, 80);
+  if (query.length < 2) return res.json({ query, stores: [], products: [] });
+  const like = `%${query}%`;
+  const stores = db.prepare(`SELECT p.order_reference AS reference,p.business_name AS name,p.description,
+    p.logo_url AS logoUrl,p.facade_url AS facadeUrl,p.whatsapp,p.website_url AS websiteUrl,
+    p.instagram_url AS instagramUrl,p.promotion_text AS promotionText,o.segment,o.lot_code AS lotCode
+    FROM store_profiles p JOIN lot_orders o ON o.reference=p.order_reference
+    WHERE p.review_status='published' AND (p.business_name LIKE ? OR p.description LIKE ? OR o.segment LIKE ?)
+    ORDER BY CASE WHEN p.business_name LIKE ? THEN 0 ELSE 1 END,p.published_at DESC LIMIT 40`)
+    .all(like, like, like, `${query}%`);
+  const products = db.prepare(`SELECT sp.id,sp.name,sp.description,sp.category,sp.price_cents AS priceCents,
+    sp.image_url AS imageUrl,sp.product_url AS productUrl,p.business_name AS storeName,p.order_reference AS storeReference
+    FROM store_products sp JOIN store_profiles p ON p.order_reference=sp.store_reference
+    WHERE sp.active=1 AND p.review_status='published' AND
+      (sp.name LIKE ? OR sp.description LIKE ? OR sp.category LIKE ? OR p.business_name LIKE ?)
+    ORDER BY CASE WHEN sp.name LIKE ? THEN 0 ELSE 1 END,sp.updated_at DESC LIMIT 60`)
+    .all(like, like, like, like, `${query}%`);
+  return res.json({ query, stores, products });
+});
+
+app.get('/api/customer/profile', requireUser, (req, res) => {
+  const addresses = db.prepare('SELECT * FROM customer_addresses WHERE user_id=? ORDER BY is_default DESC,id DESC')
+    .all(req.user.id).map(publicAddress);
+  return res.json({ customer: { name: req.user.name, email: req.user.email, whatsapp: req.user.whatsapp || '' }, addresses });
+});
+
+app.put('/api/customer/profile', requireUser, (req, res) => {
+  const name = String(req.body?.name || '').trim().slice(0, 100);
+  const whatsapp = String(req.body?.whatsapp || '').trim().slice(0, 30);
+  if (name.length < 2) return res.status(400).json({ error: 'Informe seu nome.' });
+  db.prepare('UPDATE users SET name=?,whatsapp=? WHERE id=?').run(name, whatsapp, req.user.id);
+  return res.json({ ok: true });
+});
+
+app.post('/api/customer/addresses', requireUser, (req, res) => {
+  const body = req.body || {};
+  const address = {
+    label: String(body.label || 'Casa').trim().slice(0, 30), recipient: String(body.recipientName || '').trim().slice(0, 100),
+    postal: String(body.postalCode || '').replace(/\D/g, '').slice(0, 8), street: String(body.street || '').trim().slice(0, 120),
+    number: String(body.number || '').trim().slice(0, 20), complement: String(body.complement || '').trim().slice(0, 80),
+    neighborhood: String(body.neighborhood || '').trim().slice(0, 80), city: String(body.city || '').trim().slice(0, 80),
+    state: String(body.state || '').trim().toUpperCase().slice(0, 2)
+  };
+  if (!address.recipient || address.postal.length !== 8 || !address.street || !address.number ||
+      !address.neighborhood || !address.city || address.state.length !== 2) {
+    return res.status(400).json({ error: 'Preencha corretamente todos os campos obrigatórios do endereço.' });
+  }
+  const count = db.prepare('SELECT COUNT(*) AS total FROM customer_addresses WHERE user_id=?').get(req.user.id).total;
+  const makeDefault = body.isDefault || count === 0;
+  const create = db.transaction(() => {
+    if (makeDefault) db.prepare('UPDATE customer_addresses SET is_default=0 WHERE user_id=?').run(req.user.id);
+    return db.prepare(`INSERT INTO customer_addresses
+      (user_id,label,recipient_name,postal_code,street,number,complement,neighborhood,city,state,is_default)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(req.user.id,address.label,address.recipient,address.postal,address.street,
+        address.number,address.complement,address.neighborhood,address.city,address.state,makeDefault ? 1 : 0);
+  });
+  const result = create();
+  return res.status(201).json({ ok: true, id: Number(result.lastInsertRowid) });
+});
+
+app.patch('/api/customer/addresses/:id/default', requireUser, (req, res) => {
+  const id = Number(req.params.id);
+  const exists = db.prepare('SELECT id FROM customer_addresses WHERE id=? AND user_id=?').get(id, req.user.id);
+  if (!exists) return res.status(404).json({ error: 'Endereço não encontrado.' });
+  db.transaction(() => {
+    db.prepare('UPDATE customer_addresses SET is_default=0 WHERE user_id=?').run(req.user.id);
+    db.prepare('UPDATE customer_addresses SET is_default=1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?').run(id, req.user.id);
+  })();
+  return res.json({ ok: true });
+});
+
+app.delete('/api/customer/addresses/:id', requireUser, (req, res) => {
+  const id = Number(req.params.id);
+  const selected = db.prepare('SELECT is_default FROM customer_addresses WHERE id=? AND user_id=?').get(id, req.user.id);
+  if (!selected) return res.status(404).json({ error: 'Endereço não encontrado.' });
+  db.transaction(() => {
+    db.prepare('DELETE FROM customer_addresses WHERE id=? AND user_id=?').run(id, req.user.id);
+    if (selected.is_default) db.prepare(`UPDATE customer_addresses SET is_default=1,updated_at=CURRENT_TIMESTAMP
+      WHERE id=(SELECT id FROM customer_addresses WHERE user_id=? ORDER BY id DESC LIMIT 1)`).run(req.user.id);
+  })();
+  return res.json({ ok: true });
+});
+
+app.get('/api/checkout/customer', requireUser, (req, res) => {
+  const address = db.prepare('SELECT * FROM customer_addresses WHERE user_id=? ORDER BY is_default DESC,id DESC LIMIT 1').get(req.user.id);
+  return res.json({ customer: { name: req.user.name, email: req.user.email, whatsapp: req.user.whatsapp || '' },
+    address: address ? publicAddress(address) : null, confirmationRequired: true });
 });
 
 function socialApiVersion() {
