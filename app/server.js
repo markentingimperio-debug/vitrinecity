@@ -30,6 +30,20 @@ db.exec(`CREATE TABLE IF NOT EXISTS leads (
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL, whatsapp TEXT,
   interest TEXT, consent INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS contact_submissions (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  whatsapp TEXT,
+  subject TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'normal',
+  account_reference TEXT NOT NULL DEFAULT '',
+  details TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'new',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_contact_submissions_status_created
+ON contact_submissions(status, created_at DESC);
 CREATE TABLE IF NOT EXISTS lot_orders (
   id INTEGER PRIMARY KEY,
   reference TEXT NOT NULL UNIQUE,
@@ -327,6 +341,27 @@ CREATE TABLE IF NOT EXISTS social_credit_allocations (
   units INTEGER NOT NULL,
   PRIMARY KEY (post_id, batch_id)
 );
+CREATE TABLE IF NOT EXISTS social_saves (
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (post_id,user_id)
+);
+CREATE TABLE IF NOT EXISTS social_reposts (
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (post_id,user_id)
+);
+CREATE TABLE IF NOT EXISTS social_shares (
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  visitor_key TEXT NOT NULL,
+  share_day TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (post_id,visitor_key,share_day)
+);
+CREATE INDEX IF NOT EXISTS idx_social_saves_user ON social_saves(user_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_reposts_user ON social_reposts(user_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_posts_feed ON social_posts(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_posts_user ON social_posts(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_comments_post ON social_comments(post_id, created_at DESC);
@@ -1062,6 +1097,46 @@ app.post('/api/leads', (req, res) => {
     .run(name.trim().slice(0, 100), email.trim().toLowerCase().slice(0, 160), String(whatsapp).slice(0, 30), String(interest).slice(0, 80));
   adminAnalytics.recordLead(req, String(interest).slice(0, 80));
   return res.status(201).json({ ok: true });
+});
+
+app.post('/api/contact', sameOriginOnly, (req, res) => {
+  if (!allowAttempt(authAttempts, `contact:${req.ip}`, 4, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Muitas mensagens em pouco tempo. Tente novamente mais tarde.' });
+  }
+  const body = req.body || {};
+  if (String(body.website || '').trim()) return res.status(201).json({ ok: true });
+  const name = String(body.name || '').trim().slice(0, 100);
+  const email = String(body.email || '').trim().toLowerCase().slice(0, 160);
+  const whatsapp = String(body.whatsapp || '').trim().slice(0, 30);
+  const subject = String(body.subject || '').trim().slice(0, 80);
+  const priority = ['normal','urgente'].includes(String(body.priority)) ? String(body.priority) : 'normal';
+  const accountReference = String(body.accountReference || '').trim().slice(0, 120);
+  const details = String(body.details || '').trim().slice(0, 2000);
+  const startedAt = Number(body.formStartedAt || 0);
+  const subjects = new Set(['Suporte da minha conta','Cadastrar minha empresa','VitrineCity Ads','Cursos','Parceria','Denúncia de conteúdo','Outro assunto']);
+  if (!body.consent || name.length < 2 || !/^\S+@\S+\.\S+$/.test(email) || !subjects.has(subject) || details.length < 20) {
+    return res.status(400).json({ error: 'Preencha nome, e-mail, assunto e uma mensagem com pelo menos 20 caracteres.' });
+  }
+  if (startedAt && Date.now() - startedAt < 2500) return res.status(400).json({ error: 'Revise a mensagem antes de enviar.' });
+  const result = db.prepare(`INSERT INTO contact_submissions
+    (name,email,whatsapp,subject,priority,account_reference,details) VALUES (?,?,?,?,?,?,?)`)
+    .run(name, email, whatsapp, subject, priority, accountReference, details);
+  adminAnalytics.recordLead(req, `Contato: ${subject}`);
+  return res.status(201).json({ ok: true, protocol: `VC-${String(result.lastInsertRowid).padStart(6,'0')}` });
+});
+
+app.get('/api/admin/contact-submissions', requireAdmin, (_req, res) => {
+  const items = db.prepare(`SELECT * FROM contact_submissions ORDER BY
+    CASE priority WHEN 'urgente' THEN 0 ELSE 1 END,id DESC LIMIT 200`).all();
+  return res.json({ items });
+});
+
+app.patch('/api/admin/contact-submissions/:id', requireAdmin, sameOriginOnly, (req, res) => {
+  const status = String(req.body?.status || '');
+  if (!['new','in_progress','resolved','spam'].includes(status)) return res.status(400).json({ error:'Status inválido.' });
+  const result = db.prepare('UPDATE contact_submissions SET status=? WHERE id=?').run(status, Number(req.params.id));
+  if (!result.changes) return res.status(404).json({ error:'Solicitação não encontrada.' });
+  return res.json({ ok:true });
 });
 
 app.post('/api/auth/register', (req, res) => {
@@ -3394,6 +3469,11 @@ function socialPost(row, viewerId) {
     likes: Number(row.likes_count || 0),
     comments: Number(row.comments_count || 0),
     views: Number(row.views_count || 0),
+    saves: Number(row.saves_count || 0),
+    reposts: Number(row.reposts_count || 0),
+    shares: Number(row.shares_count || 0),
+    saved: Boolean(row.viewer_saved),
+    reposted: Boolean(row.viewer_reposted),
     liked: Boolean(row.viewer_liked),
     following: Boolean(row.viewer_following),
     mine: Number(row.user_id) === Number(viewerId)
@@ -3410,6 +3490,11 @@ app.get('/api/social/feed', (req, res) => {
       (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) likes_count,
       (SELECT COUNT(*) FROM social_comments c WHERE c.post_id=p.id AND c.status='published') comments_count,
       (SELECT COUNT(*) FROM social_post_views v WHERE v.post_id=p.id) views_count,
+      (SELECT COUNT(*) FROM social_saves s WHERE s.post_id=p.id) saves_count,
+      (SELECT COUNT(*) FROM social_reposts r WHERE r.post_id=p.id) reposts_count,
+      (SELECT COUNT(*) FROM social_shares h WHERE h.post_id=p.id) shares_count,
+      EXISTS(SELECT 1 FROM social_saves s WHERE s.post_id=p.id AND s.user_id=?) viewer_saved,
+      EXISTS(SELECT 1 FROM social_reposts r WHERE r.post_id=p.id AND r.user_id=?) viewer_reposted,
       EXISTS(SELECT 1 FROM social_likes l WHERE l.post_id=p.id AND l.user_id=?) viewer_liked,
       EXISTS(SELECT 1 FROM social_follows f WHERE f.followed_id=p.user_id AND f.follower_id=?) viewer_following
     FROM social_posts p
@@ -3418,7 +3503,14 @@ app.get('/api/social/feed', (req, res) => {
     WHERE p.status='ready'
       AND (?='' OR p.created_at<?)
       AND (?='' OR p.category=?)
-    ORDER BY p.created_at DESC LIMIT ?`).all(viewer?.id || 0, viewer?.id || 0,
+    ORDER BY ((20
+      + (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) * 3
+      + (SELECT COUNT(*) FROM social_comments c WHERE c.post_id=p.id AND c.status='published') * 5
+      + (SELECT COUNT(*) FROM social_saves s WHERE s.post_id=p.id) * 4
+      + (SELECT COUNT(*) FROM social_reposts r WHERE r.post_id=p.id) * 7
+      + (SELECT COUNT(*) FROM social_shares h WHERE h.post_id=p.id) * 2)
+      / (1 + MAX(0,julianday('now')-julianday(p.created_at)) * 0.35)) DESC,p.created_at DESC LIMIT ?`).all(
+      viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, viewer?.id || 0,
       before, before, category, category, limit + 1);
   const hasMore = rows.length > limit;
   const items = rows.slice(0, limit).map(row => socialPost(row, viewer?.id));
@@ -3558,6 +3650,53 @@ app.post('/api/social/posts/:id/comments', requireUser, sameOriginOnly, (req, re
   const result = db.prepare('INSERT INTO social_comments (post_id,user_id,body) VALUES (?,?,?)')
     .run(req.params.id, req.user.id, body);
   return res.status(201).json({ id: Number(result.lastInsertRowid), body, name: req.user.name });
+});
+
+app.get('/api/social/saved', requireUser, (req, res) => {
+  const rows = db.prepare(`SELECT p.*,u.name author_name,COALESCE(sp.handle,'usuario') handle,COALESCE(sp.avatar_url,'') avatar_url,
+      (SELECT COUNT(*) FROM social_likes WHERE post_id=p.id) likes_count,
+      (SELECT COUNT(*) FROM social_comments WHERE post_id=p.id AND status='published') comments_count,
+      (SELECT COUNT(*) FROM social_post_views WHERE post_id=p.id) views_count,
+      (SELECT COUNT(*) FROM social_saves WHERE post_id=p.id) saves_count,
+      (SELECT COUNT(*) FROM social_reposts WHERE post_id=p.id) reposts_count,
+      (SELECT COUNT(*) FROM social_shares WHERE post_id=p.id) shares_count,
+      EXISTS(SELECT 1 FROM social_likes WHERE post_id=p.id AND user_id=?) viewer_liked,
+      1 viewer_saved,EXISTS(SELECT 1 FROM social_reposts WHERE post_id=p.id AND user_id=?) viewer_reposted,
+      EXISTS(SELECT 1 FROM social_follows WHERE followed_id=p.user_id AND follower_id=?) viewer_following
+    FROM social_saves saved JOIN social_posts p ON p.id=saved.post_id JOIN users u ON u.id=p.user_id
+    LEFT JOIN social_profiles sp ON sp.user_id=p.user_id WHERE saved.user_id=? AND p.status='ready'
+    ORDER BY saved.created_at DESC LIMIT 100`).all(req.user.id,req.user.id,req.user.id,req.user.id);
+  return res.json({ items:rows.map(row=>socialPost(row,req.user.id)) });
+});
+
+function toggleSocialRelation(table, postId, userId) {
+  const exists=db.prepare(`SELECT 1 FROM ${table} WHERE post_id=? AND user_id=?`).get(postId,userId);
+  if(exists) db.prepare(`DELETE FROM ${table} WHERE post_id=? AND user_id=?`).run(postId,userId);
+  else db.prepare(`INSERT INTO ${table} (post_id,user_id) VALUES (?,?)`).run(postId,userId);
+  return !exists;
+}
+
+app.post('/api/social/posts/:id/save', requireUser, sameOriginOnly, (req,res)=>{
+  if(!db.prepare("SELECT 1 FROM social_posts WHERE id=? AND status='ready'").get(req.params.id)) return res.status(404).json({error:'Publicação não encontrada.'});
+  const saved=toggleSocialRelation('social_saves',req.params.id,req.user.id);
+  const count=db.prepare('SELECT COUNT(*) count FROM social_saves WHERE post_id=?').get(req.params.id).count;
+  return res.json({saved,saves:count});
+});
+
+app.post('/api/social/posts/:id/repost', requireUser, sameOriginOnly, (req,res)=>{
+  const post=db.prepare("SELECT user_id FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
+  if(!post||post.user_id===req.user.id) return res.status(400).json({error:'Não é possível republicar este vídeo.'});
+  const reposted=toggleSocialRelation('social_reposts',req.params.id,req.user.id);
+  const count=db.prepare('SELECT COUNT(*) count FROM social_reposts WHERE post_id=?').get(req.params.id).count;
+  return res.json({reposted,reposts:count});
+});
+
+app.post('/api/social/posts/:id/share', sameOriginOnly, (req,res)=>{
+  if(!db.prepare("SELECT 1 FROM social_posts WHERE id=? AND status='ready'").get(req.params.id)) return res.status(404).json({error:'Publicação não encontrada.'});
+  db.prepare('INSERT OR IGNORE INTO social_shares (post_id,visitor_key,share_day) VALUES (?,?,?)')
+    .run(req.params.id,socialVisitorKey(req),new Date().toISOString().slice(0,10));
+  const count=db.prepare('SELECT COUNT(*) count FROM social_shares WHERE post_id=?').get(req.params.id).count;
+  return res.json({ok:true,shares:count});
 });
 
 app.post('/api/social/posts/:id/view', sameOriginOnly, (req, res) => {
