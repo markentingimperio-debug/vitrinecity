@@ -419,6 +419,36 @@ CREATE TABLE IF NOT EXISTS social_post_views (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (post_id, visitor_key, view_day)
 );
+CREATE TABLE IF NOT EXISTS social_engagement_events (
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  actor_key TEXT NOT NULL,
+  event_day TEXT NOT NULL,
+  impressions INTEGER NOT NULL DEFAULT 0,
+  watch_ms INTEGER NOT NULL DEFAULT 0,
+  completions INTEGER NOT NULL DEFAULT 0,
+  skips INTEGER NOT NULL DEFAULT 0,
+  replays INTEGER NOT NULL DEFAULT 0,
+  profile_clicks INTEGER NOT NULL DEFAULT 0,
+  cta_clicks INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (post_id,actor_key,event_day)
+);
+CREATE TABLE IF NOT EXISTS social_external_insights (
+  provider TEXT NOT NULL,
+  content_key TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'geral',
+  views INTEGER NOT NULL DEFAULT 0,
+  watch_ms INTEGER NOT NULL DEFAULT 0,
+  completions INTEGER NOT NULL DEFAULT 0,
+  likes INTEGER NOT NULL DEFAULT 0,
+  comments INTEGER NOT NULL DEFAULT 0,
+  shares INTEGER NOT NULL DEFAULT 0,
+  clicks INTEGER NOT NULL DEFAULT 0,
+  conversions INTEGER NOT NULL DEFAULT 0,
+  measured_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (provider,content_key)
+);
 CREATE TABLE IF NOT EXISTS social_credit_allocations (
   post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
   batch_id INTEGER NOT NULL REFERENCES credit_batches(id),
@@ -454,6 +484,9 @@ CREATE INDEX IF NOT EXISTS idx_social_blocks_blocked ON social_blocks(blocked_id
 CREATE INDEX IF NOT EXISTS idx_social_mutes_user ON social_mutes(user_id,muted_id);
 CREATE INDEX IF NOT EXISTS idx_social_reports_status ON social_reports(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_views_post ON social_post_views(post_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_engagement_actor ON social_engagement_events(actor_key,event_day DESC);
+CREATE INDEX IF NOT EXISTS idx_social_engagement_post ON social_engagement_events(post_id,event_day DESC);
+CREATE INDEX IF NOT EXISTS idx_social_external_category ON social_external_insights(category,provider);
 CREATE INDEX IF NOT EXISTS idx_social_stories_active ON social_stories(status,expires_at,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_stories_user ON social_stories(user_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_notifications_user ON social_notifications(user_id,read_at,created_at DESC);
@@ -3847,12 +3880,19 @@ app.get('/api/social/discover', (req,res) => {
 
 app.get('/api/social/feed', (req, res) => {
   const viewer = currentUser(req);
+  const actorKey = viewer ? `user:${viewer.id}` : socialVisitorKey(req);
+  const viewerCity = viewer ? String(db.prepare('SELECT city FROM social_profiles WHERE user_id=?').get(viewer.id)?.city || '').trim().toLowerCase() : '';
   const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 30);
   const before = String(req.query.before || '');
   const category = SOCIAL_CATEGORIES.has(String(req.query.category || '')) ? String(req.query.category) : '';
   const followingOnly = String(req.query.following || '') === '1' && viewer;
   const mode = ['recommended','latest','friends'].includes(String(req.query.mode || '')) ? String(req.query.mode) : 'recommended';
   const friendsOnly = mode === 'friends' && viewer;
+  const candidateLimit = mode === 'recommended' ? Math.min(120,Math.max(40,limit*6)) : limit+1;
+  const externalPriors=new Map(db.prepare(`SELECT category,AVG(
+    MIN(1.0,completions*1.0/MAX(1,views))*25 + MIN(1.0,shares*1.0/MAX(1,views))*20 +
+    MIN(1.0,clicks*1.0/MAX(1,views))*15 + MIN(1.0,conversions*1.0/MAX(1,clicks))*30) score
+    FROM social_external_insights WHERE views>=10 GROUP BY category`).all().map(row=>[row.category,Number(row.score||0)]));
   const rows = db.prepare(`SELECT p.*,u.name author_name,COALESCE(sp.handle,'usuario') handle,
       COALESCE(sp.avatar_url,'') avatar_url,
       (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) likes_count,
@@ -3861,6 +3901,15 @@ app.get('/api/social/feed', (req, res) => {
       (SELECT COUNT(*) FROM social_saves s WHERE s.post_id=p.id) saves_count,
       (SELECT COUNT(*) FROM social_reposts r WHERE r.post_id=p.id) reposts_count,
       (SELECT COUNT(*) FROM social_shares h WHERE h.post_id=p.id) shares_count,
+      COALESCE((SELECT SUM(e.impressions) FROM social_engagement_events e WHERE e.post_id=p.id),0) intelligence_impressions,
+      COALESCE((SELECT SUM(e.watch_ms) FROM social_engagement_events e WHERE e.post_id=p.id),0) intelligence_watch_ms,
+      COALESCE((SELECT SUM(e.completions) FROM social_engagement_events e WHERE e.post_id=p.id),0) intelligence_completions,
+      COALESCE((SELECT SUM(e.skips) FROM social_engagement_events e WHERE e.post_id=p.id),0) intelligence_skips,
+      COALESCE((SELECT SUM(e.replays) FROM social_engagement_events e WHERE e.post_id=p.id),0) intelligence_replays,
+      COALESCE((SELECT SUM(e.impressions) FROM social_engagement_events e WHERE e.post_id=p.id AND e.actor_key=?),0) viewer_impressions,
+      COALESCE((SELECT SUM(e.watch_ms/1000.0 + e.completions*18 + e.replays*12 - e.skips*8)
+        FROM social_engagement_events e JOIN social_posts interested ON interested.id=e.post_id
+        WHERE e.actor_key=? AND interested.category=p.category),0) viewer_category_affinity,
       EXISTS(SELECT 1 FROM social_saves s WHERE s.post_id=p.id AND s.user_id=?) viewer_saved,
       EXISTS(SELECT 1 FROM social_reposts r WHERE r.post_id=p.id AND r.user_id=?) viewer_reposted,
       EXISTS(SELECT 1 FROM social_likes l WHERE l.post_id=p.id AND l.user_id=?) viewer_liked,
@@ -3884,10 +3933,27 @@ app.get('/api/social/feed', (req, res) => {
       + (SELECT COUNT(*) FROM social_reposts r WHERE r.post_id=p.id) * 7
       + (SELECT COUNT(*) FROM social_shares h WHERE h.post_id=p.id) * 2)
       / (1 + MAX(0,julianday('now')-julianday(p.created_at)) * 0.35)) END DESC,p.created_at DESC LIMIT ?`).all(
-      viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, viewer?.id || 0,
+      actorKey, actorKey, viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, viewer?.id || 0,
       before, before, category, category, followingOnly ? 1 : 0, viewer?.id || 0,
       friendsOnly ? 1 : 0, viewer?.id || 0, viewer?.id || 0,
-      viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, mode, limit + 1);
+      viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, mode, candidateLimit);
+  if (mode === 'recommended') {
+    const score = row => {
+      const impressions=Math.max(1,Number(row.intelligence_impressions||0));
+      const completionRate=Number(row.intelligence_completions||0)/impressions;
+      const skipRate=Number(row.intelligence_skips||0)/impressions;
+      const avgWatch=Math.min(30,Number(row.intelligence_watch_ms||0)/impressions/1000);
+      const ageDays=Math.max(0,(Date.now()-Date.parse(`${row.created_at}Z`))/86400000);
+      const engagement=Number(row.likes_count||0)*3+Number(row.comments_count||0)*5+Number(row.saves_count||0)*4+Number(row.reposts_count||0)*7+Number(row.shares_count||0)*2;
+      const personal=Math.max(0,Math.min(45,Number(row.viewer_category_affinity||0)*0.12))+(row.viewer_following?14:0)+(viewerCity&&String(row.city||'').trim().toLowerCase()===viewerCity?9:0);
+      const exploration=impressions<20?Math.max(0,12-impressions*0.5):0;
+      const repeatPenalty=Math.min(35,Number(row.viewer_impressions||0)*12);
+      const crossNetworkPrior=Math.min(18,(externalPriors.get(row.category)||0)*0.35);
+      return (20+engagement+completionRate*30+avgWatch+Number(row.intelligence_replays||0)*2-skipRate*22+personal+exploration+crossNetworkPrior-repeatPenalty)/(1+ageDays*0.28);
+    };
+    rows.sort((a,b)=>score(b)-score(a));
+    for(let i=1;i<rows.length;i++)if(rows[i].user_id===rows[i-1].user_id){const swap=rows.findIndex((r,j)=>j>i&&j<=i+5&&r.user_id!==rows[i-1].user_id);if(swap>i)[rows[i],rows[swap]]=[rows[swap],rows[i]];}
+  }
   const hasMore = rows.length > limit;
   const items = rows.slice(0, limit).map(row => socialPost(row, viewer?.id));
   return res.json({ items, nextCursor: hasMore ? items.at(-1)?.createdAt : null });
@@ -4244,6 +4310,47 @@ app.post('/api/social/posts/:id/view', sameOriginOnly, (req, res) => {
   db.prepare(`INSERT OR IGNORE INTO social_post_views (post_id,visitor_key,view_day) VALUES (?,?,?)`)
     .run(post.id, socialVisitorKey(req), new Date().toISOString().slice(0,10));
   return res.json({ ok:true });
+});
+
+app.post('/api/social/posts/:id/intelligence', sameOriginOnly, (req,res) => {
+  const post=db.prepare("SELECT id FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
+  if(!post)return res.status(404).json({error:'Publicação não encontrada.'});
+  const type=String(req.body?.type||'');
+  if(!['impression','watch','complete','skip','replay','profile_click','cta_click'].includes(type))return res.status(400).json({error:'Evento inválido.'});
+  const viewer=currentUser(req),actorKey=viewer?`user:${viewer.id}`:socialVisitorKey(req),day=new Date().toISOString().slice(0,10);
+  const watchMs=Math.min(60000,Math.max(0,Math.round(Number(req.body?.watchMs)||0)));
+  const values={impression:[1,0,0,0,0,0,0],watch:[0,watchMs,0,0,0,0,0],complete:[0,watchMs,1,0,0,0,0],skip:[0,watchMs,0,1,0,0,0],replay:[0,0,0,0,1,0,0],profile_click:[0,0,0,0,0,1,0],cta_click:[0,0,0,0,0,0,1]}[type];
+  db.prepare(`INSERT INTO social_engagement_events
+    (post_id,actor_key,event_day,impressions,watch_ms,completions,skips,replays,profile_clicks,cta_clicks)
+    VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(post_id,actor_key,event_day) DO UPDATE SET
+    impressions=MIN(50,impressions+excluded.impressions),watch_ms=MIN(3600000,watch_ms+excluded.watch_ms),
+    completions=MIN(50,completions+excluded.completions),skips=MIN(50,skips+excluded.skips),
+    replays=MIN(50,replays+excluded.replays),profile_clicks=MIN(50,profile_clicks+excluded.profile_clicks),
+    cta_clicks=MIN(50,cta_clicks+excluded.cta_clicks),updated_at=CURRENT_TIMESTAMP`)
+    .run(post.id,actorKey,day,...values);
+  return res.json({ok:true});
+});
+
+app.post('/api/admin/social/intelligence/import', requireAdmin, sameOriginOnly, (req,res) => {
+  const provider=String(req.body?.provider||'').trim().toLowerCase();
+  if(!['instagram','facebook','tiktok','youtube','google','kwai'].includes(provider))return res.status(400).json({error:'Rede não suportada.'});
+  const items=Array.isArray(req.body?.items)?req.body.items.slice(0,500):[];
+  if(!items.length)return res.status(400).json({error:'Envie pelo menos uma métrica agregada.'});
+  const number=value=>Math.max(0,Math.min(1e12,Math.round(Number(value)||0)));
+  const upsert=db.prepare(`INSERT INTO social_external_insights
+    (provider,content_key,category,views,watch_ms,completions,likes,comments,shares,clicks,conversions,measured_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(provider,content_key) DO UPDATE SET
+    category=excluded.category,views=excluded.views,watch_ms=excluded.watch_ms,completions=excluded.completions,
+    likes=excluded.likes,comments=excluded.comments,shares=excluded.shares,clicks=excluded.clicks,
+    conversions=excluded.conversions,measured_at=excluded.measured_at,updated_at=CURRENT_TIMESTAMP`);
+  let imported=0;db.transaction(()=>{for(const item of items){const key=String(item?.contentKey||'').trim().slice(0,180);if(!key)continue;const category=SOCIAL_CATEGORIES.has(String(item?.category||''))?String(item.category):'geral';const measuredAt=/^\d{4}-\d{2}-\d{2}/.test(String(item?.measuredAt||''))?String(item.measuredAt).slice(0,30):new Date().toISOString();upsert.run(provider,key,category,number(item.views),number(item.watchMs),number(item.completions),number(item.likes),number(item.comments),number(item.shares),number(item.clicks),number(item.conversions),measuredAt);imported++;}})();
+  return res.json({ok:true,provider,imported});
+});
+
+app.get('/api/admin/social/intelligence/status', requireAdmin, (_req,res) => {
+  const internal=db.prepare(`SELECT COUNT(*) contents,COALESCE(SUM(impressions),0) impressions,COALESCE(SUM(watch_ms),0) watchMs,COALESCE(SUM(completions),0) completions,COALESCE(SUM(skips),0) skips FROM social_engagement_events`).get();
+  const providers=db.prepare(`SELECT provider,COUNT(*) contents,COALESCE(SUM(views),0) views,COALESCE(SUM(conversions),0) conversions,MAX(updated_at) updatedAt FROM social_external_insights GROUP BY provider ORDER BY provider`).all();
+  return res.json({engine:'vitriny-intelligence-v1',internal,providers});
 });
 
 app.post('/api/social/posts/:id/report', requireUser, sameOriginOnly, (req, res) => {
