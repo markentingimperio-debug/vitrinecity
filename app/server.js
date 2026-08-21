@@ -640,6 +640,51 @@ CREATE TABLE IF NOT EXISTS store_products (
 );
 CREATE INDEX IF NOT EXISTS idx_store_products_store ON store_products(store_reference,active,id);
 CREATE INDEX IF NOT EXISTS idx_store_products_name ON store_products(name);`);
+ensureColumn('store_products', 'sku', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_products', 'stock_quantity', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_products', 'weight_grams', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_products', 'fiscal_ncm', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_products', 'marketplace_enabled', 'INTEGER NOT NULL DEFAULT 0');
+db.exec(`CREATE TABLE IF NOT EXISTS marketplace_orders (
+  id INTEGER PRIMARY KEY,
+  reference TEXT NOT NULL UNIQUE,
+  buyer_user_id INTEGER NOT NULL REFERENCES users(id),
+  store_reference TEXT NOT NULL REFERENCES store_profiles(order_reference),
+  address_id INTEGER NOT NULL REFERENCES customer_addresses(id),
+  products_cents INTEGER NOT NULL,
+  shipping_cents INTEGER NOT NULL DEFAULT 0,
+  platform_percent_cents INTEGER NOT NULL,
+  platform_fixed_cents INTEGER NOT NULL DEFAULT 200,
+  return_operation_cents INTEGER NOT NULL,
+  total_cents INTEGER NOT NULL,
+  payment_status TEXT NOT NULL DEFAULT 'pending',
+  fulfillment_status TEXT NOT NULL DEFAULT 'awaiting_payment',
+  fiscal_status TEXT NOT NULL DEFAULT 'pending',
+  invoice_key TEXT,
+  invoice_xml_url TEXT,
+  shipping_provider TEXT NOT NULL DEFAULT 'j&t',
+  shipping_label_url TEXT,
+  tracking_code TEXT,
+  mp_preference_id TEXT,
+  mp_payment_id TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS marketplace_order_items (
+  id INTEGER PRIMARY KEY,
+  order_reference TEXT NOT NULL REFERENCES marketplace_orders(reference) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES store_products(id),
+  product_name TEXT NOT NULL,
+  sku TEXT NOT NULL DEFAULT '',
+  quantity INTEGER NOT NULL,
+  unit_price_cents INTEGER NOT NULL,
+  subtotal_cents INTEGER NOT NULL,
+  platform_percent_cents INTEGER NOT NULL,
+  return_operation_cents INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_marketplace_orders_buyer ON marketplace_orders(buyer_user_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_marketplace_orders_store ON marketplace_orders(store_reference,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_marketplace_items_order ON marketplace_order_items(order_reference,id);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -664,6 +709,9 @@ const VIDEO_PACKAGE = Object.freeze({ slug: '10-videos-loja', amountCents: 20000
 const REFERRAL_RATE_BPS = 600;
 const COURSE_REFERRAL_RATE_BPS = 4500;
 const VIDEO_CREATOR_RATE_BPS = 8500;
+const MARKETPLACE_COMMISSION_BPS = 1000;
+const MARKETPLACE_FIXED_FEE_CENTS = 200;
+const MARKETPLACE_RETURN_OPERATION_CENTS = 50;
 const COMMISSION_HOLD_MS = 30 * 24 * 60 * 60 * 1000;
 const AFFILIATE_COOKIE = 'vc_ref';
 const AFFILIATE_COOKIE_AGE_SECONDS = 60 * 60 * 24 * 30;
@@ -1466,6 +1514,102 @@ app.get('/api/checkout/customer', requireUser, (req, res) => {
   const address = db.prepare('SELECT * FROM customer_addresses WHERE user_id=? ORDER BY is_default DESC,id DESC LIMIT 1').get(req.user.id);
   return res.json({ customer: { name: req.user.name, email: req.user.email, whatsapp: req.user.whatsapp || '' },
     address: address ? publicAddress(address) : null, confirmationRequired: true });
+});
+
+app.get('/api/marketplace/products', (req, res) => {
+  const category = String(req.query.category || '').trim().slice(0, 80);
+  const search = String(req.query.q || '').trim().slice(0, 80);
+  const products = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,
+      p.image_url,p.sku,p.stock_quantity,s.business_name AS store_name
+    FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0
+      AND s.review_status='published' AND (?='' OR p.category=?)
+      AND (?='' OR p.name LIKE '%'||?||'%' OR p.description LIKE '%'||?||'%')
+    ORDER BY p.updated_at DESC,p.id DESC LIMIT 120`).all(category, category, search, search, search);
+  return res.json({ products });
+});
+
+app.get('/api/marketplace/orders', requireUser, (req, res) => {
+  const orders = db.prepare(`SELECT o.*,s.business_name AS store_name
+    FROM marketplace_orders o JOIN store_profiles s ON s.order_reference=o.store_reference
+    WHERE o.buyer_user_id=? ORDER BY o.created_at DESC LIMIT 100`).all(req.user.id);
+  const items = db.prepare('SELECT * FROM marketplace_order_items WHERE order_reference=? ORDER BY id');
+  return res.json({ orders: orders.map(order => ({ ...order, items: items.all(order.reference) })) });
+});
+
+app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, res) => {
+  const requested = Array.isArray(req.body?.items) ? req.body.items.slice(0, 30) : [];
+  const addressId = Number(req.body?.addressId);
+  const address = db.prepare('SELECT * FROM customer_addresses WHERE id=? AND user_id=?').get(addressId, req.user.id);
+  if (!address || !requested.length) return res.status(400).json({ error: 'Selecione os produtos e um endereço de entrega.' });
+  const quantities = new Map();
+  for (const item of requested) {
+    const id = Number(item?.productId), quantity = Math.floor(Number(item?.quantity));
+    if (!Number.isInteger(id) || !Number.isInteger(quantity) || quantity < 1 || quantity > 50) {
+      return res.status(400).json({ error: 'Quantidade inválida no carrinho.' });
+    }
+    quantities.set(id, Math.min(50, (quantities.get(id) || 0) + quantity));
+  }
+  const ids = [...quantities.keys()];
+  const placeholders = ids.map(() => '?').join(',');
+  const products = db.prepare(`SELECT p.*,s.business_name AS store_name FROM store_products p
+    JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE p.id IN (${placeholders}) AND p.active=1 AND p.marketplace_enabled=1
+      AND p.price_cents>0 AND s.review_status='published'`).all(...ids);
+  if (products.length !== ids.length) return res.status(409).json({ error: 'Um produto não está mais disponível.' });
+  const storeReference = products[0].store_reference;
+  if (products.some(product => product.store_reference !== storeReference)) {
+    return res.status(400).json({ error: 'Nesta primeira versão, finalize produtos de uma loja por vez.' });
+  }
+  if (products.some(product => product.stock_quantity < quantities.get(product.id))) {
+    return res.status(409).json({ error: 'Estoque insuficiente para um dos produtos.' });
+  }
+  const productsCents = products.reduce((sum, product) => sum + product.price_cents * quantities.get(product.id), 0);
+  const unitCount = products.reduce((sum, product) => sum + quantities.get(product.id), 0);
+  const platformPercentCents = Math.round(productsCents * MARKETPLACE_COMMISSION_BPS / 10000);
+  const returnOperationCents = unitCount * MARKETPLACE_RETURN_OPERATION_CENTS;
+  const shippingCents = 0; // Cotação J&T será ativada quando a documentação técnica for recebida.
+  const totalCents = productsCents + shippingCents;
+  const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
+  if (!token || !process.env.MERCADOPAGO_WEBHOOK_SECRET) return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
+  const reference = `shop_${randomUUID()}`;
+  try {
+    const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
+      method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
+      body: JSON.stringify({
+        items: products.map(product => ({ id: String(product.id), title: product.name.slice(0, 120),
+          quantity: quantities.get(product.id), currency_id: 'BRL', unit_price: product.price_cents / 100 })),
+        payer: { name: req.user.name, email: req.user.email, address: { zip_code: address.postal_code,
+          street_name: address.street, street_number: address.number } },
+        external_reference: reference, notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
+        back_urls: { success: `${SITE_URL}/pedidos.html?resultado=sucesso`, pending: `${SITE_URL}/pedidos.html?resultado=pendente`,
+          failure: `${SITE_URL}/loja.html?resultado=falha` }, auto_return: 'approved', statement_descriptor: 'VITRINYCITY',
+        metadata: { product: 'marketplace_order', store_reference: storeReference }
+      }), signal: AbortSignal.timeout(12000)
+    });
+    const payment = await response.json();
+    if (!response.ok || !payment.id || !payment.init_point) return res.status(502).json({ error: 'Não foi possível iniciar o pagamento.' });
+    const insertOrder = db.transaction(() => {
+      db.prepare(`INSERT INTO marketplace_orders
+        (reference,buyer_user_id,store_reference,address_id,products_cents,shipping_cents,platform_percent_cents,
+         platform_fixed_cents,return_operation_cents,total_cents,mp_preference_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(reference, req.user.id, storeReference, address.id, productsCents,
+        shippingCents, platformPercentCents, MARKETPLACE_FIXED_FEE_CENTS, returnOperationCents, totalCents, payment.id);
+      const insertItem = db.prepare(`INSERT INTO marketplace_order_items
+        (order_reference,product_id,product_name,sku,quantity,unit_price_cents,subtotal_cents,platform_percent_cents,return_operation_cents)
+        VALUES (?,?,?,?,?,?,?,?,?)`);
+      for (const product of products) {
+        const quantity = quantities.get(product.id), subtotal = product.price_cents * quantity;
+        insertItem.run(reference, product.id, product.name, product.sku || '', quantity, product.price_cents, subtotal,
+          Math.round(subtotal * MARKETPLACE_COMMISSION_BPS / 10000), quantity * MARKETPLACE_RETURN_OPERATION_CENTS);
+      }
+    });
+    insertOrder();
+    return res.status(201).json({ reference, checkoutUrl: payment.init_point });
+  } catch (error) {
+    console.error('Marketplace checkout error', error?.message || 'unknown');
+    return res.status(502).json({ error: 'Não foi possível conectar ao Mercado Pago agora.' });
+  }
 });
 
 function socialApiVersion() {
@@ -3055,6 +3199,29 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
     const payment = await response.json();
     const reference = String(payment.external_reference || '');
     const amountCents = Math.round(Number(payment.transaction_amount) * 100);
+    if (reference.startsWith('shop_')) {
+      const order = db.prepare('SELECT * FROM marketplace_orders WHERE reference=?').get(reference);
+      if (!order) return res.sendStatus(200);
+      if (amountCents !== order.total_cents || payment.currency_id !== 'BRL') return res.sendStatus(400);
+      const status = String(payment.status || 'unknown');
+      const reversed = ['refunded', 'charged_back', 'cancelled', 'rejected'].includes(status);
+      const fulfillment = status === 'approved' ? 'fiscal_pending' : reversed ? 'cancelled' : order.fulfillment_status;
+      const fiscal = status === 'approved' ? 'pending' : reversed ? 'cancelled' : order.fiscal_status;
+      const reserveStock = status === 'approved' && order.payment_status !== 'approved';
+      const releaseStock = reversed && order.payment_status === 'approved';
+      db.transaction(() => {
+        db.prepare(`UPDATE marketplace_orders SET payment_status=?,fulfillment_status=?,fiscal_status=?,
+          mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?`)
+          .run(status, fulfillment, fiscal, String(payment.id), reference);
+        if (reserveStock || releaseStock) {
+          const items = db.prepare('SELECT product_id,quantity FROM marketplace_order_items WHERE order_reference=?').all(reference);
+          const change = db.prepare('UPDATE store_products SET stock_quantity=MAX(0,stock_quantity+?),updated_at=CURRENT_TIMESTAMP WHERE id=?');
+          for (const item of items) change.run((reserveStock ? -1 : 1) * item.quantity, item.product_id);
+        }
+      })();
+      if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'marketplace', order.total_cents);
+      return res.sendStatus(200);
+    }
     if (reference.startsWith('coin_')) {
       const order = db.prepare('SELECT * FROM credit_orders WHERE reference=?').get(reference);
       if (!order) return res.sendStatus(200);
@@ -3174,6 +3341,46 @@ app.get('/api/store-portal/:reference', (req, res) => {
   const access = storePortalAccess(req, res);
   if (!access) return;
   return res.json(publicStoreProfile(access.order.reference));
+});
+
+app.get('/api/store-portal/:reference/marketplace', (req, res) => {
+  const access = storePortalAccess(req, res);
+  if (!access) return;
+  const products = db.prepare('SELECT * FROM store_products WHERE store_reference=? ORDER BY updated_at DESC,id DESC')
+    .all(access.order.reference);
+  const orders = db.prepare(`SELECT * FROM marketplace_orders WHERE store_reference=?
+    ORDER BY created_at DESC LIMIT 100`).all(access.order.reference);
+  return res.json({ products, orders, fees: { percent: 10, fixedCents: 200, returnOperationPerUnitCents: 50 } });
+});
+
+app.post('/api/store-portal/:reference/products', sameOriginOnly, (req, res) => {
+  const access = storePortalAccess(req, res);
+  if (!access) return;
+  const body = req.body || {}, name = String(body.name || '').trim().slice(0, 140);
+  const priceCents = Math.round(Number(body.priceCents)), stock = Math.floor(Number(body.stockQuantity));
+  if (name.length < 2 || !Number.isInteger(priceCents) || priceCents < 100 || !Number.isInteger(stock) || stock < 0) {
+    return res.status(400).json({ error: 'Informe nome, preço e estoque válidos.' });
+  }
+  const info = db.prepare(`INSERT INTO store_products
+    (store_reference,name,description,category,price_cents,image_url,sku,stock_quantity,weight_grams,fiscal_ncm,marketplace_enabled,active)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,1)`).run(access.order.reference, name,
+    String(body.description || '').trim().slice(0, 2000), String(body.category || '').trim().slice(0, 80), priceCents,
+    safeExternalUrl(body.imageUrl), String(body.sku || '').trim().slice(0, 80), stock,
+    Math.max(0, Math.floor(Number(body.weightGrams) || 0)), String(body.fiscalNcm || '').replace(/\D/g, '').slice(0, 8),
+    body.marketplaceEnabled ? 1 : 0);
+  return res.status(201).json({ ok: true, id: Number(info.lastInsertRowid) });
+});
+
+app.patch('/api/store-portal/:reference/orders/:orderReference/fiscal', sameOriginOnly, (req, res) => {
+  const access = storePortalAccess(req, res);
+  if (!access) return;
+  const invoiceKey = String(req.body?.invoiceKey || '').replace(/\D/g, '');
+  if (invoiceKey.length !== 44) return res.status(400).json({ error: 'A chave da NF-e precisa ter 44 números.' });
+  const result = db.prepare(`UPDATE marketplace_orders SET invoice_key=?,invoice_xml_url=?,fiscal_status='authorized',
+    fulfillment_status='label_pending',updated_at=CURRENT_TIMESTAMP WHERE reference=? AND store_reference=? AND payment_status='approved'`)
+    .run(invoiceKey, safeExternalUrl(req.body?.invoiceXmlUrl), req.params.orderReference, access.order.reference);
+  if (!result.changes) return res.status(404).json({ error: 'Pedido pago não encontrado.' });
+  return res.json({ ok: true, message: 'NF-e autorizada. Pedido liberado para gerar etiqueta J&T.' });
 });
 
 app.put('/api/store-portal/:reference', async (req, res) => {
