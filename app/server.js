@@ -3361,14 +3361,54 @@ app.post('/api/store-portal/:reference/products', sameOriginOnly, (req, res) => 
   if (name.length < 2 || !Number.isInteger(priceCents) || priceCents < 100 || !Number.isInteger(stock) || stock < 0) {
     return res.status(400).json({ error: 'Informe nome, preço e estoque válidos.' });
   }
+  let imageUrl = safeExternalUrl(body.imageUrl);
+  try { if (body.imageData) imageUrl = saveStoreImage(access.order.reference, `product-${randomUUID()}`, body.imageData, imageUrl); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
   const info = db.prepare(`INSERT INTO store_products
     (store_reference,name,description,category,price_cents,image_url,sku,stock_quantity,weight_grams,fiscal_ncm,marketplace_enabled,active)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,1)`).run(access.order.reference, name,
     String(body.description || '').trim().slice(0, 2000), String(body.category || '').trim().slice(0, 80), priceCents,
-    safeExternalUrl(body.imageUrl), String(body.sku || '').trim().slice(0, 80), stock,
+    imageUrl, String(body.sku || '').trim().slice(0, 80), stock,
     Math.max(0, Math.floor(Number(body.weightGrams) || 0)), String(body.fiscalNcm || '').replace(/\D/g, '').slice(0, 8),
     body.marketplaceEnabled ? 1 : 0);
   return res.status(201).json({ ok: true, id: Number(info.lastInsertRowid) });
+});
+
+app.patch('/api/store-portal/:reference/products/:productId', sameOriginOnly, (req, res) => {
+  const access = storePortalAccess(req, res);
+  if (!access) return;
+  const current = db.prepare('SELECT * FROM store_products WHERE id=? AND store_reference=?')
+    .get(Number(req.params.productId), access.order.reference);
+  if (!current) return res.status(404).json({ error: 'Produto não encontrado.' });
+  const body = req.body || {}, name = String(body.name ?? current.name).trim().slice(0, 140);
+  const priceCents = Math.round(Number(body.priceCents ?? current.price_cents));
+  const stock = Math.floor(Number(body.stockQuantity ?? current.stock_quantity));
+  if (name.length < 2 || !Number.isInteger(priceCents) || priceCents < 100 || !Number.isInteger(stock) || stock < 0) {
+    return res.status(400).json({ error: 'Informe nome, preço e estoque válidos.' });
+  }
+  let imageUrl = body.imageUrl === undefined ? current.image_url : safeExternalUrl(body.imageUrl);
+  try { if (body.imageData) imageUrl = saveStoreImage(access.order.reference, `product-${current.id}`, body.imageData, imageUrl); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
+  db.prepare(`UPDATE store_products SET name=?,description=?,category=?,price_cents=?,image_url=?,sku=?,
+    stock_quantity=?,weight_grams=?,fiscal_ncm=?,marketplace_enabled=?,active=?,updated_at=CURRENT_TIMESTAMP
+    WHERE id=? AND store_reference=?`).run(name, String(body.description ?? current.description ?? '').trim().slice(0, 2000),
+    String(body.category ?? current.category ?? '').trim().slice(0, 80), priceCents,
+    imageUrl,
+    String(body.sku ?? current.sku ?? '').trim().slice(0, 80), stock,
+    Math.max(0, Math.floor(Number(body.weightGrams ?? current.weight_grams) || 0)),
+    String(body.fiscalNcm ?? current.fiscal_ncm ?? '').replace(/\D/g, '').slice(0, 8),
+    body.marketplaceEnabled === undefined ? current.marketplace_enabled : body.marketplaceEnabled ? 1 : 0,
+    body.active === undefined ? current.active : body.active ? 1 : 0, current.id, access.order.reference);
+  return res.json({ ok: true, message: 'Produto atualizado.' });
+});
+
+app.delete('/api/store-portal/:reference/products/:productId', sameOriginOnly, (req, res) => {
+  const access = storePortalAccess(req, res);
+  if (!access) return;
+  const result = db.prepare(`UPDATE store_products SET active=0,marketplace_enabled=0,updated_at=CURRENT_TIMESTAMP
+    WHERE id=? AND store_reference=?`).run(Number(req.params.productId), access.order.reference);
+  if (!result.changes) return res.status(404).json({ error: 'Produto não encontrado.' });
+  return res.json({ ok: true, message: 'Produto desativado.' });
 });
 
 app.patch('/api/store-portal/:reference/orders/:orderReference/fiscal', sameOriginOnly, (req, res) => {
