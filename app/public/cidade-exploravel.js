@@ -93,8 +93,9 @@
     document.getElementById('name').textContent = pin.dataset.name || pin.textContent.trim();
     document.getElementById('desc').textContent = pin.dataset.desc || '';
     const image = document.getElementById('shopImage');
-    image.style.display = pin.dataset.image ? 'block' : 'none';
-    image.src = pin.dataset.image || '';
+    image.hidden = !pin.dataset.image;
+    if (pin.dataset.image) image.src = pin.dataset.image;
+    else image.removeAttribute('src');
     image.alt = pin.dataset.image ? `Fachada de ${pin.dataset.name}` : '';
     const isLot = Boolean(pin.dataset.lot);
     const lotAvailable = isLot && (!pin.dataset.lotStatus || pin.dataset.lotStatus === 'available');
