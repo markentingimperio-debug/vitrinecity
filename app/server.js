@@ -386,6 +386,20 @@ CREATE TABLE IF NOT EXISTS social_follows (
   PRIMARY KEY (follower_id, followed_id),
   CHECK (follower_id != followed_id)
 );
+CREATE TABLE IF NOT EXISTS social_blocks (
+  blocker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (blocker_id,blocked_id),
+  CHECK (blocker_id != blocked_id)
+);
+CREATE TABLE IF NOT EXISTS social_mutes (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  muted_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id,muted_id),
+  CHECK (user_id != muted_id)
+);
 CREATE TABLE IF NOT EXISTS social_reports (
   id INTEGER PRIMARY KEY,
   post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
@@ -436,6 +450,8 @@ CREATE INDEX IF NOT EXISTS idx_social_posts_feed ON social_posts(status, created
 CREATE INDEX IF NOT EXISTS idx_social_posts_user ON social_posts(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_comments_post ON social_comments(post_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_follows_followed ON social_follows(followed_id);
+CREATE INDEX IF NOT EXISTS idx_social_blocks_blocked ON social_blocks(blocked_id,blocker_id);
+CREATE INDEX IF NOT EXISTS idx_social_mutes_user ON social_mutes(user_id,muted_id);
 CREATE INDEX IF NOT EXISTS idx_social_reports_status ON social_reports(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_views_post ON social_post_views(post_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_stories_active ON social_stories(status,expires_at,created_at DESC);
@@ -3808,12 +3824,35 @@ function socialPost(row, viewerId) {
   };
 }
 
+app.get('/api/social/discover', (req,res) => {
+  const viewer=currentUser(req),viewerId=viewer?.id||0,q=String(req.query.q||'').trim().toLowerCase().slice(0,60).replace(/^[@#]/,'');
+  const profiles=db.prepare(`SELECT sp.user_id id,sp.handle,sp.bio,sp.city,sp.avatar_url avatarUrl,u.name,
+      (SELECT COUNT(*) FROM social_follows f WHERE f.followed_id=sp.user_id) followers
+    FROM social_profiles sp JOIN users u ON u.id=sp.user_id
+    WHERE (?='' OR sp.handle LIKE '%'||?||'%' OR u.name LIKE '%'||?||'%' OR sp.city LIKE '%'||?||'%')
+      AND NOT EXISTS(SELECT 1 FROM social_blocks b WHERE (b.blocker_id=? AND b.blocked_id=sp.user_id)
+        OR (b.blocker_id=sp.user_id AND b.blocked_id=?))
+    ORDER BY followers DESC,sp.updated_at DESC LIMIT 24`).all(q,q,q,q,viewerId,viewerId);
+  const rows=db.prepare(`SELECT p.id,p.caption,p.category,p.city,p.media_type mediaType,p.image_url imageUrl,p.video_uid videoUid,
+      p.created_at createdAt,u.name,sp.handle,sp.avatar_url avatarUrl
+    FROM social_posts p JOIN users u ON u.id=p.user_id LEFT JOIN social_profiles sp ON sp.user_id=p.user_id
+    WHERE p.status='ready' AND (?='' OR lower(p.caption) LIKE '%'||?||'%' OR lower(p.category) LIKE '%'||?||'%' OR lower(p.city) LIKE '%'||?||'%')
+      AND NOT EXISTS(SELECT 1 FROM social_blocks b WHERE (b.blocker_id=? AND b.blocked_id=p.user_id)
+        OR (b.blocker_id=p.user_id AND b.blocked_id=?)) ORDER BY p.created_at DESC LIMIT 36`).all(q,q,q,q,viewerId,viewerId);
+  const captions=db.prepare("SELECT caption FROM social_posts WHERE status='ready' ORDER BY created_at DESC LIMIT 500").all();
+  const tags=new Map();for(const row of captions)for(const match of String(row.caption||'').toLowerCase().matchAll(/#([a-z0-9_à-ÿ]{2,40})/g))tags.set(match[1],(tags.get(match[1])||0)+1);
+  const hashtags=[...tags].sort((a,b)=>b[1]-a[1]).slice(0,20).map(([tag,count])=>({tag,count}));
+  return res.json({profiles,hashtags,posts:rows.map(p=>({...p,playerUrl:p.mediaType==='video'?`https://iframe.videodelivery.net/${encodeURIComponent(p.videoUid)}?muted=true&controls=true`:'',author:{name:p.name,handle:p.handle||'usuario',avatarUrl:p.avatarUrl||''}}))});
+});
+
 app.get('/api/social/feed', (req, res) => {
   const viewer = currentUser(req);
   const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 30);
   const before = String(req.query.before || '');
   const category = SOCIAL_CATEGORIES.has(String(req.query.category || '')) ? String(req.query.category) : '';
   const followingOnly = String(req.query.following || '') === '1' && viewer;
+  const mode = ['recommended','latest','friends'].includes(String(req.query.mode || '')) ? String(req.query.mode) : 'recommended';
+  const friendsOnly = mode === 'friends' && viewer;
   const rows = db.prepare(`SELECT p.*,u.name author_name,COALESCE(sp.handle,'usuario') handle,
       COALESCE(sp.avatar_url,'') avatar_url,
       (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) likes_count,
@@ -3833,15 +3872,22 @@ app.get('/api/social/feed', (req, res) => {
       AND (?='' OR p.created_at<?)
       AND (?='' OR p.category=?)
       AND (?=0 OR EXISTS(SELECT 1 FROM social_follows ff WHERE ff.follower_id=? AND ff.followed_id=p.user_id))
-    ORDER BY ((20
+      AND (?=0 OR (EXISTS(SELECT 1 FROM social_follows f1 WHERE f1.follower_id=? AND f1.followed_id=p.user_id)
+        AND EXISTS(SELECT 1 FROM social_follows f2 WHERE f2.follower_id=p.user_id AND f2.followed_id=?)))
+      AND NOT EXISTS(SELECT 1 FROM social_blocks b WHERE (b.blocker_id=? AND b.blocked_id=p.user_id)
+        OR (b.blocker_id=p.user_id AND b.blocked_id=?))
+      AND NOT EXISTS(SELECT 1 FROM social_mutes m WHERE m.user_id=? AND m.muted_id=p.user_id)
+    ORDER BY CASE WHEN ?='latest' THEN julianday(p.created_at) ELSE ((20
       + (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) * 3
       + (SELECT COUNT(*) FROM social_comments c WHERE c.post_id=p.id AND c.status='published') * 5
       + (SELECT COUNT(*) FROM social_saves s WHERE s.post_id=p.id) * 4
       + (SELECT COUNT(*) FROM social_reposts r WHERE r.post_id=p.id) * 7
       + (SELECT COUNT(*) FROM social_shares h WHERE h.post_id=p.id) * 2)
-      / (1 + MAX(0,julianday('now')-julianday(p.created_at)) * 0.35)) DESC,p.created_at DESC LIMIT ?`).all(
+      / (1 + MAX(0,julianday('now')-julianday(p.created_at)) * 0.35)) END DESC,p.created_at DESC LIMIT ?`).all(
       viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, viewer?.id || 0,
-      before, before, category, category, followingOnly ? 1 : 0, viewer?.id || 0, limit + 1);
+      before, before, category, category, followingOnly ? 1 : 0, viewer?.id || 0,
+      friendsOnly ? 1 : 0, viewer?.id || 0, viewer?.id || 0,
+      viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, mode, limit + 1);
   const hasMore = rows.length > limit;
   const items = rows.slice(0, limit).map(row => socialPost(row, viewer?.id));
   return res.json({ items, nextCursor: hasMore ? items.at(-1)?.createdAt : null });
@@ -3864,6 +3910,9 @@ app.get('/api/social/profile/:handle', (req, res) => {
     JOIN users u ON u.id=sp.user_id WHERE sp.handle=?`).get(handle);
   if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' });
   const viewer = currentUser(req);
+  const blockedEitherWay = viewer && db.prepare(`SELECT 1 FROM social_blocks WHERE
+    (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?)`).get(viewer.id, profile.user_id, profile.user_id, viewer.id);
+  if (blockedEitherWay) return res.status(404).json({ error: 'Perfil não disponível.' });
   const counts = db.prepare(`SELECT
     (SELECT COUNT(*) FROM social_follows WHERE followed_id=?) followers,
     (SELECT COUNT(*) FROM social_follows WHERE follower_id=?) following,
@@ -3886,9 +3935,11 @@ app.get('/api/social/profile/:handle', (req, res) => {
       viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, profile.user_id);
   const followedByMe = viewer ? Boolean(db.prepare('SELECT 1 FROM social_follows WHERE follower_id=? AND followed_id=?')
     .get(viewer.id, profile.user_id)) : false;
+  const mutedByMe = viewer ? Boolean(db.prepare('SELECT 1 FROM social_mutes WHERE user_id=? AND muted_id=?')
+    .get(viewer.id, profile.user_id)) : false;
   return res.json({ profile: { id: profile.user_id, name: profile.name, handle: profile.handle,
     bio: profile.bio, city: profile.city, avatarUrl: profile.avatar_url, mine: viewer?.id === profile.user_id,
-    followedByMe, ...counts },
+    followedByMe, mutedByMe, ...counts },
     items: rows.map(row => socialPost(row, viewer?.id)) });
 });
 
@@ -3924,6 +3975,8 @@ app.patch('/api/social/profile/me', requireUser, sameOriginOnly, (req, res) => {
 function socialConversationForUser(id, userId) {
   return db.prepare(`SELECT * FROM social_conversations WHERE id=? AND (user_low=? OR user_high=?)`).get(id, userId, userId);
 }
+function socialUsersBlocked(a,b){return Boolean(db.prepare(`SELECT 1 FROM social_blocks WHERE
+  (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?)`).get(a,b,b,a));}
 
 function publicChatMessage(row, userId) {
   return { id: row.id, conversationId: row.conversation_id, mine: row.sender_id === userId,
@@ -3940,6 +3993,7 @@ app.post('/api/social/chat/conversations', requireUser, sameOriginOnly, (req, re
   else if (targetUserId) target = db.prepare('SELECT id user_id FROM users WHERE id=?').get(targetUserId);
   if (!target) return res.status(404).json({ error: 'Usuário não encontrado.' });
   if (target.user_id === req.user.id) return res.status(400).json({ error: 'Escolha outra pessoa para conversar.' });
+  if (socialUsersBlocked(req.user.id,target.user_id)) return res.status(403).json({ error:'Não é possível iniciar esta conversa.' });
   const low = Math.min(req.user.id, target.user_id), high = Math.max(req.user.id, target.user_id);
   let conversation = db.prepare('SELECT id FROM social_conversations WHERE user_low=? AND user_high=?').get(low, high);
   if (!conversation) {
@@ -3959,7 +4013,9 @@ app.get('/api/social/chat/conversations', requireUser, (req, res) => {
     FROM social_conversations c
     JOIN users u ON u.id=CASE WHEN c.user_low=? THEN c.user_high ELSE c.user_low END
     LEFT JOIN social_profiles p ON p.user_id=u.id
-    WHERE c.user_low=? OR c.user_high=? ORDER BY c.last_message_at DESC`).all(req.user.id, req.user.id, req.user.id, req.user.id);
+    WHERE (c.user_low=? OR c.user_high=?) AND NOT EXISTS(SELECT 1 FROM social_blocks b WHERE
+      (b.blocker_id=? AND b.blocked_id=u.id) OR (b.blocker_id=u.id AND b.blocked_id=?))
+    ORDER BY c.last_message_at DESC`).all(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
   return res.json({ items: items.map(row => ({ id: row.id, updatedAt: row.last_message_at,
     other: { id: row.other_id, name: row.name, handle: row.handle, avatarUrl: row.avatar_url },
     lastMessage: row.last_body || (row.last_kind ? `[${row.last_kind}]` : 'Conversa iniciada'), unread: Number(row.unread) })) });
@@ -3969,6 +4025,7 @@ app.get('/api/social/chat/conversations/:id/messages', requireUser, (req, res) =
   const conversation = socialConversationForUser(req.params.id, req.user.id);
   if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
   const otherId = conversation.user_low === req.user.id ? conversation.user_high : conversation.user_low;
+  if (socialUsersBlocked(req.user.id,otherId)) return res.status(403).json({ error:'Conversa indisponível.' });
   const other = db.prepare(`SELECT u.id,u.name,COALESCE(p.handle,'usuario') handle,COALESCE(p.avatar_url,'') avatar_url
     FROM users u LEFT JOIN social_profiles p ON p.user_id=u.id WHERE u.id=?`).get(otherId);
   const items = db.prepare('SELECT * FROM social_messages WHERE conversation_id=? ORDER BY created_at,id LIMIT 300').all(conversation.id);
@@ -3980,6 +4037,8 @@ app.get('/api/social/chat/conversations/:id/messages', requireUser, (req, res) =
 app.post('/api/social/chat/conversations/:id/messages', requireUser, sameOriginOnly, (req, res) => {
   const conversation = socialConversationForUser(req.params.id, req.user.id);
   if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
+  const otherId = conversation.user_low === req.user.id ? conversation.user_high : conversation.user_low;
+  if (socialUsersBlocked(req.user.id,otherId)) return res.status(403).json({error:'Conversa indisponível.'});
   const body = String(req.body?.body || '').trim().slice(0, 2000);
   if (!body) return res.status(400).json({ error: 'Escreva uma mensagem.' });
   const id = randomUUID();
@@ -4003,6 +4062,8 @@ app.post('/api/social/chat/conversations/:id/files', requireUser, sameOriginOnly
   express.raw({ type: () => true, limit: '25mb' }), (req, res) => {
     const conversation = socialConversationForUser(req.params.id, req.user.id);
     if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
+    const otherId = conversation.user_low === req.user.id ? conversation.user_high : conversation.user_low;
+    if (socialUsersBlocked(req.user.id,otherId)) return res.status(403).json({error:'Conversa indisponível.'});
     const mimeType = String(req.get('content-type') || '').split(';')[0].toLowerCase();
     const extension = CHAT_MIME_EXTENSIONS.get(mimeType);
     if (!extension || !Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Tipo de arquivo não permitido.' });
@@ -4095,11 +4156,12 @@ app.get('/api/social/posts/:id/status', requireUser, (req, res) => {
 });
 
 app.post('/api/social/posts/:id/like', requireUser, sameOriginOnly, (req, res) => {
-  const post = db.prepare("SELECT id FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
+  const post = db.prepare("SELECT id,user_id FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
   if (!post) return res.status(404).json({ error: 'Publicação não encontrada.' });
   const liked = db.prepare('SELECT 1 FROM social_likes WHERE post_id=? AND user_id=?').get(post.id, req.user.id);
   if (liked) db.prepare('DELETE FROM social_likes WHERE post_id=? AND user_id=?').run(post.id, req.user.id);
-  else db.prepare('INSERT INTO social_likes (post_id,user_id) VALUES (?,?)').run(post.id, req.user.id);
+  else {db.prepare('INSERT INTO social_likes (post_id,user_id) VALUES (?,?)').run(post.id, req.user.id);
+    createSocialNotification(post.user_id,req.user.id,'like','curtiu sua publicação',`like:${post.id}:${req.user.id}`,post.id);}
   const count = db.prepare('SELECT COUNT(*) count FROM social_likes WHERE post_id=?').get(post.id).count;
   return res.json({ liked: !liked, likes: count });
 });
@@ -4118,11 +4180,13 @@ app.post('/api/social/posts/:id/comments', requireUser, sameOriginOnly, (req, re
   }
   const body = String(req.body?.body || '').trim().slice(0, 500);
   if (!body) return res.status(400).json({ error: 'Escreva um comentário.' });
-  if (!db.prepare("SELECT 1 FROM social_posts WHERE id=? AND status='ready'").get(req.params.id)) {
+  const post=db.prepare("SELECT user_id FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
+  if (!post) {
     return res.status(404).json({ error: 'Publicação não encontrada.' });
   }
   const result = db.prepare('INSERT INTO social_comments (post_id,user_id,body) VALUES (?,?,?)')
     .run(req.params.id, req.user.id, body);
+  createSocialNotification(post.user_id,req.user.id,'comment','comentou na sua publicação',`comment:${result.lastInsertRowid}`,req.params.id);
   return res.status(201).json({ id: Number(result.lastInsertRowid), body, name: req.user.name });
 });
 
@@ -4161,6 +4225,7 @@ app.post('/api/social/posts/:id/repost', requireUser, sameOriginOnly, (req,res)=
   const post=db.prepare("SELECT user_id FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
   if(!post||post.user_id===req.user.id) return res.status(400).json({error:'Não é possível republicar este vídeo.'});
   const reposted=toggleSocialRelation('social_reposts',req.params.id,req.user.id);
+  if(reposted)createSocialNotification(post.user_id,req.user.id,'repost','republicou seu conteúdo',`repost:${req.params.id}:${req.user.id}`,req.params.id);
   const count=db.prepare('SELECT COUNT(*) count FROM social_reposts WHERE post_id=?').get(req.params.id).count;
   return res.json({reposted,reposts:count});
 });
@@ -4234,6 +4299,21 @@ app.post('/api/social/users/:id/follow', requireUser, sameOriginOnly, (req, res)
   else { db.prepare('INSERT INTO social_follows (follower_id,followed_id) VALUES (?,?)').run(req.user.id, followedId);
     createSocialNotification(followedId,req.user.id,'new_follower','começou a seguir você',`follow:${req.user.id}:${followedId}`); }
   return res.json({ following: !exists });
+});
+
+app.post('/api/social/users/:id/mute', requireUser, sameOriginOnly, (req,res) => {
+  const other=Number(req.params.id);if(!Number.isInteger(other)||other===req.user.id||!db.prepare('SELECT 1 FROM users WHERE id=?').get(other))return res.status(400).json({error:'Perfil inválido.'});
+  const exists=db.prepare('SELECT 1 FROM social_mutes WHERE user_id=? AND muted_id=?').get(req.user.id,other);
+  if(exists)db.prepare('DELETE FROM social_mutes WHERE user_id=? AND muted_id=?').run(req.user.id,other);
+  else db.prepare('INSERT INTO social_mutes (user_id,muted_id) VALUES (?,?)').run(req.user.id,other);
+  return res.json({muted:!exists});
+});
+
+app.post('/api/social/users/:id/block', requireUser, sameOriginOnly, (req,res) => {
+  const other=Number(req.params.id);if(!Number.isInteger(other)||other===req.user.id||!db.prepare('SELECT 1 FROM users WHERE id=?').get(other))return res.status(400).json({error:'Perfil inválido.'});
+  const exists=db.prepare('SELECT 1 FROM social_blocks WHERE blocker_id=? AND blocked_id=?').get(req.user.id,other);
+  db.transaction(()=>{if(exists)db.prepare('DELETE FROM social_blocks WHERE blocker_id=? AND blocked_id=?').run(req.user.id,other);else{db.prepare('INSERT INTO social_blocks (blocker_id,blocked_id) VALUES (?,?)').run(req.user.id,other);db.prepare('DELETE FROM social_follows WHERE (follower_id=? AND followed_id=?) OR (follower_id=? AND followed_id=?)').run(req.user.id,other,other,req.user.id);db.prepare('DELETE FROM social_mutes WHERE user_id=? AND muted_id=?').run(req.user.id,other);}})();
+  return res.json({blocked:!exists});
 });
 
 function createSocialNotification(userId, actorId, type, message, dedupeKey, postId = null, storyId = null) {
