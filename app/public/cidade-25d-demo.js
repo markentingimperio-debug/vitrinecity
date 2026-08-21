@@ -53,8 +53,9 @@
   function showDetails(target) {
     const isProperty = target.dataset.category === 'property';
     const image = document.getElementById('detailImage');
-    image.style.display = target.dataset.image ? 'block' : 'none';
+    image.hidden = !target.dataset.image;
     if (target.dataset.image) image.src = target.dataset.image;
+    else image.removeAttribute('src');
     document.getElementById('detailType').textContent = isProperty ? 'PRÉDIO PRONTO DISPONÍVEL' : target.dataset.category === 'store' ? 'VITRINE DO BAIRRO' : 'ATRAÇÃO';
     document.getElementById('detailName').textContent = target.dataset.name || 'Centro Vitrine';
     document.getElementById('detailDesc').textContent = target.dataset.desc || '';
