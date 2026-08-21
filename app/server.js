@@ -24,6 +24,8 @@ const courseFilesDir = path.resolve(process.env.COURSE_FILES_DIR || '/private-co
 fs.mkdirSync(dataDir, { recursive: true });
 const socialMediaDir = path.join(dataDir, 'social-media');
 fs.mkdirSync(socialMediaDir, { recursive: true });
+const socialChatDir = path.join(dataDir, 'social-chat');
+fs.mkdirSync(socialChatDir, { recursive: true });
 const db = new Database(path.join(dataDir, 'vitrinecity.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -282,6 +284,30 @@ CREATE TABLE IF NOT EXISTS social_profiles (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS social_conversations (
+  id TEXT PRIMARY KEY,
+  user_low INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_high INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  last_message_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_low,user_high),
+  CHECK(user_low<user_high)
+);
+CREATE TABLE IF NOT EXISTS social_messages (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES social_conversations(id) ON DELETE CASCADE,
+  sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'text',
+  body TEXT NOT NULL DEFAULT '',
+  file_name TEXT NOT NULL DEFAULT '',
+  mime_type TEXT NOT NULL DEFAULT '',
+  storage_name TEXT NOT NULL DEFAULT '',
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  read_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_social_conversations_users ON social_conversations(user_low,user_high,last_message_at);
+CREATE INDEX IF NOT EXISTS idx_social_messages_conversation ON social_messages(conversation_id,created_at,id);
 CREATE TABLE IF NOT EXISTS social_posts (
   id TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -3646,6 +3672,116 @@ app.patch('/api/social/profile/me', requireUser, sameOriginOnly, (req, res) => {
     if (String(error?.message || '').includes('UNIQUE')) return res.status(409).json({ error: 'Este nome de usuário já está em uso.' });
     return res.status(500).json({ error: 'Não foi possível atualizar o perfil.' });
   }
+});
+
+function socialConversationForUser(id, userId) {
+  return db.prepare(`SELECT * FROM social_conversations WHERE id=? AND (user_low=? OR user_high=?)`).get(id, userId, userId);
+}
+
+function publicChatMessage(row, userId) {
+  return { id: row.id, conversationId: row.conversation_id, mine: row.sender_id === userId,
+    kind: row.kind, body: row.body, fileName: row.file_name, mimeType: row.mime_type,
+    sizeBytes: Number(row.size_bytes || 0), fileUrl: row.storage_name ? `/api/social/chat/files/${row.id}` : '',
+    readAt: row.read_at, createdAt: row.created_at };
+}
+
+app.post('/api/social/chat/conversations', requireUser, sameOriginOnly, (req, res) => {
+  let target = null;
+  const handle = String(req.body?.handle || '').trim().toLowerCase();
+  const targetUserId = Number(req.body?.userId || 0);
+  if (handle) target = db.prepare('SELECT user_id FROM social_profiles WHERE handle=?').get(handle);
+  else if (targetUserId) target = db.prepare('SELECT id user_id FROM users WHERE id=?').get(targetUserId);
+  if (!target) return res.status(404).json({ error: 'Usuário não encontrado.' });
+  if (target.user_id === req.user.id) return res.status(400).json({ error: 'Escolha outra pessoa para conversar.' });
+  const low = Math.min(req.user.id, target.user_id), high = Math.max(req.user.id, target.user_id);
+  let conversation = db.prepare('SELECT id FROM social_conversations WHERE user_low=? AND user_high=?').get(low, high);
+  if (!conversation) {
+    const id = randomUUID();
+    db.prepare('INSERT INTO social_conversations (id,user_low,user_high) VALUES (?,?,?)').run(id, low, high);
+    conversation = { id };
+  }
+  return res.status(201).json({ id: conversation.id });
+});
+
+app.get('/api/social/chat/conversations', requireUser, (req, res) => {
+  const items = db.prepare(`SELECT c.id,c.last_message_at,u.id other_id,u.name,
+      COALESCE(p.handle,'usuario') handle,COALESCE(p.avatar_url,'') avatar_url,
+      (SELECT body FROM social_messages m WHERE m.conversation_id=c.id ORDER BY m.created_at DESC,m.id DESC LIMIT 1) last_body,
+      (SELECT kind FROM social_messages m WHERE m.conversation_id=c.id ORDER BY m.created_at DESC,m.id DESC LIMIT 1) last_kind,
+      (SELECT COUNT(*) FROM social_messages m WHERE m.conversation_id=c.id AND m.sender_id!=? AND m.read_at IS NULL) unread
+    FROM social_conversations c
+    JOIN users u ON u.id=CASE WHEN c.user_low=? THEN c.user_high ELSE c.user_low END
+    LEFT JOIN social_profiles p ON p.user_id=u.id
+    WHERE c.user_low=? OR c.user_high=? ORDER BY c.last_message_at DESC`).all(req.user.id, req.user.id, req.user.id, req.user.id);
+  return res.json({ items: items.map(row => ({ id: row.id, updatedAt: row.last_message_at,
+    other: { id: row.other_id, name: row.name, handle: row.handle, avatarUrl: row.avatar_url },
+    lastMessage: row.last_body || (row.last_kind ? `[${row.last_kind}]` : 'Conversa iniciada'), unread: Number(row.unread) })) });
+});
+
+app.get('/api/social/chat/conversations/:id/messages', requireUser, (req, res) => {
+  const conversation = socialConversationForUser(req.params.id, req.user.id);
+  if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
+  const otherId = conversation.user_low === req.user.id ? conversation.user_high : conversation.user_low;
+  const other = db.prepare(`SELECT u.id,u.name,COALESCE(p.handle,'usuario') handle,COALESCE(p.avatar_url,'') avatar_url
+    FROM users u LEFT JOIN social_profiles p ON p.user_id=u.id WHERE u.id=?`).get(otherId);
+  const items = db.prepare('SELECT * FROM social_messages WHERE conversation_id=? ORDER BY created_at,id LIMIT 300').all(conversation.id);
+  db.prepare('UPDATE social_messages SET read_at=CURRENT_TIMESTAMP WHERE conversation_id=? AND sender_id!=? AND read_at IS NULL')
+    .run(conversation.id, req.user.id);
+  return res.json({ conversation: { id: conversation.id, other }, items: items.map(row => publicChatMessage(row, req.user.id)) });
+});
+
+app.post('/api/social/chat/conversations/:id/messages', requireUser, sameOriginOnly, (req, res) => {
+  const conversation = socialConversationForUser(req.params.id, req.user.id);
+  if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
+  const body = String(req.body?.body || '').trim().slice(0, 2000);
+  if (!body) return res.status(400).json({ error: 'Escreva uma mensagem.' });
+  const id = randomUUID();
+  db.prepare(`INSERT INTO social_messages (id,conversation_id,sender_id,kind,body) VALUES (?,?,?,'text',?)`)
+    .run(id, conversation.id, req.user.id, body);
+  db.prepare('UPDATE social_conversations SET last_message_at=CURRENT_TIMESTAMP WHERE id=?').run(conversation.id);
+  return res.status(201).json({ message: publicChatMessage(db.prepare('SELECT * FROM social_messages WHERE id=?').get(id), req.user.id) });
+});
+
+const CHAT_MIME_EXTENSIONS = new Map([
+  ['image/jpeg','jpg'],['image/png','png'],['image/webp','webp'],['image/gif','gif'],
+  ['video/mp4','mp4'],['video/webm','webm'],['video/quicktime','mov'],
+  ['audio/webm','webm'],['audio/ogg','ogg'],['audio/mpeg','mp3'],['audio/mp4','m4a'],['audio/wav','wav'],
+  ['application/pdf','pdf'],['text/plain','txt'],['application/msword','doc'],
+  ['application/vnd.openxmlformats-officedocument.wordprocessingml.document','docx'],
+  ['application/vnd.ms-excel','xls'],['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','xlsx'],
+  ['application/zip','zip']
+]);
+
+app.post('/api/social/chat/conversations/:id/files', requireUser, sameOriginOnly,
+  express.raw({ type: () => true, limit: '25mb' }), (req, res) => {
+    const conversation = socialConversationForUser(req.params.id, req.user.id);
+    if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
+    const mimeType = String(req.get('content-type') || '').split(';')[0].toLowerCase();
+    const extension = CHAT_MIME_EXTENSIONS.get(mimeType);
+    if (!extension || !Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Tipo de arquivo não permitido.' });
+    const kind = mimeType.startsWith('image/') ? 'image' : mimeType.startsWith('video/') ? 'video' : mimeType.startsWith('audio/') ? 'audio' : 'file';
+    const id = randomUUID(), storageName = `${randomUUID()}.${extension}`;
+    let requestedName = '';
+    try { requestedName = decodeURIComponent(String(req.get('x-file-name') || '')).replace(/[\r\n]/g, '').slice(0, 180); } catch {}
+    const fileName = requestedName || `${kind}.${extension}`;
+    fs.writeFileSync(path.join(socialChatDir, storageName), req.body, { flag: 'wx' });
+    db.prepare(`INSERT INTO social_messages
+      (id,conversation_id,sender_id,kind,file_name,mime_type,storage_name,size_bytes) VALUES (?,?,?,?,?,?,?,?)`)
+      .run(id, conversation.id, req.user.id, kind, fileName, mimeType, storageName, req.body.length);
+    db.prepare('UPDATE social_conversations SET last_message_at=CURRENT_TIMESTAMP WHERE id=?').run(conversation.id);
+    return res.status(201).json({ message: publicChatMessage(db.prepare('SELECT * FROM social_messages WHERE id=?').get(id), req.user.id) });
+  });
+
+app.get('/api/social/chat/files/:messageId', requireUser, (req, res) => {
+  const message = db.prepare(`SELECT m.* FROM social_messages m JOIN social_conversations c ON c.id=m.conversation_id
+    WHERE m.id=? AND (c.user_low=? OR c.user_high=?)`).get(req.params.messageId, req.user.id, req.user.id);
+  if (!message?.storage_name) return res.status(404).json({ error: 'Arquivo não encontrado.' });
+  const absolute = path.join(socialChatDir, path.basename(message.storage_name));
+  if (!fs.existsSync(absolute)) return res.status(404).json({ error: 'Arquivo não encontrado.' });
+  res.setHeader('Content-Type', message.mime_type || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `${message.kind === 'file' ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(message.file_name)}`);
+  res.setHeader('Cache-Control', 'private,max-age=3600');
+  return res.sendFile(absolute);
 });
 
 app.post('/api/social/uploads', requireUser, sameOriginOnly, async (req, res) => {
