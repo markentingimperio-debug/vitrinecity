@@ -21,9 +21,9 @@ const posts = [
   ['vitrinecity','geral','Bem-vindo à VitrineCity: uma cidade digital para descobrir pessoas, negócios, serviços e oportunidades. #VitrineCity #CidadeDigital'],
   ['vitrinecity','geral','Crie seu perfil público, escolha sua cidade e comece a construir novas conexões. #Comunidade #VitrinySocial'],
   ['vitrinecity','geral','No feed Para Você, cada interação ajuda a inteligência da Vitriny a recomendar conteúdos melhores. #Tecnologia #VitrinyIntelligence'],
-  ['vitrineprodutos','produtos','Lojistas podem apresentar seus produtos para clientes de todo o Brasil dentro da Vitriny. #Produtos #Marketplace'],
-  ['vitrineprodutos','produtos','Fotos claras, descrição completa e preço correto aumentam a confiança de quem compra. #DicaDoLojista #Vendas'],
-  ['vitrineprodutos','produtos','Comprar de negócios locais fortalece a economia da cidade e aproxima clientes e vendedores. #CompreLocal #Negócios'],
+  ['vitrinyprodutos','produtos','Lojistas podem apresentar seus produtos para clientes de todo o Brasil dentro da Vitriny. #Produtos #Marketplace'],
+  ['vitrinyprodutos','produtos','Fotos claras, descrição completa e preço correto aumentam a confiança de quem compra. #DicaDoLojista #Vendas'],
+  ['vitrinyprodutos','produtos','Comprar de negócios locais fortalece a economia da cidade e aproxima clientes e vendedores. #CompreLocal #Negócios'],
   ['vitrinyservicos','servicos','Encontre profissionais e serviços da sua cidade em um só lugar. #Serviços #Cidade'],
   ['vitrinyservicos','servicos','Prestador de serviço: mantenha seu perfil atualizado e mostre com clareza o que você faz. #Profissional #Oportunidade'],
   ['vitrinyservicos','servicos','Avalie necessidades, converse pelo chat e confirme todas as condições antes de contratar. #Segurança #Serviços'],
@@ -76,6 +76,7 @@ db.transaction(() => {
   }
   posts.forEach(([handle,category,caption],index) => {
     const author=byHandle.get(handle);
+    if (!author) throw new Error(`Perfil institucional não encontrado para o identificador: ${handle}`);
     const id=`official-seed-${String(index+1).padStart(3,'0')}`;
     const createdAt=new Date(Date.now()-(posts.length-index)*3600000).toISOString().replace('T',' ').slice(0,19);
     insertPost.run(id,author.id,`image:${id}`,caption,category,author.city,
