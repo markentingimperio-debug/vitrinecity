@@ -4649,7 +4649,7 @@ function marketplaceProductSlug(value) {
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 100) || 'produto';
 }
 
-app.get('/produto/:id/:slug?', (req, res) => {
+app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id < 1) return res.status(404).send('Produto não encontrado.');
   const product = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,p.image_url,
