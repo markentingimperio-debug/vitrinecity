@@ -4644,6 +4644,60 @@ app.post('/api/webhooks/cloudflare-stream', (req, res) => {
       Number(video.duration) || null, String(video.status?.errorReasonText || '').slice(0, 500), String(video.uid || ''));
   return res.json({ ok: true });
 });
+function marketplaceProductSlug(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 100) || 'produto';
+}
+
+app.get('/produto/:id/:slug?', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(404).send('Produto não encontrado.');
+  const product = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,p.image_url,
+      p.sku,p.stock_quantity,p.weight_grams,s.business_name AS store_name
+    FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE p.id=? AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0
+      AND p.stock_quantity>0 AND s.review_status='published'`).get(id);
+  if (!product) return res.status(404).send('Produto não encontrado.');
+  const slug = marketplaceProductSlug(product.name);
+  if (req.params.slug !== slug) return res.redirect(301, `/produto/${product.id}/${slug}`);
+  const origin = new URL(SITE_URL).origin;
+  const canonical = `${origin}/produto/${product.id}/${slug}`;
+  const image = product.image_url ? new URL(product.image_url, origin).toString() : '';
+  const title = `${product.name} — ${product.store_name} | Vitriny Loja`;
+  const description = String(product.description || `Compre ${product.name} na Vitriny Loja.`).slice(0, 155);
+  const schema = JSON.stringify({
+    '@context': 'https://schema.org', '@type': 'Product', name: product.name,
+    description, sku: product.sku || String(product.id), image: image ? [image] : undefined,
+    brand: { '@type': 'Brand', name: product.store_name },
+    offers: { '@type': 'Offer', url: canonical, priceCurrency: 'BRL',
+      price: (product.price_cents / 100).toFixed(2), availability: 'https://schema.org/InStock',
+      inventoryLevel: { '@type': 'QuantitativeValue', value: product.stock_quantity } }
+  }).replace(/</g, '\\u003c');
+  const publicProduct = JSON.stringify({
+    id: product.id, store_reference: product.store_reference, name: product.name,
+    price_cents: product.price_cents, stock_quantity: product.stock_quantity,
+    image_url: product.image_url || '', store_name: product.store_name
+  }).replace(/</g, '\\u003c');
+  res.set('Cache-Control', 'public,max-age=60').send(`<!doctype html><html lang="pt-BR"><head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>${escapeHtml(title)}</title><meta name="description" content="${escapeHtml(description)}">
+    <link rel="canonical" href="${escapeHtml(canonical)}"><meta property="og:type" content="product">
+    <meta property="og:title" content="${escapeHtml(title)}"><meta property="og:description" content="${escapeHtml(description)}">
+    ${image ? `<meta property="og:image" content="${escapeHtml(image)}">` : ''}
+    <script type="application/ld+json">${schema}</script>
+    <style>:root{--blue:#1768e6;--yellow:#ffc628;--line:#263b5b}*{box-sizing:border-box}body{margin:0;background:#07101d;color:#f7faff;font-family:Inter,Arial,sans-serif}a{text-decoration:none;color:inherit}header{padding:17px max(18px,5vw);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.brand{font-size:24px;font-weight:950}.brand span{color:var(--yellow)}.back{padding:10px 13px;background:#15243c;border-radius:10px;font-weight:850}main{width:min(1060px,calc(100% - 32px));margin:42px auto;display:grid;grid-template-columns:minmax(280px,1fr) minmax(300px,1fr);gap:38px;align-items:center}.photo{width:100%;aspect-ratio:1;border-radius:24px;object-fit:cover;background:#14213a;border:1px solid var(--line)}.badge{color:var(--yellow);font-weight:900}.seller{color:#aebed3}h1{font-size:clamp(31px,5vw,58px);line-height:1.04;margin:12px 0}.description{color:#cad5e5;line-height:1.6}.price{font-size:35px;font-weight:950;margin:22px 0 5px}.stock{color:#9fe0b1}.actions{display:flex;gap:10px;margin-top:24px}.button,button{border:0;border-radius:12px;padding:14px 17px;background:var(--blue);color:#fff;font-weight:950;cursor:pointer}.alt{background:#17263e}.status{color:#ffd76c;margin-top:12px}@media(max-width:720px){main{grid-template-columns:1fr;margin-top:22px}.actions{display:grid}}</style>
+    <script src="/analytics.js" defer></script></head><body>
+    <header><a class="brand" href="/loja.html">Vitriny <span>Loja</span></a><a class="back" href="/loja.html">← Voltar à loja</a></header>
+    <main><img class="photo" src="${escapeHtml(product.image_url || '')}" alt="${escapeHtml(product.name)}">
+    <section><div class="badge">${escapeHtml(product.category || 'Produto')}</div><div class="seller">Vendido por ${escapeHtml(product.store_name)}</div>
+    <h1>${escapeHtml(product.name)}</h1><p class="description">${escapeHtml(description)}</p>
+    <div class="price">${(product.price_cents / 100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</div>
+    <div class="stock">${product.stock_quantity} unidades disponíveis</div>
+    <div class="actions"><button id="add">Adicionar ao carrinho</button><a class="button alt" href="/loja.html?q=${encodeURIComponent(product.name)}">Ver na loja</a></div><div class="status" id="status"></div></section></main>
+    <script>const product=${publicProduct};document.getElementById('add').onclick=()=>{let cart=[];try{cart=JSON.parse(localStorage.getItem('vc_shop_cart')||'[]')}catch{}if(cart.length&&cart[0].store_reference!==product.store_reference){document.getElementById('status').textContent='Finalize primeiro os produtos da outra loja.';return}const old=cart.find(item=>item.id===product.id);if(old)old.quantity=Math.min(product.stock_quantity,old.quantity+1);else cart.push({...product,quantity:1});localStorage.setItem('vc_shop_cart',JSON.stringify(cart));location.href='/loja.html?carrinho=1'};</script>
+    </body></html>`);
+});
+
 app.get('/social/post/:id', (req,res) => {
   const p=db.prepare(`SELECT p.*,u.name,COALESCE(sp.handle,'usuario') handle FROM social_posts p JOIN users u ON u.id=p.user_id LEFT JOIN social_profiles sp ON sp.user_id=p.user_id WHERE p.id=? AND p.status='ready'`).get(req.params.id);
   if(!p)return res.status(404).send('Publicação não encontrada.');
