@@ -400,6 +400,12 @@ CREATE TABLE IF NOT EXISTS social_mutes (
   PRIMARY KEY (user_id,muted_id),
   CHECK (user_id != muted_id)
 );
+CREATE TABLE IF NOT EXISTS social_not_interested (
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  actor_key TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (post_id,actor_key)
+);
 CREATE TABLE IF NOT EXISTS social_reports (
   id INTEGER PRIMARY KEY,
   post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
@@ -482,6 +488,7 @@ CREATE INDEX IF NOT EXISTS idx_social_comments_post ON social_comments(post_id, 
 CREATE INDEX IF NOT EXISTS idx_social_follows_followed ON social_follows(followed_id);
 CREATE INDEX IF NOT EXISTS idx_social_blocks_blocked ON social_blocks(blocked_id,blocker_id);
 CREATE INDEX IF NOT EXISTS idx_social_mutes_user ON social_mutes(user_id,muted_id);
+CREATE INDEX IF NOT EXISTS idx_social_not_interested_actor ON social_not_interested(actor_key,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_reports_status ON social_reports(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_views_post ON social_post_views(post_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_engagement_actor ON social_engagement_events(actor_key,event_day DESC);
@@ -3926,6 +3933,7 @@ app.get('/api/social/feed', (req, res) => {
       AND NOT EXISTS(SELECT 1 FROM social_blocks b WHERE (b.blocker_id=? AND b.blocked_id=p.user_id)
         OR (b.blocker_id=p.user_id AND b.blocked_id=?))
       AND NOT EXISTS(SELECT 1 FROM social_mutes m WHERE m.user_id=? AND m.muted_id=p.user_id)
+      AND NOT EXISTS(SELECT 1 FROM social_not_interested ni WHERE ni.post_id=p.id AND ni.actor_key=?)
     ORDER BY CASE WHEN ?='latest' THEN julianday(p.created_at) ELSE ((20
       + (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) * 3
       + (SELECT COUNT(*) FROM social_comments c WHERE c.post_id=p.id AND c.status='published') * 5
@@ -3936,7 +3944,7 @@ app.get('/api/social/feed', (req, res) => {
       actorKey, actorKey, viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, viewer?.id || 0,
       before, before, category, category, followingOnly ? 1 : 0, viewer?.id || 0,
       friendsOnly ? 1 : 0, viewer?.id || 0, viewer?.id || 0,
-      viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, mode, candidateLimit);
+      viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, actorKey, mode, candidateLimit);
   if (mode === 'recommended') {
     const score = row => {
       const impressions=Math.max(1,Number(row.intelligence_impressions||0));
@@ -4302,6 +4310,14 @@ app.post('/api/social/posts/:id/share', sameOriginOnly, (req,res)=>{
     .run(req.params.id,socialVisitorKey(req),new Date().toISOString().slice(0,10));
   const count=db.prepare('SELECT COUNT(*) count FROM social_shares WHERE post_id=?').get(req.params.id).count;
   return res.json({ok:true,shares:count});
+});
+
+app.post('/api/social/posts/:id/not-interested', sameOriginOnly, (req,res) => {
+  const post=db.prepare("SELECT id FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
+  if(!post)return res.status(404).json({error:'Publicação não encontrada.'});
+  const viewer=currentUser(req),actorKey=viewer?`user:${viewer.id}`:socialVisitorKey(req);
+  db.prepare('INSERT OR IGNORE INTO social_not_interested (post_id,actor_key) VALUES (?,?)').run(post.id,actorKey);
+  return res.json({ok:true});
 });
 
 app.post('/api/social/posts/:id/view', sameOriginOnly, (req, res) => {
