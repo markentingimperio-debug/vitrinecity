@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /api/
+Disallow: /minha-conta.html
+Disallow: /painel-lojista.html
+Disallow: /pedidos.html
+Disallow: /meus-cursos.html
+
+Sitemap: https://vitrinecity.com/sitemap.xml
