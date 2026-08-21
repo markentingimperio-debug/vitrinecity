@@ -4348,9 +4348,44 @@ app.post('/api/admin/social/intelligence/import', requireAdmin, sameOriginOnly, 
 });
 
 app.get('/api/admin/social/intelligence/status', requireAdmin, (_req,res) => {
-  const internal=db.prepare(`SELECT COUNT(*) contents,COALESCE(SUM(impressions),0) impressions,COALESCE(SUM(watch_ms),0) watchMs,COALESCE(SUM(completions),0) completions,COALESCE(SUM(skips),0) skips FROM social_engagement_events`).get();
-  const providers=db.prepare(`SELECT provider,COUNT(*) contents,COALESCE(SUM(views),0) views,COALESCE(SUM(conversions),0) conversions,MAX(updated_at) updatedAt FROM social_external_insights GROUP BY provider ORDER BY provider`).all();
-  return res.json({engine:'vitriny-intelligence-v1',internal,providers});
+  const internal=db.prepare(`SELECT COUNT(DISTINCT post_id) contents,
+    COALESCE(SUM(impressions),0) impressions,COALESCE(SUM(watch_ms),0) watchMs,
+    COALESCE(SUM(completions),0) completions,COALESCE(SUM(skips),0) skips,
+    COALESCE(SUM(replays),0) replays,COALESCE(SUM(profile_clicks),0) profileClicks,
+    COALESCE(SUM(cta_clicks),0) commercialClicks FROM social_engagement_events`).get();
+  const impressions=Math.max(1,Number(internal.impressions||0));
+  const overview={...internal,
+    avgWatchSeconds:Number((Number(internal.watchMs||0)/impressions/1000).toFixed(2)),
+    retentionRate:Number((Math.min(1,Number(internal.watchMs||0)/impressions/15000)).toFixed(4)),
+    completionRate:Number((Number(internal.completions||0)/impressions).toFixed(4)),
+    skipRate:Number((Number(internal.skips||0)/impressions).toFixed(4))};
+  const daily=db.prepare(`SELECT event_day day,SUM(impressions) impressions,SUM(watch_ms) watchMs,
+    SUM(completions) completions,SUM(skips) skips,SUM(replays) replays,SUM(cta_clicks) commercialClicks
+    FROM social_engagement_events WHERE event_day>=date('now','-6 days')
+    GROUP BY event_day ORDER BY event_day`).all();
+  const categories=db.prepare(`SELECT p.category,COUNT(DISTINCT p.id) contents,
+    COALESCE(SUM(e.impressions),0) impressions,COALESCE(SUM(e.watch_ms),0) watchMs,
+    COALESCE(SUM(e.completions),0) completions,COALESCE(SUM(e.skips),0) skips,
+    ROUND(COALESCE(SUM(e.watch_ms),0)/1000.0 + COALESCE(SUM(e.completions),0)*18
+      + COALESCE(SUM(e.replays),0)*12 + COALESCE(SUM(e.cta_clicks),0)*15
+      - COALESCE(SUM(e.skips),0)*8,1) score
+    FROM social_posts p LEFT JOIN social_engagement_events e ON e.post_id=p.id
+    WHERE p.status='ready' GROUP BY p.category ORDER BY score DESC`).all();
+  const growing=db.prepare(`SELECT p.id,p.caption,p.category,u.name authorName,
+    COALESCE(SUM(CASE WHEN e.event_day>=date('now','-2 days') THEN e.impressions ELSE 0 END),0) recentImpressions,
+    COALESCE(SUM(CASE WHEN e.event_day BETWEEN date('now','-5 days') AND date('now','-3 days') THEN e.impressions ELSE 0 END),0) previousImpressions
+    FROM social_posts p JOIN users u ON u.id=p.user_id
+    LEFT JOIN social_engagement_events e ON e.post_id=p.id
+    WHERE p.status='ready' GROUP BY p.id
+    HAVING recentImpressions>0 ORDER BY recentImpressions DESC LIMIT 20`).all().map(row=>({
+      ...row,growthRate:Number((((Number(row.recentImpressions||0)-Number(row.previousImpressions||0))
+        /Math.max(1,Number(row.previousImpressions||0)))*100).toFixed(1))
+    })).sort((a,b)=>b.growthRate-a.growthRate).slice(0,10);
+  const providers=db.prepare(`SELECT provider,COUNT(*) contents,COALESCE(SUM(views),0) views,
+    COALESCE(SUM(clicks),0) clicks,COALESCE(SUM(conversions),0) conversions,
+    MAX(updated_at) updatedAt FROM social_external_insights GROUP BY provider ORDER BY provider`).all();
+  return res.json({engine:'vitriny-intelligence-v1',generatedAt:new Date().toISOString(),
+    internal,overview,daily,categories,growing,providers});
 });
 
 app.post('/api/social/posts/:id/report', requireUser, sameOriginOnly, (req, res) => {

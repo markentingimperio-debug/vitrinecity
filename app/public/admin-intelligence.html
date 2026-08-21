@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vitriny Intelligence — Painel administrativo</title>
+<style>
+:root{--bg:#07101d;--panel:#101a2d;--line:#293954;--text:#f5f8ff;--muted:#aebbd0;--blue:#1768e6;--green:#24c486;--amber:#ffbd4a;--red:#ff657a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px Inter,Arial,sans-serif}a{color:#9bc1ff}header{padding:17px max(18px,5vw);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:18px;align-items:center}.wrap{width:min(1220px,94%);margin:28px auto 50px}.head{display:flex;justify-content:space-between;gap:16px;align-items:end;margin-bottom:20px}h1{margin:0 0 7px;font-size:clamp(26px,4vw,42px)}h2{font-size:18px;margin:0 0 14px}.muted{color:var(--muted)}button{font:inherit;border:0;border-radius:11px;padding:11px 15px;background:var(--blue);color:#fff;font-weight:900;cursor:pointer}.cards{display:grid;grid-template-columns:repeat(6,minmax(140px,1fr));gap:12px}.card,.panel{background:var(--panel);border:1px solid var(--line);border-radius:17px;padding:17px}.label{color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}.value{font-size:28px;font-weight:950;margin:8px 0 2px}.good{color:var(--green)}.warn{color:var(--amber)}.bad{color:var(--red)}.grid{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-top:15px}.wide{grid-column:1/-1}.row{display:grid;grid-template-columns:minmax(110px,1fr) 3fr auto;gap:12px;align-items:center;margin:11px 0}.bar{height:10px;background:#07101d;border-radius:99px;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),#58a4ff);border-radius:inherit}.table{width:100%;border-collapse:collapse}.table th,.table td{text-align:left;padding:11px 8px;border-bottom:1px solid var(--line);font-size:13px}.table th{color:var(--muted)}.empty{padding:30px;text-align:center;color:var(--muted)}#status{margin:8px 0 18px}@media(max-width:1050px){.cards{grid-template-columns:repeat(3,1fr)}}@media(max-width:720px){header,.head{align-items:flex-start;flex-direction:column}.cards{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.wide{grid-column:auto}.row{grid-template-columns:95px 1fr auto}.table{display:block;overflow:auto}}
+</style></head>
+<body>
+<header><strong>Vitriny Intelligence · Administração</strong><nav><a href="/admin.html">Painel principal</a> · <a href="/social.html">Feed social</a></nav></header>
+<main class="wrap">
+<div class="head"><div><h1>Inteligência do feed</h1><div class="muted">Métricas reais de comportamento e desempenho dos conteúdos.</div></div><button id="refresh">Atualizar dados</button></div>
+<div id="status" class="muted">Carregando métricas...</div>
+<section class="cards" id="cards"></section>
+<section class="grid">
+<article class="panel"><h2>Categorias mais fortes</h2><div id="categories"></div></article>
+<article class="panel"><h2>Últimos 7 dias</h2><div id="daily"></div></article>
+<article class="panel wide"><h2>Conteúdos em crescimento</h2><div id="growing"></div></article>
+<article class="panel wide"><h2>Fontes externas agregadas</h2><div id="providers"></div></article>
+</section></main>
+<script>
+const $=id=>document.getElementById(id),nf=new Intl.NumberFormat('pt-BR'),pct=v=>(Number(v||0)*100).toFixed(1)+'%';
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(){const r=await fetch('/api/admin/social/intelligence/status'),d=await r.json().catch(()=>({}));if(r.status===401||r.status===403){location.href='/carteira.html?admin=1';throw Error('Acesso administrativo necessário.')}if(!r.ok)throw Error(d.error||'Falha ao carregar métricas.');return d}
+function metric(label,value,tone='',detail=''){return `<article class="card"><div class="label">${label}</div><div class="value ${tone}">${value}</div><div class="muted">${detail}</div></article>`}
+function bars(rows,label,value){const max=Math.max(1,...rows.map(value));return rows.map(r=>`<div class="row"><span>${esc(label(r))}</span><div class="bar"><i style="width:${Math.max(2,value(r)/max*100)}%"></i></div><strong>${nf.format(value(r))}</strong></div>`).join('')||'<div class="empty">Ainda não há dados.</div>'}
+function table(rows,cols){return rows.length?`<table class="table"><thead><tr>${cols.map(c=>`<th>${c[0]}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody></table>`:'<div class="empty">Ainda não há dados.</div>'}
+async function load(){ $('status').textContent='Atualizando...';try{const d=await api(),o=d.overview||{};$('cards').innerHTML=[
+metric('Impressões',nf.format(o.impressions||0),'','conteúdo visível'),
+metric('Retenção média',pct(o.retentionRate),'good',nf.format(o.avgWatchSeconds||0)+' s por impressão'),
+metric('Conclusão',pct(o.completionRate),'good',nf.format(o.completions||0)+' conclusões'),
+metric('Abandono',pct(o.skipRate),'bad',nf.format(o.skips||0)+' abandonos rápidos'),
+metric('Repetições',nf.format(o.replays||0),'warn','nova visualização'),
+metric('Cliques comerciais',nf.format(o.commercialClicks||0),'good',nf.format(o.profileClicks||0)+' visitas ao perfil')
+].join('');
+$('categories').innerHTML=bars(d.categories||[],r=>r.category,r=>Number(r.score||0));
+$('daily').innerHTML=bars(d.daily||[],r=>String(r.day||'').slice(5),r=>Number(r.impressions||0));
+$('growing').innerHTML=table(d.growing||[],[['Conteúdo',r=>`<strong>${esc(r.authorName||'Criador')}</strong><br><span class="muted">${esc((r.caption||'Sem legenda').slice(0,90))}</span>`],['Categoria',r=>esc(r.category)],['Agora',r=>nf.format(r.recentImpressions||0)],['Anterior',r=>nf.format(r.previousImpressions||0)],['Crescimento',r=>`<strong class="${Number(r.growthRate)>=0?'good':'bad'}">${Number(r.growthRate||0).toFixed(1)}%</strong>`]]);
+$('providers').innerHTML=table(d.providers||[],[['Rede',r=>esc(r.provider)],['Conteúdos',r=>nf.format(r.contents||0)],['Visualizações',r=>nf.format(r.views||0)],['Cliques',r=>nf.format(r.clicks||0)],['Conversões',r=>nf.format(r.conversions||0)],['Atualizado',r=>esc(r.updatedAt||'—')]]);
+$('status').textContent='Motor '+(d.engine||'Vitriny Intelligence')+' · atualizado em '+new Date(d.generatedAt).toLocaleString('pt-BR');
+}catch(e){$('status').textContent=e.message}}
+$('refresh').onclick=load;load();
+</script></body></html>
