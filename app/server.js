@@ -3581,8 +3581,42 @@ app.get('/api/social/profile/me', requireUser, (req, res) => {
     (SELECT COUNT(*) FROM social_follows WHERE follower_id=?) following,
     (SELECT COUNT(*) FROM social_posts WHERE user_id=? AND status!='deleted') posts`)
     .get(req.user.id, req.user.id, req.user.id);
-  return res.json({ profile: { name: req.user.name, handle: profile.handle, bio: profile.bio,
-    city: profile.city, avatarUrl: profile.avatar_url, ...counts } });
+  return res.json({ profile: { id: req.user.id, name: req.user.name, handle: profile.handle, bio: profile.bio,
+    city: profile.city, avatarUrl: profile.avatar_url, mine: true, ...counts } });
+});
+
+app.get('/api/social/profile/:handle', (req, res) => {
+  const handle = String(req.params.handle || '').trim().toLowerCase();
+  const profile = db.prepare(`SELECT sp.*,u.name FROM social_profiles sp
+    JOIN users u ON u.id=sp.user_id WHERE sp.handle=?`).get(handle);
+  if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' });
+  const viewer = currentUser(req);
+  const counts = db.prepare(`SELECT
+    (SELECT COUNT(*) FROM social_follows WHERE followed_id=?) followers,
+    (SELECT COUNT(*) FROM social_follows WHERE follower_id=?) following,
+    (SELECT COUNT(*) FROM social_posts WHERE user_id=? AND status='ready') posts`)
+    .get(profile.user_id, profile.user_id, profile.user_id);
+  const rows = db.prepare(`SELECT p.*,u.name author_name,sp.handle,COALESCE(sp.avatar_url,'') avatar_url,
+      (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) likes_count,
+      (SELECT COUNT(*) FROM social_comments c WHERE c.post_id=p.id AND c.status='published') comments_count,
+      (SELECT COUNT(*) FROM social_post_views v WHERE v.post_id=p.id) views_count,
+      (SELECT COUNT(*) FROM social_saves s WHERE s.post_id=p.id) saves_count,
+      (SELECT COUNT(*) FROM social_reposts r WHERE r.post_id=p.id) reposts_count,
+      (SELECT COUNT(*) FROM social_shares h WHERE h.post_id=p.id) shares_count,
+      EXISTS(SELECT 1 FROM social_saves s WHERE s.post_id=p.id AND s.user_id=?) viewer_saved,
+      EXISTS(SELECT 1 FROM social_reposts r WHERE r.post_id=p.id AND r.user_id=?) viewer_reposted,
+      EXISTS(SELECT 1 FROM social_likes l WHERE l.post_id=p.id AND l.user_id=?) viewer_liked,
+      EXISTS(SELECT 1 FROM social_follows f WHERE f.followed_id=p.user_id AND f.follower_id=?) viewer_following
+    FROM social_posts p JOIN users u ON u.id=p.user_id
+    JOIN social_profiles sp ON sp.user_id=p.user_id
+    WHERE p.user_id=? AND p.status='ready' ORDER BY p.created_at DESC LIMIT 60`).all(
+      viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, profile.user_id);
+  const followedByMe = viewer ? Boolean(db.prepare('SELECT 1 FROM social_follows WHERE follower_id=? AND followed_id=?')
+    .get(viewer.id, profile.user_id)) : false;
+  return res.json({ profile: { id: profile.user_id, name: profile.name, handle: profile.handle,
+    bio: profile.bio, city: profile.city, avatarUrl: profile.avatar_url, mine: viewer?.id === profile.user_id,
+    followedByMe, ...counts },
+    items: rows.map(row => socialPost(row, viewer?.id)) });
 });
 
 app.get('/api/social/posts/me', requireUser, (req, res) => {
