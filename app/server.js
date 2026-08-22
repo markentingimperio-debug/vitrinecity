@@ -1672,7 +1672,10 @@ const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
 };
 const publicErrorPage = (res, status) => res.status(status).sendFile(path.join(dir, 'public', `${status}.html`));
 app.get(['/social', '/social.html'], enhancedPublicPage('social.html', ['/social-empty-states.js']));
-app.get('/loja', publicPage('loja.html'));
+app.get('/loja', (_req, res) => {
+  const page = fs.readFileSync(path.join(dir, 'public', 'loja.html'), 'utf8');
+  return res.type('html').send(page.replace('</body>', '<script src="/marketplace-terms.js"></script></body>'));
+});
 app.get(['/descobrir', '/descobrir-social.html'], enhancedPublicPage('descobrir-social.html', ['/discover-enhancements.js']));
 app.get(['/perfil', '/perfil-social.html'], enhancedPublicPage('perfil-social.html'));
 app.get('/chat-social.html', enhancedPublicPage('chat-social.html'));
@@ -1701,7 +1704,10 @@ app.get('/sitemap.xml', (_req, res) => {
     '/', '/cidade', '/cidade/bairro-premium', '/cidade/praca-central', '/cidade/avenida-premium',
     '/social', '/descobrir', '/loja', '/centro-educacional.html', '/afiliados.html',
     '/para-empresas.html', '/como-funciona.html', '/comprar-lote.html', '/sobre.html',
-    '/contato.html', '/privacy.html', '/termos-predio-digital.html'
+    '/contato.html', '/privacy.html', '/termos-predio-digital.html', '/termos-marketplace.html',
+    '/politica-vendedor-marketplace.html', '/politica-comprador-marketplace.html',
+    '/politica-devolucao-marketplace.html', '/politica-cancelamento-marketplace.html',
+    '/politica-disputas-marketplace.html', '/politica-fiscal-marketplace.html'
   ];
   const stores = db.prepare(`SELECT order_reference,business_name FROM store_profiles
     WHERE review_status='published' ORDER BY order_reference`).all();
@@ -2326,6 +2332,9 @@ app.post('/api/marketplace/orders/:reference/returns', requireUser, sameOriginOn
 });
 
 app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, res) => {
+  if (req.body?.termsAccepted !== true) {
+    return res.status(400).json({ error: 'Aceite os Termos do Marketplace para continuar.' });
+  }
   const requested = Array.isArray(req.body?.items) ? req.body.items.slice(0, 30) : [];
   const addressId = Number(req.body?.addressId);
   const address = db.prepare('SELECT * FROM customer_addresses WHERE id=? AND user_id=?').get(addressId, req.user.id);
@@ -2370,6 +2379,10 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
       return res.status(503).json({error:'A autorização Mercado Pago da loja precisa ser renovada.'});}
   }
   if (!token || !process.env.MERCADOPAGO_WEBHOOK_SECRET) return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
+  recordConsent(req, {
+    userId: req.user.id, email: req.user.email, purpose: 'marketplace_buyer_terms',
+    version: 'marketplace-2026-08-22', source: 'marketplace_checkout', evidence: { storeReference }
+  });
   const reference = `shop_${randomUUID()}`;
   const adAttribution=readAdAttribution(req);
   try {
