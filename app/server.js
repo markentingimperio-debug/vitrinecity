@@ -4699,9 +4699,18 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     '@context': 'https://schema.org', '@type': 'Product', name: product.name,
     description, sku: product.sku || String(product.id), image: [image],
     brand: { '@type': 'Brand', name: product.store_name },
+    seller: { '@type': 'Organization', name: product.store_name, url: `${origin}${storePath}` },
     offers: { '@type': 'Offer', url: canonical, priceCurrency: 'BRL',
       price: (product.price_cents / 100).toFixed(2), availability: 'https://schema.org/InStock',
       inventoryLevel: { '@type': 'QuantitativeValue', value: product.stock_quantity } }
+  }).replace(/</g, '\\u003c');
+  const breadcrumbSchema = JSON.stringify({
+    '@context': 'https://schema.org', '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Vitriny Loja', item: `${origin}/loja` },
+      { '@type': 'ListItem', position: 2, name: product.store_name, item: `${origin}${storePath}` },
+      { '@type': 'ListItem', position: 3, name: product.name, item: canonical }
+    ]
   }).replace(/</g, '\\u003c');
   const publicProduct = JSON.stringify({
     id: product.id, store_reference: product.store_reference, name: product.name,
@@ -4715,6 +4724,7 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     <meta property="og:title" content="${escapeHtml(title)}"><meta property="og:description" content="${escapeHtml(description)}">
     <meta property="og:image" content="${escapeHtml(image)}">
     <script type="application/ld+json">${schema}</script>
+    <script type="application/ld+json">${breadcrumbSchema}</script>
     <style>:root{--blue:#1768e6;--yellow:#ffc628;--line:#263b5b}*{box-sizing:border-box}body{margin:0;background:#07101d;color:#f7faff;font-family:Inter,Arial,sans-serif}a{text-decoration:none;color:inherit}header{padding:17px max(18px,5vw);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.brand{font-size:24px;font-weight:950}.brand span{color:var(--yellow)}.back{padding:10px 13px;background:#15243c;border-radius:10px;font-weight:850}main{width:min(1060px,calc(100% - 32px));margin:42px auto;display:grid;grid-template-columns:minmax(280px,1fr) minmax(300px,1fr);gap:38px;align-items:center}.photo{width:100%;aspect-ratio:1;border-radius:24px;object-fit:cover;background:#14213a;border:1px solid var(--line)}.badge{color:var(--yellow);font-weight:900}.seller{color:#aebed3}h1{font-size:clamp(31px,5vw,58px);line-height:1.04;margin:12px 0}.description{color:#cad5e5;line-height:1.6}.price{font-size:35px;font-weight:950;margin:22px 0 5px}.stock{color:#9fe0b1}.actions{display:flex;gap:10px;margin-top:24px}.button,button{border:0;border-radius:12px;padding:14px 17px;background:var(--blue);color:#fff;font-weight:950;cursor:pointer}.alt{background:#17263e}.status{color:#ffd76c;margin-top:12px}@media(max-width:720px){main{grid-template-columns:1fr;margin-top:22px}.actions{display:grid}}</style>
     <script src="/analytics.js" defer></script></head><body>
     <header><a class="brand" href="/loja">Vitriny <span>Loja</span></a><a class="back" href="/loja">← Voltar à loja</a></header>
