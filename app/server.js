@@ -1187,6 +1187,12 @@ function validCnpj(value) {
   const first=digit(digits.slice(0,12)),second=digit(digits.slice(0,12)+first);return digits.endsWith(`${first}${second}`);
 }
 
+function validNfeAccessKey(value) {
+  const digits=String(value||'').replace(/\D/g,'');if(digits.length!==44||/^(\d)\1{43}$/.test(digits))return false;
+  let factor=2,sum=0;for(let index=42;index>=0;index--){sum+=Number(digits[index])*factor;factor=factor===9?2:factor+1;}
+  const remainder=sum%11,expected=remainder===0||remainder===1?0:11-remainder;return expected===Number(digits[43]);
+}
+
 function sellerTaxFingerprint(value) {
   if(!managementSecret())throw new Error('seller_data_secret_missing');
   return createHmac('sha256',managementSecret()).update('seller-tax:'+String(value).replace(/\D/g,'')).digest('hex');
@@ -3961,7 +3967,7 @@ app.patch('/api/store-portal/:reference/orders/:orderReference/fiscal', sameOrig
   const access = storePortalAccess(req, res);
   if (!access) return;
   const invoiceKey = String(req.body?.invoiceKey || '').replace(/\D/g, '');
-  if (invoiceKey.length !== 44) return res.status(400).json({ error: 'A chave da NF-e precisa ter 44 números.' });
+  if (!validNfeAccessKey(invoiceKey)) return res.status(400).json({ error: 'Informe uma chave de acesso NF-e válida com 44 números e dígito verificador correto.' });
   const result = db.prepare(`UPDATE marketplace_orders SET invoice_key=?,invoice_xml_url=?,fiscal_status='authorized',
     fulfillment_status='label_pending',updated_at=CURRENT_TIMESTAMP WHERE reference=? AND store_reference=? AND payment_status='approved'`)
     .run(invoiceKey, safeExternalUrl(req.body?.invoiceXmlUrl), req.params.orderReference, access.order.reference);
