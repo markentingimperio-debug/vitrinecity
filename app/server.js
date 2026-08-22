@@ -4320,6 +4320,37 @@ function socialConversationForUser(id, userId) {
 function socialUsersBlocked(a,b){return Boolean(db.prepare(`SELECT 1 FROM social_blocks WHERE
   (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?)`).get(a,b,b,a));}
 
+const socialLiveClients = new Map();
+function socialUnreadCounts(userId) {
+  const notifications = db.prepare('SELECT COUNT(*) total FROM social_notifications WHERE user_id=? AND read_at IS NULL').get(userId).total;
+  const messages = db.prepare(`SELECT COUNT(*) total FROM social_messages m JOIN social_conversations c ON c.id=m.conversation_id
+    WHERE (c.user_low=? OR c.user_high=?) AND m.sender_id!=? AND m.read_at IS NULL`).get(userId,userId,userId).total;
+  return { notifications:Number(notifications), messages:Number(messages) };
+}
+function sendSocialLive(userId, event, data = {}) {
+  const clients = socialLiveClients.get(Number(userId));
+  if (!clients?.size) return;
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const response of [...clients]) {
+    try { response.write(payload); } catch { clients.delete(response); }
+  }
+  if (!clients.size) socialLiveClients.delete(Number(userId));
+}
+function sendSocialCounts(userId) { sendSocialLive(userId,'counts',socialUnreadCounts(userId)); }
+
+app.get('/api/social/live', requireUser, (req,res) => {
+  res.setHeader('Content-Type','text/event-stream');
+  res.setHeader('Cache-Control','no-cache,no-transform');
+  res.setHeader('Connection','keep-alive');
+  res.setHeader('X-Accel-Buffering','no');
+  res.flushHeaders();
+  const userId=Number(req.user.id),clients=socialLiveClients.get(userId)||new Set();
+  clients.add(res);socialLiveClients.set(userId,clients);
+  res.write(`event: counts\ndata: ${JSON.stringify(socialUnreadCounts(userId))}\n\n`);
+  const heartbeat=setInterval(()=>{try{res.write(': keep-alive\n\n')}catch{}},25000);
+  req.on('close',()=>{clearInterval(heartbeat);clients.delete(res);if(!clients.size)socialLiveClients.delete(userId)});
+});
+
 function publicChatMessage(row, userId) {
   return { id: row.id, conversationId: row.conversation_id, mine: row.sender_id === userId,
     kind: row.kind, body: row.body, fileName: row.file_name, mimeType: row.mime_type,
@@ -4358,7 +4389,7 @@ app.get('/api/social/chat/conversations', requireUser, (req, res) => {
     WHERE (c.user_low=? OR c.user_high=?) AND NOT EXISTS(SELECT 1 FROM social_blocks b WHERE
       (b.blocker_id=? AND b.blocked_id=u.id) OR (b.blocker_id=u.id AND b.blocked_id=?))
     ORDER BY c.last_message_at DESC`).all(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
-  return res.json({ items: items.map(row => ({ id: row.id, updatedAt: row.last_message_at,
+  return res.json({ totalUnread:items.reduce((sum,row)=>sum+Number(row.unread),0), items: items.map(row => ({ id: row.id, updatedAt: row.last_message_at,
     other: { id: row.other_id, name: row.name, handle: row.handle, avatarUrl: row.avatar_url },
     lastMessage: row.last_body || (row.last_kind ? `[${row.last_kind}]` : 'Conversa iniciada'), unread: Number(row.unread) })) });
 });
@@ -4373,6 +4404,7 @@ app.get('/api/social/chat/conversations/:id/messages', requireUser, (req, res) =
   const items = db.prepare('SELECT * FROM social_messages WHERE conversation_id=? ORDER BY created_at,id LIMIT 300').all(conversation.id);
   db.prepare('UPDATE social_messages SET read_at=CURRENT_TIMESTAMP WHERE conversation_id=? AND sender_id!=? AND read_at IS NULL')
     .run(conversation.id, req.user.id);
+  sendSocialCounts(req.user.id);
   return res.json({ conversation: { id: conversation.id, other }, items: items.map(row => publicChatMessage(row, req.user.id)) });
 });
 
@@ -4387,6 +4419,8 @@ app.post('/api/social/chat/conversations/:id/messages', requireActiveSocialUser,
   db.prepare(`INSERT INTO social_messages (id,conversation_id,sender_id,kind,body) VALUES (?,?,?,'text',?)`)
     .run(id, conversation.id, req.user.id, body);
   db.prepare('UPDATE social_conversations SET last_message_at=CURRENT_TIMESTAMP WHERE id=?').run(conversation.id);
+  sendSocialLive(otherId,'chat-message',{conversationId:conversation.id,messageId:id,kind:'text'});
+  sendSocialCounts(otherId);
   return res.status(201).json({ message: publicChatMessage(db.prepare('SELECT * FROM social_messages WHERE id=?').get(id), req.user.id) });
 });
 
@@ -4419,6 +4453,8 @@ app.post('/api/social/chat/conversations/:id/files', requireActiveSocialUser, sa
       (id,conversation_id,sender_id,kind,file_name,mime_type,storage_name,size_bytes) VALUES (?,?,?,?,?,?,?,?)`)
       .run(id, conversation.id, req.user.id, kind, fileName, mimeType, storageName, req.body.length);
     db.prepare('UPDATE social_conversations SET last_message_at=CURRENT_TIMESTAMP WHERE id=?').run(conversation.id);
+    sendSocialLive(otherId,'chat-message',{conversationId:conversation.id,messageId:id,kind});
+    sendSocialCounts(otherId);
     return res.status(201).json({ message: publicChatMessage(db.prepare('SELECT * FROM social_messages WHERE id=?').get(id), req.user.id) });
   });
 
@@ -4846,9 +4882,10 @@ app.post('/api/social/users/:id/block', requireActiveSocialUser, sameOriginOnly,
 
 function createSocialNotification(userId, actorId, type, message, dedupeKey, postId = null, storyId = null) {
   if (Number(userId) === Number(actorId)) return;
-  db.prepare(`INSERT OR IGNORE INTO social_notifications
+  const inserted=db.prepare(`INSERT OR IGNORE INTO social_notifications
     (user_id,actor_id,type,post_id,story_id,message,dedupe_key) VALUES (?,?,?,?,?,?,?)`)
     .run(userId,actorId,type,postId,storyId,message,dedupeKey);
+  if(inserted.changes){sendSocialLive(userId,'notification',{type,postId,storyId});sendSocialCounts(userId)}
 }
 
 function notifyFollowers(actorId, type, message, contentId) {
@@ -4957,6 +4994,7 @@ app.get('/api/social/notifications', requireUser, (req,res) => {
 });
 app.post('/api/social/notifications/read', requireUser, sameOriginOnly, (req,res) => {
   db.prepare('UPDATE social_notifications SET read_at=CURRENT_TIMESTAMP WHERE user_id=? AND read_at IS NULL').run(req.user.id);
+  sendSocialCounts(req.user.id);
   return res.json({ok:true});
 });
 
