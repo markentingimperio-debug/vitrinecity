@@ -12,6 +12,7 @@
 <main class="wrap">
 <div class="head"><div><h1>Inteligência do feed</h1><div class="muted">Métricas reais de comportamento e desempenho dos conteúdos.</div></div><button id="refresh">Atualizar dados</button></div>
 <div id="status" class="muted">Carregando métricas...</div>
+<section class="panel" id="algorithm" style="margin-bottom:15px"><div class="empty">Carregando versão do algoritmo...</div></section>
 <section class="cards" id="cards"></section>
 <section class="grid">
 <article class="panel"><h2>Categorias mais fortes</h2><div id="categories"></div></article>
@@ -38,6 +39,7 @@ metric('Repetições',nf.format(o.replays||0),'warn','nova visualização'),
 metric('Cliques',nf.format(o.clicks||0),'good',nf.format(o.commercialClicks||0)+' comerciais · '+nf.format(o.profileClicks||0)+' no perfil'),
 metric('Conversões',nf.format(o.conversions||0),'good','confirmações importadas das plataformas')
 ].join('');
+const algorithm=d.algorithm||{},versions=algorithm.versions||[];$('algorithm').innerHTML=`<h2>Versão e comparação do algoritmo</h2><p><strong>${esc(algorithm.currentVersion||d.engine)}</strong> · ${esc(algorithm.description||'')}</p>`+table(versions,[['Versão',r=>`<strong>${esc(r.version)}</strong>${r.version===algorithm.currentVersion?' <span class="good">ATUAL</span>':''}`],['Dias medidos',r=>nf.format(r.measuredDays||0)],['Impressões',r=>nf.format(r.impressions||0)],['Retenção',r=>pct(r.retentionRate)],['Conclusão',r=>pct(r.completionRate)],['Abandono',r=>pct(r.skipRate)],['CTR',r=>pct(r.clickRate)],['Conversão',r=>pct(r.conversionRate)]]);
 $('categories').innerHTML=bars(d.categories||[],r=>r.category,r=>Number(r.score||0));
 $('daily').innerHTML=bars(d.daily||[],r=>String(r.day||'').slice(5),r=>Number(r.impressions||0));
 $('newCreators').innerHTML=table(d.newCreators||[],[['Criador',r=>`<strong>${esc(r.name)}</strong><br><span class="muted">@${esc(r.handle)}</span>`],['Cidade',r=>esc(r.city||'—')],['Entrada',r=>new Date(r.createdAt+'Z').toLocaleDateString('pt-BR')],['Conteúdos',r=>nf.format(r.contents||0)],['Impressões',r=>nf.format(r.impressions||0)],['Seguidores',r=>nf.format(r.followers||0)]]);
