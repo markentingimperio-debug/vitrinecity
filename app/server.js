@@ -832,6 +832,12 @@ const pixHeaders = () => mpHeaders(pixAccessToken());
 
 function allowAttempt(store, key, limit, windowMs) {
   const now = Date.now();
+  if (store.size > 10000) {
+    for (const [entryKey, times] of store) {
+      if (!times.some(time => now - time < windowMs)) store.delete(entryKey);
+    }
+    while (store.size > 9000) store.delete(store.keys().next().value);
+  }
   const recent = (store.get(key) || []).filter(time => now - time < windowMs);
   if (recent.length >= limit) return false;
   store.set(key, [...recent, now]);
@@ -1241,6 +1247,17 @@ function publicWallet(userId) {
 
 app.use(express.json({ limit: '5mb', verify: (req, _res, buffer) => { req.rawBody = Buffer.from(buffer); } }));
 app.set('trust proxy', 1);
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'SAMEORIGIN',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(self), payment=(self)',
+    'Cross-Origin-Opener-Policy': 'same-origin-allow-popups'
+  });
+  if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  next();
+});
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 app.use('/vendor/three', express.static(path.join(dir, 'node_modules/three/build')));
 app.use('/uploads/social-media', express.static(socialMediaDir, { maxAge: '30d', immutable: true, fallthrough: false }));
@@ -1281,7 +1298,11 @@ app.get('/api/courses', (_req, res) => res.json({
       contentType: originalCourse(slug) ? 'original' : 'licensed' }))
 }));
 
-app.post('/api/leads', (req, res) => {
+app.post('/api/leads', sameOriginOnly, (req, res) => {
+  if (!allowAttempt(authAttempts, `lead:${req.ip}`, 6, 60 * 60 * 1000)) {
+    return res.set('Retry-After', '3600').status(429).json({ error: 'Muitos cadastros em pouco tempo. Tente novamente mais tarde.' });
+  }
+  if (String(req.body?.website || '').trim()) return res.status(201).json({ ok: true });
   const { name, email, whatsapp = '', interest = '', consent } = req.body || {};
   if (!consent || typeof name !== 'string' || name.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(email || '')) {
     return res.status(400).json({ error: 'Informe nome, e-mail válido e aceite o recebimento de novidades.' });
@@ -1294,7 +1315,7 @@ app.post('/api/leads', (req, res) => {
 
 app.post('/api/contact', sameOriginOnly, (req, res) => {
   if (!allowAttempt(authAttempts, `contact:${req.ip}`, 4, 60 * 60 * 1000)) {
-    return res.status(429).json({ error: 'Muitas mensagens em pouco tempo. Tente novamente mais tarde.' });
+    return res.set('Retry-After', '3600').status(429).json({ error: 'Muitas mensagens em pouco tempo. Tente novamente mais tarde.' });
   }
   const body = req.body || {};
   if (String(body.website || '').trim()) return res.status(201).json({ ok: true });
@@ -1332,12 +1353,13 @@ app.patch('/api/admin/contact-submissions/:id', requireAdmin, sameOriginOnly, (r
   return res.json({ ok:true });
 });
 
-app.post('/api/auth/register', (req, res) => {
-  if (!allowAttempt(authAttempts, `register:${req.ip}`, 8, 15 * 60 * 1000)) {
-    return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
+app.post('/api/auth/register', sameOriginOnly, (req, res) => {
+  const normalizedEmail = String(req.body?.email || '').trim().toLowerCase();
+  if (!allowAttempt(authAttempts, `register-ip:${req.ip}`, 8, 15 * 60 * 1000) ||
+      !allowAttempt(authAttempts, `register-email:${normalizedEmail}`, 4, 60 * 60 * 1000)) {
+    return res.set('Retry-After', '900').status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
   }
   const { name, email, whatsapp = '', password, adultConfirmed, termsAccepted } = req.body || {};
-  const normalizedEmail = String(email || '').trim().toLowerCase();
   if (!adultConfirmed || !termsAccepted || typeof name !== 'string' || name.trim().length < 2 ||
       !/^\S+@\S+\.\S+$/.test(normalizedEmail) || typeof password !== 'string' || password.length < 10) {
     return res.status(400).json({ error: 'Informe os dados, use senha com 10 caracteres e aceite os termos para maiores de 18 anos.' });
@@ -1358,11 +1380,12 @@ app.post('/api/auth/register', (req, res) => {
   }
 });
 
-app.post('/api/auth/login', (req, res) => {
-  if (!allowAttempt(authAttempts, `login:${req.ip}`, 10, 15 * 60 * 1000)) {
-    return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
-  }
+app.post('/api/auth/login', sameOriginOnly, (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!allowAttempt(authAttempts, `login-ip:${req.ip}`, 12, 15 * 60 * 1000) ||
+      !allowAttempt(authAttempts, `login-email:${email}`, 8, 15 * 60 * 1000)) {
+    return res.set('Retry-After', '900').status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
+  }
   const password = String(req.body?.password || '');
   const user = db.prepare('SELECT * FROM users WHERE email=?').get(email);
   if (!user || !verifyPassword(password, user.password_hash)) {
@@ -1372,7 +1395,7 @@ app.post('/api/auth/login', (req, res) => {
   return res.json({ ok: true });
 });
 
-app.post('/api/auth/logout', (req, res) => {
+app.post('/api/auth/logout', sameOriginOnly, (req, res) => {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (token) db.prepare('DELETE FROM sessions WHERE token_hash=?').run(sessionHash(token));
   res.append('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
