@@ -427,6 +427,40 @@ CREATE TABLE IF NOT EXISTS social_reports (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(post_id, reporter_id)
 );
+CREATE TABLE IF NOT EXISTS social_moderation_actions (
+  id INTEGER PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  admin_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  reason_code TEXT NOT NULL DEFAULT 'outro',
+  note TEXT NOT NULL DEFAULT '',
+  previous_status TEXT NOT NULL,
+  new_status TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS social_appeals (
+  id INTEGER PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  admin_note TEXT NOT NULL DEFAULT '',
+  reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reviewed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_social_appeals_open ON social_appeals(post_id,user_id) WHERE status='open';
+CREATE TABLE IF NOT EXISTS social_account_restrictions (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'active',
+  reason_code TEXT NOT NULL DEFAULT 'outro',
+  note TEXT NOT NULL DEFAULT '',
+  restricted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  restricted_until TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS social_post_views (
   post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
   visitor_key TEXT NOT NULL,
@@ -1299,6 +1333,8 @@ app.get('/loja', publicPage('loja.html'));
 app.get(['/descobrir', '/descobrir-social.html'], enhancedPublicPage('descobrir-social.html', ['/discover-enhancements.js']));
 app.get(['/perfil', '/perfil-social.html'], enhancedPublicPage('perfil-social.html'));
 app.get('/chat-social.html', enhancedPublicPage('chat-social.html'));
+app.get('/admin-social-moderacao.html', enhancedPublicPage('admin-social-moderacao.html', ['/admin-moderation-enhanced.js']));
+app.get('/recursos-social.html', enhancedPublicPage('recursos-social.html'));
 app.get('/cidade', publicPage('cidade-exploravel.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
 app.get('/cidade/praca-central', publicPage('praca-central.html'));
@@ -1483,6 +1519,15 @@ app.get('/api/auth/me', (req, res) => {
 function publicAgeVerification(row) {
   return { status: row?.status || 'not_started', over18: row?.over_18 == null ? null : Boolean(row.over_18),
     verifiedAt: row?.verified_at || null, expiresAt: row?.expires_at || null };
+}
+
+function requireActiveSocialUser(req, res, next) {
+  return requireUser(req, res, () => {
+    const restriction = db.prepare(`SELECT status,reason_code,note,restricted_until FROM social_account_restrictions
+      WHERE user_id=? AND status='suspended' AND (restricted_until IS NULL OR restricted_until>CURRENT_TIMESTAMP)`).get(req.user.id);
+    if (restriction) return res.status(403).json({ error: 'Sua participação na Vitriny Social está suspensa.', restriction });
+    return next();
+  });
 }
 
 app.get('/api/identity/age-verification', requireUser, (req, res) => {
@@ -3924,6 +3969,7 @@ function sameOriginOnly(req, res, next) {
 
 const SOCIAL_LINK_PRICE_UNITS = 500;
 const SOCIAL_REPORT_REASONS = new Set(['pornografia','nudez','violencia','odio','golpe','direitos_autorais','outro']);
+const SOCIAL_MODERATION_REASONS = new Set([...SOCIAL_REPORT_REASONS,'spam','assedio','informacao_falsa','menor_de_idade','violacao_dos_termos']);
 const SOCIAL_RISK_TERMS = [
   ['pornografia', /\b(porn|porno|pornografia|sexo explicito|nudez|nudes?)\b/i],
   ['violencia', /\b(decapit|tortura|massacre|sangue real|violencia grafica|mutila)\w*/i],
@@ -4281,7 +4327,7 @@ function publicChatMessage(row, userId) {
     readAt: row.read_at, createdAt: row.created_at };
 }
 
-app.post('/api/social/chat/conversations', requireUser, sameOriginOnly, (req, res) => {
+app.post('/api/social/chat/conversations', requireActiveSocialUser, sameOriginOnly, (req, res) => {
   let target = null;
   const handle = String(req.body?.handle || '').trim().toLowerCase();
   const targetUserId = Number(req.body?.userId || 0);
@@ -4330,7 +4376,7 @@ app.get('/api/social/chat/conversations/:id/messages', requireUser, (req, res) =
   return res.json({ conversation: { id: conversation.id, other }, items: items.map(row => publicChatMessage(row, req.user.id)) });
 });
 
-app.post('/api/social/chat/conversations/:id/messages', requireUser, sameOriginOnly, (req, res) => {
+app.post('/api/social/chat/conversations/:id/messages', requireActiveSocialUser, sameOriginOnly, (req, res) => {
   const conversation = socialConversationForUser(req.params.id, req.user.id);
   if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
   const otherId = conversation.user_low === req.user.id ? conversation.user_high : conversation.user_low;
@@ -4354,7 +4400,7 @@ const CHAT_MIME_EXTENSIONS = new Map([
   ['application/zip','zip']
 ]);
 
-app.post('/api/social/chat/conversations/:id/files', requireUser, sameOriginOnly,
+app.post('/api/social/chat/conversations/:id/files', requireActiveSocialUser, sameOriginOnly,
   express.raw({ type: () => true, limit: '25mb' }), (req, res) => {
     const conversation = socialConversationForUser(req.params.id, req.user.id);
     if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
@@ -4388,7 +4434,7 @@ app.get('/api/social/chat/files/:messageId', requireUser, (req, res) => {
   return res.sendFile(absolute);
 });
 
-app.post('/api/social/uploads', requireUser, sameOriginOnly, async (req, res) => {
+app.post('/api/social/uploads', requireActiveSocialUser, sameOriginOnly, async (req, res) => {
   if (!allowAttempt(socialAttempts, `upload:${req.user.id}`, 8, 24 * 60 * 60 * 1000)) {
     return res.status(429).json({ error: 'Limite diário de vídeos atingido para esta conta.' });
   }
@@ -4451,7 +4497,7 @@ app.get('/api/social/posts/:id/status', requireUser, (req, res) => {
   return res.json({ id: post.id, status: post.status, error: post.error_message || '' });
 });
 
-app.post('/api/social/posts/:id/like', requireUser, sameOriginOnly, (req, res) => {
+app.post('/api/social/posts/:id/like', requireActiveSocialUser, sameOriginOnly, (req, res) => {
   const post = db.prepare("SELECT id,user_id FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
   if (!post) return res.status(404).json({ error: 'Publicação não encontrada.' });
   const liked = db.prepare('SELECT 1 FROM social_likes WHERE post_id=? AND user_id=?').get(post.id, req.user.id);
@@ -4470,7 +4516,7 @@ app.get('/api/social/posts/:id/comments', (req, res) => {
   return res.json({ items });
 });
 
-app.post('/api/social/posts/:id/comments', requireUser, sameOriginOnly, (req, res) => {
+app.post('/api/social/posts/:id/comments', requireActiveSocialUser, sameOriginOnly, (req, res) => {
   if (!allowAttempt(socialAttempts, `comment:${req.user.id}`, 30, 60 * 60 * 1000)) {
     return res.status(429).json({ error: 'Muitos comentários em pouco tempo.' });
   }
@@ -4513,14 +4559,14 @@ function toggleSocialRelation(table, postId, userId) {
   return !exists;
 }
 
-app.post('/api/social/posts/:id/save', requireUser, sameOriginOnly, (req,res)=>{
+app.post('/api/social/posts/:id/save', requireActiveSocialUser, sameOriginOnly, (req,res)=>{
   if(!db.prepare("SELECT 1 FROM social_posts WHERE id=? AND status='ready'").get(req.params.id)) return res.status(404).json({error:'Publicação não encontrada.'});
   const saved=toggleSocialRelation('social_saves',req.params.id,req.user.id);
   const count=db.prepare('SELECT COUNT(*) count FROM social_saves WHERE post_id=?').get(req.params.id).count;
   return res.json({saved,saves:count});
 });
 
-app.post('/api/social/posts/:id/repost', requireUser, sameOriginOnly, (req,res)=>{
+app.post('/api/social/posts/:id/repost', requireActiveSocialUser, sameOriginOnly, (req,res)=>{
   const post=db.prepare("SELECT user_id FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
   if(!post||post.user_id===req.user.id) return res.status(400).json({error:'Não é possível republicar este vídeo.'});
   const reposted=toggleSocialRelation('social_reposts',req.params.id,req.user.id);
@@ -4629,7 +4675,7 @@ app.get('/api/admin/social/intelligence/status', requireAdmin, (_req,res) => {
     internal,overview,daily,categories,growing,providers});
 });
 
-app.post('/api/social/posts/:id/report', requireUser, sameOriginOnly, (req, res) => {
+app.post('/api/social/posts/:id/report', requireActiveSocialUser, sameOriginOnly, (req, res) => {
   const reason = String(req.body?.reason || 'outro');
   const details = String(req.body?.details || '').trim().slice(0,500);
   if (!SOCIAL_REPORT_REASONS.has(reason)) return res.status(400).json({ error:'Escolha um motivo válido.' });
@@ -4643,34 +4689,133 @@ app.post('/api/social/posts/:id/report', requireUser, sameOriginOnly, (req, res)
   return res.status(201).json({ ok:true, hiddenForReview: openReports >= 3 });
 });
 
+app.get('/api/social/appeals', requireUser, (req, res) => {
+  const items = db.prepare(`SELECT a.id,a.post_id postId,a.reason,a.status,a.admin_note adminNote,
+    a.reviewed_at reviewedAt,a.created_at createdAt,p.caption,p.moderation_status moderationStatus,
+    p.moderation_reason moderationReason FROM social_appeals a JOIN social_posts p ON p.id=a.post_id
+    WHERE a.user_id=? ORDER BY a.created_at DESC LIMIT 100`).all(req.user.id);
+  const eligible = db.prepare(`SELECT p.id,p.caption,p.moderation_status moderationStatus,p.moderation_reason moderationReason,
+    p.moderated_at moderatedAt FROM social_posts p WHERE p.user_id=?
+      AND p.moderation_status IN ('rejected','removed','suspended')
+      AND NOT EXISTS(SELECT 1 FROM social_appeals a WHERE a.post_id=p.id AND a.user_id=? AND a.status='open')
+    ORDER BY p.moderated_at DESC LIMIT 100`).all(req.user.id, req.user.id);
+  return res.json({ items, eligible });
+});
+
+app.post('/api/social/posts/:id/appeal', requireUser, sameOriginOnly, (req, res) => {
+  const reason = String(req.body?.reason || '').trim().slice(0, 1000);
+  const post = db.prepare(`SELECT id,user_id,status,moderation_status FROM social_posts WHERE id=?`).get(req.params.id);
+  if (!post || post.user_id !== req.user.id) return res.status(404).json({ error: 'Publicação não encontrada.' });
+  if (!['rejected','removed','suspended'].includes(post.moderation_status)) return res.status(400).json({ error: 'Esta decisão não aceita recurso.' });
+  if (reason.length < 20) return res.status(400).json({ error: 'Explique o recurso com pelo menos 20 caracteres.' });
+  try {
+    const result = db.prepare(`INSERT INTO social_appeals(post_id,user_id,reason) VALUES (?,?,?)`).run(post.id, req.user.id, reason);
+    db.prepare(`INSERT INTO social_moderation_actions(post_id,author_id,action,reason_code,note,previous_status,new_status)
+      VALUES (?,?,'appeal_submitted','outro',?,?,?)`).run(post.id, req.user.id, reason, post.status, post.status);
+    return res.status(201).json({ ok: true, id: Number(result.lastInsertRowid) });
+  } catch (error) {
+    if (String(error?.message || '').includes('UNIQUE')) return res.status(409).json({ error: 'Já existe um recurso em análise.' });
+    throw error;
+  }
+});
+
 app.get('/api/admin/social/moderation', requireAdmin, (_req, res) => {
   const items = db.prepare(`SELECT p.*,u.name,u.email,
       (SELECT COUNT(*) FROM social_reports r WHERE r.post_id=p.id AND r.status='open') reports
     FROM social_posts p JOIN users u ON u.id=p.user_id
     WHERE p.status IN ('pending_review','processing') OR p.moderation_status IN ('pending','flagged','reported')
+      OR EXISTS(SELECT 1 FROM social_reports r WHERE r.post_id=p.id AND r.status='open')
+      OR EXISTS(SELECT 1 FROM social_appeals a WHERE a.post_id=p.id AND a.status='open')
     ORDER BY CASE WHEN p.moderation_status='reported' THEN 0 ELSE 1 END,p.created_at ASC LIMIT 200`).all();
-  return res.json({ items, linkPriceCoins:SOCIAL_LINK_PRICE_UNITS/100 });
+  const enriched = items.map(post => ({ ...post,
+    reportItems: db.prepare(`SELECT r.id,r.reason,r.details,r.created_at createdAt,u.name reporterName
+      FROM social_reports r JOIN users u ON u.id=r.reporter_id WHERE r.post_id=? ORDER BY r.created_at`).all(post.id),
+    appeals: db.prepare(`SELECT id,reason,status,created_at createdAt FROM social_appeals WHERE post_id=? ORDER BY created_at DESC`).all(post.id),
+    history: db.prepare(`SELECT action,reason_code reasonCode,note,previous_status previousStatus,new_status newStatus,
+      created_at createdAt FROM social_moderation_actions WHERE post_id=? ORDER BY id DESC LIMIT 20`).all(post.id)
+  }));
+  const counts = db.prepare(`SELECT
+    (SELECT COUNT(*) FROM social_reports WHERE status='open') openReports,
+    (SELECT COUNT(*) FROM social_appeals WHERE status='open') openAppeals,
+    (SELECT COUNT(*) FROM social_account_restrictions WHERE status='suspended' AND (restricted_until IS NULL OR restricted_until>CURRENT_TIMESTAMP)) suspendedUsers`).get();
+  return res.json({ items: enriched, counts, reasons:[...SOCIAL_MODERATION_REASONS], linkPriceCoins:SOCIAL_LINK_PRICE_UNITS/100 });
+});
+
+app.get('/api/admin/social/moderation/history', requireAdmin, (_req, res) => {
+  const items = db.prepare(`SELECT a.id,a.post_id postId,a.action,a.reason_code reasonCode,a.note,
+    a.previous_status previousStatus,a.new_status newStatus,a.created_at createdAt,
+    author.name authorName,admin.name adminName FROM social_moderation_actions a
+    JOIN users author ON author.id=a.author_id LEFT JOIN users admin ON admin.id=a.admin_id
+    ORDER BY a.id DESC LIMIT 300`).all();
+  return res.json({ items });
 });
 
 app.patch('/api/admin/social/posts/:id/moderation', requireAdmin, sameOriginOnly, (req, res) => {
   const action = String(req.body?.action || '');
   const note = String(req.body?.note || '').trim().slice(0,500);
+  const reasonCode = String(req.body?.reasonCode || 'outro');
+  const suspensionDays = Math.min(365, Math.max(1, Number(req.body?.suspensionDays) || 30));
   const post = db.prepare('SELECT * FROM social_posts WHERE id=?').get(req.params.id);
   if (!post) return res.status(404).json({ error:'Vídeo não encontrado.' });
-  if (action === 'approve') {
-    db.prepare(`UPDATE social_posts SET status='ready',moderation_status='approved',moderation_reason=?,moderated_by=?,moderated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-      .run(note, req.user.id, post.id);
-    notifyFollowers(post.user_id, 'new_post', post.media_type === 'image' ? 'publicou uma nova foto' : 'publicou um novo vídeo', post.id);
-  } else if (action === 'reject') {
-    refundSocialLink(post.id, note || 'conteúdo não aprovado');
-    db.prepare(`UPDATE social_posts SET status='rejected',moderation_status='rejected',moderation_reason=?,moderated_by=?,moderated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-      .run(note || 'Conteúdo proibido ou fora das regras.', req.user.id, post.id);
-  } else return res.status(400).json({ error:'Ação inválida.' });
-  db.prepare("UPDATE social_reports SET status='reviewed',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE post_id=? AND status='open'").run(req.user.id, post.id);
-  return res.json({ ok:true });
+  if (!['approve','reject','remove','suspend','restore'].includes(action)) return res.status(400).json({ error:'Ação inválida.' });
+  if (!['approve','restore'].includes(action) && (!SOCIAL_MODERATION_REASONS.has(reasonCode) || note.length < 10)) {
+    return res.status(400).json({ error:'Selecione o motivo e registre uma justificativa com pelo menos 10 caracteres.' });
+  }
+  db.transaction(() => {
+    let status=post.status,moderationStatus=post.moderation_status;
+    if(action==='approve'){status='ready';moderationStatus='approved';notifyFollowers(post.user_id,'new_post',post.media_type==='image'?'publicou uma nova foto':'publicou um novo vídeo',post.id);}
+    if(action==='reject'){status='rejected';moderationStatus='rejected';refundSocialLink(post.id,note);}
+    if(action==='remove'){status='deleted';moderationStatus='removed';refundSocialLink(post.id,note);}
+    if(action==='suspend'){
+      status='rejected';moderationStatus='suspended';refundSocialLink(post.id,note);
+      const affected=db.prepare("SELECT id,status FROM social_posts WHERE user_id=? AND status='ready'").all(post.user_id);
+      db.prepare("UPDATE social_posts SET status='pending_review',moderation_status='suspended',moderation_reason=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND status='ready'").run(note,post.user_id);
+      const history=db.prepare(`INSERT INTO social_moderation_actions(post_id,author_id,admin_id,action,reason_code,note,previous_status,new_status)
+        VALUES (?,?,?,'suspend_related',?,?,?,'pending_review')`);
+      for(const item of affected)if(item.id!==post.id)history.run(item.id,post.user_id,req.user.id,reasonCode,note,item.status);
+      db.prepare(`INSERT INTO social_account_restrictions(user_id,status,reason_code,note,restricted_by,restricted_until)
+        VALUES (?,'suspended',?,?,?,datetime('now',?)) ON CONFLICT(user_id) DO UPDATE SET status='suspended',
+        reason_code=excluded.reason_code,note=excluded.note,restricted_by=excluded.restricted_by,
+        restricted_until=excluded.restricted_until,updated_at=CURRENT_TIMESTAMP`)
+        .run(post.user_id,reasonCode,note,req.user.id,`+${suspensionDays} days`);
+    }
+    if(action==='restore'){
+      db.prepare("UPDATE social_account_restrictions SET status='active',updated_at=CURRENT_TIMESTAMP WHERE user_id=?").run(post.user_id);
+      status='pending_review';moderationStatus='pending';
+    }
+    db.prepare(`UPDATE social_posts SET status=?,moderation_status=?,moderation_reason=?,moderated_by=?,
+      moderated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(status,moderationStatus,note,req.user.id,post.id);
+    db.prepare(`INSERT INTO social_moderation_actions(post_id,author_id,admin_id,action,reason_code,note,previous_status,new_status)
+      VALUES (?,?,?,?,?,?,?,?)`).run(post.id,post.user_id,req.user.id,action,reasonCode,note,post.status,status);
+    db.prepare("UPDATE social_reports SET status=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE post_id=? AND status='open'")
+      .run(action==='approve'?'dismissed':'reviewed',req.user.id,post.id);
+    createSocialNotification(post.user_id,req.user.id,'moderation_decision',`decisão de moderação: ${action}`,`moderation:${post.id}:${Date.now()}`,post.id);
+  })();
+  return res.json({ ok:true, action });
 });
 
-app.post('/api/social/users/:id/follow', requireUser, sameOriginOnly, (req, res) => {
+app.patch('/api/admin/social/appeals/:id', requireAdmin, sameOriginOnly, (req, res) => {
+  const action=String(req.body?.action||''),note=String(req.body?.note||'').trim().slice(0,500);
+  if(!['accept','reject'].includes(action)||note.length<10)return res.status(400).json({error:'Informe a decisão e uma justificativa com pelo menos 10 caracteres.'});
+  const appeal=db.prepare(`SELECT a.*,p.status post_status,p.moderation_status,p.user_id author_id
+    FROM social_appeals a JOIN social_posts p ON p.id=a.post_id WHERE a.id=? AND a.status='open'`).get(req.params.id);
+  if(!appeal)return res.status(404).json({error:'Recurso aberto não encontrado.'});
+  db.transaction(()=>{
+    const accepted=action==='accept';
+    db.prepare(`UPDATE social_appeals SET status=?,admin_note=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(accepted?'accepted':'rejected',note,req.user.id,appeal.id);
+    if(accepted){
+      db.prepare(`UPDATE social_posts SET status='ready',moderation_status='approved',moderation_reason=?,moderated_by=?,moderated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(note,req.user.id,appeal.post_id);
+      db.prepare("UPDATE social_account_restrictions SET status='active',updated_at=CURRENT_TIMESTAMP WHERE user_id=?").run(appeal.user_id);
+    }
+    db.prepare(`INSERT INTO social_moderation_actions(post_id,author_id,admin_id,action,reason_code,note,previous_status,new_status)
+      VALUES (?,?,?,?,?,?,?,?)`).run(appeal.post_id,appeal.user_id,req.user.id,accepted?'appeal_accepted':'appeal_rejected','outro',note,appeal.post_status,accepted?'ready':appeal.post_status);
+    createSocialNotification(appeal.user_id,req.user.id,'moderation_decision',accepted?'seu recurso foi aceito':'seu recurso foi recusado',`appeal:${appeal.id}`,appeal.post_id);
+  })();
+  return res.json({ok:true,status:action==='accept'?'accepted':'rejected'});
+});
+
+app.post('/api/social/users/:id/follow', requireActiveSocialUser, sameOriginOnly, (req, res) => {
   const followedId = Number(req.params.id);
   if (!Number.isInteger(followedId) || followedId === req.user.id ||
       !db.prepare('SELECT 1 FROM users WHERE id=?').get(followedId)) {
@@ -4684,7 +4829,7 @@ app.post('/api/social/users/:id/follow', requireUser, sameOriginOnly, (req, res)
   return res.json({ following: !exists });
 });
 
-app.post('/api/social/users/:id/mute', requireUser, sameOriginOnly, (req,res) => {
+app.post('/api/social/users/:id/mute', requireActiveSocialUser, sameOriginOnly, (req,res) => {
   const other=Number(req.params.id);if(!Number.isInteger(other)||other===req.user.id||!db.prepare('SELECT 1 FROM users WHERE id=?').get(other))return res.status(400).json({error:'Perfil inválido.'});
   const exists=db.prepare('SELECT 1 FROM social_mutes WHERE user_id=? AND muted_id=?').get(req.user.id,other);
   if(exists)db.prepare('DELETE FROM social_mutes WHERE user_id=? AND muted_id=?').run(req.user.id,other);
@@ -4692,7 +4837,7 @@ app.post('/api/social/users/:id/mute', requireUser, sameOriginOnly, (req,res) =>
   return res.json({muted:!exists});
 });
 
-app.post('/api/social/users/:id/block', requireUser, sameOriginOnly, (req,res) => {
+app.post('/api/social/users/:id/block', requireActiveSocialUser, sameOriginOnly, (req,res) => {
   const other=Number(req.params.id);if(!Number.isInteger(other)||other===req.user.id||!db.prepare('SELECT 1 FROM users WHERE id=?').get(other))return res.status(400).json({error:'Perfil inválido.'});
   const exists=db.prepare('SELECT 1 FROM social_blocks WHERE blocker_id=? AND blocked_id=?').get(req.user.id,other);
   db.transaction(()=>{if(exists)db.prepare('DELETE FROM social_blocks WHERE blocker_id=? AND blocked_id=?').run(req.user.id,other);else{db.prepare('INSERT INTO social_blocks (blocker_id,blocked_id) VALUES (?,?)').run(req.user.id,other);db.prepare('DELETE FROM social_follows WHERE (follower_id=? AND followed_id=?) OR (follower_id=? AND followed_id=?)').run(req.user.id,other,other,req.user.id);db.prepare('DELETE FROM social_mutes WHERE user_id=? AND muted_id=?').run(req.user.id,other);}})();
@@ -4745,7 +4890,7 @@ const refundStoryLink = db.transaction((storyId,reason) => {
   db.prepare("UPDATE social_stories SET cta_charge_status='refunded' WHERE id=?").run(storyId);
 });
 
-app.post('/api/social/media/photo', requireUser, sameOriginOnly,
+app.post('/api/social/media/photo', requireActiveSocialUser, sameOriginOnly,
   express.raw({type:['image/jpeg','image/png','image/webp'],limit:'10mb'}), (req,res) => {
     if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({error:'Selecione uma foto válida.'});
     const ext={'image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[String(req.get('content-type')).split(';')[0]];
@@ -4755,7 +4900,7 @@ app.post('/api/social/media/photo', requireUser, sameOriginOnly,
     return res.status(201).json({url:`/uploads/social-media/${name}`});
   });
 
-app.post('/api/social/photo-posts', requireUser, sameOriginOnly, (req,res) => {
+app.post('/api/social/photo-posts', requireActiveSocialUser, sameOriginOnly, (req,res) => {
   const imageUrl=String(req.body?.imageUrl||'');
   if(!/^\/uploads\/social-media\/[a-f0-9-]+\.(jpg|png|webp)$/i.test(imageUrl))return res.status(400).json({error:'Foto inválida.'});
   const caption=String(req.body?.caption||'').trim().slice(0,500);
@@ -4780,7 +4925,7 @@ app.get('/api/social/stories', (req,res) => {
     ctaLabel:s.cta_label,ctaUrl:s.cta_url,createdAt:s.created_at,author:{id:s.user_id,name:s.name,handle:s.handle,avatarUrl:s.avatar_url},mine:s.user_id===viewerId}))});
 });
 
-app.post('/api/social/stories', requireUser, sameOriginOnly, (req,res) => {
+app.post('/api/social/stories', requireActiveSocialUser, sameOriginOnly, (req,res) => {
   if(!allowAttempt(socialAttempts,`story:${req.user.id}`,12,24*60*60*1000))return res.status(429).json({error:'Limite diário de Stories atingido.'});
   const mediaUrl=String(req.body?.mediaUrl||'');
   if(!/^\/uploads\/social-media\/[a-f0-9-]+\.(jpg|png|webp)$/i.test(mediaUrl))return res.status(400).json({error:'Foto inválida.'});
@@ -4822,7 +4967,7 @@ function localSeoSuggestion(caption,category,city) {
   const keywords=[category,city,'Vitriny City','Vitriny Social',...caption.toLowerCase().match(/[a-zà-ÿ]{4,}/g)||[]].filter(Boolean);
   return {title,description,keywords:[...new Set(keywords)].slice(0,8),optimizedCaption:`${caption||subject}${city?` · ${city}`:''} #vitrinycity #${category}`};
 }
-app.post('/api/social/seo-suggestion', requireUser, sameOriginOnly, async (req,res) => {
+app.post('/api/social/seo-suggestion', requireActiveSocialUser, sameOriginOnly, async (req,res) => {
   const caption=String(req.body?.caption||'').trim().slice(0,500),category=SOCIAL_CATEGORIES.has(String(req.body?.category||''))?String(req.body.category):'geral';
   const city=String(req.body?.city||'').trim().slice(0,80),fallback=localSeoSuggestion(caption,category,city);
   if(!process.env.OPENAI_API_KEY)return res.json({...fallback,source:'automatic'});
