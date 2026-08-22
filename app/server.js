@@ -4649,6 +4649,8 @@ function marketplaceProductSlug(value) {
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 100) || 'produto';
 }
 
+const PRODUCT_FALLBACK_PATH = '/assets/store-seed/utilidades.svg';
+
 app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id < 1) return res.status(404).send('Produto não encontrado.');
@@ -4662,12 +4664,13 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   if (req.params.slug !== slug) return res.redirect(301, `/produto/${product.id}/${slug}`);
   const origin = new URL(SITE_URL).origin;
   const canonical = `${origin}/produto/${product.id}/${slug}`;
-  const image = product.image_url ? new URL(product.image_url, origin).toString() : '';
+  const productImagePath = product.image_url || PRODUCT_FALLBACK_PATH;
+  const image = new URL(productImagePath, origin).toString();
   const title = `${product.name} — ${product.store_name} | Vitriny Loja`;
   const description = String(product.description || `Compre ${product.name} na Vitriny Loja.`).slice(0, 155);
   const schema = JSON.stringify({
     '@context': 'https://schema.org', '@type': 'Product', name: product.name,
-    description, sku: product.sku || String(product.id), image: image ? [image] : undefined,
+    description, sku: product.sku || String(product.id), image: [image],
     brand: { '@type': 'Brand', name: product.store_name },
     offers: { '@type': 'Offer', url: canonical, priceCurrency: 'BRL',
       price: (product.price_cents / 100).toFixed(2), availability: 'https://schema.org/InStock',
@@ -4676,19 +4679,19 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   const publicProduct = JSON.stringify({
     id: product.id, store_reference: product.store_reference, name: product.name,
     price_cents: product.price_cents, stock_quantity: product.stock_quantity,
-    image_url: product.image_url || '', store_name: product.store_name
+    image_url: productImagePath, store_name: product.store_name
   }).replace(/</g, '\\u003c');
   res.set('Cache-Control', 'public,max-age=60').send(`<!doctype html><html lang="pt-BR"><head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <title>${escapeHtml(title)}</title><meta name="description" content="${escapeHtml(description)}">
     <link rel="canonical" href="${escapeHtml(canonical)}"><meta property="og:type" content="product">
     <meta property="og:title" content="${escapeHtml(title)}"><meta property="og:description" content="${escapeHtml(description)}">
-    ${image ? `<meta property="og:image" content="${escapeHtml(image)}">` : ''}
+    <meta property="og:image" content="${escapeHtml(image)}">
     <script type="application/ld+json">${schema}</script>
     <style>:root{--blue:#1768e6;--yellow:#ffc628;--line:#263b5b}*{box-sizing:border-box}body{margin:0;background:#07101d;color:#f7faff;font-family:Inter,Arial,sans-serif}a{text-decoration:none;color:inherit}header{padding:17px max(18px,5vw);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.brand{font-size:24px;font-weight:950}.brand span{color:var(--yellow)}.back{padding:10px 13px;background:#15243c;border-radius:10px;font-weight:850}main{width:min(1060px,calc(100% - 32px));margin:42px auto;display:grid;grid-template-columns:minmax(280px,1fr) minmax(300px,1fr);gap:38px;align-items:center}.photo{width:100%;aspect-ratio:1;border-radius:24px;object-fit:cover;background:#14213a;border:1px solid var(--line)}.badge{color:var(--yellow);font-weight:900}.seller{color:#aebed3}h1{font-size:clamp(31px,5vw,58px);line-height:1.04;margin:12px 0}.description{color:#cad5e5;line-height:1.6}.price{font-size:35px;font-weight:950;margin:22px 0 5px}.stock{color:#9fe0b1}.actions{display:flex;gap:10px;margin-top:24px}.button,button{border:0;border-radius:12px;padding:14px 17px;background:var(--blue);color:#fff;font-weight:950;cursor:pointer}.alt{background:#17263e}.status{color:#ffd76c;margin-top:12px}@media(max-width:720px){main{grid-template-columns:1fr;margin-top:22px}.actions{display:grid}}</style>
     <script src="/analytics.js" defer></script></head><body>
     <header><a class="brand" href="/loja.html">Vitriny <span>Loja</span></a><a class="back" href="/loja.html">← Voltar à loja</a></header>
-    <main><img class="photo" src="${escapeHtml(product.image_url || '')}" alt="${escapeHtml(product.name)}">
+    <main><img class="photo" src="${escapeHtml(productImagePath)}" onerror="this.onerror=null;this.src='/assets/store-seed/utilidades.svg'" alt="${escapeHtml(product.name)}">
     <section><div class="badge">${escapeHtml(product.category || 'Produto')}</div><div class="seller">Vendido por ${escapeHtml(product.store_name)}</div>
     <h1>${escapeHtml(product.name)}</h1><p class="description">${escapeHtml(description)}</p>
     <div class="price">${(product.price_cents / 100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</div>
