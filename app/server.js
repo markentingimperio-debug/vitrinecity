@@ -49,6 +49,20 @@ CREATE TABLE IF NOT EXISTS contact_submissions (
 );
 CREATE INDEX IF NOT EXISTS idx_contact_submissions_status_created
 ON contact_submissions(status, created_at DESC);
+CREATE TABLE IF NOT EXISTS data_subject_requests (
+  id INTEGER PRIMARY KEY,
+  protocol TEXT NOT NULL UNIQUE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  request_type TEXT NOT NULL,
+  details TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'received',
+  response_note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_data_subject_requests_user_created
+ON data_subject_requests(user_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS lot_orders (
   id INTEGER PRIMARY KEY,
   reference TEXT NOT NULL UNIQUE,
@@ -1606,7 +1620,9 @@ app.get(['/minha-conta', '/minha-conta.html'], (_req, res) => {
     <p id="age-status">Consultando…</p><label class="check" id="age-consent-wrap">
     <input type="checkbox" id="age-consent"> Autorizo a validação da minha maioridade por um provedor oficial.
     A Vitriny City não armazenará foto do documento ou selfie.</label>
-    <button class="button" id="age-start" type="button">Verificar 18+</button><div class="message" id="age-message"></div></section>`;
+    <button class="button" id="age-start" type="button">Verificar 18+</button><div class="message" id="age-message"></div></section>
+    <section class="panel"><h2>Privacidade e seus dados</h2><p>Acesse, baixe, corrija ou solicite a exclusão dos dados da sua conta e acompanhe tudo por protocolo.</p>
+    <a class="button secondary" href="/meus-dados.html">Gerenciar meus dados</a></section>`;
   const script = `<script src="/age-verification.js" defer></script>`;
   return res.type('html').send(page.replace('</main>', `${panel}</main>`).replace('</body>', `${script}</body>`));
 });
@@ -2035,6 +2051,52 @@ app.put('/api/customer/profile', requireUser, (req, res) => {
   if (name.length < 2) return res.status(400).json({ error: 'Informe seu nome.' });
   db.prepare('UPDATE users SET name=?,whatsapp=? WHERE id=?').run(name, whatsapp, req.user.id);
   return res.json({ ok: true });
+});
+
+const DATA_SUBJECT_REQUEST_TYPES=new Set(['access','correction','portability','deletion','consent_revocation']);
+app.get('/api/privacy/requests',requireUser,(req,res)=>{
+  const items=db.prepare(`SELECT protocol,request_type requestType,status,response_note responseNote,
+    created_at createdAt,updated_at updatedAt,completed_at completedAt
+    FROM data_subject_requests WHERE user_id=? ORDER BY id DESC LIMIT 50`).all(req.user.id);
+  return res.json({items});
+});
+app.post('/api/privacy/requests',sameOriginOnly,requireUser,(req,res)=>{
+  const requestType=String(req.body?.requestType||'');
+  const details=String(req.body?.details||'').trim().slice(0,1000);
+  if(!DATA_SUBJECT_REQUEST_TYPES.has(requestType))return res.status(400).json({error:'Tipo de solicitação inválido.'});
+  if(['correction','deletion'].includes(requestType)&&details.length<10)return res.status(400).json({error:'Explique a solicitação com pelo menos 10 caracteres.'});
+  const recent=db.prepare("SELECT protocol FROM data_subject_requests WHERE user_id=? AND request_type=? AND status IN ('received','in_progress') AND created_at>=datetime('now','-1 day')").get(req.user.id,requestType);
+  if(recent)return res.status(409).json({error:'Já existe uma solicitação recente deste tipo.',protocol:recent.protocol});
+  const protocol=`LGPD-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${randomBytes(4).toString('hex').toUpperCase()}`;
+  db.prepare('INSERT INTO data_subject_requests (protocol,user_id,request_type,details) VALUES (?,?,?,?)').run(protocol,req.user.id,requestType,details);
+  if(requestType==='consent_revocation')db.prepare('UPDATE leads SET consent=0 WHERE email=?').run(String(req.user.email).toLowerCase());
+  return res.status(201).json({ok:true,protocol,status:'received'});
+});
+app.get('/api/privacy/export',requireUser,(req,res)=>{
+  const userId=req.user.id;
+  const exportData={generatedAt:new Date().toISOString(),account:{name:req.user.name,email:req.user.email,whatsapp:req.user.whatsapp||'',createdAt:req.user.created_at},
+    addresses:db.prepare('SELECT label,recipient_name recipientName,postal_code postalCode,street,number,complement,neighborhood,city,state,is_default isDefault,created_at createdAt FROM customer_addresses WHERE user_id=?').all(userId),
+    ageVerification:publicAgeVerification(db.prepare('SELECT status,over_18,verified_at,expires_at FROM age_verifications WHERE user_id=?').get(userId)),
+    orders:db.prepare('SELECT reference,payment_status paymentStatus,fulfillment_status fulfillmentStatus,total_cents totalCents,created_at createdAt FROM marketplace_orders WHERE buyer_user_id=? ORDER BY id DESC').all(userId),
+    privacyRequests:db.prepare('SELECT protocol,request_type requestType,status,created_at createdAt,completed_at completedAt FROM data_subject_requests WHERE user_id=? ORDER BY id DESC').all(userId)};
+  res.set('Content-Disposition',`attachment; filename="vitrinecity-dados-${new Date().toISOString().slice(0,10)}.json"`);
+  return res.type('application/json').send(JSON.stringify(exportData,null,2));
+});
+app.get('/api/admin/privacy/requests',requireAdmin,(_req,res)=>{
+  const items=db.prepare(`SELECT r.id,r.protocol,r.request_type requestType,r.details,r.status,r.response_note responseNote,
+    r.created_at createdAt,r.updated_at updatedAt,r.completed_at completedAt,u.name,u.email
+    FROM data_subject_requests r JOIN users u ON u.id=r.user_id
+    ORDER BY CASE r.status WHEN 'received' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,r.id DESC LIMIT 200`).all();
+  return res.json({items});
+});
+app.patch('/api/admin/privacy/requests/:id',requireAdmin,sameOriginOnly,(req,res)=>{
+  const status=String(req.body?.status||''),responseNote=String(req.body?.responseNote||'').trim().slice(0,1000);
+  if(!['received','in_progress','completed','denied'].includes(status))return res.status(400).json({error:'Status inválido.'});
+  if(['completed','denied'].includes(status)&&responseNote.length<10)return res.status(400).json({error:'Registre uma resposta com pelo menos 10 caracteres.'});
+  const result=db.prepare(`UPDATE data_subject_requests SET status=?,response_note=?,updated_at=CURRENT_TIMESTAMP,
+    completed_at=CASE WHEN ? IN ('completed','denied') THEN CURRENT_TIMESTAMP ELSE NULL END WHERE id=?`).run(status,responseNote,status,Number(req.params.id));
+  if(!result.changes)return res.status(404).json({error:'Solicitação não encontrada.'});
+  return res.json({ok:true});
 });
 
 app.post('/api/customer/addresses', requireUser, (req, res) => {
