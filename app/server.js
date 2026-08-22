@@ -1803,6 +1803,11 @@ function adVisitorKey(req) {
   return createHash('sha256').update(`${day}|${req.ip}|${String(req.get('user-agent') || '').slice(0, 240)}`).digest('hex').slice(0, 32);
 }
 
+function likelyAutomatedAdTraffic(req){
+  const ua=String(req.get('user-agent')||'').toLowerCase();
+  return !ua||/(bot|crawler|spider|headless|preview|facebookexternalhit|whatsapp|curl|wget|python|monitor)/.test(ua);
+}
+
 function adAttributionCookie(campaignId,eventToken){
   const payload=Buffer.from(JSON.stringify({campaignId,eventToken,issuedAt:Date.now()})).toString('base64url');
   return `${payload}.${createHmac('sha256',managementSecret()).update(`ad:${payload}`).digest('base64url')}`;
@@ -1838,9 +1843,10 @@ function adCampaignScore(campaign, query) {
 app.get('/api/ads/serve', (req, res) => {
   const query = String(req.query.q || '').trim().slice(0, 80);
   const city = String(req.query.city || '').trim().slice(0, 80).toLowerCase();
-  if (query.length < 2) return res.json({ ads: [] });
+  if (query.length < 2||likelyAutomatedAdTraffic(req)) return res.json({ ads: [] });
   const today = new Date().toISOString().slice(0, 10);
   const visitorKey = adVisitorKey(req);
+  const viewer=currentUser(req);
   const candidates = db.prepare(`SELECT c.*,
       SUM(CASE WHEN e.event_type='impression' THEN 1 ELSE 0 END) AS impressions,
       SUM(CASE WHEN e.event_type='click' THEN 1 ELSE 0 END) AS clicks,
@@ -1856,6 +1862,7 @@ app.get('/api/ads/serve', (req, res) => {
       AND COALESCE(w.balance_units,0)>=?
     LIMIT 80`).all(today, city, city, ADS_CREDITS_PER_REAL, ADS_INTERNAL_CLICK_COST_UNITS)
     .filter(campaign => {
+      if(viewer&&Number(campaign.user_id)===Number(viewer.id))return false;
       const targets = normalizedAdTerms(`${campaign.keywords} ${campaign.category} ${campaign.creative_title} ${campaign.creative_text}`);
       const queryTerms = normalizedAdTerms(query);
       return queryTerms.some(term => targets.some(target => target.includes(term) || term.includes(target)));
@@ -1880,21 +1887,32 @@ app.get('/api/ads/:id/click', (req, res) => {
   const id = Number(req.params.id);
   const token = String(req.query.token || '').slice(0, 80);
   const visitorKey = adVisitorKey(req);
+  if(likelyAutomatedAdTraffic(req))return res.redirect(302,'/buscar.html');
   const impression = db.prepare(`SELECT e.id,c.* FROM ad_delivery_events e JOIN ad_campaigns c ON c.id=e.campaign_id
-    WHERE e.campaign_id=? AND e.event_token=? AND e.event_type='impression' AND c.status='active'`).get(id, token);
+    WHERE e.campaign_id=? AND e.event_token=? AND e.event_type='impression' AND e.visitor_key=?
+      AND e.created_at>=datetime('now','-24 hours') AND c.status='active'`).get(id, token,visitorKey);
   if (!impression) return res.redirect(302, '/buscar.html');
+  if(Number(currentUser(req)?.id)===Number(impression.user_id))return res.redirect(302,'/buscar.html');
+  const recentClicks=db.prepare("SELECT COUNT(*) total FROM ad_delivery_events WHERE event_type='click' AND visitor_key=? AND created_at>=datetime('now','-1 hour')").get(visitorKey).total;
+  if(recentClicks>=12)return res.redirect(302,'/buscar.html');
+  let charged=false;
   try {
     const chargeClick = db.transaction(() => {
+      const usage=db.prepare(`SELECT COALESCE(SUM(cost_units),0) total,
+        COALESCE(SUM(CASE WHEN event_day=? THEN cost_units ELSE 0 END),0) today
+        FROM ad_delivery_events WHERE campaign_id=? AND event_type='click'`).get(new Date().toISOString().slice(0,10),id);
+      const dailyLimit=Math.round(impression.daily_budget_cents*ADS_CREDITS_PER_REAL);
+      if(usage.total+ADS_INTERNAL_CLICK_COST_UNITS>impression.net_credits||usage.today+ADS_INTERNAL_CLICK_COST_UNITS>dailyLimit)throw new Error('campaign_budget_exhausted');
       const result = db.prepare(`INSERT OR IGNORE INTO ad_delivery_events
         (campaign_id,event_type,event_token,visitor_key,query_text,cost_units,event_day)
         VALUES (?,'click',?,?,?,?,?)`).run(id, token, visitorKey, '', ADS_INTERNAL_CLICK_COST_UNITS, new Date().toISOString().slice(0, 10));
-      if (result.changes) consumeMessageCredits(impression.user_id, ADS_INTERNAL_CLICK_COST_UNITS, `Clique patrocinado — campanha ${id}`, 'sponsored_click');
+      if (result.changes){consumeMessageCredits(impression.user_id, ADS_INTERNAL_CLICK_COST_UNITS, `Clique patrocinado — campanha ${id}`, 'sponsored_click');charged=true;}
     });
     chargeClick();
   } catch (_) {
     db.prepare("UPDATE ad_campaigns SET status='paused',admin_notes='Pausada automaticamente por saldo insuficiente.',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
   }
-  res.cookie('vc_ad_attr',adAttributionCookie(id,token),{httpOnly:true,sameSite:'lax',secure:SITE_URL.startsWith('https://'),maxAge:30*24*60*60*1000,path:'/'});
+  if(charged)res.cookie('vc_ad_attr',adAttributionCookie(id,token),{httpOnly:true,sameSite:'lax',secure:SITE_URL.startsWith('https://'),maxAge:30*24*60*60*1000,path:'/'});
   return res.redirect(302, impression.destination_url);
 });
 
