@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8'),panel=fs.readFileSync(new URL('../public/painel-lojista.html',import.meta.url),'utf8'),orders=fs.readFileSync(new URL('../public/pedidos.html',import.meta.url),'utf8');
+for(const pattern of [/marketplace_returns/,/request_cancel/,/set_label/,/mark_shipped/,/payoutCents/,/payoutStatus/])assert.match(server,pattern);
+for(const label of ['Produtos da minha loja','Estoque','Pedidos recebidos','Solicitar cancelamento','Devoluções','Registrar etiqueta','Repasse previsto'])assert.match(panel,new RegExp(label));
+assert.match(panel,/data-return-action/);
+assert.match(server,/item\.status!=='requested'/);
+assert.match(server,/order\.fulfillment_status!=='label_ready'/);
+assert.match(orders,/Solicitar devolução/);
+for(const html of [panel,orders])for(const match of html.matchAll(/<script>([\s\S]*?)<\/script>/g))new Function(match[1]);
+console.log('seller-operations: ok');

@@ -802,6 +802,20 @@ CREATE TABLE IF NOT EXISTS marketplace_order_items (
 CREATE INDEX IF NOT EXISTS idx_marketplace_orders_buyer ON marketplace_orders(buyer_user_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_orders_store ON marketplace_orders(store_reference,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_items_order ON marketplace_order_items(order_reference,id);`);
+db.exec(`CREATE TABLE IF NOT EXISTS marketplace_returns (
+  id INTEGER PRIMARY KEY,
+  order_reference TEXT NOT NULL REFERENCES marketplace_orders(reference) ON DELETE CASCADE,
+  buyer_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','approved','rejected','received','refunded')),
+  seller_note TEXT NOT NULL DEFAULT '',
+  requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  reviewed_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_marketplace_returns_open ON marketplace_returns(order_reference,buyer_user_id)
+  WHERE status IN ('requested','approved','received');
+CREATE INDEX IF NOT EXISTS idx_marketplace_returns_order ON marketplace_returns(order_reference,status,id DESC);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -1844,7 +1858,19 @@ app.get('/api/marketplace/orders', requireUser, (req, res) => {
     FROM marketplace_orders o JOIN store_profiles s ON s.order_reference=o.store_reference
     WHERE o.buyer_user_id=? ORDER BY o.created_at DESC LIMIT 100`).all(req.user.id);
   const items = db.prepare('SELECT * FROM marketplace_order_items WHERE order_reference=? ORDER BY id');
-  return res.json({ orders: orders.map(order => ({ ...order, items: items.all(order.reference) })) });
+  const returns=db.prepare('SELECT id,reason,status,seller_note,requested_at,reviewed_at FROM marketplace_returns WHERE order_reference=? AND buyer_user_id=? ORDER BY id DESC');
+  return res.json({ orders: orders.map(order => ({ ...order, items: items.all(order.reference),returns:returns.all(order.reference,req.user.id) })) });
+});
+
+app.post('/api/marketplace/orders/:reference/returns', requireUser, sameOriginOnly, (req,res) => {
+  const order=db.prepare(`SELECT * FROM marketplace_orders WHERE reference=? AND buyer_user_id=?
+    AND payment_status='approved' AND fulfillment_status IN ('shipped','delivered')`).get(req.params.reference,req.user.id);
+  if(!order)return res.status(409).json({error:'A devolução pode ser solicitada após o envio de um pedido pago.'});
+  const reason=String(req.body?.reason||'').trim().slice(0,1000);
+  if(reason.length<10)return res.status(400).json({error:'Explique o motivo da devolução com pelo menos 10 caracteres.'});
+  try{const result=db.prepare('INSERT INTO marketplace_returns(order_reference,buyer_user_id,reason) VALUES (?,?,?)').run(order.reference,req.user.id,reason);
+    return res.status(201).json({ok:true,id:Number(result.lastInsertRowid),status:'requested'});
+  }catch{return res.status(409).json({error:'Já existe uma devolução em andamento para este pedido.'});}
 });
 
 app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, res) => {
@@ -3664,7 +3690,11 @@ app.get('/api/store-portal/:reference/marketplace', (req, res) => {
     .all(access.order.reference);
   const orders = db.prepare(`SELECT * FROM marketplace_orders WHERE store_reference=?
     ORDER BY created_at DESC LIMIT 100`).all(access.order.reference);
-  return res.json({ products, orders, fees: { percent: 10, fixedCents: 200, returnOperationPerUnitCents: 50 } });
+  const returns=db.prepare(`SELECT r.*,o.total_cents FROM marketplace_returns r JOIN marketplace_orders o ON o.reference=r.order_reference
+    WHERE o.store_reference=? ORDER BY r.id DESC LIMIT 100`).all(access.order.reference);
+  const decorated=orders.map(order=>({...order,payoutCents:Math.max(0,order.products_cents-order.platform_percent_cents-order.platform_fixed_cents-order.return_operation_cents),
+    payoutStatus:['cancelled','cancel_requested'].includes(order.fulfillment_status)?'blocked':order.payment_status==='approved'?'scheduled':'not_eligible'}));
+  return res.json({ products, orders:decorated, returns, fees: { percent: 10, fixedCents: 200, returnOperationPerUnitCents: 50 } });
 });
 
 app.post('/api/store-portal/:reference/products', sameOriginOnly, (req, res) => {
@@ -3734,7 +3764,46 @@ app.patch('/api/store-portal/:reference/orders/:orderReference/fiscal', sameOrig
     fulfillment_status='label_pending',updated_at=CURRENT_TIMESTAMP WHERE reference=? AND store_reference=? AND payment_status='approved'`)
     .run(invoiceKey, safeExternalUrl(req.body?.invoiceXmlUrl), req.params.orderReference, access.order.reference);
   if (!result.changes) return res.status(404).json({ error: 'Pedido pago não encontrado.' });
-  return res.json({ ok: true, message: 'NF-e autorizada. Pedido liberado para gerar etiqueta J&T.' });
+  return res.json({ ok: true, message: 'NF-e autorizada. Pedido liberado para registrar a etiqueta da transportadora.' });
+});
+
+app.patch('/api/store-portal/:reference/orders/:orderReference/operations', sameOriginOnly, (req,res) => {
+  const access=storePortalAccess(req,res);if(!access)return;
+  const order=db.prepare('SELECT * FROM marketplace_orders WHERE reference=? AND store_reference=?').get(req.params.orderReference,access.order.reference);
+  if(!order)return res.status(404).json({error:'Pedido não encontrado.'});
+  const action=String(req.body?.action||'');
+  if(action==='request_cancel'){
+    if(['shipped','delivered','cancelled','cancel_requested'].includes(order.fulfillment_status))return res.status(409).json({error:'Este pedido não pode mais ser cancelado pelo painel.'});
+    db.prepare("UPDATE marketplace_orders SET fulfillment_status='cancel_requested',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(order.reference);
+    return res.json({ok:true,status:'cancel_requested',message:'Cancelamento solicitado para conciliação e eventual reembolso.'});
+  }
+  if(action==='set_label'){
+    const labelUrl=safeExternalUrl(req.body?.labelUrl),trackingCode=String(req.body?.trackingCode||'').trim().slice(0,100);
+    if(['cancelled','cancel_requested','shipped','delivered'].includes(order.fulfillment_status))return res.status(409).json({error:'A etiqueta não pode ser alterada neste estágio do pedido.'});
+    if(!labelUrl||trackingCode.length<5||order.fiscal_status!=='authorized')return res.status(400).json({error:'Informe etiqueta pública, rastreio e NF-e autorizada.'});
+    db.prepare("UPDATE marketplace_orders SET shipping_label_url=?,tracking_code=?,fulfillment_status='label_ready',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(labelUrl,trackingCode,order.reference);
+    return res.json({ok:true,status:'label_ready'});
+  }
+  if(action==='mark_shipped'){
+    if(order.fulfillment_status!=='label_ready'||order.fiscal_status!=='authorized'||!order.shipping_label_url||!order.tracking_code)return res.status(409).json({error:'Registre a NF-e, a etiqueta e o código de rastreio antes do envio.'});
+    db.prepare("UPDATE marketplace_orders SET fulfillment_status='shipped',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(order.reference);
+    return res.json({ok:true,status:'shipped'});
+  }
+  return res.status(400).json({error:'Operação inválida.'});
+});
+
+app.patch('/api/store-portal/:reference/returns/:returnId', sameOriginOnly, (req,res) => {
+  const access=storePortalAccess(req,res);if(!access)return;
+  const item=db.prepare(`SELECT r.* FROM marketplace_returns r JOIN marketplace_orders o ON o.reference=r.order_reference
+    WHERE r.id=? AND o.store_reference=?`).get(Number(req.params.returnId),access.order.reference);
+  if(!item)return res.status(404).json({error:'Devolução não encontrada.'});
+  const action=String(req.body?.action||''),next={approve:'approved',reject:'rejected',receive:'received'}[action];
+  if(!next)return res.status(400).json({error:'Ação inválida.'});
+  if(['approve','reject'].includes(action)&&item.status!=='requested')return res.status(409).json({error:'Esta solicitação já foi analisada.'});
+  if(action==='receive'&&item.status!=='approved')return res.status(409).json({error:'A devolução precisa estar aprovada antes do recebimento.'});
+  const note=String(req.body?.note||'').trim().slice(0,500);
+  db.prepare(`UPDATE marketplace_returns SET status=?,seller_note=?,reviewed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(next,note,item.id);
+  return res.json({ok:true,status:next});
 });
 
 app.put('/api/store-portal/:reference', async (req, res) => {
