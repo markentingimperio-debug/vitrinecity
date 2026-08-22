@@ -968,6 +968,15 @@ db.exec(`CREATE TABLE IF NOT EXISTS marketplace_seller_profiles (
 );
 CREATE INDEX IF NOT EXISTS idx_marketplace_seller_compliance ON marketplace_seller_profiles(compliance_status,updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_seller_tax_hash ON marketplace_seller_profiles(tax_id_hash);`);
+ensureColumn('marketplace_seller_profiles','totp_secret_encrypted',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('marketplace_seller_profiles','totp_enabled','INTEGER NOT NULL DEFAULT 0');
+db.exec(`CREATE TABLE IF NOT EXISTS seller_mfa_sessions (
+  session_hash TEXT PRIMARY KEY,
+  store_reference TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_seller_mfa_sessions_store_expiry ON seller_mfa_sessions(store_reference,expires_at);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -1445,7 +1454,7 @@ function saveStoreImage(reference, kind, value, currentUrl = '') {
   return `/uploads/store-assets/${filename}`;
 }
 
-function storePortalAccess(req, res) {
+function storePortalPrimaryAccess(req, res) {
   const reference = String(req.params.reference || '');
   const token = String(req.query.token || req.body?.token || req.get('x-store-token') || '');
   if (!validStoreManagementToken(reference, token)) {
@@ -1463,6 +1472,10 @@ function storePortalAccess(req, res) {
   }
   return { order, token };
 }
+function sellerMfaCookieName(reference){return `vc_store_mfa_${createHash('sha256').update(reference).digest('hex').slice(0,12)}`;}
+function sellerMfaAuthenticated(req,reference){const token=parseCookies(req)[sellerMfaCookieName(reference)];if(!token)return false;return Boolean(db.prepare('SELECT 1 FROM seller_mfa_sessions WHERE session_hash=? AND store_reference=? AND expires_at>?').get(sessionHash(token),reference,Date.now()));}
+function grantSellerMfaSession(res,reference){const token=randomBytes(32).toString('base64url'),maxAge=8*60*60;db.prepare('DELETE FROM seller_mfa_sessions WHERE expires_at<=?').run(Date.now());db.prepare('INSERT INTO seller_mfa_sessions(session_hash,store_reference,expires_at) VALUES (?,?,?)').run(sessionHash(token),reference,Date.now()+maxAge*1000);res.append('Set-Cookie',`${sellerMfaCookieName(reference)}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`);}
+function storePortalAccess(req,res){const access=storePortalPrimaryAccess(req,res);if(!access)return null;const seller=db.prepare('SELECT totp_enabled FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);if(seller?.totp_enabled&&!sellerMfaAuthenticated(req,access.order.reference)){res.status(428).json({error:'Confirme o segundo fator do lojista.',mfaRequired:true});return null;}return access;}
 
 const SMTP_USER = String(process.env.SMTP_USER || '').trim();
 const SMTP_PASS = String(process.env.SMTP_PASS || '').trim();
@@ -1681,6 +1694,7 @@ app.get(['/minha-conta', '/minha-conta.html'], (_req, res) => {
   const script = `<script src="/age-verification.js" defer></script>`;
   return res.type('html').send(page.replace('</main>', `${panel}</main>`).replace('</body>', `${script}</body>`));
 });
+app.get('/painel-lojista.html',(_req,res)=>{const page=fs.readFileSync(path.join(dir,'public','painel-lojista.html'),'utf8');return res.type('html').send(page.replace('<script>','<script src="/seller-mfa.js"></script><script>'));});
 app.get('/sitemap.xml', (_req, res) => {
   const origin = new URL(SITE_URL).origin;
   const fixedPaths = [
@@ -4197,6 +4211,11 @@ app.get('/api/orders/:reference', async (req, res) => {
     updated_at: order.updated_at
   });
 });
+
+app.get('/api/store-portal/:reference/mfa/status',(req,res)=>{const access=storePortalPrimaryAccess(req,res);if(!access)return;const seller=db.prepare('SELECT totp_enabled FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);return res.json({configured:Boolean(seller),mfaEnabled:Boolean(seller?.totp_enabled),authenticated:!seller?.totp_enabled||sellerMfaAuthenticated(req,access.order.reference)});});
+app.post('/api/store-portal/:reference/mfa/setup',sameOriginOnly,(req,res)=>{const access=storePortalPrimaryAccess(req,res);if(!access)return;const seller=db.prepare('SELECT totp_enabled FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);if(!seller)return res.status(409).json({error:'Conclua primeiro o cadastro fiscal do vendedor.'});if(seller.totp_enabled)return res.status(409).json({error:'O segundo fator já está ativo.'});const secret=base32Encode(randomBytes(20));let encrypted;try{encrypted=encryptMfaSecret(secret);}catch{return res.status(503).json({error:'Segundo fator temporariamente indisponível.'});}db.prepare('UPDATE marketplace_seller_profiles SET totp_secret_encrypted=? WHERE store_reference=?').run(encrypted,access.order.reference);const label=encodeURIComponent(`VitrineCity Loja:${access.order.business_name||access.order.reference}`);return res.json({secret,otpauthUri:`otpauth://totp/${label}?secret=${secret}&issuer=VitrineCity&algorithm=SHA1&digits=6&period=30`});});
+app.post('/api/store-portal/:reference/mfa/confirm',sameOriginOnly,(req,res)=>{const access=storePortalPrimaryAccess(req,res);if(!access)return;const seller=db.prepare('SELECT * FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);if(!seller?.totp_secret_encrypted)return res.status(409).json({error:'Inicie a configuração primeiro.'});let secret;try{secret=decryptMfaSecret(seller.totp_secret_encrypted);}catch{return res.status(503).json({error:'Não foi possível confirmar o segundo fator.'});}if(!validTotp(secret,req.body?.totpCode))return res.status(400).json({error:'Código de autenticação inválido.'});db.prepare('UPDATE marketplace_seller_profiles SET totp_enabled=1,updated_at=CURRENT_TIMESTAMP WHERE store_reference=?').run(access.order.reference);grantSellerMfaSession(res,access.order.reference);return res.json({ok:true,mfaEnabled:true});});
+app.post('/api/store-portal/:reference/mfa/verify',sameOriginOnly,(req,res)=>{const access=storePortalPrimaryAccess(req,res);if(!access)return;const seller=db.prepare('SELECT * FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);if(!seller?.totp_enabled)return res.status(409).json({error:'O segundo fator ainda não está ativo.'});let secret;try{secret=decryptMfaSecret(seller.totp_secret_encrypted);}catch{return res.status(503).json({error:'Segundo fator temporariamente indisponível.'});}if(!validTotp(secret,req.body?.totpCode))return res.status(401).json({error:'Código de autenticação inválido.'});grantSellerMfaSession(res,access.order.reference);return res.json({ok:true,expiresInSeconds:28800});});
 
 app.get('/api/store-portal/:reference', (req, res) => {
   const access = storePortalAccess(req, res);
