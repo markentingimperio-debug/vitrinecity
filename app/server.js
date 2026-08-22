@@ -744,6 +744,24 @@ ensureColumn('store_products', 'stock_quantity', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('store_products', 'weight_grams', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('store_products', 'fiscal_ncm', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('store_products', 'marketplace_enabled', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_products', 'variation_label', "TEXT NOT NULL DEFAULT 'Única'");
+ensureColumn('store_products', 'delivery_min_days', 'INTEGER NOT NULL DEFAULT 3');
+ensureColumn('store_products', 'delivery_max_days', 'INTEGER NOT NULL DEFAULT 7');
+ensureColumn('store_products', 'return_days', 'INTEGER NOT NULL DEFAULT 7');
+db.exec(`CREATE TABLE IF NOT EXISTS marketplace_product_reviews (
+  id INTEGER PRIMARY KEY,
+  product_id INTEGER NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+  title TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'published' CHECK(status IN ('pending','published','rejected')),
+  verified_purchase INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(product_id,user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_marketplace_reviews_product ON marketplace_product_reviews(product_id,status,created_at DESC);`);
 db.exec(`CREATE TABLE IF NOT EXISTS marketplace_orders (
   id INTEGER PRIMARY KEY,
   reference TEXT NOT NULL UNIQUE,
@@ -1775,7 +1793,10 @@ app.get('/api/marketplace/products', (req, res) => {
   const category = String(req.query.category || '').trim().slice(0, 80);
   const search = String(req.query.q || '').trim().slice(0, 80);
   const products = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,
-      p.image_url,p.sku,p.stock_quantity,s.business_name AS store_name
+      p.image_url,p.sku,p.stock_quantity,p.variation_label,p.delivery_min_days,p.delivery_max_days,p.return_days,
+      s.business_name AS store_name,
+      COALESCE((SELECT ROUND(AVG(r.rating),1) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published'),0) rating_average,
+      (SELECT COUNT(*) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published') rating_count
     FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
     WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0
       AND s.review_status='published' AND (?='' OR p.category=?)
@@ -5097,7 +5118,10 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id < 1) return publicErrorPage(res, 404);
   const product = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,p.image_url,
-      p.sku,p.stock_quantity,p.weight_grams,s.business_name AS store_name
+      p.sku,p.stock_quantity,p.weight_grams,p.variation_label,p.delivery_min_days,p.delivery_max_days,p.return_days,
+      s.business_name AS store_name,
+      COALESCE((SELECT ROUND(AVG(r.rating),1) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published'),0) rating_average,
+      (SELECT COUNT(*) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published') rating_count
     FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
     WHERE p.id=? AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0
       AND p.stock_quantity>0 AND s.review_status='published'`).get(id);
@@ -5111,7 +5135,10 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   const title = `${product.name} — ${product.store_name} | Vitriny Loja`;
   const description = String(product.description || `Compre ${product.name} na Vitriny Loja.`).slice(0, 155);
   const storePath = publicStorePath({ order_reference: product.store_reference, business_name: product.store_name });
-  const schema = JSON.stringify({
+  const reviews=db.prepare(`SELECT r.rating,r.title,r.body,r.verified_purchase,r.created_at,COALESCE(u.name,'Cliente Vitriny') author_name
+    FROM marketplace_product_reviews r LEFT JOIN users u ON u.id=r.user_id
+    WHERE r.product_id=? AND r.status='published' ORDER BY r.created_at DESC,r.id DESC LIMIT 12`).all(product.id);
+  const productSchema = {
     '@context': 'https://schema.org', '@type': 'Product', name: product.name,
     description, sku: product.sku || String(product.id), image: [image],
     brand: { '@type': 'Brand', name: product.store_name },
@@ -5119,7 +5146,9 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     offers: { '@type': 'Offer', url: canonical, priceCurrency: 'BRL',
       price: (product.price_cents / 100).toFixed(2), availability: 'https://schema.org/InStock',
       inventoryLevel: { '@type': 'QuantitativeValue', value: product.stock_quantity } }
-  }).replace(/</g, '\\u003c');
+  };
+  if(product.rating_count)productSchema.aggregateRating={ '@type':'AggregateRating',ratingValue:Number(product.rating_average),reviewCount:Number(product.rating_count),bestRating:5,worstRating:1 };
+  const schema = JSON.stringify(productSchema).replace(/</g, '\\u003c');
   const breadcrumbSchema = JSON.stringify({
     '@context': 'https://schema.org', '@type': 'BreadcrumbList',
     itemListElement: [
@@ -5141,15 +5170,18 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     <meta property="og:image" content="${escapeHtml(image)}">
     <script type="application/ld+json">${schema}</script>
     <script type="application/ld+json">${breadcrumbSchema}</script>
-    <style>:root{--blue:#1768e6;--yellow:#ffc628;--line:#263b5b}*{box-sizing:border-box}body{margin:0;background:#07101d;color:#f7faff;font-family:Inter,Arial,sans-serif}a{text-decoration:none;color:inherit}header{padding:17px max(18px,5vw);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.brand{font-size:24px;font-weight:950}.brand span{color:var(--yellow)}.back{padding:10px 13px;background:#15243c;border-radius:10px;font-weight:850}main{width:min(1060px,calc(100% - 32px));margin:42px auto;display:grid;grid-template-columns:minmax(280px,1fr) minmax(300px,1fr);gap:38px;align-items:center}.photo{width:100%;aspect-ratio:1;border-radius:24px;object-fit:cover;background:#14213a;border:1px solid var(--line)}.badge{color:var(--yellow);font-weight:900}.seller{color:#aebed3}h1{font-size:clamp(31px,5vw,58px);line-height:1.04;margin:12px 0}.description{color:#cad5e5;line-height:1.6}.price{font-size:35px;font-weight:950;margin:22px 0 5px}.stock{color:#9fe0b1}.actions{display:flex;gap:10px;margin-top:24px}.button,button{border:0;border-radius:12px;padding:14px 17px;background:var(--blue);color:#fff;font-weight:950;cursor:pointer}.alt{background:#17263e}.status{color:#ffd76c;margin-top:12px}@media(max-width:720px){main{grid-template-columns:1fr;margin-top:22px}.actions{display:grid}}</style>
+    <style>:root{--blue:#1768e6;--yellow:#ffc628;--line:#263b5b}*{box-sizing:border-box}body{margin:0;background:#07101d;color:#f7faff;font-family:Inter,Arial,sans-serif}a{text-decoration:none;color:inherit}header{padding:17px max(18px,5vw);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.brand{font-size:24px;font-weight:950}.brand span{color:var(--yellow)}.back{padding:10px 13px;background:#15243c;border-radius:10px;font-weight:850}main{width:min(1060px,calc(100% - 32px));margin:42px auto;display:grid;grid-template-columns:minmax(280px,1fr) minmax(300px,1fr);gap:38px;align-items:start}.photo{width:100%;aspect-ratio:1;border-radius:24px;object-fit:cover;background:#14213a;border:1px solid var(--line)}.badge{color:var(--yellow);font-weight:900}.seller{color:#aebed3}h1{font-size:clamp(31px,5vw,58px);line-height:1.04;margin:12px 0}.description{color:#cad5e5;line-height:1.6}.price{font-size:35px;font-weight:950;margin:22px 0 5px}.stock{color:#9fe0b1}.purchase-details{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:20px 0}.detail{padding:12px;border:1px solid var(--line);border-radius:12px;background:#0d192b}.detail small{display:block;color:#91a7c4;margin-bottom:5px}.rating{color:#ffd454;font-weight:900;margin-top:12px}.actions{display:flex;gap:10px;margin-top:24px}.button,button{border:0;border-radius:12px;padding:14px 17px;background:var(--blue);color:#fff;font-weight:950;cursor:pointer}.alt{background:#17263e}.status{color:#ffd76c;margin-top:12px}.reviews{grid-column:1/-1;border-top:1px solid var(--line);padding-top:28px}.reviews h2{font-size:28px}.review-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.review{border:1px solid var(--line);background:#0d192b;border-radius:14px;padding:15px}.review p{color:#cad5e5;line-height:1.5}.verified{color:#8ee5a8;font-size:12px}@media(max-width:720px){main{grid-template-columns:1fr;margin-top:22px}.actions,.purchase-details,.review-grid{display:grid;grid-template-columns:1fr}.reviews{grid-column:1}}</style>
     <script src="/analytics.js" defer></script></head><body>
     <header><a class="brand" href="/loja">Vitriny <span>Loja</span></a><a class="back" href="/loja">← Voltar à loja</a></header>
     <main><img class="photo" src="${escapeHtml(productImagePath)}" onerror="this.onerror=null;this.src='/assets/store-seed/utilidades.svg'" alt="${escapeHtml(product.name)}">
     <section><div class="badge">${escapeHtml(product.category || 'Produto')}</div><a class="seller" href="${escapeHtml(storePath)}">Vendido por ${escapeHtml(product.store_name)}</a>
     <h1>${escapeHtml(product.name)}</h1><p class="description">${escapeHtml(description)}</p>
     <div class="price">${(product.price_cents / 100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</div>
-    <div class="stock">${product.stock_quantity} unidades disponíveis</div>
-    <div class="actions"><button id="add">Adicionar ao carrinho</button><a class="button alt" href="/loja?q=${encodeURIComponent(product.name)}">Ver na loja</a></div><div class="status" id="status"></div></section></main>
+    <div class="stock">${product.stock_quantity} unidades disponíveis</div><div class="rating">${product.rating_count?`★ ${Number(product.rating_average).toFixed(1)} · ${product.rating_count} avaliação${product.rating_count===1?'':'ões'}`:'☆ Ainda sem avaliações'}</div>
+    <div class="purchase-details"><div class="detail"><small>Variação</small><b>${escapeHtml(product.variation_label||'Única')}</b></div><div class="detail"><small>Prazo estimado</small><b>${product.delivery_min_days} a ${product.delivery_max_days} dias úteis</b></div><div class="detail"><small>Frete</small><b>Calculado no checkout</b></div><div class="detail"><small>Devolução</small><b>Até ${product.return_days} dias após o recebimento</b></div></div>
+    <div class="actions"><button id="add">Adicionar ao carrinho</button><a class="button alt" href="/loja?q=${encodeURIComponent(product.name)}">Ver na loja</a></div><div class="status" id="status"></div></section>
+    <section class="reviews"><h2>Avaliações de clientes</h2>${reviews.length?`<div class="review-grid">${reviews.map(review=>`<article class="review"><div class="rating">${'★'.repeat(review.rating)}${'☆'.repeat(5-review.rating)}</div><h3>${escapeHtml(review.title||'Avaliação do produto')}</h3><p>${escapeHtml(review.body)}</p><small>${escapeHtml(review.author_name)} · ${new Date(`${review.created_at}Z`).toLocaleDateString('pt-BR')}</small>${review.verified_purchase?'<div class="verified">✓ Compra verificada</div>':''}</article>`).join('')}</div>`:'<p class="description">Este produto ainda não recebeu avaliações. As avaliações publicadas aparecerão aqui.</p>'}</section>
+    </main>
     <script>const product=${publicProduct};document.getElementById('add').onclick=()=>{let cart=[];try{cart=JSON.parse(localStorage.getItem('vc_shop_cart')||'[]')}catch{}if(cart.length&&cart[0].store_reference!==product.store_reference){document.getElementById('status').textContent='Finalize primeiro os produtos da outra loja.';return}const old=cart.find(item=>item.id===product.id);if(old)old.quantity=Math.min(product.stock_quantity,old.quantity+1);else cart.push({...product,quantity:1});localStorage.setItem('vc_shop_cart',JSON.stringify(cart));location.href='/loja?carrinho=1'};</script>
     </body></html>`);
 });
