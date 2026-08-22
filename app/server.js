@@ -71,6 +71,14 @@ CREATE TABLE IF NOT EXISTS users (
   adult_confirmed INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS age_verifications (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL DEFAULT '', provider_reference TEXT UNIQUE,
+  status TEXT NOT NULL DEFAULT 'not_started', over_18 INTEGER,
+  consent_version TEXT, consented_at TEXT, verified_at TEXT, expires_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS sessions (
   id INTEGER PRIMARY KEY,
   token_hash TEXT NOT NULL UNIQUE,
@@ -1289,6 +1297,16 @@ app.get('/cidade', publicPage('cidade-exploravel.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
 app.get('/cidade/praca-central', publicPage('praca-central.html'));
 app.get('/cidade/avenida-premium', publicPage('passeio-virtual.html'));
+app.get(['/minha-conta', '/minha-conta.html'], (_req, res) => {
+  const page = fs.readFileSync(path.join(dir, 'public', 'minha-conta.html'), 'utf8');
+  const panel = `<section class="panel" id="age-panel"><h2>Verificação de idade</h2>
+    <p id="age-status">Consultando…</p><label class="check" id="age-consent-wrap">
+    <input type="checkbox" id="age-consent"> Autorizo a validação da minha maioridade por um provedor oficial.
+    A Vitriny City não armazenará foto do documento ou selfie.</label>
+    <button class="button" id="age-start" type="button">Verificar 18+</button><div class="message" id="age-message"></div></section>`;
+  const script = `<script src="/age-verification.js" defer></script>`;
+  return res.type('html').send(page.replace('</main>', `${panel}</main>`).replace('</body>', `${script}</body>`));
+});
 app.get('/sitemap.xml', (_req, res) => {
   const origin = new URL(SITE_URL).origin;
   const fixedPaths = [
@@ -1454,6 +1472,56 @@ app.get('/api/auth/me', (req, res) => {
   if (!user) return res.status(401).json({ authenticated: false });
   return res.json({ authenticated: true, user: { name: user.name, email: user.email,
     whatsapp: user.whatsapp || '', admin: Boolean(user.is_admin || adminEmails.has(String(user.email).toLowerCase())) }, wallet: publicWallet(user.id) });
+});
+
+function publicAgeVerification(row) {
+  return { status: row?.status || 'not_started', over18: row?.over_18 == null ? null : Boolean(row.over_18),
+    verifiedAt: row?.verified_at || null, expiresAt: row?.expires_at || null };
+}
+
+app.get('/api/identity/age-verification', requireUser, (req, res) => {
+  const row = db.prepare('SELECT status,over_18,verified_at,expires_at FROM age_verifications WHERE user_id=?').get(req.user.id);
+  return res.json(publicAgeVerification(row));
+});
+
+app.post('/api/identity/age-verification/start', sameOriginOnly, requireUser, (req, res) => {
+  if (req.body?.consent !== true) return res.status(400).json({ error: 'Confirme o consentimento para iniciar a verificação.' });
+  const provider = String(process.env.AGE_VERIFICATION_PROVIDER || '').trim();
+  const startUrl = String(process.env.AGE_VERIFICATION_START_URL || '').trim();
+  const webhookSecret = String(process.env.AGE_VERIFICATION_WEBHOOK_SECRET || '').trim();
+  if (!provider || !startUrl || !webhookSecret || !startUrl.includes('{reference}')) {
+    return res.status(503).json({ error: 'A verificação documental ainda não está configurada.' });
+  }
+  const reference = randomUUID();
+  db.prepare(`INSERT INTO age_verifications
+    (user_id,provider,provider_reference,status,over_18,consent_version,consented_at,verified_at,expires_at,updated_at)
+    VALUES (?,?,?,'pending',NULL,'2026-08-22',CURRENT_TIMESTAMP,NULL,NULL,CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id) DO UPDATE SET provider=excluded.provider,provider_reference=excluded.provider_reference,
+      status='pending',over_18=NULL,consent_version=excluded.consent_version,consented_at=CURRENT_TIMESTAMP,
+      verified_at=NULL,expires_at=NULL,updated_at=CURRENT_TIMESTAMP`).run(req.user.id, provider.slice(0, 80), reference);
+  return res.json({ status: 'pending', verificationUrl: startUrl.replace('{reference}', encodeURIComponent(reference)) });
+});
+
+app.post('/api/identity/age-verification/webhook', (req, res) => {
+  const secret = String(process.env.AGE_VERIFICATION_WEBHOOK_SECRET || '');
+  const supplied = String(req.get('x-age-verification-signature') || '').replace(/^sha256=/, '');
+  const expected = createHmac('sha256', secret).update(req.rawBody || Buffer.alloc(0)).digest('hex');
+  const suppliedBuffer = Buffer.from(supplied, 'hex');
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  if (!secret || suppliedBuffer.length !== expectedBuffer.length || !timingSafeEqual(suppliedBuffer, expectedBuffer)) {
+    return res.status(401).json({ error: 'Assinatura inválida.' });
+  }
+  const reference = String(req.body?.reference || '');
+  const status = String(req.body?.status || '');
+  if (!reference || !['verified','rejected','manual_review','expired'].includes(status)) return res.status(400).json({ error: 'Retorno inválido.' });
+  const effectiveStatus = status === 'verified' && req.body?.over18 !== true ? 'rejected' : status;
+  const over18 = effectiveStatus === 'verified' ? 1 : 0;
+  const result = db.prepare(`UPDATE age_verifications SET status=?,over_18=?,
+    verified_at=CASE WHEN ?='verified' THEN CURRENT_TIMESTAMP ELSE NULL END,
+    expires_at=CASE WHEN ?='verified' THEN datetime('now','+1 year') ELSE NULL END,
+    updated_at=CURRENT_TIMESTAMP WHERE provider_reference=?`)
+    .run(effectiveStatus, over18, effectiveStatus, effectiveStatus, reference);
+  return res.json({ ok: true, matched: result.changes === 1 });
 });
 
 function publicAddress(row) {
