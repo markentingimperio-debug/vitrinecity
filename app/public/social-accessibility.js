@@ -24,6 +24,15 @@
   label('#notifications-close', 'Fechar notificações');
   label('#story-close', 'Fechar Story');
   label('#close-comments', 'Fechar comentários');
+  document.querySelectorAll('.side').forEach(side => {
+    if (!side.querySelector('[href="/recursos-social.html"]')) {
+      const link = document.createElement('a');
+      link.className = 'navlink';
+      link.href = '/recursos-social.html';
+      link.innerHTML = '<b>⚖</b> Meus recursos';
+      side.append(link);
+    }
+  });
 
   document.querySelectorAll('.status,.upload-status').forEach(node => {
     node.setAttribute('role', 'status');

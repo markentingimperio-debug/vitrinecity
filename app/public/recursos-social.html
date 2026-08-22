@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Meus recursos — Vitriny Social</title><style>
+:root{--blue:#1768e6;--bg:#07101d;--panel:#101a2d;--line:#2b3952;--text:#f5f8ff;--muted:#aebbd0}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif}header{padding:18px max(18px,5vw);border-bottom:1px solid var(--line)}header a{color:#9bc1ff}.wrap{width:min(900px,92%);margin:30px auto}.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;margin:14px 0}.muted{color:var(--muted)}textarea{width:100%;min-height:110px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#07101d;color:#fff;font:inherit}.btn{border:0;border-radius:10px;padding:11px 14px;background:var(--blue);color:#fff;font-weight:900;cursor:pointer}.badge{display:inline-block;border-radius:99px;padding:5px 9px;background:#503e14;color:#ffe18a;font-size:12px;font-weight:900}.accepted{background:#123f2a;color:#9ff0bc}.rejected{background:#531e2b;color:#ffb3c1}
+</style></head><body><header><a href="/social">← Voltar à Vitriny Social</a></header><main class="wrap">
+<h1>Meus recursos</h1><p class="muted">Se uma publicação foi rejeitada, removida ou suspensa, explique por que a decisão deve ser revista. Cada recurso será analisado pela administração.</p>
+<div id="status" class="muted" role="status" aria-live="polite">Carregando…</div>
+<section id="eligible" aria-labelledby="eligible-title"><h2 id="eligible-title">Decisões que aceitam recurso</h2></section>
+<section id="history" aria-labelledby="history-title"><h2 id="history-title">Histórico de recursos</h2></section></main><script>
+const esc=value=>String(value??'').replace(/[&<>"']/g,character=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
+async function request(url,options){const response=await fetch(url,options),data=await response.json().catch(()=>({}));if(response.status===401){location.href='/entrar.html?returnTo='+encodeURIComponent(location.pathname);throw Error('Entre para continuar.')}if(!response.ok)throw Error(data.error||'Não foi possível concluir.');return data}
+async function load(){
+  const data=await request('/api/social/appeals');
+  const eligibleCards=(data.eligible||[]).map(post=>`<article class="card" data-post="${esc(post.id)}"><span class="badge">${esc(post.moderationStatus)}</span><h3>${esc(post.caption||'Publicação sem legenda')}</h3><p>${esc(post.moderationReason||'Decisão administrativa')}</p><label>Explique seu recurso<textarea maxlength="1000" minlength="20" required></textarea></label><button class="btn appeal" type="button">Enviar recurso</button></article>`).join('');
+  document.getElementById('eligible').innerHTML='<h2 id="eligible-title">Decisões que aceitam recurso</h2>'+(eligibleCards||'<p class="muted">Nenhuma decisão disponível para recurso.</p>');
+  const historyCards=(data.items||[]).map(appeal=>`<article class="card"><span class="badge ${esc(appeal.status)}">${esc(appeal.status)}</span><h3>${esc(appeal.caption||'Publicação')}</h3><p><b>Seu recurso:</b> ${esc(appeal.reason)}</p>${appeal.adminNote?`<p><b>Resposta:</b> ${esc(appeal.adminNote)}</p>`:''}<small class="muted">Enviado em ${new Date(appeal.createdAt+'Z').toLocaleString('pt-BR')}</small></article>`).join('');
+  document.getElementById('history').innerHTML='<h2 id="history-title">Histórico de recursos</h2>'+(historyCards||'<p class="muted">Você ainda não enviou recursos.</p>');
+  document.getElementById('status').textContent=`${data.eligible.length} decisão(ões) disponível(is) e ${data.items.length} recurso(s) no histórico.`;
+}
+document.getElementById('eligible').addEventListener('click',async event=>{const button=event.target.closest('.appeal');if(!button)return;const card=button.closest('[data-post]'),reason=card.querySelector('textarea').value.trim();button.disabled=true;try{await request('/api/social/posts/'+encodeURIComponent(card.dataset.post)+'/appeal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})});await load()}catch(error){document.getElementById('status').textContent=error.message;button.disabled=false}});
+load().catch(error=>document.getElementById('status').textContent=error.message);
+</script></body></html>
