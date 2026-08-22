@@ -1014,6 +1014,21 @@ function safeExternalUrl(value, max = 500) {
   } catch { return ''; }
 }
 
+function safePublicUrl(value, origin, fallback = '') {
+  const text = String(value || '').trim().slice(0, 500);
+  if (!text) return fallback;
+  try {
+    const parsed = new URL(text, origin);
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : fallback;
+  } catch { return fallback; }
+}
+
+function escapeXml(value) {
+  return String(value || '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;'
+  })[character]);
+}
+
 function publicStoreProfile(reference) {
   const order = db.prepare(`SELECT reference,business_name,segment,lot_code,status,fulfillment_status,
     plan_code,billing_type FROM lot_orders WHERE reference=?`).get(reference);
@@ -1256,6 +1271,37 @@ app.get('/cidade', publicPage('cidade-exploravel.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
 app.get('/cidade/praca-central', publicPage('praca-central.html'));
 app.get('/cidade/avenida-premium', publicPage('passeio-virtual.html'));
+app.get('/sitemap.xml', (_req, res) => {
+  const origin = new URL(SITE_URL).origin;
+  const fixedPaths = [
+    '/', '/cidade', '/cidade/bairro-premium', '/cidade/praca-central', '/cidade/avenida-premium',
+    '/social', '/descobrir', '/loja', '/centro-educacional.html', '/afiliados.html',
+    '/para-empresas.html', '/como-funciona.html', '/comprar-lote.html', '/sobre.html',
+    '/contato.html', '/privacy.html', '/termos-predio-digital.html'
+  ];
+  const stores = db.prepare(`SELECT order_reference,business_name FROM store_profiles
+    WHERE review_status='published' ORDER BY order_reference`).all();
+  const products = db.prepare(`SELECT p.id,p.name FROM store_products p
+    JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0
+      AND p.stock_quantity>0 AND s.review_status='published' ORDER BY p.id`).all();
+  const categories = db.prepare(`SELECT DISTINCT p.category FROM store_products p
+    JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0
+      AND s.review_status='published' AND TRIM(p.category)<>'' ORDER BY p.category`).all();
+  const cities = db.prepare(`SELECT DISTINCT city FROM social_posts
+    WHERE status='ready' AND TRIM(city)<>'' ORDER BY city`).all();
+  const dynamicPaths = [
+    ...stores.map(store => publicStorePath(store)),
+    ...products.map(product => `/produto/${product.id}/${marketplaceSlug(product.name, 'produto')}`),
+    ...categories.map(row => `/categoria/${marketplaceSlug(row.category, 'categoria')}`),
+    ...cities.map(row => `/cidade/${marketplaceSlug(row.city, 'cidade')}`)
+  ];
+  const urls = [...new Set([...fixedPaths, ...dynamicPaths])];
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
+    .map(item => `  <url><loc>${escapeXml(`${origin}${item}`)}</loc></url>`).join('\n')}\n</urlset>\n`;
+  return res.type('application/xml').set('Cache-Control', 'public,max-age=300').send(xml);
+});
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
 
 app.get('/r/:code', (req, res) => {
@@ -4661,6 +4707,24 @@ function marketplaceProductSlug(value) {
 
 const PRODUCT_FALLBACK_PATH = '/assets/store-seed/utilidades.svg';
 
+function renderIndexableListingPage({ title, description, canonical, parentName, parentUrl, items }) {
+  const origin = new URL(SITE_URL).origin;
+  const safeItems = items.map((item, index) => ({ ...item, position: index + 1 }));
+  const schema = JSON.stringify({
+    '@context': 'https://schema.org', '@graph': [
+      { '@type': 'BreadcrumbList', itemListElement: [
+        { '@type': 'ListItem', position: 1, name: parentName, item: `${origin}${parentUrl}` },
+        { '@type': 'ListItem', position: 2, name: title, item: canonical }
+      ] },
+      { '@type': 'ItemList', name: title, itemListElement: safeItems.map(item => ({
+        '@type': 'ListItem', position: item.position, name: item.name, url: `${origin}${item.path}`
+      })) }
+    ]
+  }).replace(/</g, '\\u003c');
+  const cards = safeItems.map(item => `<article class="card">${item.image ? `<a href="${escapeHtml(item.path)}"><img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.name)}"></a>` : ''}<div><h2><a href="${escapeHtml(item.path)}">${escapeHtml(item.name)}</a></h2><p>${escapeHtml(item.description)}</p>${item.meta ? `<small>${escapeHtml(item.meta)}</small>` : ''}</div></article>`).join('');
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} | VitrineCity</title><meta name="description" content="${escapeHtml(description)}"><link rel="canonical" href="${escapeHtml(canonical)}"><meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(title)} | VitrineCity"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:image" content="${origin}/assets/vitriny-city-master.jpg"><script type="application/ld+json">${schema}</script><style>:root{--blue:#1768e6;--navy:#071f4b;--line:#d8e7f7;--muted:#5b7192}*{box-sizing:border-box}body{margin:0;background:#f4f9ff;color:var(--navy);font-family:Inter,Arial,sans-serif}a{color:inherit}header{padding:18px max(20px,5vw);background:#fff;border-bottom:1px solid var(--line);display:flex;justify-content:space-between}.brand{font-size:24px;font-weight:950;text-decoration:none}.back{font-weight:850;color:var(--blue)}main{width:min(1050px,calc(100% - 36px));margin:55px auto 90px}.hero{margin-bottom:30px}.hero h1{font-size:clamp(38px,6vw,62px);line-height:1;margin:0 0 14px}.hero p{color:var(--muted);font-size:18px;line-height:1.55;max-width:750px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.card{background:#fff;border:1px solid var(--line);border-radius:18px;overflow:hidden}.card img{width:100%;aspect-ratio:16/10;object-fit:cover;background:#e6eef8}.card div{padding:18px}.card h2{font-size:19px;margin:0 0 9px}.card h2 a{text-decoration:none}.card p{color:var(--muted);line-height:1.5;margin:0 0 10px}.card small{color:#45658f}.empty{padding:45px;background:#fff;border:1px dashed #9bb6d8;border-radius:18px;text-align:center}@media(max-width:800px){.grid{grid-template-columns:1fr 1fr}}@media(max-width:520px){.grid{grid-template-columns:1fr}}</style></head><body><header><a class="brand" href="/">VitrineCity</a><a class="back" href="${escapeHtml(parentUrl)}">← ${escapeHtml(parentName)}</a></header><main><section class="hero"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p></section>${cards ? `<section class="grid">${cards}</section>` : '<div class="empty">Novos conteúdos serão publicados aqui em breve.</div>'}</main></body></html>`;
+}
+
 app.get(['/loja/:reference', '/loja/:reference/:slug'], (req, res) => {
   const reference = String(req.params.reference || '').trim().slice(0, 120);
   const store = db.prepare(`SELECT order_reference,business_name,description,logo_url,facade_url,
@@ -4726,6 +4790,47 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     <div class="actions"><button id="add">Adicionar ao carrinho</button><a class="button alt" href="/loja?q=${encodeURIComponent(product.name)}">Ver na loja</a></div><div class="status" id="status"></div></section></main>
     <script>const product=${publicProduct};document.getElementById('add').onclick=()=>{let cart=[];try{cart=JSON.parse(localStorage.getItem('vc_shop_cart')||'[]')}catch{}if(cart.length&&cart[0].store_reference!==product.store_reference){document.getElementById('status').textContent='Finalize primeiro os produtos da outra loja.';return}const old=cart.find(item=>item.id===product.id);if(old)old.quantity=Math.min(product.stock_quantity,old.quantity+1);else cart.push({...product,quantity:1});localStorage.setItem('vc_shop_cart',JSON.stringify(cart));location.href='/loja?carrinho=1'};</script>
     </body></html>`);
+});
+
+app.get('/categoria/:slug', (req, res) => {
+  const categories = db.prepare(`SELECT DISTINCT category FROM store_products
+    WHERE active=1 AND marketplace_enabled=1 AND price_cents>0 AND stock_quantity>0 AND TRIM(category)<>''`).all();
+  const category = categories.map(row => row.category).find(value => marketplaceSlug(value, 'categoria') === req.params.slug);
+  if (!category) return res.status(404).send('Categoria não encontrada.');
+  const products = db.prepare(`SELECT p.id,p.name,p.description,p.price_cents,p.image_url,s.business_name
+    FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE p.category=? AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0
+      AND p.stock_quantity>0 AND s.review_status='published' ORDER BY p.updated_at DESC,p.id DESC LIMIT 120`).all(category);
+  const origin = new URL(SITE_URL).origin, slug = marketplaceSlug(category, 'categoria');
+  const canonical = `${origin}/categoria/${slug}`;
+  return res.set('Cache-Control', 'public,max-age=120').send(renderIndexableListingPage({
+    title: category, description: `Produtos de ${category} disponíveis nas lojas da Vitriny City.`, canonical,
+    parentName: 'Vitriny Loja', parentUrl: '/loja', items: products.map(product => ({
+      name: product.name, description: product.description || `Produto vendido por ${product.business_name}.`,
+      meta: `${product.business_name} · ${(product.price_cents / 100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}`,
+      image: safePublicUrl(product.image_url, origin, `${origin}${PRODUCT_FALLBACK_PATH}`),
+      path: `/produto/${product.id}/${marketplaceSlug(product.name, 'produto')}`
+    }))
+  }));
+});
+
+app.get('/cidade/:slug', (req, res) => {
+  const cities = db.prepare(`SELECT DISTINCT city FROM social_posts WHERE status='ready' AND TRIM(city)<>''`).all();
+  const city = cities.map(row => row.city).find(value => marketplaceSlug(value, 'cidade') === req.params.slug);
+  if (!city) return res.status(404).send('Cidade não encontrada.');
+  const posts = db.prepare(`SELECT p.id,p.caption,p.category,p.media_type,p.image_url,u.name,sp.handle
+    FROM social_posts p JOIN users u ON u.id=p.user_id LEFT JOIN social_profiles sp ON sp.user_id=p.user_id
+    WHERE p.city=? AND p.status='ready' ORDER BY p.created_at DESC LIMIT 120`).all(city);
+  const origin = new URL(SITE_URL).origin, slug = marketplaceSlug(city, 'cidade');
+  const canonical = `${origin}/cidade/${slug}`;
+  return res.set('Cache-Control', 'public,max-age=120').send(renderIndexableListingPage({
+    title: city, description: `Pessoas, publicações, ofertas e negócios de ${city} na Vitriny City.`, canonical,
+    parentName: 'Vitriny City', parentUrl: '/cidade', items: posts.map(post => ({
+      name: post.caption || `Publicação de ${post.name}`, description: `Conteúdo de @${post.handle || 'usuario'} em ${city}.`,
+      meta: post.category || 'geral', image: post.media_type === 'image' ? safePublicUrl(post.image_url, origin) : '',
+      path: `/social/post/${encodeURIComponent(post.id)}`
+    }))
+  }));
 });
 
 app.get('/perfil/:handle', (req, res) => {
