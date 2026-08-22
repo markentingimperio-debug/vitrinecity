@@ -595,13 +595,25 @@ CREATE INDEX IF NOT EXISTS idx_social_stories_user ON social_stories(user_id,cre
 CREATE INDEX IF NOT EXISTS idx_social_notifications_user ON social_notifications(user_id,read_at,created_at DESC);
 `);
 const SOCIAL_ALGORITHM_VERSION='vitriny-feed-v1';
+ensureColumn('social_algorithm_versions','is_active','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('social_algorithm_versions','created_by','INTEGER');
+ensureColumn('social_algorithm_versions','change_reason',"TEXT NOT NULL DEFAULT 'Versão compilada'");
 const SOCIAL_ALGORITHM_DESCRIPTION='Ranking por relevância, retenção, conclusão, repetição, afinidade, exploração e recência.';
-const SOCIAL_ALGORITHM_CONFIG=Object.freeze({engagementWeight:4,completionWeight:30,replayWeight:2,skipPenalty:22,
-  personalAffinity:18,explorationBoost:10,crossNetworkBoost:12,ageDecay:0.28});
+const SOCIAL_ALGORITHM_CONFIG=Object.freeze({engagementMultiplier:1,completionWeight:30,watchMultiplier:1,replayWeight:2,skipPenalty:22,
+  personalMultiplier:1,explorationMultiplier:1,crossNetworkMultiplier:1,repeatPenaltyMultiplier:1,ageDecay:0.28});
 db.prepare(`INSERT INTO social_algorithm_versions(version,description,config_json,code_commit)
-  VALUES (?,?,?,?) ON CONFLICT(version) DO UPDATE SET description=excluded.description,config_json=excluded.config_json,retired_at=NULL`)
+  VALUES (?,?,?,?) ON CONFLICT(version) DO UPDATE SET description=excluded.description,config_json=excluded.config_json`)
   .run(SOCIAL_ALGORITHM_VERSION,SOCIAL_ALGORITHM_DESCRIPTION,JSON.stringify(SOCIAL_ALGORITHM_CONFIG),String(process.env.APP_COMMIT_SHA||''));
-db.prepare('UPDATE social_algorithm_versions SET retired_at=COALESCE(retired_at,CURRENT_TIMESTAMP) WHERE version<>?').run(SOCIAL_ALGORITHM_VERSION);
+if(!db.prepare('SELECT 1 FROM social_algorithm_versions WHERE is_active=1 LIMIT 1').get())
+  db.prepare('UPDATE social_algorithm_versions SET is_active=1,retired_at=NULL WHERE version=?').run(SOCIAL_ALGORITHM_VERSION);
+
+function activeSocialAlgorithm(){
+  const row=db.prepare('SELECT * FROM social_algorithm_versions WHERE is_active=1 ORDER BY activated_at DESC LIMIT 1').get()||
+    db.prepare('SELECT * FROM social_algorithm_versions WHERE version=?').get(SOCIAL_ALGORITHM_VERSION);
+  let parsed={};try{parsed=JSON.parse(row?.config_json||'{}')}catch{}
+  return {version:row?.version||SOCIAL_ALGORITHM_VERSION,description:row?.description||SOCIAL_ALGORITHM_DESCRIPTION,
+    config:{...SOCIAL_ALGORITHM_CONFIG,...parsed}};
+}
 ensureColumn('social_posts', 'moderation_status', "TEXT NOT NULL DEFAULT 'pending'");
 ensureColumn('social_posts', 'moderation_reason', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('social_posts', 'moderated_by', 'INTEGER');
@@ -4782,6 +4794,7 @@ app.get('/api/social/feed', (req, res) => {
       friendsOnly ? 1 : 0, viewer?.id || 0, viewer?.id || 0,
       viewer?.id || 0, viewer?.id || 0, viewer?.id || 0, actorKey, mode, candidateLimit);
   if (mode === 'recommended') {
+    const algorithmConfig=activeSocialAlgorithm().config;
     const score = row => {
       const impressions=Math.max(1,Number(row.intelligence_impressions||0));
       const completionRate=Number(row.intelligence_completions||0)/impressions;
@@ -4793,7 +4806,10 @@ app.get('/api/social/feed', (req, res) => {
       const exploration=impressions<20?Math.max(0,12-impressions*0.5):0;
       const repeatPenalty=Math.min(35,Number(row.viewer_impressions||0)*12);
       const crossNetworkPrior=Math.min(18,(externalPriors.get(row.category)||0)*0.35);
-      return (20+engagement+completionRate*30+avgWatch+Number(row.intelligence_replays||0)*2-skipRate*22+personal+exploration+crossNetworkPrior-repeatPenalty)/(1+ageDays*0.28);
+      return (20+engagement*algorithmConfig.engagementMultiplier+completionRate*algorithmConfig.completionWeight+
+        avgWatch*algorithmConfig.watchMultiplier+Number(row.intelligence_replays||0)*algorithmConfig.replayWeight-
+        skipRate*algorithmConfig.skipPenalty+personal*algorithmConfig.personalMultiplier+exploration*algorithmConfig.explorationMultiplier+
+        crossNetworkPrior*algorithmConfig.crossNetworkMultiplier-repeatPenalty*algorithmConfig.repeatPenaltyMultiplier)/(1+ageDays*algorithmConfig.ageDecay);
     };
     rows.sort((a,b)=>score(b)-score(a));
     for(let i=1;i<rows.length;i++)if(rows[i].user_id===rows[i-1].user_id){const swap=rows.findIndex((r,j)=>j>i&&j<=i+5&&r.user_id!==rows[i-1].user_id);if(swap>i)[rows[i],rows[swap]]=[rows[swap],rows[i]];}
@@ -5341,15 +5357,16 @@ app.get('/api/admin/social/intelligence/status', requireAdmin, (_req,res) => {
     title,evidence_json evidenceJson,status,review_note reviewNote,first_seen_at firstSeenAt,last_seen_at lastSeenAt,reviewed_at reviewedAt
     FROM social_intelligence_alerts ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END,
     CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,last_seen_at DESC LIMIT 100`).all().map(row=>({...row,evidence:JSON.parse(row.evidenceJson||'{}')}));
+  const activeAlgorithm=activeSocialAlgorithm();
   db.prepare(`INSERT INTO social_algorithm_metrics_daily
     (version,metric_day,impressions,watch_ms,completions,skips,replays,clicks,conversions)
     VALUES (?,date('now'),?,?,?,?,?,?,?) ON CONFLICT(version,metric_day) DO UPDATE SET
       impressions=excluded.impressions,watch_ms=excluded.watch_ms,completions=excluded.completions,
       skips=excluded.skips,replays=excluded.replays,clicks=excluded.clicks,conversions=excluded.conversions,captured_at=CURRENT_TIMESTAMP`)
-    .run(SOCIAL_ALGORITHM_VERSION,Number(internal.impressions||0),Number(internal.watchMs||0),Number(internal.completions||0),
+    .run(activeAlgorithm.version,Number(internal.impressions||0),Number(internal.watchMs||0),Number(internal.completions||0),
       Number(internal.skips||0),Number(internal.replays||0),Number(overview.clicks||0),Number(overview.conversions||0));
   const versions=db.prepare(`SELECT v.version,v.description,v.config_json configJson,v.code_commit codeCommit,v.activated_at activatedAt,
-    v.retired_at retiredAt,COALESCE(SUM(m.impressions),0) impressions,COALESCE(SUM(m.watch_ms),0) watchMs,
+    v.retired_at retiredAt,v.is_active isActive,v.change_reason changeReason,COALESCE(SUM(m.impressions),0) impressions,COALESCE(SUM(m.watch_ms),0) watchMs,
     COALESCE(SUM(m.completions),0) completions,COALESCE(SUM(m.skips),0) skips,COALESCE(SUM(m.replays),0) replays,
     COALESCE(SUM(m.clicks),0) clicks,COALESCE(SUM(m.conversions),0) conversions,COUNT(m.metric_day) measuredDays
     FROM social_algorithm_versions v LEFT JOIN social_algorithm_metrics_daily m ON m.version=v.version
@@ -5359,9 +5376,47 @@ app.get('/api/admin/social/intelligence/status', requireAdmin, (_req,res) => {
       skipRate:Number(row.impressions?Number(row.skips)/Number(row.impressions):0),
       clickRate:Number(row.impressions?Number(row.clicks)/Number(row.impressions):0),
       conversionRate:Number(row.clicks?Number(row.conversions)/Number(row.clicks):0)}));
-  return res.json({engine:SOCIAL_ALGORITHM_VERSION,generatedAt:new Date().toISOString(),
+  return res.json({engine:activeAlgorithm.version,generatedAt:new Date().toISOString(),
     internal,overview,daily,categories,growing,providers,newCreators,cities,alerts,
-    algorithm:{currentVersion:SOCIAL_ALGORITHM_VERSION,description:SOCIAL_ALGORITHM_DESCRIPTION,config:SOCIAL_ALGORITHM_CONFIG,versions}});
+    algorithm:{currentVersion:activeAlgorithm.version,description:activeAlgorithm.description,config:activeAlgorithm.config,limits:SOCIAL_ALGORITHM_LIMITS,versions}});
+});
+
+const SOCIAL_ALGORITHM_LIMITS=Object.freeze({engagementMultiplier:[0.2,3],completionWeight:[0,50],watchMultiplier:[0.2,3],
+  replayWeight:[0,5],skipPenalty:[0,40],personalMultiplier:[0,2],explorationMultiplier:[0,2],crossNetworkMultiplier:[0,2],
+  repeatPenaltyMultiplier:[0.2,3],ageDecay:[0.05,1]});
+function validatedSocialAlgorithmConfig(value){
+  const config={};for(const [key,[min,max]] of Object.entries(SOCIAL_ALGORITHM_LIMITS)){const number=Number(value?.[key]);
+    if(!Number.isFinite(number)||number<min||number>max)throw new Error(`${key} deve ficar entre ${min} e ${max}.`);config[key]=Math.round(number*1000)/1000;}
+  return config;
+}
+function algorithmPreviewToken(userId,currentVersion,config){
+  const payload=Buffer.from(JSON.stringify({userId,currentVersion,configHash:createHash('sha256').update(JSON.stringify(config)).digest('hex'),expiresAt:Date.now()+10*60*1000})).toString('base64url');
+  return `${payload}.${createHmac('sha256',managementSecret()).update(`algorithm:${payload}`).digest('base64url')}`;
+}
+function verifyAlgorithmPreviewToken(token,userId,currentVersion,config){
+  const [payload,signature]=String(token||'').split('.');if(!payload||!signature||!managementSecret())return false;
+  const expected=createHmac('sha256',managementSecret()).update(`algorithm:${payload}`).digest('base64url');
+  if(expected.length!==signature.length||!timingSafeEqual(Buffer.from(expected),Buffer.from(signature)))return false;
+  try{const data=JSON.parse(Buffer.from(payload,'base64url').toString('utf8'));return Number(data.userId)===Number(userId)&&
+    data.currentVersion===currentVersion&&data.expiresAt>Date.now()&&data.configHash===createHash('sha256').update(JSON.stringify(config)).digest('hex');}catch{return false;}
+}
+app.post('/api/admin/social/intelligence/algorithm/preview',requireAdmin,sameOriginOnly,(req,res)=>{
+  let config;try{config=validatedSocialAlgorithmConfig(req.body?.config);}catch(error){return res.status(400).json({error:error.message});}
+  const current=activeSocialAlgorithm(),changes=Object.keys(config).filter(key=>config[key]!==current.config[key]).map(key=>({key,before:current.config[key],after:config[key]}));
+  if(!changes.length)return res.status(400).json({error:'Altere pelo menos um peso para gerar a prévia.'});
+  const warnings=changes.filter(change=>Math.abs(change.after-change.before)>Math.max(.2,Math.abs(change.before)*.5)).map(change=>`Mudança ampla em ${change.key}: ${change.before} → ${change.after}.`);
+  return res.json({currentVersion:current.version,config,changes,warnings,previewToken:algorithmPreviewToken(req.user.id,current.version,config),expiresInSeconds:600});
+});
+app.post('/api/admin/social/intelligence/algorithm/activate',requireAdmin,sameOriginOnly,(req,res)=>{
+  let config;try{config=validatedSocialAlgorithmConfig(req.body?.config);}catch(error){return res.status(400).json({error:error.message});}
+  const current=activeSocialAlgorithm(),reason=String(req.body?.reason||'').trim().slice(0,600);
+  if(req.body?.confirm!==true||reason.length<10)return res.status(400).json({error:'Confirme a ativação e registre um motivo com pelo menos 10 caracteres.'});
+  if(!verifyAlgorithmPreviewToken(req.body?.previewToken,req.user.id,current.version,config))return res.status(409).json({error:'A prévia expirou ou não corresponde aos pesos atuais. Gere uma nova prévia.'});
+  const version=`vitriny-feed-config-${new Date().toISOString().replace(/[-:TZ.]/g,'').slice(0,14)}-${randomBytes(3).toString('hex')}`;
+  db.transaction(()=>{db.prepare("UPDATE social_algorithm_versions SET is_active=0,retired_at=CURRENT_TIMESTAMP WHERE is_active=1").run();
+    db.prepare(`INSERT INTO social_algorithm_versions(version,description,config_json,code_commit,is_active,created_by,change_reason)
+      VALUES (?,?,?,?,1,?,?)`).run(version,'Configuração administrativa segura do ranking',JSON.stringify(config),String(process.env.APP_COMMIT_SHA||''),req.user.id,reason);})();
+  return res.status(201).json({ok:true,version,previousVersion:current.version,config});
 });
 
 app.patch('/api/admin/social/intelligence/alerts/:id',requireAdmin,sameOriginOnly,(req,res)=>{
