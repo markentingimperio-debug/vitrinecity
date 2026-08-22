@@ -286,6 +286,9 @@ ensureColumn('ad_campaigns', 'placement', "TEXT NOT NULL DEFAULT 'search'");
 ensureColumn('ad_campaigns', 'target_audience', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('ad_campaigns', 'reach_km', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('ad_campaigns', 'starts_on', 'TEXT');
+ensureColumn('ad_campaigns', 'campaign_channel', "TEXT NOT NULL DEFAULT 'internal'");
+ensureColumn('ad_campaigns', 'external_campaign_id', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('ad_campaigns', 'external_platform_status', "TEXT NOT NULL DEFAULT 'not_applicable'");
 db.exec(`
 CREATE TABLE IF NOT EXISTS social_profiles (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -2401,12 +2404,14 @@ app.get('/api/ads/campaigns', requireUser, (req, res) => {
   const objectiveLabels = { messages: 'Receber mensagens', visits: 'Visitas ao site',
     sales: 'Oportunidades de venda', followers: 'Atrair seguidores' };
   const destinationLabels = { whatsapp: 'WhatsApp', site: 'Site', instagram: 'Instagram' };
+  const channelLabels={internal:'VitrineCity — anúncio interno',meta:'Meta Ads — Facebook e Instagram',tiktok:'TikTok Ads',google:'Google Ads'};
   const statusLabels = { awaiting_payment: 'Aguardando pagamento', funded: 'Pendente de ativação',
     in_review: 'Em configuração', payment_failed: 'Pagamento não concluído', reversed: 'Estornada',
     active: 'Em veiculação', paused: 'Pausada', completed: 'Concluída' };
   const campaigns = db.prepare(`SELECT id,objective,destination_type,destination_url,daily_budget_cents,
     duration_days,gross_credits,management_credits,net_credits,status,creative_title,creative_text,
-    image_url,keywords,category,target_city,target_audience,reach_km,starts_on,placement,created_at,updated_at,
+    image_url,keywords,category,target_city,target_audience,reach_km,starts_on,placement,campaign_channel,
+    external_campaign_id,external_platform_status,created_at,updated_at,
     (SELECT COUNT(*) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='impression') impressions,
     (SELECT COUNT(*) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='click') clicks,
     (SELECT COUNT(DISTINCT visitor_key) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='impression') reach,
@@ -2418,7 +2423,8 @@ app.get('/api/ads/campaigns', requireUser, (req, res) => {
     ...item,
     objectiveLabel: objectiveLabels[item.objective] || item.objective,
     destinationLabel: destinationLabels[item.destination_type] || item.destination_type,
-    statusLabel: statusLabels[item.status] || item.status,
+    channelLabel:channelLabels[item.campaign_channel]||item.campaign_channel,
+    statusLabel:`${channelLabels[item.campaign_channel]||item.campaign_channel} · ${statusLabels[item.status]||item.status}`,
     ctrPercent:item.impressions?Math.round(item.clicks/item.impressions*10000)/100:0,
     spentCredits:Number(item.spent_units||0)/100,
     spentCents:Math.round(Number(item.spent_units||0)/9.6),
@@ -3098,7 +3104,8 @@ app.get('/api/admin/ad-campaigns', requireAdmin, (req, res) => {
   if (status && !allowedStatuses.has(status)) return res.status(400).json({ error: 'Filtro de status inválido.' });
   const campaigns = db.prepare(`SELECT c.id,c.order_reference,c.objective,c.destination_type,c.destination_url,
     c.daily_budget_cents,c.duration_days,c.gross_credits,c.management_credits,c.net_credits,c.status,
-    c.admin_notes,c.reviewed_at,c.activated_at,c.completed_at,c.created_at,c.updated_at,
+    c.admin_notes,c.reviewed_at,c.activated_at,c.completed_at,c.created_at,c.updated_at,c.campaign_channel,
+    c.external_campaign_id,c.external_platform_status,
     u.name AS customer_name,u.email,u.whatsapp,o.amount_cents,o.fee_cents,o.status AS payment_status,
     w.balance_units
     FROM ad_campaigns c
@@ -3130,18 +3137,21 @@ app.patch('/api/admin/ad-campaigns/:id', requireAdmin, (req, res) => {
   const rule = AD_CAMPAIGN_ACTIONS[action];
   if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Campanha inválida.' });
   if (!rule) return res.status(400).json({ error: 'Ação administrativa inválida.' });
-  const campaign = db.prepare('SELECT id,status FROM ad_campaigns WHERE id=?').get(id);
+  const campaign = db.prepare('SELECT id,status,campaign_channel,external_campaign_id FROM ad_campaigns WHERE id=?').get(id);
   if (!campaign) return res.status(404).json({ error: 'Campanha não encontrada.' });
   if (!rule.from.includes(campaign.status)) {
     return res.status(409).json({ error: `Não é possível executar esta ação quando a campanha está: ${AD_CAMPAIGN_STATUS_LABELS[campaign.status] || campaign.status}.` });
   }
   const notes = String(req.body?.notes || '').trim().slice(0, 1200);
-  db.prepare(`UPDATE ad_campaigns SET status=?,admin_notes=?,
+  const externalCampaignId=String(req.body?.externalCampaignId||campaign.external_campaign_id||'').trim().slice(0,160);
+  if(action==='activate'&&campaign.campaign_channel!=='internal'&&!externalCampaignId)return res.status(409).json({error:'Informe o identificador confirmado da campanha na plataforma externa antes de ativar.'});
+  db.prepare(`UPDATE ad_campaigns SET status=?,admin_notes=?,external_campaign_id=?,
+    external_platform_status=CASE WHEN campaign_channel='internal' THEN 'not_applicable' WHEN ?<>'' THEN 'connected' ELSE 'pending_setup' END,
     reviewed_at=CASE WHEN ?='in_review' THEN CURRENT_TIMESTAMP ELSE reviewed_at END,
     activated_at=CASE WHEN ?='active' THEN COALESCE(activated_at,CURRENT_TIMESTAMP) ELSE activated_at END,
     completed_at=CASE WHEN ?='completed' THEN CURRENT_TIMESTAMP ELSE completed_at END,
     updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-    .run(rule.to, notes, rule.to, rule.to, rule.to, id);
+    .run(rule.to,notes,externalCampaignId,externalCampaignId,rule.to,rule.to,rule.to,id);
   return res.json({ ok: true, id, status: rule.to, statusLabel: AD_CAMPAIGN_STATUS_LABELS[rule.to] });
 });
 
@@ -3447,6 +3457,7 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   const targetAudience = String(req.body?.targetAudience || '').trim().slice(0, 160);
   const reachKm = Math.round(Number(req.body?.reachKm));
   const startsOn = String(req.body?.startsOn || '').trim();
+  const campaignChannel=String(req.body?.campaignChannel||'internal').trim();
   if (!Number.isInteger(amountCents) || amountCents < ADS_MIN_TOPUP_CENTS || amountCents > ADS_MAX_TOPUP_CENTS) {
     return res.status(400).json({ error: 'A recarga deve ficar entre R$ 30,00 e R$ 5.000,00.' });
   }
@@ -3467,6 +3478,7 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   if (!['site','whatsapp','instagram'].includes(destinationType)) {
     return res.status(400).json({ error: 'Escolha site, WhatsApp ou Instagram como destino.' });
   }
+  if(!['internal','meta','tiktok','google'].includes(campaignChannel))return res.status(400).json({error:'Escolha VitrineCity, Meta Ads, TikTok Ads ou Google Ads como canal.'});
   if (creativeTitle.length < 4 || creativeText.length < 10 || normalizedAdTerms(keywords).length < 1) {
     return res.status(400).json({ error: 'Informe título, texto e palavras-chave do anúncio.' });
   }
@@ -3505,11 +3517,12 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
     db.prepare(`INSERT INTO ad_campaigns
       (user_id,order_reference,objective,destination_type,destination_url,daily_budget_cents,duration_days,
        gross_credits,management_credits,net_credits,creative_title,creative_text,image_url,keywords,category,target_city,
-       target_audience,reach_km,starts_on,placement,status)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'search','awaiting_payment')`)
+       target_audience,reach_km,starts_on,campaign_channel,external_platform_status,placement,status)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'awaiting_payment')`)
       .run(req.user.id, reference, objective, destinationType, destinationUrl, dailyBudgetCents, durationDays,
         grossCredits, managementCredits, netCredits, creativeTitle, creativeText, imageUrl, keywords, category, targetCity,
-        targetAudience,reachKm,startsOn);
+        targetAudience,reachKm,startsOn,campaignChannel,campaignChannel==='internal'?'not_applicable':'pending_setup',
+        campaignChannel==='internal'?'search':'external');
   });
   createOrder();
   adminAnalytics.recordOrderAttribution(req, reference, 'credits');
