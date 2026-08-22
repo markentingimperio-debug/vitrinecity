@@ -28,7 +28,8 @@ const html = renderPublicStorePage({
 });
 
 assert.match(html, /<link rel="canonical" href="https:\/\/vitrinecity\.com\/loja\/STORE-1\/loja-segura">/);
-assert.match(html, /"@type":"Store"/);
+assert.match(html, /"@type":\["Store","LocalBusiness"\]/);
+assert.match(html, /"@type":"BreadcrumbList"/);
 assert.match(html, /Loja &lt;Segura&gt;/);
 assert.doesNotMatch(html, /javascript:alert/);
 assert.doesNotMatch(html, /javascript:alert\(2\)/);
