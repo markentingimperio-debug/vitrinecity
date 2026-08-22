@@ -569,10 +569,39 @@ CREATE TABLE IF NOT EXISTS social_intelligence_alerts (
   reviewed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_social_intelligence_alerts_status ON social_intelligence_alerts(status,severity,last_seen_at DESC);
+CREATE TABLE IF NOT EXISTS social_algorithm_versions (
+  version TEXT PRIMARY KEY,
+  description TEXT NOT NULL,
+  config_json TEXT NOT NULL,
+  code_commit TEXT NOT NULL DEFAULT '',
+  activated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  retired_at TEXT
+);
+CREATE TABLE IF NOT EXISTS social_algorithm_metrics_daily (
+  version TEXT NOT NULL REFERENCES social_algorithm_versions(version),
+  metric_day TEXT NOT NULL,
+  impressions INTEGER NOT NULL DEFAULT 0,
+  watch_ms INTEGER NOT NULL DEFAULT 0,
+  completions INTEGER NOT NULL DEFAULT 0,
+  skips INTEGER NOT NULL DEFAULT 0,
+  replays INTEGER NOT NULL DEFAULT 0,
+  clicks INTEGER NOT NULL DEFAULT 0,
+  conversions INTEGER NOT NULL DEFAULT 0,
+  captured_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(version,metric_day)
+);
 CREATE INDEX IF NOT EXISTS idx_social_stories_active ON social_stories(status,expires_at,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_stories_user ON social_stories(user_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_notifications_user ON social_notifications(user_id,read_at,created_at DESC);
 `);
+const SOCIAL_ALGORITHM_VERSION='vitriny-feed-v1';
+const SOCIAL_ALGORITHM_DESCRIPTION='Ranking por relevância, retenção, conclusão, repetição, afinidade, exploração e recência.';
+const SOCIAL_ALGORITHM_CONFIG=Object.freeze({engagementWeight:4,completionWeight:30,replayWeight:2,skipPenalty:22,
+  personalAffinity:18,explorationBoost:10,crossNetworkBoost:12,ageDecay:0.28});
+db.prepare(`INSERT INTO social_algorithm_versions(version,description,config_json,code_commit)
+  VALUES (?,?,?,?) ON CONFLICT(version) DO UPDATE SET description=excluded.description,config_json=excluded.config_json,retired_at=NULL`)
+  .run(SOCIAL_ALGORITHM_VERSION,SOCIAL_ALGORITHM_DESCRIPTION,JSON.stringify(SOCIAL_ALGORITHM_CONFIG),String(process.env.APP_COMMIT_SHA||''));
+db.prepare('UPDATE social_algorithm_versions SET retired_at=COALESCE(retired_at,CURRENT_TIMESTAMP) WHERE version<>?').run(SOCIAL_ALGORITHM_VERSION);
 ensureColumn('social_posts', 'moderation_status', "TEXT NOT NULL DEFAULT 'pending'");
 ensureColumn('social_posts', 'moderation_reason', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('social_posts', 'moderated_by', 'INTEGER');
@@ -5312,8 +5341,27 @@ app.get('/api/admin/social/intelligence/status', requireAdmin, (_req,res) => {
     title,evidence_json evidenceJson,status,review_note reviewNote,first_seen_at firstSeenAt,last_seen_at lastSeenAt,reviewed_at reviewedAt
     FROM social_intelligence_alerts ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END,
     CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,last_seen_at DESC LIMIT 100`).all().map(row=>({...row,evidence:JSON.parse(row.evidenceJson||'{}')}));
-  return res.json({engine:'vitriny-intelligence-v1',generatedAt:new Date().toISOString(),
-    internal,overview,daily,categories,growing,providers,newCreators,cities,alerts});
+  db.prepare(`INSERT INTO social_algorithm_metrics_daily
+    (version,metric_day,impressions,watch_ms,completions,skips,replays,clicks,conversions)
+    VALUES (?,date('now'),?,?,?,?,?,?,?) ON CONFLICT(version,metric_day) DO UPDATE SET
+      impressions=excluded.impressions,watch_ms=excluded.watch_ms,completions=excluded.completions,
+      skips=excluded.skips,replays=excluded.replays,clicks=excluded.clicks,conversions=excluded.conversions,captured_at=CURRENT_TIMESTAMP`)
+    .run(SOCIAL_ALGORITHM_VERSION,Number(internal.impressions||0),Number(internal.watchMs||0),Number(internal.completions||0),
+      Number(internal.skips||0),Number(internal.replays||0),Number(overview.clicks||0),Number(overview.conversions||0));
+  const versions=db.prepare(`SELECT v.version,v.description,v.config_json configJson,v.code_commit codeCommit,v.activated_at activatedAt,
+    v.retired_at retiredAt,COALESCE(SUM(m.impressions),0) impressions,COALESCE(SUM(m.watch_ms),0) watchMs,
+    COALESCE(SUM(m.completions),0) completions,COALESCE(SUM(m.skips),0) skips,COALESCE(SUM(m.replays),0) replays,
+    COALESCE(SUM(m.clicks),0) clicks,COALESCE(SUM(m.conversions),0) conversions,COUNT(m.metric_day) measuredDays
+    FROM social_algorithm_versions v LEFT JOIN social_algorithm_metrics_daily m ON m.version=v.version
+    GROUP BY v.version ORDER BY v.activated_at DESC`).all().map(row=>({...row,config:JSON.parse(row.configJson||'{}'),
+      retentionRate:Number(row.impressions?Math.min(1,Number(row.watchMs)/Number(row.impressions)/15000):0),
+      completionRate:Number(row.impressions?Number(row.completions)/Number(row.impressions):0),
+      skipRate:Number(row.impressions?Number(row.skips)/Number(row.impressions):0),
+      clickRate:Number(row.impressions?Number(row.clicks)/Number(row.impressions):0),
+      conversionRate:Number(row.clicks?Number(row.conversions)/Number(row.clicks):0)}));
+  return res.json({engine:SOCIAL_ALGORITHM_VERSION,generatedAt:new Date().toISOString(),
+    internal,overview,daily,categories,growing,providers,newCreators,cities,alerts,
+    algorithm:{currentVersion:SOCIAL_ALGORITHM_VERSION,description:SOCIAL_ALGORITHM_DESCRIPTION,config:SOCIAL_ALGORITHM_CONFIG,versions}});
 });
 
 app.patch('/api/admin/social/intelligence/alerts/:id',requireAdmin,sameOriginOnly,(req,res)=>{
