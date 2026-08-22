@@ -5213,12 +5213,16 @@ app.get('/api/admin/social/intelligence/status', requireAdmin, (_req,res) => {
     COALESCE(SUM(completions),0) completions,COALESCE(SUM(skips),0) skips,
     COALESCE(SUM(replays),0) replays,COALESCE(SUM(profile_clicks),0) profileClicks,
     COALESCE(SUM(cta_clicks),0) commercialClicks FROM social_engagement_events`).get();
+  const externalTotals=db.prepare(`SELECT COALESCE(SUM(clicks),0) clicks,COALESCE(SUM(conversions),0) conversions
+    FROM social_external_insights`).get();
   const impressions=Math.max(1,Number(internal.impressions||0));
   const overview={...internal,
     avgWatchSeconds:Number((Number(internal.watchMs||0)/impressions/1000).toFixed(2)),
     retentionRate:Number((Math.min(1,Number(internal.watchMs||0)/impressions/15000)).toFixed(4)),
     completionRate:Number((Number(internal.completions||0)/impressions).toFixed(4)),
-    skipRate:Number((Number(internal.skips||0)/impressions).toFixed(4))};
+    skipRate:Number((Number(internal.skips||0)/impressions).toFixed(4)),
+    clicks:Number(internal.profileClicks||0)+Number(internal.commercialClicks||0)+Number(externalTotals.clicks||0),
+    conversions:Number(externalTotals.conversions||0)};
   const daily=db.prepare(`SELECT event_day day,SUM(impressions) impressions,SUM(watch_ms) watchMs,
     SUM(completions) completions,SUM(skips) skips,SUM(replays) replays,SUM(cta_clicks) commercialClicks
     FROM social_engagement_events WHERE event_day>=date('now','-6 days')
@@ -5244,8 +5248,23 @@ app.get('/api/admin/social/intelligence/status', requireAdmin, (_req,res) => {
   const providers=db.prepare(`SELECT provider,COUNT(*) contents,COALESCE(SUM(views),0) views,
     COALESCE(SUM(clicks),0) clicks,COALESCE(SUM(conversions),0) conversions,
     MAX(updated_at) updatedAt FROM social_external_insights GROUP BY provider ORDER BY provider`).all();
+  const newCreators=db.prepare(`SELECT u.name,p.handle,p.city,p.created_at createdAt,
+    COUNT(DISTINCT post.id) contents,COALESCE(SUM(e.impressions),0) impressions,
+    (SELECT COUNT(*) FROM social_follows f WHERE f.followed_id=p.user_id) followers
+    FROM social_profiles p JOIN users u ON u.id=p.user_id
+    LEFT JOIN social_posts post ON post.user_id=p.user_id AND post.status='ready'
+    LEFT JOIN social_engagement_events e ON e.post_id=post.id
+    WHERE p.created_at>=datetime('now','-30 days') GROUP BY p.user_id
+    ORDER BY p.created_at DESC LIMIT 30`).all();
+  const cities=db.prepare(`SELECT TRIM(p.city) city,COUNT(DISTINCT p.id) contents,COUNT(DISTINCT p.user_id) creators,
+    COALESCE(SUM(e.impressions),0) impressions,COALESCE(SUM(e.profile_clicks+e.cta_clicks),0) clicks,
+    COALESCE(SUM(e.completions),0) completions
+    FROM social_posts p LEFT JOIN social_engagement_events e ON e.post_id=p.id
+    WHERE p.status='ready' AND TRIM(p.city)<>'' GROUP BY LOWER(TRIM(p.city))
+    ORDER BY impressions DESC,contents DESC LIMIT 30`).all().map(row=>({...row,
+      completionRate:Number(row.impressions?Number(row.completions)/Number(row.impressions):0)}));
   return res.json({engine:'vitriny-intelligence-v1',generatedAt:new Date().toISOString(),
-    internal,overview,daily,categories,growing,providers});
+    internal,overview,daily,categories,growing,providers,newCreators,cities});
 });
 
 app.post('/api/social/posts/:id/report', requireActiveSocialUser, sameOriginOnly, (req, res) => {

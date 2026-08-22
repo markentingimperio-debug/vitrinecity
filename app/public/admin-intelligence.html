@@ -16,6 +16,8 @@
 <section class="grid">
 <article class="panel"><h2>Categorias mais fortes</h2><div id="categories"></div></article>
 <article class="panel"><h2>Últimos 7 dias</h2><div id="daily"></div></article>
+<article class="panel wide"><h2>Novos criadores — últimos 30 dias</h2><div id="newCreators"></div></article>
+<article class="panel wide"><h2>Desempenho por cidade</h2><div id="cities"></div></article>
 <article class="panel wide"><h2>Conteúdos em crescimento</h2><div id="growing"></div></article>
 <article class="panel wide"><h2>Fontes externas agregadas</h2><div id="providers"></div></article>
 </section></main>
@@ -32,10 +34,13 @@ metric('Retenção média',pct(o.retentionRate),'good',nf.format(o.avgWatchSecon
 metric('Conclusão',pct(o.completionRate),'good',nf.format(o.completions||0)+' conclusões'),
 metric('Abandono',pct(o.skipRate),'bad',nf.format(o.skips||0)+' abandonos rápidos'),
 metric('Repetições',nf.format(o.replays||0),'warn','nova visualização'),
-metric('Cliques comerciais',nf.format(o.commercialClicks||0),'good',nf.format(o.profileClicks||0)+' visitas ao perfil')
+metric('Cliques',nf.format(o.clicks||0),'good',nf.format(o.commercialClicks||0)+' comerciais · '+nf.format(o.profileClicks||0)+' no perfil'),
+metric('Conversões',nf.format(o.conversions||0),'good','confirmações importadas das plataformas')
 ].join('');
 $('categories').innerHTML=bars(d.categories||[],r=>r.category,r=>Number(r.score||0));
 $('daily').innerHTML=bars(d.daily||[],r=>String(r.day||'').slice(5),r=>Number(r.impressions||0));
+$('newCreators').innerHTML=table(d.newCreators||[],[['Criador',r=>`<strong>${esc(r.name)}</strong><br><span class="muted">@${esc(r.handle)}</span>`],['Cidade',r=>esc(r.city||'—')],['Entrada',r=>new Date(r.createdAt+'Z').toLocaleDateString('pt-BR')],['Conteúdos',r=>nf.format(r.contents||0)],['Impressões',r=>nf.format(r.impressions||0)],['Seguidores',r=>nf.format(r.followers||0)]]);
+$('cities').innerHTML=table(d.cities||[],[['Cidade',r=>`<strong>${esc(r.city)}</strong>`],['Criadores',r=>nf.format(r.creators||0)],['Conteúdos',r=>nf.format(r.contents||0)],['Impressões',r=>nf.format(r.impressions||0)],['Cliques',r=>nf.format(r.clicks||0)],['Conclusão',r=>pct(r.completionRate)]]);
 $('growing').innerHTML=table(d.growing||[],[['Conteúdo',r=>`<strong>${esc(r.authorName||'Criador')}</strong><br><span class="muted">${esc((r.caption||'Sem legenda').slice(0,90))}</span>`],['Categoria',r=>esc(r.category)],['Agora',r=>nf.format(r.recentImpressions||0)],['Anterior',r=>nf.format(r.previousImpressions||0)],['Crescimento',r=>`<strong class="${Number(r.growthRate)>=0?'good':'bad'}">${Number(r.growthRate||0).toFixed(1)}%</strong>`]]);
 $('providers').innerHTML=table(d.providers||[],[['Rede',r=>esc(r.provider)],['Conteúdos',r=>nf.format(r.contents||0)],['Visualizações',r=>nf.format(r.views||0)],['Cliques',r=>nf.format(r.clicks||0)],['Conversões',r=>nf.format(r.conversions||0)],['Atualizado',r=>esc(r.updatedAt||'—')]]);
 $('status').textContent='Motor '+(d.engine||'Vitriny Intelligence')+' · atualizado em '+new Date(d.generatedAt).toLocaleString('pt-BR');
