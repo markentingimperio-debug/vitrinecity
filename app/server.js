@@ -1805,6 +1805,40 @@ app.get('/api/marketplace/products', (req, res) => {
   return res.json({ products });
 });
 
+function automaticMarketplaceShipping(products, quantities, postalCode) {
+  const postal=String(postalCode||'').replace(/\D/g,'');
+  if(postal.length!==8)throw new Error('postal_code_invalid');
+  const subtotalCents=products.reduce((sum,p)=>sum+p.price_cents*quantities.get(p.id),0);
+  const totalWeightGrams=products.reduce((sum,p)=>sum+Math.max(100,Number(p.weight_grams)||500)*quantities.get(p.id),0);
+  const freeThreshold=Math.max(0,Number(process.env.MARKETPLACE_FREE_SHIPPING_CENTS)||20000);
+  const baseCents=Math.max(0,Number(process.env.MARKETPLACE_SHIPPING_BASE_CENTS)||1190);
+  const extraPer500g=Math.max(0,Number(process.env.MARKETPLACE_SHIPPING_PER_500G_CENTS)||250);
+  const zoneMultipliers=[10000,10000,10800,10500,11500,12000,13500,12800,11200,11800];
+  const zone=Number(postal[0]),weightBlocks=Math.max(1,Math.ceil(totalWeightGrams/500));
+  const calculated=Math.round((baseCents+(weightBlocks-1)*extraPer500g)*(zoneMultipliers[zone]||12000)/10000);
+  const shippingCents=freeThreshold>0&&subtotalCents>=freeThreshold?0:calculated;
+  const productMin=Math.max(...products.map(p=>Math.max(1,Number(p.delivery_min_days)||3)));
+  const productMax=Math.max(...products.map(p=>Math.max(productMin,Number(p.delivery_max_days)||7)));
+  const zoneExtra=[0,0,1,1,2,2,4,3,2,2][zone]??3;
+  return {provider:'vitriny_table',service:'Entrega econômica',shippingCents,totalWeightGrams,
+    deliveryMinDays:productMin+zoneExtra,deliveryMaxDays:productMax+zoneExtra,
+    freeShipping:shippingCents===0,freeShippingThresholdCents:freeThreshold,postalCode:postal};
+}
+
+app.post('/api/marketplace/shipping/quote', sameOriginOnly, (req,res) => {
+  const requested=Array.isArray(req.body?.items)?req.body.items.slice(0,30):[];
+  const quantities=new Map();
+  for(const item of requested){const id=Number(item?.productId),quantity=Math.floor(Number(item?.quantity));
+    if(!Number.isInteger(id)||!Number.isInteger(quantity)||quantity<1||quantity>50)return res.status(400).json({error:'Quantidade inválida no carrinho.'});
+    quantities.set(id,Math.min(50,(quantities.get(id)||0)+quantity));}
+  if(!quantities.size)return res.status(400).json({error:'Adicione produtos para calcular o frete.'});
+  const ids=[...quantities.keys()],products=db.prepare(`SELECT p.* FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE p.id IN (${ids.map(()=>'?').join(',')}) AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND s.review_status='published'`).all(...ids);
+  if(products.length!==ids.length||products.some(p=>p.stock_quantity<quantities.get(p.id)))return res.status(409).json({error:'Revise a disponibilidade dos produtos.'});
+  if(products.some(p=>p.store_reference!==products[0].store_reference))return res.status(400).json({error:'Calcule o frete de uma loja por vez.'});
+  try{return res.json({quote:automaticMarketplaceShipping(products,quantities,req.body?.postalCode)});}catch{return res.status(400).json({error:'Informe um CEP válido com 8 números.'});}
+});
+
 app.get('/api/marketplace/orders', requireUser, (req, res) => {
   const orders = db.prepare(`SELECT o.*,s.business_name AS store_name
     FROM marketplace_orders o JOIN store_profiles s ON s.order_reference=o.store_reference
@@ -1844,7 +1878,10 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
   const unitCount = products.reduce((sum, product) => sum + quantities.get(product.id), 0);
   const platformPercentCents = Math.round(productsCents * MARKETPLACE_COMMISSION_BPS / 10000);
   const returnOperationCents = unitCount * MARKETPLACE_RETURN_OPERATION_CENTS;
-  const shippingCents = 0; // Cotação J&T será ativada quando a documentação técnica for recebida.
+  let shippingQuote;
+  try { shippingQuote=automaticMarketplaceShipping(products,quantities,address.postal_code); }
+  catch { return res.status(400).json({ error:'O CEP do endereço de entrega é inválido.' }); }
+  const shippingCents = shippingQuote.shippingCents;
   const totalCents = productsCents + shippingCents;
   const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
   if (!token || !process.env.MERCADOPAGO_WEBHOOK_SECRET) return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
@@ -1853,8 +1890,9 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
       body: JSON.stringify({
-        items: products.map(product => ({ id: String(product.id), title: product.name.slice(0, 120),
+        items: [...products.map(product => ({ id: String(product.id), title: product.name.slice(0, 120),
           quantity: quantities.get(product.id), currency_id: 'BRL', unit_price: product.price_cents / 100 })),
+          ...(shippingCents?[{id:'shipping',title:shippingQuote.service,quantity:1,currency_id:'BRL',unit_price:shippingCents/100}]:[])],
         payer: { name: req.user.name, email: req.user.email, address: { zip_code: address.postal_code,
           street_name: address.street, street_number: address.number } },
         external_reference: reference, notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
@@ -1881,7 +1919,7 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
       }
     });
     insertOrder();
-    return res.status(201).json({ reference, checkoutUrl: payment.init_point });
+    return res.status(201).json({ reference, checkoutUrl: payment.init_point, shipping:shippingQuote });
   } catch (error) {
     console.error('Marketplace checkout error', error?.message || 'unknown');
     return res.status(502).json({ error: 'Não foi possível conectar ao Mercado Pago agora.' });

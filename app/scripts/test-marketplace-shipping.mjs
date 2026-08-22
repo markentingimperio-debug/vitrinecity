@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8'),store=fs.readFileSync(new URL('../public/loja.html',import.meta.url),'utf8');
+assert.match(server,/function automaticMarketplaceShipping/);
+assert.match(server,/\/api\/marketplace\/shipping\/quote/);
+assert.match(server,/shippingCents = shippingQuote\.shippingCents/);
+assert.match(server,/totalCents = productsCents \+ shippingCents/);
+assert.match(server,/id:'shipping'/);
+assert.match(server,/MARKETPLACE_FREE_SHIPPING_CENTS/);
+assert.match(store,/id="postalCode"/);
+assert.match(store,/async function calculateShipping/);
+assert.match(store,/deliveryMinDays/);
+assert.match(store,/subtotal\+\(shippingQuote\?\.shippingCents\|\|0\)/);
+console.log('marketplace-shipping: ok');
