@@ -871,6 +871,25 @@ const MARKETPLACE_RETURN_PROVISION_CENTS = 50;
 const COMMISSION_HOLD_MS = 30 * 24 * 60 * 60 * 1000;
 const AFFILIATE_COOKIE = 'vc_ref';
 const AFFILIATE_COOKIE_AGE_SECONDS = 60 * 60 * 24 * 30;
+function adsCreditQuote(dailyCreditsValue,durationValue) {
+  const dailyCredits=Math.round(Number(dailyCreditsValue)*100)/100,durationDays=Math.round(Number(durationValue));
+  if(!Number.isFinite(dailyCredits)||dailyCredits<48||dailyCredits>48000)throw new Error('daily_credits_invalid');
+  if(!Number.isInteger(durationDays)||durationDays<1||durationDays>60)throw new Error('duration_invalid');
+  const requestedNetUnits=Math.round(dailyCredits*100)*durationDays;
+  const dailyBudgetCents=Math.round(dailyCredits/ADS_CREDITS_PER_REAL*100);
+  let amountCents=Math.max(ADS_MIN_TOPUP_CENTS,Math.ceil((requestedNetUnits/(1-ADS_MANAGEMENT_RATE))/ADS_CREDITS_PER_REAL));
+  let feeCents,mediaCents,grossCreditUnits,managementCreditUnits,netCreditUnits;
+  do{
+    feeCents=Math.round(amountCents*ADS_MANAGEMENT_RATE);mediaCents=amountCents-feeCents;
+    grossCreditUnits=Math.round(amountCents*ADS_CREDITS_PER_REAL);
+    managementCreditUnits=Math.round(grossCreditUnits*ADS_MANAGEMENT_RATE);netCreditUnits=grossCreditUnits-managementCreditUnits;
+    if(mediaCents>=dailyBudgetCents*durationDays&&netCreditUnits>=requestedNetUnits)break;amountCents++;
+  }while(amountCents<=ADS_MAX_TOPUP_CENTS);
+  if(amountCents>ADS_MAX_TOPUP_CENTS)throw new Error('amount_limit');
+  return {dailyCredits,durationDays,dailyBudgetCents,requestedNetUnits,amountCents,feeCents,mediaCents,
+    grossCreditUnits,managementCreditUnits,netCreditUnits,creditsPerReal:ADS_CREDITS_PER_REAL,managementRatePercent:ADS_MANAGEMENT_RATE*100,
+    validityDays:Math.round(CREDIT_VALIDITY_MS/(24*60*60*1000))};
+}
 const COURSES = Object.freeze({
   'geladinhos-gourmet': Object.freeze({
     slug: 'geladinhos-gourmet', title: 'Geladinhos Gourmet: produção e vendas',
@@ -3334,6 +3353,11 @@ app.post('/api/payments/mercadopago/pix', async (req, res) => {
   }
 });
 
+app.post('/api/credits/quote', requireUser, sameOriginOnly, (req,res) => {
+  try{return res.json({quote:adsCreditQuote(req.body?.dailyCredits,req.body?.durationDays)});}
+  catch(error){return res.status(400).json({error:error.message==='amount_limit'?'O planejamento ultrapassa o limite de recarga.':'Informe entre 48 e 48.000 Créditos Ads por dia e período de até 60 dias.'});}
+});
+
 app.post('/api/credits/checkout', requireUser, async (req, res) => {
   if (!process.env.MERCADOPAGO_ACCESS_TOKEN || !process.env.MERCADOPAGO_WEBHOOK_SECRET) {
     return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
@@ -3346,6 +3370,7 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   const amountCents = Math.round(Number(req.body?.amountCents));
   const dailyBudgetCents = Math.round(Number(req.body?.dailyBudgetCents));
   const durationDays = Math.round(Number(req.body?.durationDays));
+  const dailyCredits = Number(req.body?.dailyCredits);
   const objective = String(req.body?.objective || '');
   const destinationType = String(req.body?.destinationType || '');
   const destinationUrl = String(req.body?.destinationUrl || '').trim();
@@ -3363,6 +3388,11 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   }
   if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 60) {
     return res.status(400).json({ error: 'A duração deve ficar entre 1 e 60 dias.' });
+  }
+  let authoritativeQuote;
+  try{authoritativeQuote=adsCreditQuote(dailyCredits,durationDays);}catch{return res.status(400).json({error:'Recalcule o orçamento em Créditos Ads antes de pagar.'});}
+  if(amountCents!==authoritativeQuote.amountCents||dailyBudgetCents!==authoritativeQuote.dailyBudgetCents){
+    return res.status(409).json({error:'O resumo de pagamento mudou. Revise os valores antes de continuar.',quote:authoritativeQuote});
   }
   if (!['messages','visits','sales','followers'].includes(objective)) {
     return res.status(400).json({ error: 'Escolha um objetivo válido.' });
@@ -3384,16 +3414,16 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   if (!['http:','https:'].includes(parsedDestination.protocol)) {
     return res.status(400).json({ error: 'O destino deve usar um link HTTP ou HTTPS.' });
   }
-  const feeCents = Math.round(amountCents * ADS_MANAGEMENT_RATE);
-  const mediaCents = amountCents - feeCents;
+  const feeCents = authoritativeQuote.feeCents;
+  const mediaCents = authoritativeQuote.mediaCents;
   const requiredMediaCents = dailyBudgetCents * durationDays;
   if (requiredMediaCents > mediaCents) {
     const minimumTopupCents = Math.ceil(requiredMediaCents / (1 - ADS_MANAGEMENT_RATE));
     return res.status(400).json({ error: `Para este orçamento e período, faça uma recarga mínima de R$ ${(minimumTopupCents / 100).toFixed(2).replace('.', ',')}.` });
   }
-  const grossCredits = Math.round(amountCents * ADS_CREDITS_PER_REAL);
-  const managementCredits = Math.round(grossCredits * ADS_MANAGEMENT_RATE);
-  const netCredits = grossCredits - managementCredits;
+  const grossCredits = authoritativeQuote.grossCreditUnits;
+  const managementCredits = authoritativeQuote.managementCreditUnits;
+  const netCredits = authoritativeQuote.netCreditUnits;
   const reference = `ads_${randomUUID()}`;
   const createOrder = db.transaction(() => {
     db.prepare(`INSERT INTO credit_orders
