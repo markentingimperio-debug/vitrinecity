@@ -1094,7 +1094,7 @@ async function deliverLotConfirmation(reference) {
   }
   const order = db.prepare('SELECT * FROM lot_orders WHERE reference=?').get(reference);
   const lot = LOT_CATALOG[order.lot_code] || { label: order.lot_code, place: 'VitrineCity' };
-  const mapUrl = `${SITE_URL}/cidade-exploravel.html?lote=${encodeURIComponent(order.lot_code)}`;
+  const mapUrl = `${SITE_URL}/cidade?lote=${encodeURIComponent(order.lot_code)}`;
   const portalUrl = `${SITE_URL}/painel-lojista.html?ref=${encodeURIComponent(order.reference)}&token=${encodeURIComponent(storeManagementToken(order.reference))}`;
   const replyEmail = LOT_ADMIN_EMAIL || SMTP_USER;
   const customerText = `Olá, ${order.name}!\n\nPagamento aprovado e lote reservado na VitrineCity.\n\n` +
@@ -1247,6 +1247,15 @@ app.use('/uploads/social-media', express.static(socialMediaDir, { maxAge: '30d',
 app.use('/uploads/store-assets', express.static(path.join(dataDir, 'store-assets'), {
   immutable: true, maxAge: '30d', fallthrough: false
 }));
+const publicPage = file => (_req, res) => res.sendFile(path.join(dir, 'public', file));
+app.get('/social', publicPage('social.html'));
+app.get('/loja', publicPage('loja.html'));
+app.get('/descobrir', publicPage('descobrir-social.html'));
+app.get('/perfil', publicPage('perfil-social.html'));
+app.get('/cidade', publicPage('cidade-exploravel.html'));
+app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
+app.get('/cidade/praca-central', publicPage('praca-central.html'));
+app.get('/cidade/avenida-premium', publicPage('passeio-virtual.html'));
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
 
 app.get('/r/:code', (req, res) => {
@@ -1640,7 +1649,7 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
           street_name: address.street, street_number: address.number } },
         external_reference: reference, notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
         back_urls: { success: `${SITE_URL}/pedidos.html?resultado=sucesso`, pending: `${SITE_URL}/pedidos.html?resultado=pendente`,
-          failure: `${SITE_URL}/loja.html?resultado=falha` }, auto_return: 'approved', statement_descriptor: 'VITRINYCITY',
+          failure: `${SITE_URL}/loja?resultado=falha` }, auto_return: 'approved', statement_descriptor: 'VITRINYCITY',
         metadata: { product: 'marketplace_order', store_reference: storeReference }
       }), signal: AbortSignal.timeout(12000)
     });
@@ -3383,7 +3392,7 @@ app.get('/api/orders/:reference', async (req, res) => {
     status: order.status,
     businessName: order.business_name,
     segment: order.segment,
-    lot: { ...lot, mapUrl: `${SITE_URL}/cidade-exploravel.html?lote=${encodeURIComponent(order.lot_code || '')}` },
+    lot: { ...lot, mapUrl: `${SITE_URL}/cidade?lote=${encodeURIComponent(order.lot_code || '')}` },
     fulfillmentStatus: order.fulfillment_status,
     confirmationStatus: order.confirmation_status,
     billingType: order.billing_type,
@@ -4708,14 +4717,14 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     <script type="application/ld+json">${schema}</script>
     <style>:root{--blue:#1768e6;--yellow:#ffc628;--line:#263b5b}*{box-sizing:border-box}body{margin:0;background:#07101d;color:#f7faff;font-family:Inter,Arial,sans-serif}a{text-decoration:none;color:inherit}header{padding:17px max(18px,5vw);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.brand{font-size:24px;font-weight:950}.brand span{color:var(--yellow)}.back{padding:10px 13px;background:#15243c;border-radius:10px;font-weight:850}main{width:min(1060px,calc(100% - 32px));margin:42px auto;display:grid;grid-template-columns:minmax(280px,1fr) minmax(300px,1fr);gap:38px;align-items:center}.photo{width:100%;aspect-ratio:1;border-radius:24px;object-fit:cover;background:#14213a;border:1px solid var(--line)}.badge{color:var(--yellow);font-weight:900}.seller{color:#aebed3}h1{font-size:clamp(31px,5vw,58px);line-height:1.04;margin:12px 0}.description{color:#cad5e5;line-height:1.6}.price{font-size:35px;font-weight:950;margin:22px 0 5px}.stock{color:#9fe0b1}.actions{display:flex;gap:10px;margin-top:24px}.button,button{border:0;border-radius:12px;padding:14px 17px;background:var(--blue);color:#fff;font-weight:950;cursor:pointer}.alt{background:#17263e}.status{color:#ffd76c;margin-top:12px}@media(max-width:720px){main{grid-template-columns:1fr;margin-top:22px}.actions{display:grid}}</style>
     <script src="/analytics.js" defer></script></head><body>
-    <header><a class="brand" href="/loja.html">Vitriny <span>Loja</span></a><a class="back" href="/loja.html">← Voltar à loja</a></header>
+    <header><a class="brand" href="/loja">Vitriny <span>Loja</span></a><a class="back" href="/loja">← Voltar à loja</a></header>
     <main><img class="photo" src="${escapeHtml(productImagePath)}" onerror="this.onerror=null;this.src='/assets/store-seed/utilidades.svg'" alt="${escapeHtml(product.name)}">
     <section><div class="badge">${escapeHtml(product.category || 'Produto')}</div><a class="seller" href="${escapeHtml(storePath)}">Vendido por ${escapeHtml(product.store_name)}</a>
     <h1>${escapeHtml(product.name)}</h1><p class="description">${escapeHtml(description)}</p>
     <div class="price">${(product.price_cents / 100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</div>
     <div class="stock">${product.stock_quantity} unidades disponíveis</div>
-    <div class="actions"><button id="add">Adicionar ao carrinho</button><a class="button alt" href="/loja.html?q=${encodeURIComponent(product.name)}">Ver na loja</a></div><div class="status" id="status"></div></section></main>
-    <script>const product=${publicProduct};document.getElementById('add').onclick=()=>{let cart=[];try{cart=JSON.parse(localStorage.getItem('vc_shop_cart')||'[]')}catch{}if(cart.length&&cart[0].store_reference!==product.store_reference){document.getElementById('status').textContent='Finalize primeiro os produtos da outra loja.';return}const old=cart.find(item=>item.id===product.id);if(old)old.quantity=Math.min(product.stock_quantity,old.quantity+1);else cart.push({...product,quantity:1});localStorage.setItem('vc_shop_cart',JSON.stringify(cart));location.href='/loja.html?carrinho=1'};</script>
+    <div class="actions"><button id="add">Adicionar ao carrinho</button><a class="button alt" href="/loja?q=${encodeURIComponent(product.name)}">Ver na loja</a></div><div class="status" id="status"></div></section></main>
+    <script>const product=${publicProduct};document.getElementById('add').onclick=()=>{let cart=[];try{cart=JSON.parse(localStorage.getItem('vc_shop_cart')||'[]')}catch{}if(cart.length&&cart[0].store_reference!==product.store_reference){document.getElementById('status').textContent='Finalize primeiro os produtos da outra loja.';return}const old=cart.find(item=>item.id===product.id);if(old)old.quantity=Math.min(product.stock_quantity,old.quantity+1);else cart.push({...product,quantity:1});localStorage.setItem('vc_shop_cart',JSON.stringify(cart));location.href='/loja?carrinho=1'};</script>
     </body></html>`);
 });
 
@@ -4731,7 +4740,7 @@ app.get('/social/post/:id', (req,res) => {
   const esc=v=>String(v||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const title=esc(p.seo_title||p.caption||'Publicação na Vitriny Social'),description=esc(p.seo_description||p.caption||'Veja esta publicação na Vitriny Social');
   const origin=new URL(process.env.SITE_URL||'https://vitrinecity.com').origin,image=p.media_type==='image'?new URL(p.image_url,origin).toString():origin+'/assets/vitriny-city-master.jpg';
-  res.set('Cache-Control','public,max-age=60').send('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>'+title+'</title><meta name="description" content="'+description+'"><meta property="og:title" content="'+title+'"><meta property="og:description" content="'+description+'"><meta property="og:type" content="article"><meta property="og:image" content="'+esc(image)+'"><link rel="canonical" href="'+origin+'/social/post/'+encodeURIComponent(p.id)+'"></head><body style="font-family:Arial;max-width:680px;margin:40px auto;padding:20px"><h1>'+title+'</h1>'+(p.media_type==='image'?'<img src="'+esc(p.image_url)+'" style="max-width:100%;border-radius:18px">':'')+'<p>'+esc(p.caption)+'</p><p>Por @'+esc(p.handle)+'</p><a href="/social.html?post='+encodeURIComponent(p.id)+'">Abrir na Vitriny Social</a></body></html>');
+  res.set('Cache-Control','public,max-age=60').send('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>'+title+'</title><meta name="description" content="'+description+'"><meta property="og:title" content="'+title+'"><meta property="og:description" content="'+description+'"><meta property="og:type" content="article"><meta property="og:image" content="'+esc(image)+'"><link rel="canonical" href="'+origin+'/social/post/'+encodeURIComponent(p.id)+'"></head><body style="font-family:Arial;max-width:680px;margin:40px auto;padding:20px"><h1>'+title+'</h1>'+(p.media_type==='image'?'<img src="'+esc(p.image_url)+'" style="max-width:100%;border-radius:18px">':'')+'<p>'+esc(p.caption)+'</p><p>Por @'+esc(p.handle)+'</p><a href="/social?post='+encodeURIComponent(p.id)+'">Abrir na Vitriny Social</a></body></html>');
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
