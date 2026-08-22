@@ -1289,7 +1289,10 @@ app.use('/uploads/store-assets', express.static(path.join(dataDir, 'store-assets
 }));
 const publicPage = file => (_req, res) => res.sendFile(path.join(dir, 'public', file));
 const publicErrorPage = (res, status) => res.status(status).sendFile(path.join(dir, 'public', `${status}.html`));
-app.get('/social', publicPage('social.html'));
+app.get(['/social', '/social.html'], (_req, res) => {
+  const page = fs.readFileSync(path.join(dir, 'public', 'social.html'), 'utf8');
+  return res.type('html').send(page.replace('</body>', '<script src="/social-empty-states.js" defer></script></body>'));
+});
 app.get('/loja', publicPage('loja.html'));
 app.get('/descobrir', (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', 'descobrir-social.html'), 'utf8');

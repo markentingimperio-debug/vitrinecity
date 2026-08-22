@@ -18,11 +18,15 @@
   const storesSection = makeSection('Lojas', 'stores', 'discover-cards');
   const suggestionsSection = makeSection('Sugestões para você', 'profile-suggestions', 'discover-cards');
   peopleSection.before(citiesSection, categoriesSection, storesSection, suggestionsSection);
+  const resultState = document.createElement('div');
+  resultState.id = 'discover-result-state';
+  resultState.setAttribute('aria-live', 'polite');
+  document.getElementById('search').after(resultState);
   postsSection.querySelector('h2').textContent = 'Conteúdos populares';
   document.querySelector('#tags')?.closest('section')?.querySelector('h2')?.replaceChildren('Hashtags em alta');
 
   const style = document.createElement('style');
-  style.textContent = '.discover-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.discover-card{display:flex;align-items:center;gap:12px;min-height:78px;padding:14px;background:var(--panel);border:1px solid var(--line);border-radius:16px}.discover-card span{min-width:0}.discover-card b,.discover-card small{display:block;overflow:hidden;text-overflow:ellipsis}.discover-card small{color:var(--muted);margin-top:3px}@media(max-width:720px){.discover-cards{grid-template-columns:1fr}}';
+  style.textContent = '.discover-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.discover-card{display:flex;align-items:center;gap:12px;min-height:78px;padding:14px;background:var(--panel);border:1px solid var(--line);border-radius:16px}.discover-card span{min-width:0}.discover-card b,.discover-card small{display:block;overflow:hidden;text-overflow:ellipsis}.discover-card small{color:var(--muted);margin-top:3px}#discover-result-state{margin-top:12px;color:var(--muted)}#discover-result-state .no-results{padding:20px;border:1px dashed var(--line);border-radius:15px;text-align:center}#discover-result-state button{margin-top:10px}@media(max-width:720px){.discover-cards{grid-template-columns:1fr}}';
   document.head.append(style);
 
   async function enhance() {
@@ -33,6 +37,12 @@
     if (!response.ok) return;
     const data = await response.json();
     const suggestionData = suggestionsResponse.ok ? await suggestionsResponse.json() : { suggestions: [] };
+    const query = input.value.trim();
+    const resultCount = ['profiles', 'hashtags', 'cities', 'categories', 'stores', 'posts']
+      .reduce((total, key) => total + (data[key]?.length || 0), 0);
+    resultState.innerHTML = query && resultCount === 0
+      ? `<div class="no-results"><b>Nenhum resultado para “${escapeHtml(query)}”</b><br>Tente outro nome, cidade, categoria ou hashtag.<br><button class="btn" id="clear-discover-search" type="button">Limpar busca</button></div>`
+      : query ? `${resultCount} resultados encontrados para “${escapeHtml(query)}”.` : '';
     document.getElementById('cities').innerHTML = (data.cities || []).map(item =>
       `<a class="discover-card" href="${escapeHtml(item.url)}"><span class="avatar">⌖</span><span><b>${escapeHtml(item.city)}</b><small>${Number(item.count)} conteúdos e perfis</small></span></a>`
     ).join('') || '<div class="empty">Nenhuma cidade encontrada.</div>';
@@ -71,6 +81,13 @@
     const data = await response.json();
     if (response.ok && data.following) card.remove();
     else button.disabled = false;
+  });
+  resultState.addEventListener('click', event => {
+    if (!event.target.closest('#clear-discover-search')) return;
+    input.value = '';
+    history.replaceState(null, '', location.pathname);
+    document.getElementById('search').requestSubmit();
+    input.focus();
   });
   document.getElementById('search').addEventListener('submit', () => setTimeout(enhance, 0));
   document.getElementById('tags').addEventListener('click', () => setTimeout(enhance, 0));
