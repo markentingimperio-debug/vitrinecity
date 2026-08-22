@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node scripts/test-marketplace-public.mjs && node scripts/test-product-purchase-details.mjs && node scripts/test-social-accessibility.mjs && node scripts/test-social-moderation.mjs && node scripts/test-social-chat-auth.mjs && node scripts/test-social-realtime.mjs"
+    "test": "node scripts/test-marketplace-public.mjs && node scripts/test-product-purchase-details.mjs && node scripts/test-marketplace-shipping.mjs && node scripts/test-social-accessibility.mjs && node scripts/test-social-moderation.mjs && node scripts/test-social-chat-auth.mjs && node scripts/test-social-realtime.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.0.0",
