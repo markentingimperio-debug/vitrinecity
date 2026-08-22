@@ -4206,7 +4206,6 @@ app.get('/api/orders/:reference', async (req, res) => {
     confirmationStatus: order.confirmation_status,
     billingType: order.billing_type,
     planCode: order.plan_code,
-    manageToken: order.status === 'approved' ? storeManagementToken(order.reference) : '',
     created_at: order.created_at,
     updated_at: order.updated_at
   });
