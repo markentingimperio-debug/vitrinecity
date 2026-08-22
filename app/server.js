@@ -831,6 +831,16 @@ CREATE TABLE IF NOT EXISTS marketplace_payment_reconciliation (
   last_event_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_marketplace_reconciliation_status ON marketplace_payment_reconciliation(reconciliation_status,updated_at DESC);`);
+db.exec(`CREATE TABLE IF NOT EXISTS marketplace_seller_profiles (
+  store_reference TEXT PRIMARY KEY REFERENCES store_profiles(order_reference) ON DELETE CASCADE,
+  seller_type TEXT NOT NULL CHECK(seller_type IN ('cpf','cnpj')), legal_name TEXT NOT NULL,
+  trade_name TEXT NOT NULL DEFAULT '', tax_id_hash TEXT NOT NULL, tax_id_last4 TEXT NOT NULL,
+  compliance_status TEXT NOT NULL DEFAULT 'pending' CHECK(compliance_status IN ('pending','verified','rejected')),
+  declarations_version TEXT NOT NULL, declared_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  reviewed_at TEXT, review_note TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_marketplace_seller_compliance ON marketplace_seller_profiles(compliance_status,updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_marketplace_seller_tax_hash ON marketplace_seller_profiles(tax_id_hash);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -1163,6 +1173,29 @@ function safeExternalUrl(value, max = 500) {
     const parsed = new URL(text);
     return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : '';
   } catch { return ''; }
+}
+
+function validCpf(value) {
+  const digits=String(value||'').replace(/\D/g,'');if(digits.length!==11||/^(\d)\1{10}$/.test(digits))return false;
+  const check=length=>{let sum=0;for(let i=0;i<length;i++)sum+=Number(digits[i])*(length+1-i);const remainder=(sum*10)%11;return (remainder===10?0:remainder)===Number(digits[length]);};
+  return check(9)&&check(10);
+}
+
+function validCnpj(value) {
+  const digits=String(value||'').replace(/\D/g,'');if(digits.length!==14||/^(\d)\1{13}$/.test(digits))return false;
+  const digit=base=>{let factor=base.length-7,sum=0;for(const number of base){sum+=Number(number)*factor--;if(factor<2)factor=9;}const remainder=sum%11;return remainder<2?0:11-remainder;};
+  const first=digit(digits.slice(0,12)),second=digit(digits.slice(0,12)+first);return digits.endsWith(`${first}${second}`);
+}
+
+function sellerTaxFingerprint(value) {
+  if(!managementSecret())throw new Error('seller_data_secret_missing');
+  return createHmac('sha256',managementSecret()).update('seller-tax:'+String(value).replace(/\D/g,'')).digest('hex');
+}
+
+function publicSellerProfile(row) {
+  if(!row)return null;return {sellerType:row.seller_type,legalName:row.legal_name,tradeName:row.trade_name||'',
+    taxIdMasked:row.seller_type==='cpf'?`***.***.***-${row.tax_id_last4.slice(-2)}`:`**.***.***/****-${row.tax_id_last4.slice(-2)}`,
+    complianceStatus:row.compliance_status,declaredAt:row.declared_at,reviewedAt:row.reviewed_at,reviewNote:row.review_note||''};
 }
 
 function safePublicUrl(value, origin, fallback = '') {
@@ -3787,6 +3820,8 @@ app.get('/api/store-portal/:reference', (req, res) => {
 app.get('/api/store-portal/:reference/mercadopago/connect', (req,res) => {
   const access=storePortalAccess(req,res);if(!access)return;
   if(!marketplaceOAuthConfigured())return res.status(503).send('A aplicação Marketplace do Mercado Pago ainda não está configurada.');
+  const sellerProfile=db.prepare("SELECT compliance_status FROM marketplace_seller_profiles WHERE store_reference=?").get(access.order.reference);
+  if(sellerProfile?.compliance_status!=='verified')return res.status(409).send('O cadastro CPF/CNPJ precisa ser verificado antes de conectar os recebimentos.');
   const redirectUri=SITE_URL+'/api/marketplace/mercadopago/callback';
   const authorization=new URL('https://auth.mercadopago.com.br/authorization');
   authorization.searchParams.set('client_id',String(process.env.MERCADOPAGO_MARKETPLACE_CLIENT_ID));
@@ -3835,10 +3870,33 @@ app.get('/api/store-portal/:reference/marketplace', (req, res) => {
     payoutStatus:['cancelled','cancel_requested'].includes(order.fulfillment_status)?'blocked':order.payment_status==='approved'?'scheduled':'not_eligible'}));
   const sellerAccount=db.prepare(`SELECT provider_user_id,status,expires_at,connected_at,updated_at
     FROM marketplace_seller_accounts WHERE store_reference=?`).get(access.order.reference)||null;
-  return res.json({ products, orders:decorated, returns, paymentSplit:{configured:marketplaceOAuthConfigured(),account:sellerAccount}, fees: {
+  const sellerProfile=publicSellerProfile(db.prepare('SELECT * FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference));
+  return res.json({ products, orders:decorated, returns, sellerProfile,paymentSplit:{configured:marketplaceOAuthConfigured(),account:sellerAccount}, fees: {
     percent: MARKETPLACE_COMMISSION_BPS / 100, fixedCents: MARKETPLACE_FIXED_FEE_CENTS,
     returnProvisionPerOrderCents: MARKETPLACE_RETURN_PROVISION_CENTS
   } });
+});
+
+app.put('/api/store-portal/:reference/seller-profile', sameOriginOnly, (req,res) => {
+  const access=storePortalAccess(req,res);if(!access)return;
+  const sellerType=String(req.body?.sellerType||'').toLowerCase(),taxId=String(req.body?.taxId||'').replace(/\D/g,''),
+    legalName=String(req.body?.legalName||'').trim().slice(0,160),tradeName=String(req.body?.tradeName||'').trim().slice(0,160);
+  if(!['cpf','cnpj'].includes(sellerType))return res.status(400).json({error:'Escolha vendedor CPF ou CNPJ.'});
+  if(legalName.length<3)return res.status(400).json({error:'Informe o nome civil ou a razão social.'});
+  if((sellerType==='cpf'&&!validCpf(taxId))||(sellerType==='cnpj'&&!validCnpj(taxId)))return res.status(400).json({error:`${sellerType.toUpperCase()} inválido.`});
+  if(req.body?.termsAccepted!==true)return res.status(400).json({error:'Aceite as regras do marketplace.'});
+  if(sellerType==='cpf'&&req.body?.adultConfirmed!==true)return res.status(400).json({error:'O vendedor CPF precisa declarar que possui 18 anos ou mais.'});
+  if(sellerType==='cnpj'&&req.body?.authorityConfirmed!==true)return res.status(400).json({error:'Confirme que você pode representar legalmente o CNPJ.'});
+  let fingerprint;try{fingerprint=sellerTaxFingerprint(taxId)}catch{return res.status(503).json({error:'A proteção do cadastro fiscal ainda não está configurada.'});}
+  db.prepare(`INSERT INTO marketplace_seller_profiles
+    (store_reference,seller_type,legal_name,trade_name,tax_id_hash,tax_id_last4,compliance_status,declarations_version,declared_at,reviewed_at,review_note,updated_at)
+    VALUES (?,?,?,?,?,?,'pending','2026-08-22',CURRENT_TIMESTAMP,NULL,'',CURRENT_TIMESTAMP)
+    ON CONFLICT(store_reference) DO UPDATE SET seller_type=excluded.seller_type,legal_name=excluded.legal_name,
+      trade_name=excluded.trade_name,tax_id_hash=excluded.tax_id_hash,tax_id_last4=excluded.tax_id_last4,
+      compliance_status='pending',declarations_version=excluded.declarations_version,declared_at=CURRENT_TIMESTAMP,
+      reviewed_at=NULL,review_note='',updated_at=CURRENT_TIMESTAMP`)
+    .run(access.order.reference,sellerType,legalName,tradeName,fingerprint,taxId.slice(-4));
+  return res.json({ok:true,message:'Cadastro enviado para verificação.',sellerProfile:publicSellerProfile(db.prepare('SELECT * FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference))});
 });
 
 app.post('/api/store-portal/:reference/products', sameOriginOnly, (req, res) => {
@@ -4036,6 +4094,26 @@ app.get('/api/admin/marketplace/reconciliation', requireAdmin, (req,res) => {
     JOIN store_profiles s ON s.order_reference=o.store_reference
     WHERE (?='' OR r.reconciliation_status=?) ORDER BY r.updated_at DESC LIMIT 300`).all(status,status);
   return res.json({reconciliation:rows});
+});
+
+app.get('/api/admin/marketplace/sellers', requireAdmin, (req,res) => {
+  const status=String(req.query.status||'').trim(),allowed=new Set(['pending','verified','rejected']);
+  if(status&&!allowed.has(status))return res.status(400).json({error:'Status cadastral inválido.'});
+  const rows=db.prepare(`SELECT p.store_reference,p.seller_type,p.legal_name,p.trade_name,p.tax_id_last4,
+    p.compliance_status,p.declared_at,p.reviewed_at,p.review_note,s.business_name
+    FROM marketplace_seller_profiles p JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE (?='' OR p.compliance_status=?) ORDER BY p.updated_at DESC LIMIT 300`).all(status,status);
+  return res.json({sellers:rows.map(row=>({...row,tax_id_masked:row.seller_type==='cpf'?`***.***.***-${row.tax_id_last4.slice(-2)}`:`**.***.***/****-${row.tax_id_last4.slice(-2)}`,tax_id_last4:undefined}))});
+});
+
+app.patch('/api/admin/marketplace/sellers/:reference', requireAdmin, sameOriginOnly, (req,res) => {
+  const action=String(req.body?.action||''),status={verify:'verified',reject:'rejected'}[action];
+  if(!status)return res.status(400).json({error:'Ação cadastral inválida.'});
+  const note=String(req.body?.note||'').trim().slice(0,600);
+  const result=db.prepare(`UPDATE marketplace_seller_profiles SET compliance_status=?,review_note=?,reviewed_at=CURRENT_TIMESTAMP,
+    updated_at=CURRENT_TIMESTAMP WHERE store_reference=?`).run(status,note,req.params.reference);
+  if(!result.changes)return res.status(404).json({error:'Cadastro de vendedor não encontrado.'});
+  return res.json({ok:true,status});
 });
 
 app.patch('/api/admin/store-submissions/:reference', requireAdmin, async (req, res) => {
