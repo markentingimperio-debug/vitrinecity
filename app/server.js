@@ -805,6 +805,20 @@ CREATE TABLE IF NOT EXISTS marketplace_order_items (
 CREATE INDEX IF NOT EXISTS idx_marketplace_orders_buyer ON marketplace_orders(buyer_user_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_orders_store ON marketplace_orders(store_reference,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_items_order ON marketplace_order_items(order_reference,id);`);
+ensureColumn('marketplace_orders','ad_campaign_id','INTEGER');
+ensureColumn('marketplace_orders','ad_event_token','TEXT');
+db.exec(`CREATE TABLE IF NOT EXISTS ad_campaign_conversions (
+  id INTEGER PRIMARY KEY,
+  campaign_id INTEGER NOT NULL REFERENCES ad_campaigns(id) ON DELETE CASCADE,
+  order_reference TEXT NOT NULL UNIQUE,
+  event_token TEXT NOT NULL DEFAULT '',
+  conversion_type TEXT NOT NULL DEFAULT 'purchase',
+  value_cents INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'approved',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ad_campaign_conversions_report ON ad_campaign_conversions(campaign_id,status,created_at);`);
 db.exec(`CREATE TABLE IF NOT EXISTS marketplace_returns (
   id INTEGER PRIMARY KEY,
   order_reference TEXT NOT NULL REFERENCES marketplace_orders(reference) ON DELETE CASCADE,
@@ -1789,6 +1803,23 @@ function adVisitorKey(req) {
   return createHash('sha256').update(`${day}|${req.ip}|${String(req.get('user-agent') || '').slice(0, 240)}`).digest('hex').slice(0, 32);
 }
 
+function adAttributionCookie(campaignId,eventToken){
+  const payload=Buffer.from(JSON.stringify({campaignId,eventToken,issuedAt:Date.now()})).toString('base64url');
+  return `${payload}.${createHmac('sha256',managementSecret()).update(`ad:${payload}`).digest('base64url')}`;
+}
+
+function readAdAttribution(req){
+  const [payload,signature]=String(parseCookies(req).vc_ad_attr||'').split('.');
+  if(!payload||!signature||!managementSecret())return null;
+  const expected=createHmac('sha256',managementSecret()).update(`ad:${payload}`).digest('base64url');
+  if(expected.length!==signature.length||!timingSafeEqual(Buffer.from(expected),Buffer.from(signature)))return null;
+  try{const data=JSON.parse(Buffer.from(payload,'base64url').toString('utf8'));
+    if(!Number.isInteger(Number(data.campaignId))||!data.eventToken||Date.now()-Number(data.issuedAt)>30*24*60*60*1000)return null;
+    const click=db.prepare("SELECT 1 FROM ad_delivery_events WHERE campaign_id=? AND event_token=? AND event_type='click'").get(Number(data.campaignId),String(data.eventToken));
+    return click?{campaignId:Number(data.campaignId),eventToken:String(data.eventToken)}:null;
+  }catch{return null;}
+}
+
 function normalizedAdTerms(value) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
     .split(/[^a-z0-9]+/).filter(term => term.length > 1).slice(0, 20);
@@ -1863,6 +1894,7 @@ app.get('/api/ads/:id/click', (req, res) => {
   } catch (_) {
     db.prepare("UPDATE ad_campaigns SET status='paused',admin_notes='Pausada automaticamente por saldo insuficiente.',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
   }
+  res.cookie('vc_ad_attr',adAttributionCookie(id,token),{httpOnly:true,sameSite:'lax',secure:SITE_URL.startsWith('https://'),maxAge:30*24*60*60*1000,path:'/'});
   return res.redirect(302, impression.destination_url);
 });
 
@@ -2051,6 +2083,7 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
   }
   if (!token || !process.env.MERCADOPAGO_WEBHOOK_SECRET) return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
   const reference = `shop_${randomUUID()}`;
+  const adAttribution=readAdAttribution(req);
   try {
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST', headers: { ...mpHeaders(token), 'X-Idempotency-Key': reference },
@@ -2073,9 +2106,10 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
     const insertOrder = db.transaction(() => {
       db.prepare(`INSERT INTO marketplace_orders
         (reference,buyer_user_id,store_reference,address_id,products_cents,shipping_cents,platform_percent_cents,
-         platform_fixed_cents,return_operation_cents,total_cents,mp_preference_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(reference, req.user.id, storeReference, address.id, productsCents,
-        shippingCents, platformPercentCents, MARKETPLACE_FIXED_FEE_CENTS, returnOperationCents, totalCents, payment.id);
+         platform_fixed_cents,return_operation_cents,total_cents,mp_preference_id,ad_campaign_id,ad_event_token)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(reference, req.user.id, storeReference, address.id, productsCents,
+        shippingCents, platformPercentCents, MARKETPLACE_FIXED_FEE_CENTS, returnOperationCents, totalCents, payment.id,
+        adAttribution?.campaignId||null,adAttribution?.eventToken||null);
       const insertItem = db.prepare(`INSERT INTO marketplace_order_items
         (order_reference,product_id,product_name,sku,quantity,unit_price_cents,subtotal_cents,platform_percent_cents,return_operation_cents)
         VALUES (?,?,?,?,?,?,?,?,?)`);
@@ -2357,13 +2391,22 @@ app.get('/api/ads/campaigns', requireUser, (req, res) => {
     image_url,keywords,category,target_city,target_audience,reach_km,starts_on,placement,created_at,updated_at,
     (SELECT COUNT(*) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='impression') impressions,
     (SELECT COUNT(*) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='click') clicks,
-    (SELECT COALESCE(SUM(cost_units),0) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='click') spent_units
+    (SELECT COUNT(DISTINCT visitor_key) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='impression') reach,
+    (SELECT COALESCE(SUM(cost_units),0) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='click') spent_units,
+    (SELECT COUNT(*) FROM ad_campaign_conversions c WHERE c.campaign_id=ad_campaigns.id AND c.status='approved') conversions,
+    (SELECT COALESCE(SUM(value_cents),0) FROM ad_campaign_conversions c WHERE c.campaign_id=ad_campaigns.id AND c.status='approved') sales_cents
     FROM ad_campaigns WHERE user_id=? ORDER BY id DESC LIMIT 30`).all(req.user.id);
   return res.json({ campaigns: campaigns.map(item => ({
     ...item,
     objectiveLabel: objectiveLabels[item.objective] || item.objective,
     destinationLabel: destinationLabels[item.destination_type] || item.destination_type,
-    statusLabel: statusLabels[item.status] || item.status
+    statusLabel: statusLabels[item.status] || item.status,
+    ctrPercent:item.impressions?Math.round(item.clicks/item.impressions*10000)/100:0,
+    spentCredits:Number(item.spent_units||0)/100,
+    spentCents:Math.round(Number(item.spent_units||0)/9.6),
+    conversionRatePercent:item.clicks?Math.round(item.conversions/item.clicks*10000)/100:0,
+    roas:Number(item.spent_units||0)>0?Math.round(Number(item.sales_cents||0)/(Number(item.spent_units)/9.6)*100)/100:0,
+    returnPercent:Number(item.spent_units||0)>0?Math.round((Number(item.sales_cents||0)-Number(item.spent_units)/9.6)/(Number(item.spent_units)/9.6)*10000)/100:0
   })) });
 });
 
@@ -3742,6 +3785,13 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
           reconciliation_status=?,last_event_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
           .run(String(payment.id),amountCents,status,reversed?'reversed':status==='approved'?'matched':'pending',reference);
       })();
+      if(order.ad_campaign_id){
+        if(status==='approved')db.prepare(`INSERT INTO ad_campaign_conversions
+          (campaign_id,order_reference,event_token,conversion_type,value_cents,status) VALUES (?,?,?,'purchase',?,'approved')
+          ON CONFLICT(order_reference) DO UPDATE SET value_cents=excluded.value_cents,status='approved',updated_at=CURRENT_TIMESTAMP`)
+          .run(order.ad_campaign_id,reference,order.ad_event_token||'',order.products_cents);
+        else if(reversed)db.prepare("UPDATE ad_campaign_conversions SET status='reversed',updated_at=CURRENT_TIMESTAMP WHERE order_reference=?").run(reference);
+      }
       if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'marketplace', order.total_cents);
       return res.sendStatus(200);
     }
