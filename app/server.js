@@ -1291,7 +1291,10 @@ const publicPage = file => (_req, res) => res.sendFile(path.join(dir, 'public', 
 const publicErrorPage = (res, status) => res.status(status).sendFile(path.join(dir, 'public', `${status}.html`));
 app.get('/social', publicPage('social.html'));
 app.get('/loja', publicPage('loja.html'));
-app.get('/descobrir', publicPage('descobrir-social.html'));
+app.get('/descobrir', (_req, res) => {
+  const page = fs.readFileSync(path.join(dir, 'public', 'descobrir-social.html'), 'utf8');
+  return res.type('html').send(page.replace('</body>', '<script src="/discover-enhancements.js" defer></script></body>'));
+});
 app.get('/perfil', publicPage('perfil-social.html'));
 app.get('/cidade', publicPage('cidade-exploravel.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
@@ -4022,15 +4025,38 @@ app.get('/api/social/discover', (req,res) => {
         OR (b.blocker_id=sp.user_id AND b.blocked_id=?))
     ORDER BY followers DESC,sp.updated_at DESC LIMIT 24`).all(q,q,q,q,viewerId,viewerId);
   const rows=db.prepare(`SELECT p.id,p.caption,p.category,p.city,p.media_type mediaType,p.image_url imageUrl,p.video_uid videoUid,
-      p.created_at createdAt,u.name,sp.handle,sp.avatar_url avatarUrl
+      p.created_at createdAt,u.name,sp.handle,sp.avatar_url avatarUrl,
+      (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) likes,
+      (SELECT COUNT(*) FROM social_comments c WHERE c.post_id=p.id AND c.status='published') comments,
+      (SELECT COUNT(*) FROM social_post_views v WHERE v.post_id=p.id) views,
+      (SELECT COUNT(*) FROM social_saves s WHERE s.post_id=p.id) saves,
+      (SELECT COUNT(*) FROM social_shares h WHERE h.post_id=p.id) shares
     FROM social_posts p JOIN users u ON u.id=p.user_id LEFT JOIN social_profiles sp ON sp.user_id=p.user_id
     WHERE p.status='ready' AND (?='' OR lower(p.caption) LIKE '%'||?||'%' OR lower(p.category) LIKE '%'||?||'%' OR lower(p.city) LIKE '%'||?||'%')
       AND NOT EXISTS(SELECT 1 FROM social_blocks b WHERE (b.blocker_id=? AND b.blocked_id=p.user_id)
-        OR (b.blocker_id=p.user_id AND b.blocked_id=?)) ORDER BY p.created_at DESC LIMIT 36`).all(q,q,q,q,viewerId,viewerId);
+        OR (b.blocker_id=p.user_id AND b.blocked_id=?))
+    ORDER BY (likes*4 + comments*6 + saves*5 + shares*7 + MIN(views,100)*0.1) DESC,p.created_at DESC LIMIT 36`).all(q,q,q,q,viewerId,viewerId);
   const captions=db.prepare("SELECT caption FROM social_posts WHERE status='ready' ORDER BY created_at DESC LIMIT 500").all();
   const tags=new Map();for(const row of captions)for(const match of String(row.caption||'').toLowerCase().matchAll(/#([a-z0-9_à-ÿ]{2,40})/g))tags.set(match[1],(tags.get(match[1])||0)+1);
   const hashtags=[...tags].sort((a,b)=>b[1]-a[1]).slice(0,20).map(([tag,count])=>({tag,count}));
-  return res.json({profiles,hashtags,posts:rows.map(p=>({...p,playerUrl:p.mediaType==='video'?`https://iframe.videodelivery.net/${encodeURIComponent(p.videoUid)}?muted=true&controls=true`:'',author:{name:p.name,handle:p.handle||'usuario',avatarUrl:p.avatarUrl||''}}))});
+  const cities=db.prepare(`SELECT city,COUNT(*) count FROM (
+      SELECT TRIM(city) city FROM social_posts WHERE status='ready' AND TRIM(city)<>''
+      UNION ALL SELECT TRIM(city) city FROM social_profiles WHERE TRIM(city)<>''
+    ) WHERE (?='' OR lower(city) LIKE '%'||?||'%') GROUP BY lower(city) ORDER BY count DESC,city LIMIT 16`).all(q,q)
+    .map(row=>({...row,url:`/cidade/${marketplaceSlug(row.city,'cidade')}`}));
+  const categories=db.prepare(`SELECT category,COUNT(*) count FROM social_posts
+    WHERE status='ready' AND TRIM(category)<>'' AND (?='' OR lower(category) LIKE '%'||?||'%')
+    GROUP BY lower(category) ORDER BY count DESC,category LIMIT 16`).all(q,q);
+  const stores=db.prepare(`SELECT p.order_reference reference,p.business_name name,p.logo_url logoUrl,
+      p.description,o.segment category FROM store_profiles p JOIN lot_orders o ON o.reference=p.order_reference
+    WHERE p.review_status='published' AND (?='' OR lower(p.business_name) LIKE '%'||?||'%'
+      OR lower(p.description) LIKE '%'||?||'%' OR lower(o.segment) LIKE '%'||?||'%')
+    ORDER BY p.published_at DESC,p.business_name LIMIT 16`).all(q,q,q,q)
+    .map(store=>({...store,url:publicStorePath({order_reference:store.reference,business_name:store.name})}));
+  return res.json({profiles,hashtags,cities,categories,stores,posts:rows.map(p=>({...p,
+    engagement:Number(p.likes||0)+Number(p.comments||0)+Number(p.saves||0)+Number(p.shares||0),
+    playerUrl:p.mediaType==='video'?`https://iframe.videodelivery.net/${encodeURIComponent(p.videoUid)}?muted=true&controls=true`:'',
+    author:{name:p.name,handle:p.handle||'usuario',avatarUrl:p.avatarUrl||''}}))});
 });
 
 app.get('/api/social/feed', (req, res) => {
