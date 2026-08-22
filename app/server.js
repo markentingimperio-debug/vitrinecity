@@ -3987,6 +3987,10 @@ function socialVisitorKey(req) {
 }
 
 function socialPost(row, viewerId) {
+  const reach = Number(row.reach_count ?? row.views_count ?? 0);
+  const views = Math.max(reach, Number(row.intelligence_impressions || 0));
+  const interactions = Number(row.likes_count || 0) + Number(row.comments_count || 0) +
+    Number(row.saves_count || 0) + Number(row.reposts_count || 0) + Number(row.shares_count || 0);
   return {
     id: row.id,
     videoUid: row.media_type === 'video' ? row.video_uid : '',
@@ -4003,7 +4007,10 @@ function socialPost(row, viewerId) {
     author: { id: row.user_id, name: row.author_name, handle: row.handle, avatarUrl: row.avatar_url || '' },
     likes: Number(row.likes_count || 0),
     comments: Number(row.comments_count || 0),
-    views: Number(row.views_count || 0),
+    views,
+    reach,
+    interactions,
+    engagementRate: reach ? Number(((interactions / reach) * 100).toFixed(1)) : 0,
     saves: Number(row.saves_count || 0),
     reposts: Number(row.reposts_count || 0),
     shares: Number(row.shares_count || 0),
@@ -4100,6 +4107,8 @@ app.get('/api/social/feed', (req, res) => {
       (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) likes_count,
       (SELECT COUNT(*) FROM social_comments c WHERE c.post_id=p.id AND c.status='published') comments_count,
       (SELECT COUNT(*) FROM social_post_views v WHERE v.post_id=p.id) views_count,
+      MAX((SELECT COUNT(DISTINCT e.actor_key) FROM social_engagement_events e WHERE e.post_id=p.id),
+        (SELECT COUNT(DISTINCT v.visitor_key) FROM social_post_views v WHERE v.post_id=p.id)) reach_count,
       (SELECT COUNT(*) FROM social_saves s WHERE s.post_id=p.id) saves_count,
       (SELECT COUNT(*) FROM social_reposts r WHERE r.post_id=p.id) reposts_count,
       (SELECT COUNT(*) FROM social_shares h WHERE h.post_id=p.id) shares_count,
@@ -4191,6 +4200,9 @@ app.get('/api/social/profile/:handle', (req, res) => {
       (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) likes_count,
       (SELECT COUNT(*) FROM social_comments c WHERE c.post_id=p.id AND c.status='published') comments_count,
       (SELECT COUNT(*) FROM social_post_views v WHERE v.post_id=p.id) views_count,
+      MAX((SELECT COUNT(DISTINCT e.actor_key) FROM social_engagement_events e WHERE e.post_id=p.id),
+        (SELECT COUNT(DISTINCT v.visitor_key) FROM social_post_views v WHERE v.post_id=p.id)) reach_count,
+      COALESCE((SELECT SUM(e.impressions) FROM social_engagement_events e WHERE e.post_id=p.id),0) intelligence_impressions,
       (SELECT COUNT(*) FROM social_saves s WHERE s.post_id=p.id) saves_count,
       (SELECT COUNT(*) FROM social_reposts r WHERE r.post_id=p.id) reposts_count,
       (SELECT COUNT(*) FROM social_shares h WHERE h.post_id=p.id) shares_count,
@@ -4216,14 +4228,26 @@ app.get('/api/social/posts/me', requireUser, (req, res) => {
   const items = db.prepare(`SELECT p.*,
       (SELECT COUNT(*) FROM social_likes WHERE post_id=p.id) likes,
       (SELECT COUNT(*) FROM social_comments WHERE post_id=p.id AND status='published') comments,
-      (SELECT COUNT(*) FROM social_post_views WHERE post_id=p.id) views,
+      (SELECT COUNT(*) FROM social_saves WHERE post_id=p.id) saves,
+      (SELECT COUNT(*) FROM social_reposts WHERE post_id=p.id) reposts,
+      (SELECT COUNT(*) FROM social_shares WHERE post_id=p.id) shares,
+      MAX((SELECT COUNT(DISTINCT actor_key) FROM social_engagement_events WHERE post_id=p.id),
+        (SELECT COUNT(DISTINCT visitor_key) FROM social_post_views WHERE post_id=p.id)) reach,
+      COALESCE((SELECT SUM(impressions) FROM social_engagement_events WHERE post_id=p.id),0) views,
+      COALESCE((SELECT SUM(watch_ms) FROM social_engagement_events WHERE post_id=p.id),0) watchMs,
+      COALESCE((SELECT SUM(completions) FROM social_engagement_events WHERE post_id=p.id),0) completions,
       (SELECT COUNT(*) FROM social_reports WHERE post_id=p.id AND status='open') reports
     FROM social_posts p WHERE p.user_id=? AND p.status!='deleted' ORDER BY p.created_at DESC LIMIT 100`).all(req.user.id);
-  return res.json({ items: items.map(p => ({ id:p.id, videoUid:p.video_uid, caption:p.caption, category:p.category,
+  return res.json({ items: items.map(p => { const interactions=Number(p.likes)+Number(p.comments)+Number(p.saves)+Number(p.reposts)+Number(p.shares);
+    const views=Math.max(Number(p.views),Number(p.reach)); return ({ id:p.id, videoUid:p.video_uid, caption:p.caption, category:p.category,
     city:p.city, ctaLabel:p.cta_label, ctaUrl:p.cta_url, status:p.status, moderationStatus:p.moderation_status,
     moderationReason:p.moderation_reason, chargeCoins:Number(p.cta_charge_units || 0)/100,
-    chargeStatus:p.cta_charge_status, likes:Number(p.likes), comments:Number(p.comments), views:Number(p.views),
-    reports:Number(p.reports), createdAt:p.created_at })) });
+    chargeStatus:p.cta_charge_status, likes:Number(p.likes), comments:Number(p.comments), saves:Number(p.saves),
+    reposts:Number(p.reposts), shares:Number(p.shares), views, reach:Number(p.reach), interactions,
+    engagementRate:p.reach?Number(((interactions/Number(p.reach))*100).toFixed(1)):0,
+    avgWatchSeconds:views?Number((Number(p.watchMs)/views/1000).toFixed(1)):0,
+    completionRate:views?Number(((Number(p.completions)/views)*100).toFixed(1)):0,
+    reports:Number(p.reports), createdAt:p.created_at }); }) });
 });
 
 app.patch('/api/social/profile/me', requireUser, sameOriginOnly, (req, res) => {
@@ -4464,6 +4488,9 @@ app.get('/api/social/saved', requireUser, (req, res) => {
       (SELECT COUNT(*) FROM social_likes WHERE post_id=p.id) likes_count,
       (SELECT COUNT(*) FROM social_comments WHERE post_id=p.id AND status='published') comments_count,
       (SELECT COUNT(*) FROM social_post_views WHERE post_id=p.id) views_count,
+      MAX((SELECT COUNT(DISTINCT actor_key) FROM social_engagement_events WHERE post_id=p.id),
+        (SELECT COUNT(DISTINCT visitor_key) FROM social_post_views WHERE post_id=p.id)) reach_count,
+      COALESCE((SELECT SUM(impressions) FROM social_engagement_events WHERE post_id=p.id),0) intelligence_impressions,
       (SELECT COUNT(*) FROM social_saves WHERE post_id=p.id) saves_count,
       (SELECT COUNT(*) FROM social_reposts WHERE post_id=p.id) reposts_count,
       (SELECT COUNT(*) FROM social_shares WHERE post_id=p.id) shares_count,
