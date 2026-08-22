@@ -63,6 +63,22 @@ CREATE TABLE IF NOT EXISTS data_subject_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_data_subject_requests_user_created
 ON data_subject_requests(user_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS consent_records (
+  id INTEGER PRIMARY KEY,
+  subject_user_id INTEGER,
+  subject_key TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  document_version TEXT NOT NULL,
+  granted INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  evidence_json TEXT NOT NULL DEFAULT '{}',
+  request_fingerprint TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_consent_records_subject_created
+ON consent_records(subject_key,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_consent_records_purpose_created
+ON consent_records(purpose,created_at DESC);
 CREATE TABLE IF NOT EXISTS lot_orders (
   id INTEGER PRIMARY KEY,
   reference TEXT NOT NULL UNIQUE,
@@ -1229,6 +1245,19 @@ function managementSecret() {
   return String(process.env.STORE_PORTAL_SECRET || process.env.MERCADOPAGO_WEBHOOK_SECRET || '').trim();
 }
 
+function consentSubjectKey(userId,email=''){
+  const identity=userId?`user:${userId}`:`email:${String(email).trim().toLowerCase()}`;
+  return createHmac('sha256',managementSecret()||'vitrinecity-consent-local').update(identity).digest('hex');
+}
+function recordConsent(req,{userId=null,email='',purpose,version,granted=true,source,evidence={}}){
+  const requestFingerprint=createHmac('sha256',managementSecret()||'vitrinecity-consent-local')
+    .update(`${new Date().toISOString().slice(0,10)}|${req.ip}|${String(req.get('user-agent')||'').slice(0,240)}`).digest('hex');
+  db.prepare(`INSERT INTO consent_records
+    (subject_user_id,subject_key,purpose,document_version,granted,source,evidence_json,request_fingerprint)
+    VALUES (?,?,?,?,?,?,?,?)`).run(userId,consentSubjectKey(userId,email),String(purpose).slice(0,100),String(version).slice(0,40),
+      granted?1:0,String(source).slice(0,100),JSON.stringify(evidence).slice(0,2000),requestFingerprint);
+}
+
 function marketplaceOAuthConfigured() {
   return Boolean(process.env.MERCADOPAGO_MARKETPLACE_CLIENT_ID && process.env.MERCADOPAGO_MARKETPLACE_CLIENT_SECRET &&
     process.env.MERCADOPAGO_MARKETPLACE_TOKEN_ENCRYPTION_KEY);
@@ -1693,6 +1722,7 @@ app.post('/api/leads', sameOriginOnly, (req, res) => {
   }
   db.prepare('INSERT INTO leads (name,email,whatsapp,interest,consent) VALUES (?,?,?,?,1)')
     .run(name.trim().slice(0, 100), email.trim().toLowerCase().slice(0, 160), String(whatsapp).slice(0, 30), String(interest).slice(0, 80));
+  recordConsent(req,{email,purpose:'marketing_communications',version:'privacy-2026-08-22',source:'lead_form',evidence:{interest:String(interest).slice(0,80)}});
   adminAnalytics.recordLead(req, String(interest).slice(0, 80));
   return res.status(201).json({ ok: true });
 });
@@ -1719,6 +1749,7 @@ app.post('/api/contact', sameOriginOnly, (req, res) => {
   const result = db.prepare(`INSERT INTO contact_submissions
     (name,email,whatsapp,subject,priority,account_reference,details) VALUES (?,?,?,?,?,?,?)`)
     .run(name, email, whatsapp, subject, priority, accountReference, details);
+  recordConsent(req,{email,purpose:'contact_request_processing',version:'privacy-2026-08-22',source:'contact_form',evidence:{subject}});
   adminAnalytics.recordLead(req, `Contato: ${subject}`);
   return res.status(201).json({ ok: true, protocol: `VC-${String(result.lastInsertRowid).padStart(6,'0')}` });
 });
@@ -1756,6 +1787,8 @@ app.post('/api/auth/register', sameOriginOnly, (req, res) => {
       return Number(result.lastInsertRowid);
     });
     const userId = create();
+    recordConsent(req,{userId,email:normalizedEmail,purpose:'account_terms',version:'terms-2026-08-22',source:'account_registration'});
+    recordConsent(req,{userId,email:normalizedEmail,purpose:'adult_declaration',version:'adult-2026-08-22',source:'account_registration'});
     setSession(res, userId);
     return res.status(201).json({ ok: true });
   } catch (error) {
@@ -1851,6 +1884,7 @@ app.post('/api/identity/age-verification/start', sameOriginOnly, requireUser, (r
     ON CONFLICT(user_id) DO UPDATE SET provider=excluded.provider,provider_reference=excluded.provider_reference,
       status='pending',over_18=NULL,consent_version=excluded.consent_version,consented_at=CURRENT_TIMESTAMP,
       verified_at=NULL,expires_at=NULL,updated_at=CURRENT_TIMESTAMP`).run(req.user.id, provider.slice(0, 80), reference);
+  recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'document_age_verification',version:'age-verification-2026-08-22',source:'account_age_verification',evidence:{provider:provider.slice(0,80)}});
   return res.json({ status: 'pending', verificationUrl: startUrl.replace('{reference}', encodeURIComponent(reference)) });
 });
 
@@ -2060,6 +2094,12 @@ app.get('/api/privacy/requests',requireUser,(req,res)=>{
     FROM data_subject_requests WHERE user_id=? ORDER BY id DESC LIMIT 50`).all(req.user.id);
   return res.json({items});
 });
+app.get('/api/privacy/consents',requireUser,(req,res)=>{
+  const items=db.prepare(`SELECT purpose,document_version documentVersion,granted,source,created_at createdAt
+    FROM consent_records WHERE subject_user_id=? ORDER BY id DESC LIMIT 100`).all(req.user.id)
+    .map(item=>({...item,granted:Boolean(item.granted)}));
+  return res.json({items});
+});
 app.post('/api/privacy/requests',sameOriginOnly,requireUser,(req,res)=>{
   const requestType=String(req.body?.requestType||'');
   const details=String(req.body?.details||'').trim().slice(0,1000);
@@ -2070,6 +2110,7 @@ app.post('/api/privacy/requests',sameOriginOnly,requireUser,(req,res)=>{
   const protocol=`LGPD-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${randomBytes(4).toString('hex').toUpperCase()}`;
   db.prepare('INSERT INTO data_subject_requests (protocol,user_id,request_type,details) VALUES (?,?,?,?)').run(protocol,req.user.id,requestType,details);
   if(requestType==='consent_revocation')db.prepare('UPDATE leads SET consent=0 WHERE email=?').run(String(req.user.email).toLowerCase());
+  if(requestType==='consent_revocation')recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'marketing_communications',version:'privacy-2026-08-22',granted:false,source:'privacy_center'});
   return res.status(201).json({ok:true,protocol,status:'received'});
 });
 app.get('/api/privacy/export',requireUser,(req,res)=>{
@@ -2078,7 +2119,8 @@ app.get('/api/privacy/export',requireUser,(req,res)=>{
     addresses:db.prepare('SELECT label,recipient_name recipientName,postal_code postalCode,street,number,complement,neighborhood,city,state,is_default isDefault,created_at createdAt FROM customer_addresses WHERE user_id=?').all(userId),
     ageVerification:publicAgeVerification(db.prepare('SELECT status,over_18,verified_at,expires_at FROM age_verifications WHERE user_id=?').get(userId)),
     orders:db.prepare('SELECT reference,payment_status paymentStatus,fulfillment_status fulfillmentStatus,total_cents totalCents,created_at createdAt FROM marketplace_orders WHERE buyer_user_id=? ORDER BY id DESC').all(userId),
-    privacyRequests:db.prepare('SELECT protocol,request_type requestType,status,created_at createdAt,completed_at completedAt FROM data_subject_requests WHERE user_id=? ORDER BY id DESC').all(userId)};
+    privacyRequests:db.prepare('SELECT protocol,request_type requestType,status,created_at createdAt,completed_at completedAt FROM data_subject_requests WHERE user_id=? ORDER BY id DESC').all(userId),
+    consents:db.prepare('SELECT purpose,document_version documentVersion,granted,source,created_at createdAt FROM consent_records WHERE subject_user_id=? ORDER BY id DESC').all(userId)};
   res.set('Content-Disposition',`attachment; filename="vitrinecity-dados-${new Date().toISOString().slice(0,10)}.json"`);
   return res.type('application/json').send(JSON.stringify(exportData,null,2));
 });
@@ -3333,6 +3375,7 @@ app.post('/api/affiliates/register', requireUser, (req, res) => {
     const code = `${base}${randomBytes(3).toString('hex')}`;
     try {
       db.prepare("INSERT INTO affiliates (user_id,code,status) VALUES (?,?,'active')").run(req.user.id, code);
+      recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'affiliate_program_terms',version:'affiliate-terms-2026-08-22',source:'affiliate_registration'});
       return res.status(201).json({ ok: true, affiliate: { code, status: 'active' } });
     } catch (error) {
       if (!String(error?.message || '').includes('UNIQUE')) break;
@@ -3604,6 +3647,7 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   }
   if (!req.user.adult_confirmed) return res.status(403).json({ error: 'Disponível somente para maiores de 18 anos.' });
   if (!req.body?.termsAccepted) return res.status(400).json({ error: 'Aceite os termos dos Créditos Ads.' });
+  recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'ads_credits_terms',version:'ads-credits-2026-08-19',source:'credits_checkout'});
   if (!allowAttempt(checkoutAttempts, `credits:${req.user.id}`, 5, 10 * 60 * 1000)) {
     return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
   }
@@ -3736,6 +3780,7 @@ app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
   if (!course) return res.status(404).json({ error: 'Curso não encontrado.' });
   if (!courseReady(course.slug)) return res.status(409).json({ error: 'Este curso está em preparação. A compra será liberada quando as aulas estiverem na área privada.' });
   if (!req.body?.termsAccepted) return res.status(400).json({ error: 'Aceite os termos da compra para continuar.' });
+  recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'course_purchase_terms',version:'course-purchase-2026-08-22',source:'course_checkout',evidence:{course:course.slug}});
   if (!process.env.MERCADOPAGO_ACCESS_TOKEN || !process.env.MERCADOPAGO_WEBHOOK_SECRET) {
     return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
   }
@@ -3792,6 +3837,7 @@ app.post('/api/services/videos/checkout', async (req, res) => {
   if (!consent || !termsAccepted || typeof name !== 'string' || name.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(normalizedEmail)) {
     return res.status(400).json({ error: 'Informe seus dados e aceite os termos do pacote.' });
   }
+  recordConsent(req,{email:normalizedEmail,purpose:'video_service_terms',version:'video-service-2026-08-22',source:'video_service_checkout'});
   const affiliate = referralAffiliate(req, normalizedEmail);
   const reference = `video_${randomUUID()}`;
   db.prepare(`INSERT INTO service_orders
@@ -4183,6 +4229,7 @@ app.put('/api/store-portal/:reference/seller-profile', sameOriginOnly, (req,res)
   if(req.body?.termsAccepted!==true)return res.status(400).json({error:'Aceite as regras do marketplace.'});
   if(sellerType==='cpf'&&req.body?.adultConfirmed!==true)return res.status(400).json({error:'O vendedor CPF precisa declarar que possui 18 anos ou mais.'});
   if(sellerType==='cnpj'&&req.body?.authorityConfirmed!==true)return res.status(400).json({error:'Confirme que você pode representar legalmente o CNPJ.'});
+  recordConsent(req,{email:access.order.email,purpose:'marketplace_seller_declarations',version:'seller-2026-08-22',source:'seller_portal',evidence:{sellerType,storeReference:access.order.reference}});
   let fingerprint;try{fingerprint=sellerTaxFingerprint(taxId)}catch{return res.status(503).json({error:'A proteção do cadastro fiscal ainda não está configurada.'});}
   db.prepare(`INSERT INTO marketplace_seller_profiles
     (store_reference,seller_type,legal_name,trade_name,tax_id_hash,tax_id_last4,compliance_status,declarations_version,declared_at,reviewed_at,review_note,updated_at)

@@ -4,6 +4,7 @@ const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
 const page=fs.readFileSync(new URL('../public/meus-dados.html',import.meta.url),'utf8');
 for(const right of ['access','correction','portability','deletion','consent_revocation'])assert.match(server,new RegExp(`'${right}'`));
 assert.match(server,/data_subject_requests/);assert.match(server,/LGPD-/);assert.match(server,/Content-Disposition/);
+assert.match(server,/consent_records/);assert.match(server,/document_version/);assert.match(server,/request_fingerprint/);
 for(const label of ['Acesso aos dados','Correção','Portabilidade','Exclusão','Revogar consentimento'])assert.match(page,new RegExp(label));
 assert.match(page,/\/api\/privacy\/export/);assert.match(page,/vc_analytics_consent/);
 console.log('privacy-rights: ok');
