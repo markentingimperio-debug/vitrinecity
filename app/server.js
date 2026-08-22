@@ -1248,6 +1248,7 @@ app.use('/uploads/store-assets', express.static(path.join(dataDir, 'store-assets
   immutable: true, maxAge: '30d', fallthrough: false
 }));
 const publicPage = file => (_req, res) => res.sendFile(path.join(dir, 'public', file));
+const publicErrorPage = (res, status) => res.status(status).sendFile(path.join(dir, 'public', `${status}.html`));
 app.get('/social', publicPage('social.html'));
 app.get('/loja', publicPage('loja.html'));
 app.get('/descobrir', publicPage('descobrir-social.html'));
@@ -4666,7 +4667,7 @@ app.get(['/loja/:reference', '/loja/:reference/:slug'], (req, res) => {
   const store = db.prepare(`SELECT order_reference,business_name,description,logo_url,facade_url,
       website_url,instagram_url,tiktok_url,promotion_text
     FROM store_profiles WHERE order_reference=? AND review_status='published'`).get(reference);
-  if (!store) return res.status(404).send('Loja não encontrada.');
+  if (!store) return publicErrorPage(res, 404);
   const canonicalSlug = marketplaceSlug(store.business_name);
   if (req.params.slug !== canonicalSlug) return res.redirect(301, publicStorePath(store));
   const products = db.prepare(`SELECT id,name,description,category,price_cents,image_url,sku,stock_quantity
@@ -4679,13 +4680,13 @@ app.get(['/loja/:reference', '/loja/:reference/:slug'], (req, res) => {
 
 app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id < 1) return res.status(404).send('Produto não encontrado.');
+  if (!Number.isInteger(id) || id < 1) return publicErrorPage(res, 404);
   const product = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,p.image_url,
       p.sku,p.stock_quantity,p.weight_grams,s.business_name AS store_name
     FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
     WHERE p.id=? AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0
       AND p.stock_quantity>0 AND s.review_status='published'`).get(id);
-  if (!product) return res.status(404).send('Produto não encontrado.');
+  if (!product) return publicErrorPage(res, 404);
   const slug = marketplaceProductSlug(product.name);
   if (req.params.slug !== slug) return res.redirect(301, `/produto/${product.id}/${slug}`);
   const origin = new URL(SITE_URL).origin;
@@ -4730,13 +4731,13 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
 
 app.get('/perfil/:handle', (req, res) => {
   const handle = String(req.params.handle || '').trim();
-  if (!/^[a-z0-9._-]{3,40}$/i.test(handle)) return res.status(404).send('Perfil não encontrado.');
+  if (!/^[a-z0-9._-]{3,40}$/i.test(handle)) return publicErrorPage(res, 404);
   return res.sendFile(path.join(dir, 'public', 'perfil-social.html'));
 });
 
 app.get('/social/post/:id', (req,res) => {
   const p=db.prepare(`SELECT p.*,u.name,COALESCE(sp.handle,'usuario') handle FROM social_posts p JOIN users u ON u.id=p.user_id LEFT JOIN social_profiles sp ON sp.user_id=p.user_id WHERE p.id=? AND p.status='ready'`).get(req.params.id);
-  if(!p)return res.status(404).send('Publicação não encontrada.');
+  if(!p)return publicErrorPage(res, 404);
   const esc=v=>String(v||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const title=esc(p.seo_title||p.caption||'Publicação na Vitriny Social'),description=esc(p.seo_description||p.caption||'Veja esta publicação na Vitriny Social');
   const origin=new URL(process.env.SITE_URL||'https://vitrinecity.com').origin,image=p.media_type==='image'?new URL(p.image_url,origin).toString():origin+'/assets/vitriny-city-master.jpg';
@@ -4744,4 +4745,17 @@ app.get('/social/post/:id', (req,res) => {
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+if (process.env.ENABLE_ERROR_TEST_ROUTE === 'true') {
+  app.get('/__test/error', () => { throw new Error('Erro controlado para validar a página 500.'); });
+}
+app.use((req, res) => {
+  if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Endpoint não encontrado.' });
+  return publicErrorPage(res, 404);
+});
+app.use((error, req, res, next) => {
+  console.error('Erro não tratado:', error);
+  if (res.headersSent) return next(error);
+  if (req.path.startsWith('/api/')) return res.status(500).json({ error: 'Não foi possível concluir a solicitação.' });
+  return publicErrorPage(res, 500);
+});
 app.listen(process.env.PORT || 3000, () => console.log('VitrineCity online'));
