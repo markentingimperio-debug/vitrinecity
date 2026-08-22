@@ -109,6 +109,12 @@ CREATE TABLE IF NOT EXISTS age_verifications (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS age_verification_events (
+  event_id TEXT PRIMARY KEY,
+  provider_reference TEXT NOT NULL,
+  status TEXT NOT NULL,
+  received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS sessions (
   id INTEGER PRIMARY KEY,
   token_hash TEXT NOT NULL UNIQUE,
@@ -1920,6 +1926,29 @@ function publicAgeVerification(row) {
     verifiedAt: row?.verified_at || null, expiresAt: row?.expires_at || null };
 }
 
+function ageVerificationConfigured() {
+  const startUrl = String(process.env.AGE_VERIFICATION_START_URL || '').trim();
+  return Boolean(String(process.env.AGE_VERIFICATION_PROVIDER || '').trim() &&
+    String(process.env.AGE_VERIFICATION_WEBHOOK_SECRET || '').trim() &&
+    /^https:\/\//i.test(startUrl) && startUrl.includes('{reference}'));
+}
+
+function hasCurrentAdultVerification(userId) {
+  return Boolean(db.prepare(`SELECT 1 FROM age_verifications WHERE user_id=? AND status='verified'
+    AND over_18=1 AND expires_at>CURRENT_TIMESTAMP`).get(userId));
+}
+
+function isAtLeast18(dateOfBirth, now = new Date()) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateOfBirth || ''))) return false;
+  const birth = new Date(`${dateOfBirth}T00:00:00Z`);
+  if (Number.isNaN(birth.getTime()) || birth.toISOString().slice(0, 10) !== dateOfBirth) return false;
+  let age = now.getUTCFullYear() - birth.getUTCFullYear();
+  const beforeBirthday = now.getUTCMonth() < birth.getUTCMonth() ||
+    (now.getUTCMonth() === birth.getUTCMonth() && now.getUTCDate() < birth.getUTCDate());
+  if (beforeBirthday) age -= 1;
+  return age >= 18 && age < 130;
+}
+
 function requireActiveSocialUser(req, res, next) {
   return requireUser(req, res, () => {
     const restriction = db.prepare(`SELECT status,reason_code,note,restricted_until FROM social_account_restrictions
@@ -1938,11 +1967,14 @@ app.post('/api/identity/age-verification/start', sameOriginOnly, requireUser, (r
   if (req.body?.consent !== true) return res.status(400).json({ error: 'Confirme o consentimento para iniciar a verificação.' });
   const provider = String(process.env.AGE_VERIFICATION_PROVIDER || '').trim();
   const startUrl = String(process.env.AGE_VERIFICATION_START_URL || '').trim();
-  const webhookSecret = String(process.env.AGE_VERIFICATION_WEBHOOK_SECRET || '').trim();
-  if (!provider || !startUrl || !webhookSecret || !startUrl.includes('{reference}')) {
+  if (!ageVerificationConfigured()) {
     return res.status(503).json({ error: 'A verificação documental ainda não está configurada.' });
   }
+  if (!allowAttempt(checkoutAttempts, `age:${req.user.id}`, 5, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Muitas tentativas de verificação. Tente novamente mais tarde.' });
+  }
   const reference = randomUUID();
+  db.prepare("DELETE FROM age_verification_events WHERE received_at<datetime('now','-370 days')").run();
   db.prepare(`INSERT INTO age_verifications
     (user_id,provider,provider_reference,status,over_18,consent_version,consented_at,verified_at,expires_at,updated_at)
     VALUES (?,?,?,'pending',NULL,'2026-08-22',CURRENT_TIMESTAMP,NULL,NULL,CURRENT_TIMESTAMP)
@@ -1955,24 +1987,38 @@ app.post('/api/identity/age-verification/start', sameOriginOnly, requireUser, (r
 
 app.post('/api/identity/age-verification/webhook', (req, res) => {
   const secret = String(process.env.AGE_VERIFICATION_WEBHOOK_SECRET || '');
+  const timestamp = String(req.get('x-age-verification-timestamp') || '');
   const supplied = String(req.get('x-age-verification-signature') || '').replace(/^sha256=/, '');
-  const expected = createHmac('sha256', secret).update(req.rawBody || Buffer.alloc(0)).digest('hex');
+  const timestampSeconds = Number(timestamp);
+  const timely = Number.isFinite(timestampSeconds) && Math.abs(Date.now() - timestampSeconds * 1000) <= 5 * 60 * 1000;
+  const expected = createHmac('sha256', secret).update(`${timestamp}.`).update(req.rawBody || Buffer.alloc(0)).digest('hex');
   const suppliedBuffer = Buffer.from(supplied, 'hex');
   const expectedBuffer = Buffer.from(expected, 'hex');
-  if (!secret || suppliedBuffer.length !== expectedBuffer.length || !timingSafeEqual(suppliedBuffer, expectedBuffer)) {
+  if (!secret || !timely || suppliedBuffer.length !== expectedBuffer.length || !timingSafeEqual(suppliedBuffer, expectedBuffer)) {
     return res.status(401).json({ error: 'Assinatura inválida.' });
   }
   const reference = String(req.body?.reference || '');
+  const eventId = String(req.body?.eventId || '').trim().slice(0, 160);
   const status = String(req.body?.status || '');
-  if (!reference || !['verified','rejected','manual_review','expired'].includes(status)) return res.status(400).json({ error: 'Retorno inválido.' });
-  const effectiveStatus = status === 'verified' && req.body?.over18 !== true ? 'rejected' : status;
+  if (!reference || !eventId || !['verified','rejected','manual_review','expired'].includes(status)) return res.status(400).json({ error: 'Retorno inválido.' });
+  const verifiedEvidence = req.body?.documentVerified === true && req.body?.livenessPassed === true &&
+    isAtLeast18(String(req.body?.dateOfBirth || ''));
+  const effectiveStatus = status === 'verified' && !verifiedEvidence ? 'rejected' : status;
   const over18 = effectiveStatus === 'verified' ? 1 : 0;
-  const result = db.prepare(`UPDATE age_verifications SET status=?,over_18=?,
-    verified_at=CASE WHEN ?='verified' THEN CURRENT_TIMESTAMP ELSE NULL END,
-    expires_at=CASE WHEN ?='verified' THEN datetime('now','+1 year') ELSE NULL END,
-    updated_at=CURRENT_TIMESTAMP WHERE provider_reference=?`)
-    .run(effectiveStatus, over18, effectiveStatus, effectiveStatus, reference);
-  return res.json({ ok: true, matched: result.changes === 1 });
+  const processEvent = db.transaction(() => {
+    const verification = db.prepare('SELECT provider_reference FROM age_verifications WHERE provider_reference=?').get(reference);
+    if (!verification) return { matched: false, duplicate: false };
+    const event = db.prepare('INSERT OR IGNORE INTO age_verification_events(event_id,provider_reference,status) VALUES (?,?,?)')
+      .run(eventId, reference, effectiveStatus);
+    if (event.changes !== 1) return { matched: true, duplicate: true };
+    const result = db.prepare(`UPDATE age_verifications SET status=?,over_18=?,
+      verified_at=CASE WHEN ?='verified' THEN CURRENT_TIMESTAMP ELSE NULL END,
+      expires_at=CASE WHEN ?='verified' THEN datetime('now','+1 year') ELSE NULL END,
+      updated_at=CURRENT_TIMESTAMP WHERE provider_reference=?`)
+      .run(effectiveStatus, over18, effectiveStatus, effectiveStatus, reference);
+    return { matched: result.changes === 1, duplicate: false };
+  });
+  return res.json({ ok: true, ...processEvent() });
 });
 
 function publicAddress(row) {
@@ -3439,6 +3485,9 @@ app.post('/api/affiliates/register', requireUser, (req, res) => {
   if (!req.user.adult_confirmed || !req.body?.termsAccepted) {
     return res.status(400).json({ error: 'Confirme que é maior de 18 anos e aceite os termos do programa.' });
   }
+  if (ageVerificationConfigured() && !hasCurrentAdultVerification(req.user.id)) {
+    return res.status(403).json({ error: 'Verifique sua maioridade em Minha conta antes de participar.', verificationRequired: true });
+  }
   const existing = db.prepare('SELECT code,status FROM affiliates WHERE user_id=?').get(req.user.id);
   if (existing) return res.json({ ok: true, affiliate: existing });
   const base = req.user.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
@@ -3718,6 +3767,9 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
     return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
   }
   if (!req.user.adult_confirmed) return res.status(403).json({ error: 'Disponível somente para maiores de 18 anos.' });
+  if (ageVerificationConfigured() && !hasCurrentAdultVerification(req.user.id)) {
+    return res.status(403).json({ error: 'Verifique sua maioridade em Minha conta antes de comprar Créditos Ads.', verificationRequired: true });
+  }
   if (!req.body?.termsAccepted) return res.status(400).json({ error: 'Aceite os termos dos Créditos Ads.' });
   recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'ads_credits_terms',version:'ads-credits-2026-08-19',source:'credits_checkout'});
   if (!allowAttempt(checkoutAttempts, `credits:${req.user.id}`, 5, 10 * 60 * 1000)) {

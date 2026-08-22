@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node scripts/test-marketplace-legal.mjs && node scripts/test-marketplace-public.mjs && node scripts/test-product-purchase-details.mjs && node scripts/test-marketplace-shipping.mjs && node scripts/test-seller-operations.mjs && node scripts/test-seller-operations-api.mjs && node scripts/test-ads-pricing.mjs && node scripts/test-admin-auth.mjs && node scripts/test-social-accessibility.mjs && node scripts/test-social-moderation.mjs && node scripts/test-social-chat-auth.mjs && node scripts/test-social-realtime.mjs && node scripts/test-privacy-rights.mjs"
+    "test": "node scripts/test-age-verification.mjs && node scripts/test-marketplace-legal.mjs && node scripts/test-marketplace-public.mjs && node scripts/test-product-purchase-details.mjs && node scripts/test-marketplace-shipping.mjs && node scripts/test-seller-operations.mjs && node scripts/test-seller-operations-api.mjs && node scripts/test-ads-pricing.mjs && node scripts/test-admin-auth.mjs && node scripts/test-social-accessibility.mjs && node scripts/test-social-moderation.mjs && node scripts/test-social-chat-auth.mjs && node scripts/test-social-realtime.mjs && node scripts/test-privacy-rights.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.0.0",
