@@ -18,6 +18,7 @@
     <form id="login">
       <label for="email">E-mail administrativo</label><input id="email" name="email" type="email" autocomplete="username" required autofocus>
       <label for="password">Senha</label><input id="password" name="password" type="password" autocomplete="current-password" required minlength="10">
+      <div id="mfa" hidden><label for="totpCode">Código do aplicativo autenticador</label><input id="totpCode" name="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"><p class="small">Abra seu aplicativo autenticador e informe o código de seis dígitos.</p></div>
       <button type="submit">Entrar com segurança</button>
     </form>
     <div id="notice" class="notice" role="alert"></div>
@@ -27,11 +28,11 @@
   <script>
     const form=document.querySelector('#login'),notice=document.querySelector('#notice');
     const show=text=>{notice.textContent=text;notice.style.display='block'};
-    const params=new URLSearchParams(location.search);if(params.get('erro')==='restrito')show('Esta conta não possui autorização administrativa.');
+    const params=new URLSearchParams(location.search);if(params.get('erro')==='restrito')show('Esta conta não possui autorização administrativa.');if(params.get('erro')==='2fa')show('Confirme o segundo fator para continuar.');
     fetch('/api/admin/auth/status').then(r=>r.json()).then(data=>{if(data.administrator)location.replace('/admin')}).catch(()=>{});
     form.addEventListener('submit',async event=>{event.preventDefault();const button=form.querySelector('button');button.disabled=true;notice.style.display='none';
-      try{const response=await fetch('/api/admin/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:form.email.value.trim(),password:form.password.value})});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||'Não foi possível entrar.');location.replace('/admin')}
-      catch(error){show(error.message);button.disabled=false;form.password.value='';form.password.focus()}});
+      try{const response=await fetch('/api/admin/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:form.email.value.trim(),password:form.password.value,totpCode:form.totpCode.value})});const data=await response.json().catch(()=>({}));if(response.status===202&&data.mfaRequired){document.querySelector('#mfa').hidden=false;form.totpCode.required=true;button.disabled=false;form.totpCode.focus();show('Digite o código do aplicativo autenticador.');return}if(!response.ok)throw new Error(data.error||'Não foi possível entrar.');location.replace('/admin')}
+      catch(error){show(error.message);button.disabled=false;if(!form.totpCode.required){form.password.value='';form.password.focus()}else{form.totpCode.value='';form.totpCode.focus()}}});
   </script>
 </body>
 </html>

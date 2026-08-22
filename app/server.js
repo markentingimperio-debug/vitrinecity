@@ -283,6 +283,8 @@ ensureColumn('lot_orders', 'plan_code', "TEXT NOT NULL DEFAULT 'founder'");
 ensureColumn('lot_orders', 'billing_type', "TEXT NOT NULL DEFAULT 'one_time'");
 ensureColumn('lot_orders', 'mp_subscription_id', 'TEXT');
 ensureColumn('users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('users', 'totp_secret_encrypted', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('users', 'totp_enabled', 'INTEGER NOT NULL DEFAULT 0');
 db.exec(`CREATE TABLE IF NOT EXISTS admin_login_audit (
   id INTEGER PRIMARY KEY,
   email_hash TEXT NOT NULL,
@@ -291,7 +293,15 @@ db.exec(`CREATE TABLE IF NOT EXISTS admin_login_audit (
   reason TEXT NOT NULL DEFAULT 'invalid',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_admin_login_audit_created ON admin_login_audit(created_at DESC);`);
+CREATE INDEX IF NOT EXISTS idx_admin_login_audit_created ON admin_login_audit(created_at DESC);
+CREATE TABLE IF NOT EXISTS privileged_sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  scope TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_privileged_sessions_expiry ON privileged_sessions(expires_at);`);
 db.exec(`
 CREATE TABLE IF NOT EXISTS ad_campaigns (
   id INTEGER PRIMARY KEY,
@@ -958,6 +968,15 @@ db.exec(`CREATE TABLE IF NOT EXISTS marketplace_seller_profiles (
 );
 CREATE INDEX IF NOT EXISTS idx_marketplace_seller_compliance ON marketplace_seller_profiles(compliance_status,updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_seller_tax_hash ON marketplace_seller_profiles(tax_id_hash);`);
+ensureColumn('marketplace_seller_profiles','totp_secret_encrypted',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('marketplace_seller_profiles','totp_enabled','INTEGER NOT NULL DEFAULT 0');
+db.exec(`CREATE TABLE IF NOT EXISTS seller_mfa_sessions (
+  session_hash TEXT PRIMARY KEY,
+  store_reference TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_seller_mfa_sessions_store_expiry ON seller_mfa_sessions(store_reference,expires_at);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -1163,12 +1182,13 @@ function setSession(res, userId,maxAgeSeconds=SESSION_MAX_AGE_SECONDS) {
   db.prepare('INSERT INTO sessions (token_hash,user_id,expires_at) VALUES (?,?,?)')
     .run(sessionHash(token), userId, Date.now() + maxAgeSeconds * 1000);
   res.append('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAgeSeconds}`);
+  return token;
 }
 
 function currentUser(req) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (!token) return null;
-  return db.prepare(`SELECT u.id,u.name,u.email,u.whatsapp,u.adult_confirmed,u.is_admin
+  return db.prepare(`SELECT u.id,u.name,u.email,u.whatsapp,u.adult_confirmed,u.is_admin,u.totp_enabled,u.totp_secret_encrypted
     FROM sessions s JOIN users u ON u.id=s.user_id
     WHERE s.token_hash=? AND s.expires_at>?`).get(sessionHash(token), Date.now()) || null;
 }
@@ -1179,6 +1199,17 @@ const ADMIN_SESSION_MAX_AGE_SECONDS=8*60*60;
 const ADMIN_DUMMY_PASSWORD_HASH=hashPassword(randomBytes(24).toString('hex'));
 
 function isAdministrativeUser(user){return Boolean(user?.is_admin||adminEmails.has(String(user?.email||'').toLowerCase()));}
+
+const BASE32_ALPHABET='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+function base32Encode(buffer){let bits=0,value=0,output='';for(const byte of buffer){value=(value<<8)|byte;bits+=8;while(bits>=5){output+=BASE32_ALPHABET[(value>>>(bits-5))&31];bits-=5;}}if(bits)output+=BASE32_ALPHABET[(value<<(5-bits))&31];return output;}
+function base32Decode(value){let bits=0,acc=0,bytes=[];for(const char of String(value).replace(/=+$/,'').toUpperCase()){const index=BASE32_ALPHABET.indexOf(char);if(index<0)continue;acc=(acc<<5)|index;bits+=5;if(bits>=8){bytes.push((acc>>>(bits-8))&255);bits-=8;}}return Buffer.from(bytes);}
+function mfaEncryptionKey(){const secret=managementSecret();if(!secret)throw new Error('management_secret_missing');return createHash('sha256').update(`mfa:${secret}`).digest();}
+function encryptMfaSecret(secret){const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',mfaEncryptionKey(),iv),encrypted=Buffer.concat([cipher.update(secret,'utf8'),cipher.final()]);return [iv,cipher.getAuthTag(),encrypted].map(v=>v.toString('base64url')).join('.');}
+function decryptMfaSecret(value){const [iv,tag,data]=String(value||'').split('.');const decipher=createDecipheriv('aes-256-gcm',mfaEncryptionKey(),Buffer.from(iv,'base64url'));decipher.setAuthTag(Buffer.from(tag,'base64url'));return Buffer.concat([decipher.update(Buffer.from(data,'base64url')),decipher.final()]).toString('utf8');}
+function totpCode(secret,time=Date.now()){const counter=Buffer.alloc(8);counter.writeBigUInt64BE(BigInt(Math.floor(time/30000)));const digest=createHmac('sha1',base32Decode(secret)).update(counter).digest(),offset=digest[19]&15;return String((digest.readUInt32BE(offset)&0x7fffffff)%1000000).padStart(6,'0');}
+function validTotp(secret,provided){const code=String(provided||'').replace(/\D/g,'');if(code.length!==6)return false;return [-1,0,1].some(step=>{const expected=totpCode(secret,Date.now()+step*30000);return timingSafeEqual(Buffer.from(expected),Buffer.from(code));});}
+function privilegedSession(req,scope){const token=parseCookies(req)[SESSION_COOKIE];if(!token)return false;return Boolean(db.prepare('SELECT 1 FROM privileged_sessions WHERE token_hash=? AND scope=? AND expires_at>?').get(sessionHash(token),scope,Date.now()));}
+function grantPrivilegedSession(token,userId,scope,maxAgeSeconds){db.prepare('DELETE FROM privileged_sessions WHERE expires_at<=?').run(Date.now());db.prepare('INSERT OR REPLACE INTO privileged_sessions(token_hash,user_id,scope,expires_at) VALUES (?,?,?,?)').run(sessionHash(token),userId,scope,Date.now()+maxAgeSeconds*1000);}
 
 function recordAdminLogin(req,email,success,reason){
   const key=managementSecret()||'vitrinecity-admin-audit';
@@ -1197,6 +1228,10 @@ function requireAdmin(req, res, next) {
   if (!isAdministrativeUser(user)) {
     if(req.path==='/admin'||req.path==='/admin.html')return res.redirect(302,'/admin-login.html?erro=restrito');
     return res.status(403).json({ error: 'Acesso restrito à administração.' });
+  }
+  if(user.totp_enabled&&!privilegedSession(req,'admin')){
+    if(req.path==='/admin'||req.path==='/admin.html')return res.redirect(302,'/admin-login.html?erro=2fa');
+    return res.status(401).json({error:'Confirme o segundo fator administrativo.'});
   }
   req.user = user;
   return next();
@@ -1419,7 +1454,7 @@ function saveStoreImage(reference, kind, value, currentUrl = '') {
   return `/uploads/store-assets/${filename}`;
 }
 
-function storePortalAccess(req, res) {
+function storePortalPrimaryAccess(req, res) {
   const reference = String(req.params.reference || '');
   const token = String(req.query.token || req.body?.token || req.get('x-store-token') || '');
   if (!validStoreManagementToken(reference, token)) {
@@ -1437,6 +1472,10 @@ function storePortalAccess(req, res) {
   }
   return { order, token };
 }
+function sellerMfaCookieName(reference){return `vc_store_mfa_${createHash('sha256').update(reference).digest('hex').slice(0,12)}`;}
+function sellerMfaAuthenticated(req,reference){const token=parseCookies(req)[sellerMfaCookieName(reference)];if(!token)return false;return Boolean(db.prepare('SELECT 1 FROM seller_mfa_sessions WHERE session_hash=? AND store_reference=? AND expires_at>?').get(sessionHash(token),reference,Date.now()));}
+function grantSellerMfaSession(res,reference){const token=randomBytes(32).toString('base64url'),maxAge=8*60*60;db.prepare('DELETE FROM seller_mfa_sessions WHERE expires_at<=?').run(Date.now());db.prepare('INSERT INTO seller_mfa_sessions(session_hash,store_reference,expires_at) VALUES (?,?,?)').run(sessionHash(token),reference,Date.now()+maxAge*1000);res.append('Set-Cookie',`${sellerMfaCookieName(reference)}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`);}
+function storePortalAccess(req,res){const access=storePortalPrimaryAccess(req,res);if(!access)return null;const seller=db.prepare('SELECT totp_enabled FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);if(seller?.totp_enabled&&!sellerMfaAuthenticated(req,access.order.reference)){res.status(428).json({error:'Confirme o segundo fator do lojista.',mfaRequired:true});return null;}return access;}
 
 const SMTP_USER = String(process.env.SMTP_USER || '').trim();
 const SMTP_PASS = String(process.env.SMTP_PASS || '').trim();
@@ -1655,6 +1694,7 @@ app.get(['/minha-conta', '/minha-conta.html'], (_req, res) => {
   const script = `<script src="/age-verification.js" defer></script>`;
   return res.type('html').send(page.replace('</main>', `${panel}</main>`).replace('</body>', `${script}</body>`));
 });
+app.get('/painel-lojista.html',(_req,res)=>{const page=fs.readFileSync(path.join(dir,'public','painel-lojista.html'),'utf8');return res.type('html').send(page.replace('<script>','<script src="/seller-mfa.js"></script><script>'));});
 app.get('/sitemap.xml', (_req, res) => {
   const origin = new URL(SITE_URL).origin;
   const fixedPaths = [
@@ -1814,7 +1854,8 @@ app.post('/api/auth/login', sameOriginOnly, (req, res) => {
 
 app.get('/api/admin/auth/status',(req,res)=>{
   const user=currentUser(req);
-  return res.json({authenticated:Boolean(user),administrator:isAdministrativeUser(user)});
+  const administrator=isAdministrativeUser(user)&&(!user?.totp_enabled||privilegedSession(req,'admin'));
+  return res.json({authenticated:Boolean(user),administrator,mfaEnabled:Boolean(user?.totp_enabled),mfaRequired:Boolean(user?.totp_enabled&&!administrator)});
 });
 
 app.post('/api/admin/auth/login',sameOriginOnly,(req,res)=>{
@@ -1830,15 +1871,33 @@ app.post('/api/admin/auth/login',sameOriginOnly,(req,res)=>{
     recordAdminLogin(req,email,false,'invalid_credentials');
     return res.status(401).json({error:'Credenciais administrativas inválidas.'});
   }
+  if(user.totp_enabled){let secret;try{secret=decryptMfaSecret(user.totp_secret_encrypted);}catch{recordAdminLogin(req,email,false,'mfa_unavailable');return res.status(503).json({error:'Segundo fator temporariamente indisponível.'});}
+    if(!req.body?.totpCode)return res.status(202).json({ok:false,mfaRequired:true});
+    if(!validTotp(secret,req.body.totpCode)){recordAdminLogin(req,email,false,'invalid_mfa');return res.status(401).json({error:'Código de autenticação inválido.'});}}
   const currentToken=parseCookies(req)[SESSION_COOKIE];
-  if(currentToken)db.prepare('DELETE FROM sessions WHERE token_hash=?').run(sessionHash(currentToken));
-  setSession(res,user.id,ADMIN_SESSION_MAX_AGE_SECONDS);recordAdminLogin(req,email,true,'success');
-  return res.json({ok:true,expiresInSeconds:ADMIN_SESSION_MAX_AGE_SECONDS});
+  if(currentToken){db.prepare('DELETE FROM sessions WHERE token_hash=?').run(sessionHash(currentToken));db.prepare('DELETE FROM privileged_sessions WHERE token_hash=?').run(sessionHash(currentToken));}
+  const token=setSession(res,user.id,ADMIN_SESSION_MAX_AGE_SECONDS);grantPrivilegedSession(token,user.id,'admin',ADMIN_SESSION_MAX_AGE_SECONDS);recordAdminLogin(req,email,true,user.totp_enabled?'success_mfa':'success');
+  return res.json({ok:true,expiresInSeconds:ADMIN_SESSION_MAX_AGE_SECONDS,mfaEnabled:Boolean(user.totp_enabled)});
+});
+
+app.post('/api/admin/auth/mfa/setup',requireAdmin,sameOriginOnly,(req,res)=>{
+  if(req.user.totp_enabled)return res.status(409).json({error:'O segundo fator já está ativo.'});
+  const secret=base32Encode(randomBytes(20));let encrypted;try{encrypted=encryptMfaSecret(secret);}catch{return res.status(503).json({error:'Configure o segredo de gestão antes de ativar o segundo fator.'});}
+  db.prepare("UPDATE users SET totp_secret_encrypted=? WHERE id=?").run(encrypted,req.user.id);
+  const label=encodeURIComponent(`VitrineCity Admin:${req.user.email}`),issuer=encodeURIComponent('VitrineCity');
+  return res.json({secret,otpauthUri:`otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30`});
+});
+app.post('/api/admin/auth/mfa/confirm',requireAdmin,sameOriginOnly,(req,res)=>{
+  const user=db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id);if(!user?.totp_secret_encrypted)return res.status(409).json({error:'Inicie a configuração primeiro.'});
+  let secret;try{secret=decryptMfaSecret(user.totp_secret_encrypted);}catch{return res.status(503).json({error:'Não foi possível confirmar o segundo fator.'});}
+  if(!validTotp(secret,req.body?.totpCode))return res.status(400).json({error:'Código de autenticação inválido.'});
+  db.prepare('UPDATE users SET totp_enabled=1 WHERE id=?').run(user.id);const token=parseCookies(req)[SESSION_COOKIE];grantPrivilegedSession(token,user.id,'admin',ADMIN_SESSION_MAX_AGE_SECONDS);
+  return res.json({ok:true,mfaEnabled:true});
 });
 
 app.post('/api/auth/logout', sameOriginOnly, (req, res) => {
   const token = parseCookies(req)[SESSION_COOKIE];
-  if (token) db.prepare('DELETE FROM sessions WHERE token_hash=?').run(sessionHash(token));
+  if (token){db.prepare('DELETE FROM sessions WHERE token_hash=?').run(sessionHash(token));db.prepare('DELETE FROM privileged_sessions WHERE token_hash=?').run(sessionHash(token));}
   res.append('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
   return res.json({ ok: true });
 });
@@ -4152,6 +4211,11 @@ app.get('/api/orders/:reference', async (req, res) => {
     updated_at: order.updated_at
   });
 });
+
+app.get('/api/store-portal/:reference/mfa/status',(req,res)=>{const access=storePortalPrimaryAccess(req,res);if(!access)return;const seller=db.prepare('SELECT totp_enabled FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);return res.json({configured:Boolean(seller),mfaEnabled:Boolean(seller?.totp_enabled),authenticated:!seller?.totp_enabled||sellerMfaAuthenticated(req,access.order.reference)});});
+app.post('/api/store-portal/:reference/mfa/setup',sameOriginOnly,(req,res)=>{const access=storePortalPrimaryAccess(req,res);if(!access)return;const seller=db.prepare('SELECT totp_enabled FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);if(!seller)return res.status(409).json({error:'Conclua primeiro o cadastro fiscal do vendedor.'});if(seller.totp_enabled)return res.status(409).json({error:'O segundo fator já está ativo.'});const secret=base32Encode(randomBytes(20));let encrypted;try{encrypted=encryptMfaSecret(secret);}catch{return res.status(503).json({error:'Segundo fator temporariamente indisponível.'});}db.prepare('UPDATE marketplace_seller_profiles SET totp_secret_encrypted=? WHERE store_reference=?').run(encrypted,access.order.reference);const label=encodeURIComponent(`VitrineCity Loja:${access.order.business_name||access.order.reference}`);return res.json({secret,otpauthUri:`otpauth://totp/${label}?secret=${secret}&issuer=VitrineCity&algorithm=SHA1&digits=6&period=30`});});
+app.post('/api/store-portal/:reference/mfa/confirm',sameOriginOnly,(req,res)=>{const access=storePortalPrimaryAccess(req,res);if(!access)return;const seller=db.prepare('SELECT * FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);if(!seller?.totp_secret_encrypted)return res.status(409).json({error:'Inicie a configuração primeiro.'});let secret;try{secret=decryptMfaSecret(seller.totp_secret_encrypted);}catch{return res.status(503).json({error:'Não foi possível confirmar o segundo fator.'});}if(!validTotp(secret,req.body?.totpCode))return res.status(400).json({error:'Código de autenticação inválido.'});db.prepare('UPDATE marketplace_seller_profiles SET totp_enabled=1,updated_at=CURRENT_TIMESTAMP WHERE store_reference=?').run(access.order.reference);grantSellerMfaSession(res,access.order.reference);return res.json({ok:true,mfaEnabled:true});});
+app.post('/api/store-portal/:reference/mfa/verify',sameOriginOnly,(req,res)=>{const access=storePortalPrimaryAccess(req,res);if(!access)return;const seller=db.prepare('SELECT * FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);if(!seller?.totp_enabled)return res.status(409).json({error:'O segundo fator ainda não está ativo.'});let secret;try{secret=decryptMfaSecret(seller.totp_secret_encrypted);}catch{return res.status(503).json({error:'Segundo fator temporariamente indisponível.'});}if(!validTotp(secret,req.body?.totpCode))return res.status(401).json({error:'Código de autenticação inválido.'});grantSellerMfaSession(res,access.order.reference);return res.json({ok:true,expiresInSeconds:28800});});
 
 app.get('/api/store-portal/:reference', (req, res) => {
   const access = storePortalAccess(req, res);
