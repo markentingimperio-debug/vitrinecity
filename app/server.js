@@ -16,6 +16,7 @@ import {
 import { fileURLToPath } from 'node:url';
 import { originalCourse } from './course-content.js';
 import { setupAdminAnalytics } from './admin-analytics.js';
+import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marketplace-public.js';
 
 const app = express();
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -1580,8 +1581,8 @@ app.get('/api/marketplace/products', (req, res) => {
     FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
     WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0
       AND s.review_status='published' AND (?='' OR p.category=?)
-      AND (?='' OR p.name LIKE '%'||?||'%' OR p.description LIKE '%'||?||'%')
-    ORDER BY p.updated_at DESC,p.id DESC LIMIT 120`).all(category, category, search, search, search);
+      AND (?='' OR p.name LIKE '%'||?||'%' OR p.description LIKE '%'||?||'%' OR s.business_name LIKE '%'||?||'%')
+    ORDER BY p.updated_at DESC,p.id DESC LIMIT 120`).all(category, category, search, search, search, search);
   return res.json({ products });
 });
 
@@ -4651,6 +4652,22 @@ function marketplaceProductSlug(value) {
 
 const PRODUCT_FALLBACK_PATH = '/assets/store-seed/utilidades.svg';
 
+app.get(['/loja/:reference', '/loja/:reference/:slug'], (req, res) => {
+  const reference = String(req.params.reference || '').trim().slice(0, 120);
+  const store = db.prepare(`SELECT order_reference,business_name,description,logo_url,facade_url,
+      website_url,instagram_url,tiktok_url,promotion_text
+    FROM store_profiles WHERE order_reference=? AND review_status='published'`).get(reference);
+  if (!store) return res.status(404).send('Loja não encontrada.');
+  const canonicalSlug = marketplaceSlug(store.business_name);
+  if (req.params.slug !== canonicalSlug) return res.redirect(301, publicStorePath(store));
+  const products = db.prepare(`SELECT id,name,description,category,price_cents,image_url,sku,stock_quantity
+    FROM store_products WHERE store_reference=? AND active=1 AND marketplace_enabled=1
+      AND price_cents>0 AND stock_quantity>0 ORDER BY updated_at DESC,id DESC LIMIT 120`).all(reference);
+  return res.set('Cache-Control', 'public,max-age=60').send(renderPublicStorePage({
+    store, products, siteUrl: SITE_URL, productFallback: PRODUCT_FALLBACK_PATH
+  }));
+});
+
 app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id < 1) return res.status(404).send('Produto não encontrado.');
@@ -4668,6 +4685,7 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   const image = new URL(productImagePath, origin).toString();
   const title = `${product.name} — ${product.store_name} | Vitriny Loja`;
   const description = String(product.description || `Compre ${product.name} na Vitriny Loja.`).slice(0, 155);
+  const storePath = publicStorePath({ order_reference: product.store_reference, business_name: product.store_name });
   const schema = JSON.stringify({
     '@context': 'https://schema.org', '@type': 'Product', name: product.name,
     description, sku: product.sku || String(product.id), image: [image],
@@ -4692,7 +4710,7 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     <script src="/analytics.js" defer></script></head><body>
     <header><a class="brand" href="/loja.html">Vitriny <span>Loja</span></a><a class="back" href="/loja.html">← Voltar à loja</a></header>
     <main><img class="photo" src="${escapeHtml(productImagePath)}" onerror="this.onerror=null;this.src='/assets/store-seed/utilidades.svg'" alt="${escapeHtml(product.name)}">
-    <section><div class="badge">${escapeHtml(product.category || 'Produto')}</div><div class="seller">Vendido por ${escapeHtml(product.store_name)}</div>
+    <section><div class="badge">${escapeHtml(product.category || 'Produto')}</div><a class="seller" href="${escapeHtml(storePath)}">Vendido por ${escapeHtml(product.store_name)}</a>
     <h1>${escapeHtml(product.name)}</h1><p class="description">${escapeHtml(description)}</p>
     <div class="price">${(product.price_cents / 100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</div>
     <div class="stock">${product.stock_quantity} unidades disponíveis</div>
