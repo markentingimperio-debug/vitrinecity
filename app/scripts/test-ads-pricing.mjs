@@ -22,14 +22,22 @@ try{
   const walletHtml=readFileSync(new URL('../public/carteira.html',import.meta.url),'utf8');for(const id of ['targetAudience','targetCity','reachKm','startsOn','creativeTitle','destinationUrl'])assert.match(walletHtml,new RegExp(`id=["']${id}["']`));
   const testDb=new Database(path.join(dataDir,'vitrinecity.db'));const userId=testDb.prepare('SELECT id FROM users WHERE email=?').get(email).id;
   testDb.prepare("INSERT INTO credit_orders(reference,user_id,amount_cents,fee_cents,credit_units,status) VALUES ('report_order',?,?,?,?, 'approved')").run(userId,105883,15882,864005);
+  testDb.prepare('UPDATE wallets SET balance_units=100000 WHERE user_id=?').run(userId);
+  testDb.prepare("INSERT INTO credit_batches(user_id,order_reference,original_units,remaining_units,expires_at,status) VALUES (?,'report_order',100000,100000,?,'active')").run(userId,Date.now()+86400000);
   const campaignId=Number(testDb.prepare(`INSERT INTO ad_campaigns
-    (user_id,order_reference,objective,destination_type,destination_url,daily_budget_cents,duration_days,gross_credits,management_credits,net_credits,status)
-    VALUES (?,'report_order','sales','site','https://example.com',3000,30,1016477,152472,864005,'active')`).run(userId).lastInsertRowid);
+    (user_id,order_reference,objective,destination_type,destination_url,daily_budget_cents,duration_days,gross_credits,management_credits,net_credits,status,creative_title,creative_text,keywords)
+    VALUES (?,'report_order','sales','site','https://example.com',3000,30,1016477,152472,864005,'active','Produto teste','Conheça este produto especial','produto, especial')`).run(userId).lastInsertRowid);
   const insertEvent=testDb.prepare('INSERT INTO ad_delivery_events(campaign_id,event_type,event_token,visitor_key,query_text,cost_units,event_day) VALUES (?,?,?,?,?,?,?)');
   for(let i=0;i<10;i++)insertEvent.run(campaignId,'impression',`imp-${i}`,`visitor-${i}`,'produto',0,'2026-08-22');
   insertEvent.run(campaignId,'click','imp-0','visitor-0','produto',480,'2026-08-22');insertEvent.run(campaignId,'click','imp-1','visitor-1','produto',480,'2026-08-22');
   testDb.prepare("INSERT INTO ad_campaign_conversions(campaign_id,order_reference,event_token,value_cents,status) VALUES (?,'sale-1','imp-0',5000,'approved')").run(campaignId);testDb.close();
   response=await request('/api/ads/campaigns',{headers:{cookie}});assert.equal(response.status,200);const report=(await response.json()).campaigns[0];
   assert.deepEqual({impressions:report.impressions,reach:report.reach,clicks:report.clicks,ctrPercent:report.ctrPercent,spentCredits:report.spentCredits,spentCents:report.spentCents,conversions:report.conversions,salesCents:report.sales_cents,conversionRatePercent:report.conversionRatePercent,roas:report.roas,returnPercent:report.returnPercent},{impressions:10,reach:10,clicks:2,ctrPercent:20,spentCredits:9.6,spentCents:100,conversions:1,salesCents:5000,conversionRatePercent:50,roas:50,returnPercent:4900});
+  response=await request('/api/ads/serve?q=produto',{headers:{cookie}});assert.equal((await response.json()).ads.length,0,'o anunciante não recebe o próprio anúncio');
+  response=await request('/api/ads/serve?q=produto',{headers:{'User-Agent':'Googlebot/2.1'}});assert.equal((await response.json()).ads.length,0,'robôs conhecidos não recebem anúncios');
+  response=await request('/api/ads/serve?q=produto');const served=(await response.json()).ads[0];assert.ok(served?.clickUrl);
+  response=await request(served.clickUrl,{redirect:'manual',headers:{'User-Agent':'browser-diferente'}});assert.equal(response.headers.get('location'),'/buscar.html','token não vale em outro navegador');
+  response=await request(served.clickUrl,{redirect:'manual'});assert.equal(response.headers.get('location'),'https://example.com');assert.match(response.headers.get('set-cookie')||'',/vc_ad_attr=/);
+  await request(served.clickUrl,{redirect:'manual'});response=await request('/api/ads/campaigns',{headers:{cookie}});const protectedReport=(await response.json()).campaigns[0];assert.equal(protectedReport.spentCredits,14.4,'o mesmo token cobra uma única vez');
   console.log('ads-pricing: ok');
 }finally{child.kill();await new Promise(resolve=>child.once('exit',resolve));await new Promise(resolve=>setTimeout(resolve,300));try{rmSync(dataDir,{recursive:true,force:true,maxRetries:5,retryDelay:100})}catch(error){if(error.code!=='EPERM')throw error}}
