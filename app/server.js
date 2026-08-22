@@ -816,6 +816,21 @@ db.exec(`CREATE TABLE IF NOT EXISTS marketplace_returns (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_marketplace_returns_open ON marketplace_returns(order_reference,buyer_user_id)
   WHERE status IN ('requested','approved','received');
 CREATE INDEX IF NOT EXISTS idx_marketplace_returns_order ON marketplace_returns(order_reference,status,id DESC);`);
+db.exec(`CREATE TABLE IF NOT EXISTS marketplace_seller_accounts (
+  store_reference TEXT PRIMARY KEY REFERENCES store_profiles(order_reference) ON DELETE CASCADE,
+  provider_user_id TEXT NOT NULL, access_token_encrypted TEXT NOT NULL, refresh_token_encrypted TEXT NOT NULL DEFAULT '',
+  public_key TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'connected' CHECK(status IN ('connected','expired','revoked','error')),
+  expires_at TEXT, connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS marketplace_payment_reconciliation (
+  order_reference TEXT PRIMARY KEY REFERENCES marketplace_orders(reference) ON DELETE CASCADE,
+  payment_id TEXT UNIQUE, expected_gross_cents INTEGER NOT NULL, expected_marketplace_fee_cents INTEGER NOT NULL,
+  expected_seller_net_cents INTEGER NOT NULL, split_mode TEXT NOT NULL DEFAULT 'central' CHECK(split_mode IN ('central','marketplace')),
+  actual_gross_cents INTEGER, payment_status TEXT NOT NULL DEFAULT 'pending',
+  reconciliation_status TEXT NOT NULL DEFAULT 'pending' CHECK(reconciliation_status IN ('pending','matched','mismatch','reversed')),
+  last_event_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_marketplace_reconciliation_status ON marketplace_payment_reconciliation(reconciliation_status,updated_at DESC);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -1069,6 +1084,62 @@ function escapeHtml(value) {
 
 function managementSecret() {
   return String(process.env.STORE_PORTAL_SECRET || process.env.MERCADOPAGO_WEBHOOK_SECRET || '').trim();
+}
+
+function marketplaceOAuthConfigured() {
+  return Boolean(process.env.MERCADOPAGO_MARKETPLACE_CLIENT_ID && process.env.MERCADOPAGO_MARKETPLACE_CLIENT_SECRET &&
+    process.env.MERCADOPAGO_MARKETPLACE_TOKEN_ENCRYPTION_KEY);
+}
+
+function marketplaceTokenKey() {
+  const secret=String(process.env.MERCADOPAGO_MARKETPLACE_TOKEN_ENCRYPTION_KEY||'');
+  if(secret.length<24)throw new Error('Configure MERCADOPAGO_MARKETPLACE_TOKEN_ENCRYPTION_KEY com uma chave segura.');
+  return createHash('sha256').update('marketplace:'+secret).digest();
+}
+
+function encryptMarketplaceToken(token) {
+  const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',marketplaceTokenKey(),iv);
+  const encrypted=Buffer.concat([cipher.update(String(token),'utf8'),cipher.final()]);
+  return [iv.toString('base64url'),cipher.getAuthTag().toString('base64url'),encrypted.toString('base64url')].join('.');
+}
+
+function decryptMarketplaceToken(value) {
+  const [ivText,tagText,encryptedText]=String(value||'').split('.');
+  const decipher=createDecipheriv('aes-256-gcm',marketplaceTokenKey(),Buffer.from(ivText,'base64url'));
+  decipher.setAuthTag(Buffer.from(tagText,'base64url'));
+  return Buffer.concat([decipher.update(Buffer.from(encryptedText,'base64url')),decipher.final()]).toString('utf8');
+}
+
+async function marketplaceSellerAccessToken(account) {
+  const expiresAt=Date.parse(account.expires_at||''),stillValid=!Number.isFinite(expiresAt)||expiresAt>Date.now()+5*60*1000;
+  if(stillValid)return decryptMarketplaceToken(account.access_token_encrypted);
+  if(!account.refresh_token_encrypted)throw new Error('seller_authorization_expired');
+  const refreshToken=decryptMarketplaceToken(account.refresh_token_encrypted);
+  const response=await fetch('https://api.mercadopago.com/oauth/token',{method:'POST',headers:{accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},
+    body:new URLSearchParams({client_id:String(process.env.MERCADOPAGO_MARKETPLACE_CLIENT_ID),client_secret:String(process.env.MERCADOPAGO_MARKETPLACE_CLIENT_SECRET),
+      grant_type:'refresh_token',refresh_token:refreshToken}),signal:AbortSignal.timeout(12000)});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok||!data.access_token)throw new Error('seller_authorization_refresh_failed');
+  const nextExpiry=Number(data.expires_in)>0?new Date(Date.now()+Number(data.expires_in)*1000).toISOString():null;
+  db.prepare(`UPDATE marketplace_seller_accounts SET access_token_encrypted=?,refresh_token_encrypted=?,expires_at=?,
+    status='connected',updated_at=CURRENT_TIMESTAMP WHERE store_reference=?`).run(encryptMarketplaceToken(data.access_token),
+      data.refresh_token?encryptMarketplaceToken(data.refresh_token):account.refresh_token_encrypted,nextExpiry,account.store_reference);
+  return String(data.access_token);
+}
+
+function marketplaceOAuthState(reference) {
+  const payload=Buffer.from(JSON.stringify({reference:String(reference),issuedAt:Date.now()})).toString('base64url');
+  const signature=createHmac('sha256',managementSecret()).update('mp-marketplace:'+payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function verifyMarketplaceOAuthState(value) {
+  const [payload,provided]=String(value||'').split('.');
+  if(!payload||!provided||!managementSecret())return null;
+  const expected=createHmac('sha256',managementSecret()).update('mp-marketplace:'+payload).digest('base64url');
+  if(expected.length!==provided.length||!timingSafeEqual(Buffer.from(expected),Buffer.from(provided)))return null;
+  try{const data=JSON.parse(Buffer.from(payload,'base64url').toString('utf8'));
+    if(!data.reference||Date.now()-Number(data.issuedAt)>10*60*1000)return null;return data;}catch{return null;}
 }
 
 function storeManagementToken(reference) {
@@ -1908,12 +1979,20 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
   catch { return res.status(400).json({ error:'O CEP do endereço de entrega é inválido.' }); }
   const shippingCents = shippingQuote.shippingCents;
   const totalCents = productsCents + shippingCents;
-  const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
+  let token=process.env.MERCADOPAGO_ACCESS_TOKEN,splitMode='central';
+  const marketplaceFeeCents=platformPercentCents+MARKETPLACE_FIXED_FEE_CENTS+returnOperationCents;
+  if(marketplaceOAuthConfigured()){
+    const sellerAccount=db.prepare("SELECT * FROM marketplace_seller_accounts WHERE store_reference=? AND status='connected'").get(storeReference);
+    if(!sellerAccount)return res.status(409).json({error:'A loja precisa conectar sua conta Mercado Pago antes de receber pedidos.'});
+    try{token=await marketplaceSellerAccessToken(sellerAccount);splitMode='marketplace';}
+    catch{db.prepare("UPDATE marketplace_seller_accounts SET status='expired',updated_at=CURRENT_TIMESTAMP WHERE store_reference=?").run(storeReference);
+      return res.status(503).json({error:'A autorização Mercado Pago da loja precisa ser renovada.'});}
+  }
   if (!token || !process.env.MERCADOPAGO_WEBHOOK_SECRET) return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
   const reference = `shop_${randomUUID()}`;
   try {
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
-      method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
+      method: 'POST', headers: { ...mpHeaders(token), 'X-Idempotency-Key': reference },
       body: JSON.stringify({
         items: [...products.map(product => ({ id: String(product.id), title: product.name.slice(0, 120),
           quantity: quantities.get(product.id), currency_id: 'BRL', unit_price: product.price_cents / 100 })),
@@ -1923,7 +2002,9 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
         external_reference: reference, notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
         back_urls: { success: `${SITE_URL}/pedidos.html?resultado=sucesso`, pending: `${SITE_URL}/pedidos.html?resultado=pendente`,
           failure: `${SITE_URL}/loja?resultado=falha` }, auto_return: 'approved', statement_descriptor: 'VITRINYCITY',
-        metadata: { product: 'marketplace_order', store_reference: storeReference }
+        ...(splitMode==='marketplace'?{marketplace_fee:marketplaceFeeCents/100}:{}),
+        metadata: { product: 'marketplace_order', store_reference: storeReference, split_mode:splitMode,
+          expected_marketplace_fee_cents:marketplaceFeeCents }
       }), signal: AbortSignal.timeout(12000)
     });
     const payment = await response.json();
@@ -1944,6 +2025,9 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
           Math.round(subtotal * MARKETPLACE_COMMISSION_BPS / 10000), returnProvisionPending);
         returnProvisionPending = 0;
       }
+      db.prepare(`INSERT INTO marketplace_payment_reconciliation
+        (order_reference,expected_gross_cents,expected_marketplace_fee_cents,expected_seller_net_cents,split_mode)
+        VALUES (?,?,?,?,?)`).run(reference,totalCents,marketplaceFeeCents,totalCents-marketplaceFeeCents,splitMode);
     });
     insertOrder();
     return res.status(201).json({ reference, checkoutUrl: payment.init_point, shipping:shippingQuote });
@@ -3543,7 +3627,20 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
     if (reference.startsWith('shop_')) {
       const order = db.prepare('SELECT * FROM marketplace_orders WHERE reference=?').get(reference);
       if (!order) return res.sendStatus(200);
-      if (amountCents !== order.total_cents || payment.currency_id !== 'BRL') return res.sendStatus(400);
+      const reconciliation=db.prepare('SELECT * FROM marketplace_payment_reconciliation WHERE order_reference=?').get(reference);
+      const sellerAccount=reconciliation?.split_mode==='marketplace'?
+        db.prepare('SELECT provider_user_id FROM marketplace_seller_accounts WHERE store_reference=?').get(order.store_reference):null;
+      const collectorId=String(payment.collector_id||payment.collector?.id||'');
+      const collectorMatches=!sellerAccount||collectorId===String(sellerAccount.provider_user_id);
+      const amountMatches=amountCents===order.total_cents&&payment.currency_id==='BRL';
+      const reportedMarketplaceFee=Number(payment.marketplace_fee);
+      const feeMatches=payment.marketplace_fee==null||!Number.isFinite(reportedMarketplaceFee)||!reconciliation||Math.round(reportedMarketplaceFee*100)===reconciliation.expected_marketplace_fee_cents;
+      if(!amountMatches||!collectorMatches||!feeMatches){
+        db.prepare(`UPDATE marketplace_payment_reconciliation SET payment_id=?,actual_gross_cents=?,payment_status=?,
+          reconciliation_status='mismatch',last_event_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
+          .run(String(payment.id),amountCents,String(payment.status||'unknown'),reference);
+        return res.sendStatus(400);
+      }
       const status = String(payment.status || 'unknown');
       const reversed = ['refunded', 'charged_back', 'cancelled', 'rejected'].includes(status);
       const fulfillment = status === 'approved' ? 'fiscal_pending' : reversed ? 'cancelled' : order.fulfillment_status;
@@ -3559,6 +3656,9 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
           const change = db.prepare('UPDATE store_products SET stock_quantity=MAX(0,stock_quantity+?),updated_at=CURRENT_TIMESTAMP WHERE id=?');
           for (const item of items) change.run((reserveStock ? -1 : 1) * item.quantity, item.product_id);
         }
+        db.prepare(`UPDATE marketplace_payment_reconciliation SET payment_id=?,actual_gross_cents=?,payment_status=?,
+          reconciliation_status=?,last_event_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
+          .run(String(payment.id),amountCents,status,reversed?'reversed':status==='approved'?'matched':'pending',reference);
       })();
       if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'marketplace', order.total_cents);
       return res.sendStatus(200);
@@ -3684,18 +3784,58 @@ app.get('/api/store-portal/:reference', (req, res) => {
   return res.json(publicStoreProfile(access.order.reference));
 });
 
+app.get('/api/store-portal/:reference/mercadopago/connect', (req,res) => {
+  const access=storePortalAccess(req,res);if(!access)return;
+  if(!marketplaceOAuthConfigured())return res.status(503).send('A aplicação Marketplace do Mercado Pago ainda não está configurada.');
+  const redirectUri=SITE_URL+'/api/marketplace/mercadopago/callback';
+  const authorization=new URL('https://auth.mercadopago.com.br/authorization');
+  authorization.searchParams.set('client_id',String(process.env.MERCADOPAGO_MARKETPLACE_CLIENT_ID));
+  authorization.searchParams.set('response_type','code');authorization.searchParams.set('platform_id','mp');
+  authorization.searchParams.set('redirect_uri',redirectUri);authorization.searchParams.set('state',marketplaceOAuthState(access.order.reference));
+  return res.redirect(302,authorization.toString());
+});
+
+app.get('/api/marketplace/mercadopago/callback', async (req,res) => {
+  const state=verifyMarketplaceOAuthState(req.query.state),destination=(status,reference='')=>
+    `/painel-lojista.html?ref=${encodeURIComponent(reference)}&token=${encodeURIComponent(storeManagementToken(reference))}&mercadopago=${encodeURIComponent(status)}`;
+  if(!state)return res.redirect(302,'/painel-lojista.html?mercadopago=invalid_state');
+  if(req.query.error)return res.redirect(302,destination('cancelled',state.reference));
+  if(!marketplaceOAuthConfigured()||!req.query.code)return res.redirect(302,destination('configuration_error',state.reference));
+  try{
+    const redirectUri=SITE_URL+'/api/marketplace/mercadopago/callback';
+    const response=await fetch('https://api.mercadopago.com/oauth/token',{method:'POST',headers:{accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},
+      body:new URLSearchParams({client_id:String(process.env.MERCADOPAGO_MARKETPLACE_CLIENT_ID),client_secret:String(process.env.MERCADOPAGO_MARKETPLACE_CLIENT_SECRET),
+        grant_type:'authorization_code',code:String(req.query.code),redirect_uri:redirectUri}),signal:AbortSignal.timeout(12000)});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok||!data.access_token||!data.user_id)throw new Error(String(data.message||'oauth_exchange_failed'));
+    const expiresAt=Number(data.expires_in)>0?new Date(Date.now()+Number(data.expires_in)*1000).toISOString():null;
+    db.prepare(`INSERT INTO marketplace_seller_accounts
+      (store_reference,provider_user_id,access_token_encrypted,refresh_token_encrypted,public_key,status,expires_at,updated_at)
+      VALUES (?,?,?,?,?,'connected',?,CURRENT_TIMESTAMP)
+      ON CONFLICT(store_reference) DO UPDATE SET provider_user_id=excluded.provider_user_id,
+      access_token_encrypted=excluded.access_token_encrypted,refresh_token_encrypted=excluded.refresh_token_encrypted,
+      public_key=excluded.public_key,status='connected',expires_at=excluded.expires_at,updated_at=CURRENT_TIMESTAMP`)
+      .run(state.reference,String(data.user_id),encryptMarketplaceToken(data.access_token),data.refresh_token?encryptMarketplaceToken(data.refresh_token):'',String(data.public_key||''),expiresAt);
+    return res.redirect(302,destination('connected',state.reference));
+  }catch(error){console.error('Mercado Pago marketplace OAuth error',String(error?.message||error).slice(0,180));
+    return res.redirect(302,destination('error',state.reference));}
+});
+
 app.get('/api/store-portal/:reference/marketplace', (req, res) => {
   const access = storePortalAccess(req, res);
   if (!access) return;
   const products = db.prepare('SELECT * FROM store_products WHERE store_reference=? ORDER BY updated_at DESC,id DESC')
     .all(access.order.reference);
-  const orders = db.prepare(`SELECT * FROM marketplace_orders WHERE store_reference=?
-    ORDER BY created_at DESC LIMIT 100`).all(access.order.reference);
+  const orders = db.prepare(`SELECT o.*,r.reconciliation_status,r.expected_marketplace_fee_cents,r.expected_seller_net_cents
+    FROM marketplace_orders o LEFT JOIN marketplace_payment_reconciliation r ON r.order_reference=o.reference
+    WHERE o.store_reference=? ORDER BY o.created_at DESC LIMIT 100`).all(access.order.reference);
   const returns=db.prepare(`SELECT r.*,o.total_cents FROM marketplace_returns r JOIN marketplace_orders o ON o.reference=r.order_reference
     WHERE o.store_reference=? ORDER BY r.id DESC LIMIT 100`).all(access.order.reference);
   const decorated=orders.map(order=>({...order,payoutCents:Math.max(0,order.products_cents-order.platform_percent_cents-order.platform_fixed_cents-order.return_operation_cents),
     payoutStatus:['cancelled','cancel_requested'].includes(order.fulfillment_status)?'blocked':order.payment_status==='approved'?'scheduled':'not_eligible'}));
-  return res.json({ products, orders:decorated, returns, fees: {
+  const sellerAccount=db.prepare(`SELECT provider_user_id,status,expires_at,connected_at,updated_at
+    FROM marketplace_seller_accounts WHERE store_reference=?`).get(access.order.reference)||null;
+  return res.json({ products, orders:decorated, returns, paymentSplit:{configured:marketplaceOAuthConfigured(),account:sellerAccount}, fees: {
     percent: MARKETPLACE_COMMISSION_BPS / 100, fixedCents: MARKETPLACE_FIXED_FEE_CENTS,
     returnProvisionPerOrderCents: MARKETPLACE_RETURN_PROVISION_CENTS
   } });
@@ -3885,6 +4025,17 @@ app.get('/api/admin/store-submissions', requireAdmin, (req, res) => {
     FROM store_profiles p JOIN lot_orders o ON o.reference=p.order_reference
     WHERE (?='' OR p.review_status=?) ORDER BY COALESCE(p.submitted_at,p.created_at) DESC LIMIT 200`).all(status, status);
   return res.json({ submissions: rows });
+});
+
+app.get('/api/admin/marketplace/reconciliation', requireAdmin, (req,res) => {
+  const status=String(req.query.status||'').trim();
+  const allowed=new Set(['pending','matched','mismatch','reversed']);
+  if(status&&!allowed.has(status))return res.status(400).json({error:'Status de conciliação inválido.'});
+  const rows=db.prepare(`SELECT r.*,o.store_reference,o.payment_status AS order_payment_status,s.business_name AS store_name
+    FROM marketplace_payment_reconciliation r JOIN marketplace_orders o ON o.reference=r.order_reference
+    JOIN store_profiles s ON s.order_reference=o.store_reference
+    WHERE (?='' OR r.reconciliation_status=?) ORDER BY r.updated_at DESC LIMIT 300`).all(status,status);
+  return res.json({reconciliation:rows});
 });
 
 app.patch('/api/admin/store-submissions/:reference', requireAdmin, async (req, res) => {
