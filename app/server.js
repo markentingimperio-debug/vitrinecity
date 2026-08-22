@@ -4015,6 +4015,27 @@ function socialPost(row, viewerId) {
   };
 }
 
+app.get('/api/social/profile-suggestions', (req, res) => {
+  const viewer = currentUser(req);
+  const viewerId = viewer?.id || 0;
+  const viewerCity = viewerId ? String(db.prepare('SELECT city FROM social_profiles WHERE user_id=?').get(viewerId)?.city || '').trim().toLowerCase() : '';
+  const suggestions = db.prepare(`SELECT sp.user_id id,sp.handle,sp.bio,sp.city,sp.avatar_url avatarUrl,u.name,
+      (SELECT COUNT(*) FROM social_follows f WHERE f.followed_id=sp.user_id) followers,
+      (SELECT COUNT(*) FROM social_posts p WHERE p.user_id=sp.user_id AND p.status='ready') posts,
+      (SELECT COUNT(*) FROM social_follows mine JOIN social_follows theirs ON theirs.follower_id=mine.followed_id
+        WHERE mine.follower_id=? AND theirs.followed_id=sp.user_id) mutualConnections
+    FROM social_profiles sp JOIN users u ON u.id=sp.user_id
+    WHERE (?=0 OR sp.user_id<>?)
+      AND (?=0 OR NOT EXISTS(SELECT 1 FROM social_follows f WHERE f.follower_id=? AND f.followed_id=sp.user_id))
+      AND NOT EXISTS(SELECT 1 FROM social_blocks b WHERE (b.blocker_id=? AND b.blocked_id=sp.user_id)
+        OR (b.blocker_id=sp.user_id AND b.blocked_id=?))
+      AND NOT EXISTS(SELECT 1 FROM social_mutes m WHERE m.user_id=? AND m.muted_id=sp.user_id)
+    ORDER BY (CASE WHEN ?<>'' AND lower(trim(sp.city))=? THEN 20 ELSE 0 END)
+      + mutualConnections*12 + followers*2 + posts DESC,sp.updated_at DESC LIMIT 8`)
+    .all(viewerId,viewerId,viewerId,viewerId,viewerId,viewerId,viewerId,viewerId,viewerCity,viewerCity);
+  return res.json({ authenticated: Boolean(viewer), suggestions });
+});
+
 app.get('/api/social/discover', (req,res) => {
   const viewer=currentUser(req),viewerId=viewer?.id||0,q=String(req.query.q||'').trim().toLowerCase().slice(0,60).replace(/^[@#]/,'');
   const profiles=db.prepare(`SELECT sp.user_id id,sp.handle,sp.bio,sp.city,sp.avatar_url avatarUrl,u.name,
