@@ -4719,6 +4719,12 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     </body></html>`);
 });
 
+app.get('/perfil/:handle', (req, res) => {
+  const handle = String(req.params.handle || '').trim();
+  if (!/^[a-z0-9._-]{3,40}$/i.test(handle)) return res.status(404).send('Perfil não encontrado.');
+  return res.sendFile(path.join(dir, 'public', 'perfil-social.html'));
+});
+
 app.get('/social/post/:id', (req,res) => {
   const p=db.prepare(`SELECT p.*,u.name,COALESCE(sp.handle,'usuario') handle FROM social_posts p JOIN users u ON u.id=p.user_id LEFT JOIN social_profiles sp ON sp.user_id=p.user_id WHERE p.id=? AND p.status='ready'`).get(req.params.id);
   if(!p)return res.status(404).send('Publicação não encontrada.');
