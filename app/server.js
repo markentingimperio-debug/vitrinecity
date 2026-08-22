@@ -283,6 +283,9 @@ ensureColumn('ad_campaigns', 'keywords', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('ad_campaigns', 'category', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('ad_campaigns', 'target_city', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('ad_campaigns', 'placement', "TEXT NOT NULL DEFAULT 'search'");
+ensureColumn('ad_campaigns', 'target_audience', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('ad_campaigns', 'reach_km', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('ad_campaigns', 'starts_on', 'TEXT');
 db.exec(`
 CREATE TABLE IF NOT EXISTS social_profiles (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -2351,7 +2354,7 @@ app.get('/api/ads/campaigns', requireUser, (req, res) => {
     active: 'Em veiculação', paused: 'Pausada', completed: 'Concluída' };
   const campaigns = db.prepare(`SELECT id,objective,destination_type,destination_url,daily_budget_cents,
     duration_days,gross_credits,management_credits,net_credits,status,creative_title,creative_text,
-    image_url,keywords,category,target_city,placement,created_at,updated_at,
+    image_url,keywords,category,target_city,target_audience,reach_km,starts_on,placement,created_at,updated_at,
     (SELECT COUNT(*) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='impression') impressions,
     (SELECT COUNT(*) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='click') clicks,
     (SELECT COALESCE(SUM(cost_units),0) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='click') spent_units
@@ -3380,6 +3383,9 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   const keywords = String(req.body?.keywords || '').trim().slice(0, 300);
   const category = String(req.body?.category || '').trim().slice(0, 80);
   const targetCity = String(req.body?.targetCity || '').trim().slice(0, 80);
+  const targetAudience = String(req.body?.targetAudience || '').trim().slice(0, 160);
+  const reachKm = Math.round(Number(req.body?.reachKm));
+  const startsOn = String(req.body?.startsOn || '').trim();
   if (!Number.isInteger(amountCents) || amountCents < ADS_MIN_TOPUP_CENTS || amountCents > ADS_MAX_TOPUP_CENTS) {
     return res.status(400).json({ error: 'A recarga deve ficar entre R$ 30,00 e R$ 5.000,00.' });
   }
@@ -3403,6 +3409,11 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   if (creativeTitle.length < 4 || creativeText.length < 10 || normalizedAdTerms(keywords).length < 1) {
     return res.status(400).json({ error: 'Informe título, texto e palavras-chave do anúncio.' });
   }
+  if(targetAudience.length<4)return res.status(400).json({error:'Descreva o público que deseja alcançar.'});
+  if(!Number.isInteger(reachKm)||reachKm<1||reachKm>100)return res.status(400).json({error:'Escolha um alcance entre 1 e 100 km.'});
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(startsOn)||Number.isNaN(Date.parse(`${startsOn}T12:00:00Z`)))return res.status(400).json({error:'Escolha uma data de início válida.'});
+  const today=new Date().toISOString().slice(0,10),latestStart=new Date(Date.now()+90*24*60*60*1000).toISOString().slice(0,10);
+  if(startsOn<today||startsOn>latestStart)return res.status(400).json({error:'A data de início deve ficar entre hoje e os próximos 90 dias.'});
   if (imageUrl) {
     try { const parsedImage = new URL(imageUrl); if (!['http:','https:'].includes(parsedImage.protocol)) throw new Error(); }
     catch (_) { return res.status(400).json({ error: 'Informe uma URL de imagem válida ou deixe o campo vazio.' }); }
@@ -3432,10 +3443,12 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
       .run(reference, req.user.id, amountCents, feeCents, netCredits);
     db.prepare(`INSERT INTO ad_campaigns
       (user_id,order_reference,objective,destination_type,destination_url,daily_budget_cents,duration_days,
-       gross_credits,management_credits,net_credits,creative_title,creative_text,image_url,keywords,category,target_city,placement,status)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'search','awaiting_payment')`)
+       gross_credits,management_credits,net_credits,creative_title,creative_text,image_url,keywords,category,target_city,
+       target_audience,reach_km,starts_on,placement,status)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'search','awaiting_payment')`)
       .run(req.user.id, reference, objective, destinationType, destinationUrl, dailyBudgetCents, durationDays,
-        grossCredits, managementCredits, netCredits, creativeTitle, creativeText, imageUrl, keywords, category, targetCity);
+        grossCredits, managementCredits, netCredits, creativeTitle, creativeText, imageUrl, keywords, category, targetCity,
+        targetAudience,reachKm,startsOn);
   });
   createOrder();
   adminAnalytics.recordOrderAttribution(req, reference, 'credits');

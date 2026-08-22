@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
@@ -15,5 +15,9 @@ try{
   assert.deepEqual(quote,{dailyCredits:288,durationDays:30,dailyBudgetCents:3000,requestedNetUnits:864000,amountCents:105883,feeCents:15882,mediaCents:90001,grossCreditUnits:1016477,managementCreditUnits:152472,netCreditUnits:864005,creditsPerReal:9.6,managementRatePercent:15,validityDays:90});
   response=await request('/api/credits/quote',{method:'POST',headers:{cookie},body:JSON.stringify({dailyCredits:47,durationDays:30})});assert.equal(response.status,400);
   response=await request('/api/credits/checkout',{method:'POST',headers:{cookie},body:JSON.stringify({termsAccepted:true,amountCents:105882,dailyCredits:288,dailyBudgetCents:3000,durationDays:30,objective:'visits',destinationType:'site',destinationUrl:'https://example.com',creativeTitle:'Anúncio teste',creativeText:'Texto completo para o anúncio de teste.',keywords:'produto, teste'})});assert.equal(response.status,409);const mismatch=await response.json();assert.equal(mismatch.quote.amountCents,105883);
+  const checkoutBase={termsAccepted:true,amountCents:105883,dailyCredits:288,dailyBudgetCents:3000,durationDays:30,objective:'visits',destinationType:'site',destinationUrl:'https://example.com',creativeTitle:'Anúncio teste',creativeText:'Texto completo para o anúncio de teste.',keywords:'produto, teste',targetCity:'Anápolis',startsOn:new Date().toISOString().slice(0,10)};
+  response=await request('/api/credits/checkout',{method:'POST',headers:{cookie},body:JSON.stringify({...checkoutBase,reachKm:10})});assert.equal(response.status,400);assert.match((await response.json()).error,/público/i);
+  response=await request('/api/credits/checkout',{method:'POST',headers:{cookie},body:JSON.stringify({...checkoutBase,targetAudience:'Pessoas interessadas no produto',reachKm:101})});assert.equal(response.status,400);assert.match((await response.json()).error,/alcance/i);
+  const walletHtml=readFileSync(new URL('../public/carteira.html',import.meta.url),'utf8');for(const id of ['targetAudience','targetCity','reachKm','startsOn','creativeTitle','destinationUrl'])assert.match(walletHtml,new RegExp(`id=["']${id}["']`));
   console.log('ads-pricing: ok');
 }finally{child.kill();await new Promise(resolve=>child.once('exit',resolve));await new Promise(resolve=>setTimeout(resolve,300));try{rmSync(dataDir,{recursive:true,force:true,maxRetries:5,retryDelay:100})}catch(error){if(error.code!=='EPERM')throw error}}
