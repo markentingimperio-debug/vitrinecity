@@ -253,6 +253,15 @@ ensureColumn('lot_orders', 'plan_code', "TEXT NOT NULL DEFAULT 'founder'");
 ensureColumn('lot_orders', 'billing_type', "TEXT NOT NULL DEFAULT 'one_time'");
 ensureColumn('lot_orders', 'mp_subscription_id', 'TEXT');
 ensureColumn('users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
+db.exec(`CREATE TABLE IF NOT EXISTS admin_login_audit (
+  id INTEGER PRIMARY KEY,
+  email_hash TEXT NOT NULL,
+  ip_hash TEXT NOT NULL,
+  success INTEGER NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL DEFAULT 'invalid',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_admin_login_audit_created ON admin_login_audit(created_at DESC);`);
 db.exec(`
 CREATE TABLE IF NOT EXISTS ad_campaigns (
   id INTEGER PRIMARY KEY,
@@ -1060,12 +1069,12 @@ function sessionHash(token) {
   return createHash('sha256').update(token).digest('hex');
 }
 
-function setSession(res, userId) {
+function setSession(res, userId,maxAgeSeconds=SESSION_MAX_AGE_SECONDS) {
   const token = randomBytes(32).toString('base64url');
   db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(Date.now());
   db.prepare('INSERT INTO sessions (token_hash,user_id,expires_at) VALUES (?,?,?)')
-    .run(sessionHash(token), userId, Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
-  res.append('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECONDS}`);
+    .run(sessionHash(token), userId, Date.now() + maxAgeSeconds * 1000);
+  res.append('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAgeSeconds}`);
 }
 
 function currentUser(req) {
@@ -1078,14 +1087,27 @@ function currentUser(req) {
 
 const adminEmails = new Set(String(process.env.ADMIN_EMAILS || '').split(',')
   .map(email => email.trim().toLowerCase()).filter(Boolean));
+const ADMIN_SESSION_MAX_AGE_SECONDS=8*60*60;
+const ADMIN_DUMMY_PASSWORD_HASH=hashPassword(randomBytes(24).toString('hex'));
+
+function isAdministrativeUser(user){return Boolean(user?.is_admin||adminEmails.has(String(user?.email||'').toLowerCase()));}
+
+function recordAdminLogin(req,email,success,reason){
+  const key=managementSecret()||'vitrinecity-admin-audit';
+  const hash=value=>createHmac('sha256',key).update(String(value||'')).digest('hex');
+  db.prepare('INSERT INTO admin_login_audit(email_hash,ip_hash,success,reason) VALUES (?,?,?,?)')
+    .run(hash(String(email||'').toLowerCase()),hash(req.ip),success?1:0,String(reason||'invalid').slice(0,40));
+  db.prepare("DELETE FROM admin_login_audit WHERE created_at<datetime('now','-180 days')").run();
+}
 
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
   if (!user) {
-    if (req.path === '/admin' || req.path === '/admin.html') return res.redirect(302, '/carteira.html?admin=1');
+    if (req.path === '/admin' || req.path === '/admin.html') return res.redirect(302, '/admin-login.html');
     return res.status(401).json({ error: 'Entre na conta administrativa.' });
   }
-  if (!user.is_admin && !adminEmails.has(String(user.email).toLowerCase())) {
+  if (!isAdministrativeUser(user)) {
+    if(req.path==='/admin'||req.path==='/admin.html')return res.redirect(302,'/admin-login.html?erro=restrito');
     return res.status(403).json({ error: 'Acesso restrito à administração.' });
   }
   req.user = user;
@@ -1681,6 +1703,30 @@ app.post('/api/auth/login', sameOriginOnly, (req, res) => {
   }
   setSession(res, user.id);
   return res.json({ ok: true });
+});
+
+app.get('/api/admin/auth/status',(req,res)=>{
+  const user=currentUser(req);
+  return res.json({authenticated:Boolean(user),administrator:isAdministrativeUser(user)});
+});
+
+app.post('/api/admin/auth/login',sameOriginOnly,(req,res)=>{
+  const email=String(req.body?.email||'').trim().toLowerCase(),password=String(req.body?.password||'');
+  if(!allowAttempt(authAttempts,`admin-login-ip:${req.ip}`,6,15*60*1000)||
+     !allowAttempt(authAttempts,`admin-login-email:${email}`,5,15*60*1000)){
+    recordAdminLogin(req,email,false,'rate_limited');
+    return res.set('Retry-After','900').status(429).json({error:'Muitas tentativas. Aguarde 15 minutos antes de tentar novamente.'});
+  }
+  const user=db.prepare('SELECT * FROM users WHERE email=?').get(email);
+  const passwordValid=verifyPassword(password,user?.password_hash||ADMIN_DUMMY_PASSWORD_HASH);
+  if(!passwordValid||!isAdministrativeUser(user)){
+    recordAdminLogin(req,email,false,'invalid_credentials');
+    return res.status(401).json({error:'Credenciais administrativas inválidas.'});
+  }
+  const currentToken=parseCookies(req)[SESSION_COOKIE];
+  if(currentToken)db.prepare('DELETE FROM sessions WHERE token_hash=?').run(sessionHash(currentToken));
+  setSession(res,user.id,ADMIN_SESSION_MAX_AGE_SECONDS);recordAdminLogin(req,email,true,'success');
+  return res.json({ok:true,expiresInSeconds:ADMIN_SESSION_MAX_AGE_SECONDS});
 });
 
 app.post('/api/auth/logout', sameOriginOnly, (req, res) => {

@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {spawn} from 'node:child_process';
+import Database from 'better-sqlite3';
+const dataDir=mkdtempSync(path.join(tmpdir(),'vitriny-admin-auth-')),port=38000+Math.floor(Math.random()*1000),origin=`http://127.0.0.1:${port}`;
+const child=spawn(process.execPath,['server.js'],{cwd:new URL('..',import.meta.url),env:{...process.env,DATA_DIR:dataDir,PORT:String(port),SITE_URL:origin,MERCADOPAGO_WEBHOOK_SECRET:'admin-auth-test'},stdio:['ignore','pipe','pipe']});let output='';child.stdout.on('data',c=>output+=c);child.stderr.on('data',c=>output+=c);
+const request=(url,options={})=>fetch(origin+url,{...options,redirect:options.redirect||'manual',headers:{origin,'Content-Type':'application/json',...(options.headers||{})}});
+async function wait(){for(let i=0;i<80;i++){try{if((await fetch(origin+'/api/health')).ok)return}catch{}await new Promise(r=>setTimeout(r,100))}throw new Error(output)}
+try{
+  await wait();const email=`admin-${port}@example.com`,password='senha-administrativa-123';
+  let response=await request('/admin');assert.equal(response.status,302);assert.equal(response.headers.get('location'),'/admin-login.html');
+  response=await request('/api/auth/register',{method:'POST',body:JSON.stringify({name:'Gestor Teste',email,password,adultConfirmed:true,termsAccepted:true})});assert.equal(response.status,201);const regularCookie=response.headers.get('set-cookie').split(';')[0];
+  response=await request('/api/admin/auth/login',{method:'POST',headers:{cookie:regularCookie},body:JSON.stringify({email,password})});assert.equal(response.status,401);assert.equal((await response.json()).error,'Credenciais administrativas inválidas.');
+  const db=new Database(path.join(dataDir,'vitrinecity.db'));db.prepare('UPDATE users SET is_admin=1 WHERE email=?').run(email);db.close();
+  response=await request('/api/admin/auth/login',{method:'POST',headers:{cookie:regularCookie},body:JSON.stringify({email,password})});assert.equal(response.status,200);const setCookie=response.headers.get('set-cookie')||'';assert.match(setCookie,/Max-Age=28800/);const adminCookie=setCookie.split(';')[0];
+  response=await request('/api/admin/auth/status',{headers:{cookie:adminCookie}});assert.deepEqual(await response.json(),{authenticated:true,administrator:true});
+  response=await request('/admin',{headers:{cookie:adminCookie}});assert.equal(response.status,200);assert.match(await response.text(),/Painel de crescimento/i);
+  const auditDb=new Database(path.join(dataDir,'vitrinecity.db'));const audits=auditDb.prepare('SELECT * FROM admin_login_audit ORDER BY id').all();auditDb.close();assert.equal(audits.length,2);assert.deepEqual(audits.map(a=>a.success),[0,1]);assert.ok(audits.every(a=>!a.email_hash.includes(email)));
+  const page=readFileSync(new URL('../public/admin-login.html',import.meta.url),'utf8');assert.match(page,/Acesso administrativo/);assert.match(page,/noindex,nofollow/);assert.doesNotMatch(page,/Criar conta/);
+  console.log('admin-auth: ok');
+}finally{child.kill();await new Promise(r=>child.once('exit',r));await new Promise(r=>setTimeout(r,200));try{rmSync(dataDir,{recursive:true,force:true,maxRetries:5,retryDelay:100})}catch(error){if(error.code!=='EPERM')throw error}}
