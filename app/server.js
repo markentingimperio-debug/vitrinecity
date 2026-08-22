@@ -842,7 +842,7 @@ const COURSE_REFERRAL_RATE_BPS = 4500;
 const VIDEO_CREATOR_RATE_BPS = 8500;
 const MARKETPLACE_COMMISSION_BPS = 1000;
 const MARKETPLACE_FIXED_FEE_CENTS = 200;
-const MARKETPLACE_RETURN_OPERATION_CENTS = 50;
+const MARKETPLACE_RETURN_PROVISION_CENTS = 50;
 const COMMISSION_HOLD_MS = 30 * 24 * 60 * 60 * 1000;
 const AFFILIATE_COOKIE = 'vc_ref';
 const AFFILIATE_COOKIE_AGE_SECONDS = 60 * 60 * 24 * 30;
@@ -1901,9 +1901,8 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
     return res.status(409).json({ error: 'Estoque insuficiente para um dos produtos.' });
   }
   const productsCents = products.reduce((sum, product) => sum + product.price_cents * quantities.get(product.id), 0);
-  const unitCount = products.reduce((sum, product) => sum + quantities.get(product.id), 0);
   const platformPercentCents = Math.round(productsCents * MARKETPLACE_COMMISSION_BPS / 10000);
-  const returnOperationCents = unitCount * MARKETPLACE_RETURN_OPERATION_CENTS;
+  const returnOperationCents = MARKETPLACE_RETURN_PROVISION_CENTS;
   let shippingQuote;
   try { shippingQuote=automaticMarketplaceShipping(products,quantities,address.postal_code); }
   catch { return res.status(400).json({ error:'O CEP do endereço de entrega é inválido.' }); }
@@ -1938,10 +1937,12 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
       const insertItem = db.prepare(`INSERT INTO marketplace_order_items
         (order_reference,product_id,product_name,sku,quantity,unit_price_cents,subtotal_cents,platform_percent_cents,return_operation_cents)
         VALUES (?,?,?,?,?,?,?,?,?)`);
+      let returnProvisionPending = MARKETPLACE_RETURN_PROVISION_CENTS;
       for (const product of products) {
         const quantity = quantities.get(product.id), subtotal = product.price_cents * quantity;
         insertItem.run(reference, product.id, product.name, product.sku || '', quantity, product.price_cents, subtotal,
-          Math.round(subtotal * MARKETPLACE_COMMISSION_BPS / 10000), quantity * MARKETPLACE_RETURN_OPERATION_CENTS);
+          Math.round(subtotal * MARKETPLACE_COMMISSION_BPS / 10000), returnProvisionPending);
+        returnProvisionPending = 0;
       }
     });
     insertOrder();
@@ -3694,7 +3695,10 @@ app.get('/api/store-portal/:reference/marketplace', (req, res) => {
     WHERE o.store_reference=? ORDER BY r.id DESC LIMIT 100`).all(access.order.reference);
   const decorated=orders.map(order=>({...order,payoutCents:Math.max(0,order.products_cents-order.platform_percent_cents-order.platform_fixed_cents-order.return_operation_cents),
     payoutStatus:['cancelled','cancel_requested'].includes(order.fulfillment_status)?'blocked':order.payment_status==='approved'?'scheduled':'not_eligible'}));
-  return res.json({ products, orders:decorated, returns, fees: { percent: 10, fixedCents: 200, returnOperationPerUnitCents: 50 } });
+  return res.json({ products, orders:decorated, returns, fees: {
+    percent: MARKETPLACE_COMMISSION_BPS / 100, fixedCents: MARKETPLACE_FIXED_FEE_CENTS,
+    returnProvisionPerOrderCents: MARKETPLACE_RETURN_PROVISION_CENTS
+  } });
 });
 
 app.post('/api/store-portal/:reference/products', sameOriginOnly, (req, res) => {
