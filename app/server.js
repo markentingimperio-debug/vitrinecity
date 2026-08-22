@@ -1288,17 +1288,17 @@ app.use('/uploads/store-assets', express.static(path.join(dataDir, 'store-assets
   immutable: true, maxAge: '30d', fallthrough: false
 }));
 const publicPage = file => (_req, res) => res.sendFile(path.join(dir, 'public', file));
+const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
+  const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
+  const tags = [...scripts, '/social-accessibility.js'].map(src => `<script src="${src}" defer></script>`).join('');
+  return res.type('html').send(page.replace('</body>', `${tags}</body>`));
+};
 const publicErrorPage = (res, status) => res.status(status).sendFile(path.join(dir, 'public', `${status}.html`));
-app.get(['/social', '/social.html'], (_req, res) => {
-  const page = fs.readFileSync(path.join(dir, 'public', 'social.html'), 'utf8');
-  return res.type('html').send(page.replace('</body>', '<script src="/social-empty-states.js" defer></script></body>'));
-});
+app.get(['/social', '/social.html'], enhancedPublicPage('social.html', ['/social-empty-states.js']));
 app.get('/loja', publicPage('loja.html'));
-app.get('/descobrir', (_req, res) => {
-  const page = fs.readFileSync(path.join(dir, 'public', 'descobrir-social.html'), 'utf8');
-  return res.type('html').send(page.replace('</body>', '<script src="/discover-enhancements.js" defer></script></body>'));
-});
-app.get('/perfil', publicPage('perfil-social.html'));
+app.get(['/descobrir', '/descobrir-social.html'], enhancedPublicPage('descobrir-social.html', ['/discover-enhancements.js']));
+app.get(['/perfil', '/perfil-social.html'], enhancedPublicPage('perfil-social.html'));
+app.get('/chat-social.html', enhancedPublicPage('chat-social.html'));
 app.get('/cidade', publicPage('cidade-exploravel.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
 app.get('/cidade/praca-central', publicPage('praca-central.html'));
@@ -5015,7 +5015,7 @@ app.get('/cidade/:slug', (req, res) => {
 app.get('/perfil/:handle', (req, res) => {
   const handle = String(req.params.handle || '').trim();
   if (!/^[a-z0-9._-]{3,40}$/i.test(handle)) return publicErrorPage(res, 404);
-  return res.sendFile(path.join(dir, 'public', 'perfil-social.html'));
+  return enhancedPublicPage('perfil-social.html')(req, res);
 });
 
 app.get('/social/post/:id', (req,res) => {
