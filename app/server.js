@@ -832,6 +832,12 @@ const pixHeaders = () => mpHeaders(pixAccessToken());
 
 function allowAttempt(store, key, limit, windowMs) {
   const now = Date.now();
+  if (store.size > 10000) {
+    for (const [entryKey, times] of store) {
+      if (!times.some(time => now - time < windowMs)) store.delete(entryKey);
+    }
+    while (store.size > 9000) store.delete(store.keys().next().value);
+  }
   const recent = (store.get(key) || []).filter(time => now - time < windowMs);
   if (recent.length >= limit) return false;
   store.set(key, [...recent, now]);
@@ -1012,6 +1018,21 @@ function safeExternalUrl(value, max = 500) {
     const parsed = new URL(text);
     return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : '';
   } catch { return ''; }
+}
+
+function safePublicUrl(value, origin, fallback = '') {
+  const text = String(value || '').trim().slice(0, 500);
+  if (!text) return fallback;
+  try {
+    const parsed = new URL(text, origin);
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : fallback;
+  } catch { return fallback; }
+}
+
+function escapeXml(value) {
+  return String(value || '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;'
+  })[character]);
 }
 
 function publicStoreProfile(reference) {
@@ -1241,6 +1262,17 @@ function publicWallet(userId) {
 
 app.use(express.json({ limit: '5mb', verify: (req, _res, buffer) => { req.rawBody = Buffer.from(buffer); } }));
 app.set('trust proxy', 1);
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'SAMEORIGIN',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(self), payment=(self)',
+    'Cross-Origin-Opener-Policy': 'same-origin-allow-popups'
+  });
+  if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  next();
+});
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 app.use('/vendor/three', express.static(path.join(dir, 'node_modules/three/build')));
 app.use('/uploads/social-media', express.static(socialMediaDir, { maxAge: '30d', immutable: true, fallthrough: false }));
@@ -1248,6 +1280,7 @@ app.use('/uploads/store-assets', express.static(path.join(dataDir, 'store-assets
   immutable: true, maxAge: '30d', fallthrough: false
 }));
 const publicPage = file => (_req, res) => res.sendFile(path.join(dir, 'public', file));
+const publicErrorPage = (res, status) => res.status(status).sendFile(path.join(dir, 'public', `${status}.html`));
 app.get('/social', publicPage('social.html'));
 app.get('/loja', publicPage('loja.html'));
 app.get('/descobrir', publicPage('descobrir-social.html'));
@@ -1256,6 +1289,37 @@ app.get('/cidade', publicPage('cidade-exploravel.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
 app.get('/cidade/praca-central', publicPage('praca-central.html'));
 app.get('/cidade/avenida-premium', publicPage('passeio-virtual.html'));
+app.get('/sitemap.xml', (_req, res) => {
+  const origin = new URL(SITE_URL).origin;
+  const fixedPaths = [
+    '/', '/cidade', '/cidade/bairro-premium', '/cidade/praca-central', '/cidade/avenida-premium',
+    '/social', '/descobrir', '/loja', '/centro-educacional.html', '/afiliados.html',
+    '/para-empresas.html', '/como-funciona.html', '/comprar-lote.html', '/sobre.html',
+    '/contato.html', '/privacy.html', '/termos-predio-digital.html'
+  ];
+  const stores = db.prepare(`SELECT order_reference,business_name FROM store_profiles
+    WHERE review_status='published' ORDER BY order_reference`).all();
+  const products = db.prepare(`SELECT p.id,p.name FROM store_products p
+    JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0
+      AND p.stock_quantity>0 AND s.review_status='published' ORDER BY p.id`).all();
+  const categories = db.prepare(`SELECT DISTINCT p.category FROM store_products p
+    JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0
+      AND s.review_status='published' AND TRIM(p.category)<>'' ORDER BY p.category`).all();
+  const cities = db.prepare(`SELECT DISTINCT city FROM social_posts
+    WHERE status='ready' AND TRIM(city)<>'' ORDER BY city`).all();
+  const dynamicPaths = [
+    ...stores.map(store => publicStorePath(store)),
+    ...products.map(product => `/produto/${product.id}/${marketplaceSlug(product.name, 'produto')}`),
+    ...categories.map(row => `/categoria/${marketplaceSlug(row.category, 'categoria')}`),
+    ...cities.map(row => `/cidade/${marketplaceSlug(row.city, 'cidade')}`)
+  ];
+  const urls = [...new Set([...fixedPaths, ...dynamicPaths])];
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
+    .map(item => `  <url><loc>${escapeXml(`${origin}${item}`)}</loc></url>`).join('\n')}\n</urlset>\n`;
+  return res.type('application/xml').set('Cache-Control', 'public,max-age=300').send(xml);
+});
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
 
 app.get('/r/:code', (req, res) => {
@@ -1281,7 +1345,11 @@ app.get('/api/courses', (_req, res) => res.json({
       contentType: originalCourse(slug) ? 'original' : 'licensed' }))
 }));
 
-app.post('/api/leads', (req, res) => {
+app.post('/api/leads', sameOriginOnly, (req, res) => {
+  if (!allowAttempt(authAttempts, `lead:${req.ip}`, 6, 60 * 60 * 1000)) {
+    return res.set('Retry-After', '3600').status(429).json({ error: 'Muitos cadastros em pouco tempo. Tente novamente mais tarde.' });
+  }
+  if (String(req.body?.website || '').trim()) return res.status(201).json({ ok: true });
   const { name, email, whatsapp = '', interest = '', consent } = req.body || {};
   if (!consent || typeof name !== 'string' || name.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(email || '')) {
     return res.status(400).json({ error: 'Informe nome, e-mail válido e aceite o recebimento de novidades.' });
@@ -1294,7 +1362,7 @@ app.post('/api/leads', (req, res) => {
 
 app.post('/api/contact', sameOriginOnly, (req, res) => {
   if (!allowAttempt(authAttempts, `contact:${req.ip}`, 4, 60 * 60 * 1000)) {
-    return res.status(429).json({ error: 'Muitas mensagens em pouco tempo. Tente novamente mais tarde.' });
+    return res.set('Retry-After', '3600').status(429).json({ error: 'Muitas mensagens em pouco tempo. Tente novamente mais tarde.' });
   }
   const body = req.body || {};
   if (String(body.website || '').trim()) return res.status(201).json({ ok: true });
@@ -1332,12 +1400,13 @@ app.patch('/api/admin/contact-submissions/:id', requireAdmin, sameOriginOnly, (r
   return res.json({ ok:true });
 });
 
-app.post('/api/auth/register', (req, res) => {
-  if (!allowAttempt(authAttempts, `register:${req.ip}`, 8, 15 * 60 * 1000)) {
-    return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
+app.post('/api/auth/register', sameOriginOnly, (req, res) => {
+  const normalizedEmail = String(req.body?.email || '').trim().toLowerCase();
+  if (!allowAttempt(authAttempts, `register-ip:${req.ip}`, 8, 15 * 60 * 1000) ||
+      !allowAttempt(authAttempts, `register-email:${normalizedEmail}`, 4, 60 * 60 * 1000)) {
+    return res.set('Retry-After', '900').status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
   }
   const { name, email, whatsapp = '', password, adultConfirmed, termsAccepted } = req.body || {};
-  const normalizedEmail = String(email || '').trim().toLowerCase();
   if (!adultConfirmed || !termsAccepted || typeof name !== 'string' || name.trim().length < 2 ||
       !/^\S+@\S+\.\S+$/.test(normalizedEmail) || typeof password !== 'string' || password.length < 10) {
     return res.status(400).json({ error: 'Informe os dados, use senha com 10 caracteres e aceite os termos para maiores de 18 anos.' });
@@ -1358,11 +1427,12 @@ app.post('/api/auth/register', (req, res) => {
   }
 });
 
-app.post('/api/auth/login', (req, res) => {
-  if (!allowAttempt(authAttempts, `login:${req.ip}`, 10, 15 * 60 * 1000)) {
-    return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
-  }
+app.post('/api/auth/login', sameOriginOnly, (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!allowAttempt(authAttempts, `login-ip:${req.ip}`, 12, 15 * 60 * 1000) ||
+      !allowAttempt(authAttempts, `login-email:${email}`, 8, 15 * 60 * 1000)) {
+    return res.set('Retry-After', '900').status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
+  }
   const password = String(req.body?.password || '');
   const user = db.prepare('SELECT * FROM users WHERE email=?').get(email);
   if (!user || !verifyPassword(password, user.password_hash)) {
@@ -1372,7 +1442,7 @@ app.post('/api/auth/login', (req, res) => {
   return res.json({ ok: true });
 });
 
-app.post('/api/auth/logout', (req, res) => {
+app.post('/api/auth/logout', sameOriginOnly, (req, res) => {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (token) db.prepare('DELETE FROM sessions WHERE token_hash=?').run(sessionHash(token));
   res.append('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
@@ -4661,12 +4731,30 @@ function marketplaceProductSlug(value) {
 
 const PRODUCT_FALLBACK_PATH = '/assets/store-seed/utilidades.svg';
 
+function renderIndexableListingPage({ title, description, canonical, parentName, parentUrl, items }) {
+  const origin = new URL(SITE_URL).origin;
+  const safeItems = items.map((item, index) => ({ ...item, position: index + 1 }));
+  const schema = JSON.stringify({
+    '@context': 'https://schema.org', '@graph': [
+      { '@type': 'BreadcrumbList', itemListElement: [
+        { '@type': 'ListItem', position: 1, name: parentName, item: `${origin}${parentUrl}` },
+        { '@type': 'ListItem', position: 2, name: title, item: canonical }
+      ] },
+      { '@type': 'ItemList', name: title, itemListElement: safeItems.map(item => ({
+        '@type': 'ListItem', position: item.position, name: item.name, url: `${origin}${item.path}`
+      })) }
+    ]
+  }).replace(/</g, '\\u003c');
+  const cards = safeItems.map(item => `<article class="card">${item.image ? `<a href="${escapeHtml(item.path)}"><img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.name)}"></a>` : ''}<div><h2><a href="${escapeHtml(item.path)}">${escapeHtml(item.name)}</a></h2><p>${escapeHtml(item.description)}</p>${item.meta ? `<small>${escapeHtml(item.meta)}</small>` : ''}</div></article>`).join('');
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} | VitrineCity</title><meta name="description" content="${escapeHtml(description)}"><link rel="canonical" href="${escapeHtml(canonical)}"><meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(title)} | VitrineCity"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:image" content="${origin}/assets/vitriny-city-master.jpg"><script type="application/ld+json">${schema}</script><style>:root{--blue:#1768e6;--navy:#071f4b;--line:#d8e7f7;--muted:#5b7192}*{box-sizing:border-box}body{margin:0;background:#f4f9ff;color:var(--navy);font-family:Inter,Arial,sans-serif}a{color:inherit}header{padding:18px max(20px,5vw);background:#fff;border-bottom:1px solid var(--line);display:flex;justify-content:space-between}.brand{font-size:24px;font-weight:950;text-decoration:none}.back{font-weight:850;color:var(--blue)}main{width:min(1050px,calc(100% - 36px));margin:55px auto 90px}.hero{margin-bottom:30px}.hero h1{font-size:clamp(38px,6vw,62px);line-height:1;margin:0 0 14px}.hero p{color:var(--muted);font-size:18px;line-height:1.55;max-width:750px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.card{background:#fff;border:1px solid var(--line);border-radius:18px;overflow:hidden}.card img{width:100%;aspect-ratio:16/10;object-fit:cover;background:#e6eef8}.card div{padding:18px}.card h2{font-size:19px;margin:0 0 9px}.card h2 a{text-decoration:none}.card p{color:var(--muted);line-height:1.5;margin:0 0 10px}.card small{color:#45658f}.empty{padding:45px;background:#fff;border:1px dashed #9bb6d8;border-radius:18px;text-align:center}@media(max-width:800px){.grid{grid-template-columns:1fr 1fr}}@media(max-width:520px){.grid{grid-template-columns:1fr}}</style></head><body><header><a class="brand" href="/">VitrineCity</a><a class="back" href="${escapeHtml(parentUrl)}">← ${escapeHtml(parentName)}</a></header><main><section class="hero"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p></section>${cards ? `<section class="grid">${cards}</section>` : '<div class="empty">Novos conteúdos serão publicados aqui em breve.</div>'}</main></body></html>`;
+}
+
 app.get(['/loja/:reference', '/loja/:reference/:slug'], (req, res) => {
   const reference = String(req.params.reference || '').trim().slice(0, 120);
   const store = db.prepare(`SELECT order_reference,business_name,description,logo_url,facade_url,
       website_url,instagram_url,tiktok_url,promotion_text
     FROM store_profiles WHERE order_reference=? AND review_status='published'`).get(reference);
-  if (!store) return res.status(404).send('Loja não encontrada.');
+  if (!store) return publicErrorPage(res, 404);
   const canonicalSlug = marketplaceSlug(store.business_name);
   if (req.params.slug !== canonicalSlug) return res.redirect(301, publicStorePath(store));
   const products = db.prepare(`SELECT id,name,description,category,price_cents,image_url,sku,stock_quantity
@@ -4679,13 +4767,13 @@ app.get(['/loja/:reference', '/loja/:reference/:slug'], (req, res) => {
 
 app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id < 1) return res.status(404).send('Produto não encontrado.');
+  if (!Number.isInteger(id) || id < 1) return publicErrorPage(res, 404);
   const product = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,p.image_url,
       p.sku,p.stock_quantity,p.weight_grams,s.business_name AS store_name
     FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
     WHERE p.id=? AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0
       AND p.stock_quantity>0 AND s.review_status='published'`).get(id);
-  if (!product) return res.status(404).send('Produto não encontrado.');
+  if (!product) return publicErrorPage(res, 404);
   const slug = marketplaceProductSlug(product.name);
   if (req.params.slug !== slug) return res.redirect(301, `/produto/${product.id}/${slug}`);
   const origin = new URL(SITE_URL).origin;
@@ -4699,9 +4787,18 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     '@context': 'https://schema.org', '@type': 'Product', name: product.name,
     description, sku: product.sku || String(product.id), image: [image],
     brand: { '@type': 'Brand', name: product.store_name },
+    seller: { '@type': 'Organization', name: product.store_name, url: `${origin}${storePath}` },
     offers: { '@type': 'Offer', url: canonical, priceCurrency: 'BRL',
       price: (product.price_cents / 100).toFixed(2), availability: 'https://schema.org/InStock',
       inventoryLevel: { '@type': 'QuantitativeValue', value: product.stock_quantity } }
+  }).replace(/</g, '\\u003c');
+  const breadcrumbSchema = JSON.stringify({
+    '@context': 'https://schema.org', '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Vitriny Loja', item: `${origin}/loja` },
+      { '@type': 'ListItem', position: 2, name: product.store_name, item: `${origin}${storePath}` },
+      { '@type': 'ListItem', position: 3, name: product.name, item: canonical }
+    ]
   }).replace(/</g, '\\u003c');
   const publicProduct = JSON.stringify({
     id: product.id, store_reference: product.store_reference, name: product.name,
@@ -4715,6 +4812,7 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     <meta property="og:title" content="${escapeHtml(title)}"><meta property="og:description" content="${escapeHtml(description)}">
     <meta property="og:image" content="${escapeHtml(image)}">
     <script type="application/ld+json">${schema}</script>
+    <script type="application/ld+json">${breadcrumbSchema}</script>
     <style>:root{--blue:#1768e6;--yellow:#ffc628;--line:#263b5b}*{box-sizing:border-box}body{margin:0;background:#07101d;color:#f7faff;font-family:Inter,Arial,sans-serif}a{text-decoration:none;color:inherit}header{padding:17px max(18px,5vw);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.brand{font-size:24px;font-weight:950}.brand span{color:var(--yellow)}.back{padding:10px 13px;background:#15243c;border-radius:10px;font-weight:850}main{width:min(1060px,calc(100% - 32px));margin:42px auto;display:grid;grid-template-columns:minmax(280px,1fr) minmax(300px,1fr);gap:38px;align-items:center}.photo{width:100%;aspect-ratio:1;border-radius:24px;object-fit:cover;background:#14213a;border:1px solid var(--line)}.badge{color:var(--yellow);font-weight:900}.seller{color:#aebed3}h1{font-size:clamp(31px,5vw,58px);line-height:1.04;margin:12px 0}.description{color:#cad5e5;line-height:1.6}.price{font-size:35px;font-weight:950;margin:22px 0 5px}.stock{color:#9fe0b1}.actions{display:flex;gap:10px;margin-top:24px}.button,button{border:0;border-radius:12px;padding:14px 17px;background:var(--blue);color:#fff;font-weight:950;cursor:pointer}.alt{background:#17263e}.status{color:#ffd76c;margin-top:12px}@media(max-width:720px){main{grid-template-columns:1fr;margin-top:22px}.actions{display:grid}}</style>
     <script src="/analytics.js" defer></script></head><body>
     <header><a class="brand" href="/loja">Vitriny <span>Loja</span></a><a class="back" href="/loja">← Voltar à loja</a></header>
@@ -4728,15 +4826,56 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     </body></html>`);
 });
 
+app.get('/categoria/:slug', (req, res) => {
+  const categories = db.prepare(`SELECT DISTINCT category FROM store_products
+    WHERE active=1 AND marketplace_enabled=1 AND price_cents>0 AND stock_quantity>0 AND TRIM(category)<>''`).all();
+  const category = categories.map(row => row.category).find(value => marketplaceSlug(value, 'categoria') === req.params.slug);
+  if (!category) return res.status(404).send('Categoria não encontrada.');
+  const products = db.prepare(`SELECT p.id,p.name,p.description,p.price_cents,p.image_url,s.business_name
+    FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE p.category=? AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0
+      AND p.stock_quantity>0 AND s.review_status='published' ORDER BY p.updated_at DESC,p.id DESC LIMIT 120`).all(category);
+  const origin = new URL(SITE_URL).origin, slug = marketplaceSlug(category, 'categoria');
+  const canonical = `${origin}/categoria/${slug}`;
+  return res.set('Cache-Control', 'public,max-age=120').send(renderIndexableListingPage({
+    title: category, description: `Produtos de ${category} disponíveis nas lojas da Vitriny City.`, canonical,
+    parentName: 'Vitriny Loja', parentUrl: '/loja', items: products.map(product => ({
+      name: product.name, description: product.description || `Produto vendido por ${product.business_name}.`,
+      meta: `${product.business_name} · ${(product.price_cents / 100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}`,
+      image: safePublicUrl(product.image_url, origin, `${origin}${PRODUCT_FALLBACK_PATH}`),
+      path: `/produto/${product.id}/${marketplaceSlug(product.name, 'produto')}`
+    }))
+  }));
+});
+
+app.get('/cidade/:slug', (req, res) => {
+  const cities = db.prepare(`SELECT DISTINCT city FROM social_posts WHERE status='ready' AND TRIM(city)<>''`).all();
+  const city = cities.map(row => row.city).find(value => marketplaceSlug(value, 'cidade') === req.params.slug);
+  if (!city) return res.status(404).send('Cidade não encontrada.');
+  const posts = db.prepare(`SELECT p.id,p.caption,p.category,p.media_type,p.image_url,u.name,sp.handle
+    FROM social_posts p JOIN users u ON u.id=p.user_id LEFT JOIN social_profiles sp ON sp.user_id=p.user_id
+    WHERE p.city=? AND p.status='ready' ORDER BY p.created_at DESC LIMIT 120`).all(city);
+  const origin = new URL(SITE_URL).origin, slug = marketplaceSlug(city, 'cidade');
+  const canonical = `${origin}/cidade/${slug}`;
+  return res.set('Cache-Control', 'public,max-age=120').send(renderIndexableListingPage({
+    title: city, description: `Pessoas, publicações, ofertas e negócios de ${city} na Vitriny City.`, canonical,
+    parentName: 'Vitriny City', parentUrl: '/cidade', items: posts.map(post => ({
+      name: post.caption || `Publicação de ${post.name}`, description: `Conteúdo de @${post.handle || 'usuario'} em ${city}.`,
+      meta: post.category || 'geral', image: post.media_type === 'image' ? safePublicUrl(post.image_url, origin) : '',
+      path: `/social/post/${encodeURIComponent(post.id)}`
+    }))
+  }));
+});
+
 app.get('/perfil/:handle', (req, res) => {
   const handle = String(req.params.handle || '').trim();
-  if (!/^[a-z0-9._-]{3,40}$/i.test(handle)) return res.status(404).send('Perfil não encontrado.');
+  if (!/^[a-z0-9._-]{3,40}$/i.test(handle)) return publicErrorPage(res, 404);
   return res.sendFile(path.join(dir, 'public', 'perfil-social.html'));
 });
 
 app.get('/social/post/:id', (req,res) => {
   const p=db.prepare(`SELECT p.*,u.name,COALESCE(sp.handle,'usuario') handle FROM social_posts p JOIN users u ON u.id=p.user_id LEFT JOIN social_profiles sp ON sp.user_id=p.user_id WHERE p.id=? AND p.status='ready'`).get(req.params.id);
-  if(!p)return res.status(404).send('Publicação não encontrada.');
+  if(!p)return publicErrorPage(res, 404);
   const esc=v=>String(v||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const title=esc(p.seo_title||p.caption||'Publicação na Vitriny Social'),description=esc(p.seo_description||p.caption||'Veja esta publicação na Vitriny Social');
   const origin=new URL(process.env.SITE_URL||'https://vitrinecity.com').origin,image=p.media_type==='image'?new URL(p.image_url,origin).toString():origin+'/assets/vitriny-city-master.jpg';
@@ -4744,4 +4883,17 @@ app.get('/social/post/:id', (req,res) => {
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+if (process.env.ENABLE_ERROR_TEST_ROUTE === 'true') {
+  app.get('/__test/error', () => { throw new Error('Erro controlado para validar a página 500.'); });
+}
+app.use((req, res) => {
+  if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Endpoint não encontrado.' });
+  return publicErrorPage(res, 404);
+});
+app.use((error, req, res, next) => {
+  console.error('Erro não tratado:', error);
+  if (res.headersSent) return next(error);
+  if (req.path.startsWith('/api/')) return res.status(500).json({ error: 'Não foi possível concluir a solicitação.' });
+  return publicErrorPage(res, 500);
+});
 app.listen(process.env.PORT || 3000, () => console.log('VitrineCity online'));
