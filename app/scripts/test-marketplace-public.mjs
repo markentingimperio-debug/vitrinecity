@@ -23,7 +23,7 @@ const html = renderPublicStorePage({
     category: 'Casa & Jardim',
     price_cents: 1590,
     stock_quantity: 4,
-    image_url: ''
+    image_url: 'javascript:alert(2)'
   }]
 });
 
@@ -31,6 +31,7 @@ assert.match(html, /<link rel="canonical" href="https:\/\/vitrinecity\.com\/loja
 assert.match(html, /"@type":"Store"/);
 assert.match(html, /Loja &lt;Segura&gt;/);
 assert.doesNotMatch(html, /javascript:alert/);
+assert.doesNotMatch(html, /javascript:alert\(2\)/);
 assert.match(html, />Instagram<\/a>/);
 assert.doesNotMatch(html, /<\/script><script>alert/);
 assert.match(html, /\\u003c\/script>\\u003cscript>alert/);
