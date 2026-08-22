@@ -552,6 +552,23 @@ CREATE INDEX IF NOT EXISTS idx_social_views_post ON social_post_views(post_id, c
 CREATE INDEX IF NOT EXISTS idx_social_engagement_actor ON social_engagement_events(actor_key,event_day DESC);
 CREATE INDEX IF NOT EXISTS idx_social_engagement_post ON social_engagement_events(post_id,event_day DESC);
 CREATE INDEX IF NOT EXISTS idx_social_external_category ON social_external_insights(category,provider);
+CREATE TABLE IF NOT EXISTS social_intelligence_alerts (
+  id INTEGER PRIMARY KEY,
+  alert_key TEXT NOT NULL UNIQUE,
+  alert_type TEXT NOT NULL,
+  severity TEXT NOT NULL DEFAULT 'medium',
+  subject_type TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  evidence_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'open',
+  reviewed_by INTEGER REFERENCES users(id),
+  review_note TEXT NOT NULL DEFAULT '',
+  first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  reviewed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_social_intelligence_alerts_status ON social_intelligence_alerts(status,severity,last_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_stories_active ON social_stories(status,expires_at,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_stories_user ON social_stories(user_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_notifications_user ON social_notifications(user_id,read_at,created_at DESC);
@@ -5207,7 +5224,35 @@ app.post('/api/admin/social/intelligence/import', requireAdmin, sameOriginOnly, 
   return res.json({ok:true,provider,imported});
 });
 
+function refreshSocialIntelligenceAlerts(){
+  const day=new Date().toISOString().slice(0,10);
+  const upsert=db.prepare(`INSERT INTO social_intelligence_alerts
+    (alert_key,alert_type,severity,subject_type,subject_id,title,evidence_json)
+    VALUES (?,?,?,?,?,?,?) ON CONFLICT(alert_key) DO UPDATE SET
+      severity=excluded.severity,title=excluded.title,evidence_json=excluded.evidence_json,last_seen_at=CURRENT_TIMESTAMP`);
+  const save=(type,severity,subjectType,subjectId,title,evidence)=>upsert.run(`${type}:${subjectId}:${day}`,type,severity,subjectType,String(subjectId),title,JSON.stringify(evidence));
+  const duplicate=db.prepare(`SELECT p.user_id subjectId,u.name,LOWER(TRIM(p.caption)) caption,COUNT(*) occurrences
+    FROM social_posts p JOIN users u ON u.id=p.user_id WHERE p.status='ready' AND LENGTH(TRIM(p.caption))>=15
+    GROUP BY p.user_id,LOWER(TRIM(p.caption)) HAVING COUNT(*)>=3 LIMIT 100`).all();
+  for(const row of duplicate)save('duplicate_spam','high','creator',row.subjectId,`Possível spam repetido de ${row.name}`,{occurrences:row.occurrences,caption:String(row.caption).slice(0,160)});
+  const rapid=db.prepare(`SELECT p.user_id subjectId,u.name,COUNT(*) occurrences FROM social_posts p JOIN users u ON u.id=p.user_id
+    WHERE p.created_at>=datetime('now','-1 hour') GROUP BY p.user_id HAVING COUNT(*)>=6 LIMIT 100`).all();
+  for(const row of rapid)save('rapid_posting','medium','creator',row.subjectId,`Volume incomum de publicações de ${row.name}`,{postsLastHour:row.occurrences});
+  const suspicious=db.prepare(`SELECT p.id subjectId,u.name,SUM(e.impressions) impressions,SUM(e.replays) replays,
+    SUM(e.profile_clicks+e.cta_clicks) clicks FROM social_posts p JOIN users u ON u.id=p.user_id
+    JOIN social_engagement_events e ON e.post_id=p.id GROUP BY p.id
+    HAVING impressions>=10 AND (replays>=impressions*3 OR clicks>impressions) LIMIT 100`).all();
+  for(const row of suspicious)save('suspicious_engagement','high','post',row.subjectId,`Engajamento suspeito em conteúdo de ${row.name}`,{impressions:row.impressions,replays:row.replays,clicks:row.clicks});
+  const artificial=db.prepare(`SELECT p.id subjectId,u.name,
+    SUM(CASE WHEN e.event_day>=date('now','-2 days') THEN e.impressions ELSE 0 END) recent,
+    SUM(CASE WHEN e.event_day BETWEEN date('now','-5 days') AND date('now','-3 days') THEN e.impressions ELSE 0 END) previous,
+    SUM(e.replays) replays FROM social_posts p JOIN users u ON u.id=p.user_id JOIN social_engagement_events e ON e.post_id=p.id
+    GROUP BY p.id HAVING recent>=30 AND recent>=MAX(1,previous)*8 AND replays>=recent LIMIT 100`).all();
+  for(const row of artificial)save('artificial_growth','high','post',row.subjectId,`Crescimento possivelmente artificial em conteúdo de ${row.name}`,{recentImpressions:row.recent,previousImpressions:row.previous,replays:row.replays});
+}
+
 app.get('/api/admin/social/intelligence/status', requireAdmin, (_req,res) => {
+  refreshSocialIntelligenceAlerts();
   const internal=db.prepare(`SELECT COUNT(DISTINCT post_id) contents,
     COALESCE(SUM(impressions),0) impressions,COALESCE(SUM(watch_ms),0) watchMs,
     COALESCE(SUM(completions),0) completions,COALESCE(SUM(skips),0) skips,
@@ -5263,8 +5308,21 @@ app.get('/api/admin/social/intelligence/status', requireAdmin, (_req,res) => {
     WHERE p.status='ready' AND TRIM(p.city)<>'' GROUP BY LOWER(TRIM(p.city))
     ORDER BY impressions DESC,contents DESC LIMIT 30`).all().map(row=>({...row,
       completionRate:Number(row.impressions?Number(row.completions)/Number(row.impressions):0)}));
+  const alerts=db.prepare(`SELECT id,alert_type alertType,severity,subject_type subjectType,subject_id subjectId,
+    title,evidence_json evidenceJson,status,review_note reviewNote,first_seen_at firstSeenAt,last_seen_at lastSeenAt,reviewed_at reviewedAt
+    FROM social_intelligence_alerts ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END,
+    CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,last_seen_at DESC LIMIT 100`).all().map(row=>({...row,evidence:JSON.parse(row.evidenceJson||'{}')}));
   return res.json({engine:'vitriny-intelligence-v1',generatedAt:new Date().toISOString(),
-    internal,overview,daily,categories,growing,providers,newCreators,cities});
+    internal,overview,daily,categories,growing,providers,newCreators,cities,alerts});
+});
+
+app.patch('/api/admin/social/intelligence/alerts/:id',requireAdmin,sameOriginOnly,(req,res)=>{
+  const id=Number(req.params.id),status=String(req.body?.status||''),note=String(req.body?.note||'').trim().slice(0,600);
+  if(!Number.isInteger(id)||!['open','acknowledged','resolved'].includes(status))return res.status(400).json({error:'Alerta ou estado inválido.'});
+  const result=db.prepare(`UPDATE social_intelligence_alerts SET status=?,review_note=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP
+    WHERE id=?`).run(status,note,req.user.id,id);
+  if(!result.changes)return res.status(404).json({error:'Alerta não encontrado.'});
+  return res.json({ok:true,id,status});
 });
 
 app.post('/api/social/posts/:id/report', requireActiveSocialUser, sameOriginOnly, (req, res) => {
