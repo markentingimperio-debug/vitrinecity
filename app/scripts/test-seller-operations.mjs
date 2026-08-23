@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8'),panel=fs.readFileSync(new URL('../public/painel-lojista.html',import.meta.url),'utf8'),orders=fs.readFileSync(new URL('../public/pedidos.html',import.meta.url),'utf8'),fiscalPolicy=fs.readFileSync(new URL('../public/politica-fiscal-marketplace.html',import.meta.url),'utf8');
 for(const pattern of [/marketplace_returns/,/request_cancel/,/set_label/,/mark_shipped/,/payoutCents/,/payoutStatus/])assert.match(server,pattern);
+for(const pattern of [/generate_provider_label/,/shipping_provider_order_id/,/shipping_provider_status='checking_out'/,/createMelhorEnvioShipment/,/checkoutMelhorEnvioShipment/,/generateMelhorEnvioShipment/,/printMelhorEnvioShipment/])assert.match(server,pattern);
 for(const pattern of [/marketplace_seller_accounts/,/marketplace_payment_reconciliation/,/marketplace_fee/,/marketplaceOAuthState/,/grant_type:'refresh_token'/,/reconciliation_status='mismatch'/,/api\/admin\/marketplace\/reconciliation/])assert.match(server,pattern);
 for(const pattern of [/marketplace_seller_profiles/,/validCpf/,/validCnpj/,/sellerTaxFingerprint/,/api\/admin\/marketplace\/sellers/])assert.match(server,pattern);
 assert.match(server,/validNfeAccessKey/);

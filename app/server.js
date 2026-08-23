@@ -18,6 +18,8 @@ import { originalCourse } from './course-content.js';
 import { setupAdminAnalytics } from './admin-analytics.js';
 import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marketplace-public.js';
 import { marketplaceShippingQuote, melhorEnvioConfig } from './marketplace-shipping.js';
+import { checkoutMelhorEnvioShipment,createMelhorEnvioShipment,generateMelhorEnvioShipment,
+  melhorEnvioShipmentPayload,printMelhorEnvioShipment } from './melhor-envio-fulfillment.js';
 import {
   externalMetricsProviderStatus,
   fetchGoogleSearchAggregatedInsights,
@@ -948,6 +950,11 @@ CREATE INDEX IF NOT EXISTS idx_marketplace_orders_store ON marketplace_orders(st
 CREATE INDEX IF NOT EXISTS idx_marketplace_items_order ON marketplace_order_items(order_reference,id);`);
 ensureColumn('marketplace_orders','ad_campaign_id','INTEGER');
 ensureColumn('marketplace_orders','ad_event_token','TEXT');
+ensureColumn('marketplace_orders','shipping_service_id',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('marketplace_orders','shipping_service_name',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('marketplace_orders','shipping_provider_order_id',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('marketplace_orders','shipping_provider_status',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('marketplace_orders','shipping_provider_error',"TEXT NOT NULL DEFAULT ''");
 db.exec(`CREATE TABLE IF NOT EXISTS ad_campaign_conversions (
   id INTEGER PRIMARY KEY,
   campaign_id INTEGER NOT NULL REFERENCES ad_campaigns(id) ON DELETE CASCADE,
@@ -2517,12 +2524,22 @@ async function officialMarketplaceShippingQuote(products,quantities,postalCode){
   if(!config.configured)try{config.accessToken=await activeMelhorEnvioAccessToken();config.configured=Boolean(config.accessToken&&config.originPostalCode);}catch{}
   return marketplaceShippingQuote(products,quantities,postalCode,{config});
 }
+function melhorEnvioSenderConfig(){return {name:String(process.env.MELHOR_ENVIO_SENDER_NAME||'').trim(),
+  email:String(process.env.MELHOR_ENVIO_SENDER_EMAIL||'').trim(),phone:String(process.env.MELHOR_ENVIO_SENDER_PHONE||'').trim(),
+  document:String(process.env.MELHOR_ENVIO_SENDER_DOCUMENT||'').trim(),companyDocument:String(process.env.MELHOR_ENVIO_SENDER_COMPANY_DOCUMENT||'').trim(),
+  stateRegister:String(process.env.MELHOR_ENVIO_SENDER_STATE_REGISTER||'').trim(),postalCode:String(process.env.MELHOR_ENVIO_ORIGIN_POSTAL_CODE||'').trim(),
+  street:String(process.env.MELHOR_ENVIO_SENDER_STREET||'').trim(),number:String(process.env.MELHOR_ENVIO_SENDER_NUMBER||'').trim(),
+  complement:String(process.env.MELHOR_ENVIO_SENDER_COMPLEMENT||'').trim(),neighborhood:String(process.env.MELHOR_ENVIO_SENDER_NEIGHBORHOOD||'').trim(),
+  city:String(process.env.MELHOR_ENVIO_SENDER_CITY||'').trim(),state:String(process.env.MELHOR_ENVIO_SENDER_STATE||'').trim()};}
+function melhorEnvioSenderReady(){const sender=melhorEnvioSenderConfig(),document=String(sender.companyDocument||sender.document).replace(/\D/g,'');
+  return Boolean(sender.name&&sender.email&&String(sender.phone).replace(/\D/g,'').length>=10&&[11,14].includes(document.length)&&
+    String(sender.postalCode).replace(/\D/g,'').length===8&&sender.street&&sender.number&&sender.neighborhood&&sender.city&&sender.state.length===2);}
 
 app.get('/api/admin/marketplace/shipping/status',requireAdmin,(_req,res)=>{
   const config=melhorEnvioOAuthConfig();
   const account=db.prepare("SELECT expires_at,status FROM melhor_envio_oauth WHERE id=1").get();
   return res.json({provider:'Melhor Envio',appConfigured:config.oauthConfigured,
-    originConfigured:config.originPostalCode.length===8,connected:account?.status==='connected',
+    originConfigured:config.originPostalCode.length===8,senderConfigured:melhorEnvioSenderReady(),connected:account?.status==='connected',
     expiresAt:account?.expires_at||null,sandbox:config.sandbox,callback:config.redirectUri,
     connectUrl:'/api/admin/marketplace/shipping/connect'});
 });
@@ -2537,7 +2554,7 @@ app.get('/api/admin/marketplace/shipping/connect',requireAdmin,(req,res)=>{
   db.prepare('INSERT INTO melhor_envio_oauth_states(state_hash,expires_at) VALUES (?,?)').run(stateHash,Date.now()+10*60*1000);
   const url=new URL(`${config.endpoint}/oauth/authorize`);
   url.search=new URLSearchParams({client_id:config.clientId,redirect_uri:config.redirectUri,response_type:'code',
-    scope:'shipping-calculate shipping-companies',state}).toString();
+    scope:'shipping-calculate shipping-companies cart-write shipping-checkout shipping-generate shipping-print',state}).toString();
   return res.redirect(302,url.toString());
 });
 
@@ -2675,10 +2692,10 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
     if (!response.ok || !payment.id || !payment.init_point) return res.status(502).json({ error: 'Não foi possível iniciar o pagamento.' });
     const insertOrder = db.transaction(() => {
       db.prepare(`INSERT INTO marketplace_orders
-        (reference,buyer_user_id,store_reference,address_id,products_cents,shipping_cents,shipping_provider,platform_percent_cents,
-         platform_fixed_cents,return_operation_cents,total_cents,mp_preference_id,ad_campaign_id,ad_event_token)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(reference, req.user.id, storeReference, address.id, productsCents,
-        shippingCents, shippingQuote.provider, platformPercentCents, MARKETPLACE_FIXED_FEE_CENTS, returnOperationCents, totalCents, payment.id,
+        (reference,buyer_user_id,store_reference,address_id,products_cents,shipping_cents,shipping_provider,shipping_service_id,
+         shipping_service_name,platform_percent_cents,platform_fixed_cents,return_operation_cents,total_cents,mp_preference_id,ad_campaign_id,ad_event_token)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(reference, req.user.id, storeReference, address.id, productsCents,
+        shippingCents, shippingQuote.provider, shippingQuote.providerServiceId||'',shippingQuote.service||'',platformPercentCents, MARKETPLACE_FIXED_FEE_CENTS, returnOperationCents, totalCents, payment.id,
         adAttribution?.campaignId||null,adAttribution?.eventToken||null);
       const insertItem = db.prepare(`INSERT INTO marketplace_order_items
         (order_reference,product_id,product_name,sku,quantity,unit_price_cents,subtotal_cents,platform_percent_cents,return_operation_cents)
@@ -4672,7 +4689,7 @@ app.patch('/api/store-portal/:reference/orders/:orderReference/fiscal', sameOrig
   return res.json({ ok: true, message: 'NF-e autorizada. Pedido liberado para registrar a etiqueta da transportadora.' });
 });
 
-app.patch('/api/store-portal/:reference/orders/:orderReference/operations', sameOriginOnly, (req,res) => {
+app.patch('/api/store-portal/:reference/orders/:orderReference/operations', sameOriginOnly, async (req,res) => {
   const access=storePortalAccess(req,res);if(!access)return;
   const order=db.prepare('SELECT * FROM marketplace_orders WHERE reference=? AND store_reference=?').get(req.params.orderReference,access.order.reference);
   if(!order)return res.status(404).json({error:'Pedido não encontrado.'});
@@ -4681,6 +4698,38 @@ app.patch('/api/store-portal/:reference/orders/:orderReference/operations', same
     if(['shipped','delivered','cancelled','cancel_requested'].includes(order.fulfillment_status))return res.status(409).json({error:'Este pedido não pode mais ser cancelado pelo painel.'});
     db.prepare("UPDATE marketplace_orders SET fulfillment_status='cancel_requested',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(order.reference);
     return res.json({ok:true,status:'cancel_requested',message:'Cancelamento solicitado para conciliação e eventual reembolso.'});
+  }
+  if(action==='generate_provider_label'){
+    if(order.payment_status!=='approved'||order.fiscal_status!=='authorized')return res.status(409).json({error:'O pagamento e a NF-e precisam estar autorizados.'});
+    if(order.shipping_provider!=='melhor_envio'||!order.shipping_service_id)return res.status(409).json({error:'Este pedido não possui uma cotação oficial do Melhor Envio vinculada.'});
+    if(['cancelled','cancel_requested','shipped','delivered'].includes(order.fulfillment_status))return res.status(409).json({error:'A etiqueta não pode ser gerada neste estágio.'});
+    try{
+      const config=melhorEnvioOAuthConfig();config.accessToken=await activeMelhorEnvioAccessToken();config.configured=true;
+      let shipmentId=order.shipping_provider_order_id,status=order.shipping_provider_status;
+      if(['creating','checking_out','generating','printing','error'].includes(status))return res.status(409).json({error:'A última tentativa precisa de conferência administrativa antes de ser repetida, evitando cobrança duplicada.'});
+      if(!shipmentId){
+        db.prepare("UPDATE marketplace_orders SET shipping_provider_status='creating',shipping_provider_error='',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(order.reference);
+        const details=db.prepare(`SELECT o.*,a.*,u.email buyer_email,u.whatsapp buyer_whatsapp FROM marketplace_orders o
+          JOIN customer_addresses a ON a.id=o.address_id JOIN users u ON u.id=o.buyer_user_id WHERE o.reference=?`).get(order.reference);
+        const items=db.prepare(`SELECT i.*,p.weight_grams FROM marketplace_order_items i JOIN store_products p ON p.id=i.product_id WHERE i.order_reference=?`).all(order.reference);
+        const shipping=melhorEnvioConfig(process.env),weight=Math.max(.1,items.reduce((sum,item)=>sum+Math.max(100,Number(item.weight_grams)||500)*item.quantity,0)/1000);
+        const payload=melhorEnvioShipmentPayload({order,items,address:details,buyer:{email:details.buyer_email,whatsapp:details.buyer_whatsapp},
+          sender:melhorEnvioSenderConfig(),dimensions:{height:shipping.defaultHeightCm,width:shipping.defaultWidthCm,length:shipping.defaultLengthCm,weight}});
+        const created=await createMelhorEnvioShipment(config,payload);shipmentId=created.id;
+        db.prepare("UPDATE marketplace_orders SET shipping_provider_order_id=?,tracking_code=?,shipping_provider_status='cart',updated_at=CURRENT_TIMESTAMP WHERE reference=?")
+          .run(shipmentId,created.tracking||'',order.reference);status='cart';
+      }
+      if(status==='cart'){db.prepare("UPDATE marketplace_orders SET shipping_provider_status='checking_out',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(order.reference);await checkoutMelhorEnvioShipment(config,shipmentId);db.prepare("UPDATE marketplace_orders SET shipping_provider_status='paid',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(order.reference);status='paid';}
+      if(status==='paid'){db.prepare("UPDATE marketplace_orders SET shipping_provider_status='generating',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(order.reference);await generateMelhorEnvioShipment(config,shipmentId);db.prepare("UPDATE marketplace_orders SET shipping_provider_status='generated',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(order.reference);return res.status(202).json({ok:true,status:'generated',message:'Etiqueta comprada e gerada. Aguarde alguns instantes e clique novamente para obter o arquivo de impressão.'});}
+      if(status==='generated'){
+        db.prepare("UPDATE marketplace_orders SET shipping_provider_status='printing',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(order.reference);const printed=await printMelhorEnvioShipment(config,shipmentId);db.prepare("UPDATE marketplace_orders SET shipping_label_url=?,shipping_provider_status='ready',fulfillment_status='label_ready',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(printed.url,order.reference);
+        return res.json({ok:true,status:'label_ready',labelUrl:printed.url,message:'Etiqueta pronta para impressão.'});
+      }
+      if(status==='ready'&&order.shipping_label_url)return res.json({ok:true,status:'label_ready',labelUrl:order.shipping_label_url});
+      return res.status(409).json({error:'O estado da etiqueta precisa de conferência administrativa.'});
+    }catch(error){const code=String(error?.message||'melhor_envio_fulfillment_failed').slice(0,100);
+      db.prepare("UPDATE marketplace_orders SET shipping_provider_status=CASE WHEN shipping_provider_order_id='' THEN 'error' ELSE shipping_provider_status END,shipping_provider_error=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(code,order.reference);
+      return res.status(502).json({error:'Não foi possível concluir a etiqueta no Melhor Envio. Nenhuma repetição automática será feita para evitar cobrança duplicada.'});}
   }
   if(action==='set_label'){
     const labelUrl=safeExternalUrl(req.body?.labelUrl),trackingCode=String(req.body?.trackingCode||'').trim().slice(0,100);

@@ -8,7 +8,7 @@ const admin=fs.readFileSync(new URL('../public/admin-logistica.html',import.meta
 assert.match(server,/marketplaceShippingQuote/);
 assert.match(server,/\/api\/marketplace\/shipping\/quote/);
 assert.match(server,/shippingCents = shippingQuote\.shippingCents/);
-assert.match(server,/shippingCents, shippingQuote\.provider, platformPercentCents/);
+assert.match(server,/shippingCents, shippingQuote\.provider, shippingQuote\.providerServiceId\|\|'',shippingQuote\.service\|\|'',platformPercentCents/);
 assert.match(server,/totalCents = productsCents \+ shippingCents/);
 assert.match(server,/id:'shipping'/);
 assert.match(store,/id="postalCode"/);
