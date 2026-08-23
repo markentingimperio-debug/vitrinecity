@@ -6313,11 +6313,19 @@ app.use((error, req, res, next) => {
 });
 function scheduleOfficialMetricsSync(){
   const config=youtubeMetricsConfig(process.env);
-  if(!config.configured||!config.autoSync)return;
-  const execute=()=>syncOfficialYouTubeMetrics('automatic').catch(error=>
-    console.error('Falha na sincronização oficial do YouTube:',String(error?.message||'youtube_sync_failed')));
-  const initialTimer=setTimeout(execute,30000);initialTimer.unref();
-  const intervalTimer=setInterval(execute,config.intervalMs);intervalTimer.unref();
+  if(config.configured&&config.autoSync){
+    const executeYouTube=()=>syncOfficialYouTubeMetrics('automatic').catch(error=>
+      console.error('Falha na sincronização oficial do YouTube:',String(error?.message||'youtube_sync_failed')));
+    const initialYouTubeTimer=setTimeout(executeYouTube,30000);initialYouTubeTimer.unref();
+    const youtubeIntervalTimer=setInterval(executeYouTube,config.intervalMs);youtubeIntervalTimer.unref();
+  }
+  const metaAutoSync=['1','true','yes','on'].includes(String(process.env.META_SOCIAL_METRICS_AUTO_SYNC||'').trim().toLowerCase());
+  if(metaAutoSync){
+    const executeMeta=()=>syncOfficialMetaMetrics('automatic').catch(error=>
+      console.error('Falha na sincronização oficial da Meta:',String(error?.message||'meta_sync_failed')));
+    const initialMetaTimer=setTimeout(executeMeta,15000);initialMetaTimer.unref();
+    const metaIntervalTimer=setInterval(executeMeta,config.intervalMs);metaIntervalTimer.unref();
+  }
 }
 
 app.listen(process.env.PORT || 3000, () => {
