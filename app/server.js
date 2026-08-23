@@ -19,6 +19,7 @@ import { setupAdminAnalytics } from './admin-analytics.js';
 import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marketplace-public.js';
 import {
   externalMetricsProviderStatus,
+  fetchMetaAggregatedInsights,
   fetchYouTubeAggregatedInsights,
   youtubeMetricsConfig
 } from './external-social-metrics.js';
@@ -2508,6 +2509,13 @@ function encryptSocialToken(token) {
   const iv = randomBytes(12),cipher = createCipheriv('aes-256-gcm', socialEncryptionKey(), iv);
   const encrypted = Buffer.concat([cipher.update(String(token), 'utf8'), cipher.final()]);
   return [iv.toString('base64url'),cipher.getAuthTag().toString('base64url'),encrypted.toString('base64url')].join('.');
+}
+function decryptSocialToken(value) {
+  const [iv,tag,data] = String(value || '').split('.');
+  if (!iv || !tag || !data) throw new Error('meta_token_invalid');
+  const decipher = createDecipheriv('aes-256-gcm', socialEncryptionKey(), Buffer.from(iv, 'base64url'));
+  decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+  return Buffer.concat([decipher.update(Buffer.from(data, 'base64url')), decipher.final()]).toString('utf8');
 }
 
 app.get('/api/social/status', requireUser, (req, res) => {
@@ -5536,6 +5544,36 @@ app.post('/api/admin/social/intelligence/import', requireAdmin, sameOriginOnly, 
 });
 
 let youtubeMetricsSyncPromise=null;
+let metaMetricsSyncPromise=null;
+function connectedMetaMetricAccounts(){
+  return db.prepare(`SELECT page_id pageId,instagram_id instagramId,token_encrypted tokenEncrypted
+    FROM social_accounts WHERE status='connected' ORDER BY id`).all().map(account=>({
+      pageId:account.pageId,instagramId:account.instagramId,accessToken:decryptSocialToken(account.tokenEncrypted)
+    }));
+}
+async function syncOfficialMetaMetrics(triggerType='admin'){
+  if(metaMetricsSyncPromise)return metaMetricsSyncPromise;
+  metaMetricsSyncPromise=(async()=>{
+    const accounts=connectedMetaMetricAccounts();
+    if(!accounts.length)throw new Error('meta_not_configured');
+    const runIds={};
+    for(const provider of ['facebook','instagram'])runIds[provider]=db.prepare(`INSERT INTO social_external_sync_runs
+      (provider,trigger_type,status) VALUES (?,?,'running')`).run(provider,String(triggerType).slice(0,30)).lastInsertRowid;
+    try{
+      const result=await fetchMetaAggregatedInsights({accounts,apiVersion:socialApiVersion()});
+      const imported={facebook:persistExternalInsights('facebook',result.facebook),instagram:persistExternalInsights('instagram',result.instagram)};
+      for(const provider of ['facebook','instagram'])db.prepare(`UPDATE social_external_sync_runs SET status='completed',
+        imported_count=?,finished_at=CURRENT_TIMESTAMP WHERE id=?`).run(imported[provider],runIds[provider]);
+      return {ok:true,provider:'meta',imported,measuredAt:result.measuredAt};
+    }catch(error){
+      const code=String(error?.message||'meta_sync_failed').slice(0,80);
+      for(const provider of ['facebook','instagram'])db.prepare(`UPDATE social_external_sync_runs SET status='failed',
+        error_code=?,finished_at=CURRENT_TIMESTAMP WHERE id=?`).run(code,runIds[provider]);
+      throw error;
+    }
+  })();
+  try{return await metaMetricsSyncPromise;}finally{metaMetricsSyncPromise=null;}
+}
 async function syncOfficialYouTubeMetrics(triggerType='admin'){
   if(youtubeMetricsSyncPromise)return youtubeMetricsSyncPromise;
   youtubeMetricsSyncPromise=(async()=>{
@@ -5563,7 +5601,19 @@ app.get('/api/admin/social/intelligence/providers', requireAdmin, (req,res) => {
   const runs=db.prepare(`SELECT id,provider,trigger_type triggerType,status,imported_count importedCount,
     error_code errorCode,started_at startedAt,finished_at finishedAt
     FROM social_external_sync_runs ORDER BY id DESC LIMIT 30`).all();
-  return res.json({providers:externalMetricsProviderStatus(process.env),runs});
+  const meta=db.prepare(`SELECT COUNT(*) pages,SUM(CASE WHEN instagram_id IS NOT NULL THEN 1 ELSE 0 END) instagram
+    FROM social_accounts WHERE status='connected'`).get();
+  return res.json({providers:externalMetricsProviderStatus(process.env,{facebook:Number(meta.pages)>0,instagram:Number(meta.instagram)>0}),runs});
+});
+
+app.post('/api/admin/social/intelligence/sync/meta', requireAdmin, sameOriginOnly, async (req,res) => {
+  try{return res.json(await syncOfficialMetaMetrics('admin'));}
+  catch(error){
+    const raw=String(error?.message||'meta_sync_failed');
+    if(raw==='meta_not_configured')return res.status(503).json({error:'Conecte uma Página profissional do Facebook ou Instagram à Vitriny City.'});
+    const code=/^meta_(?:[a-z0-9_]+|api_\d{3})$/.test(raw)?raw:'meta_sync_failed';
+    return res.status(502).json({error:'Não foi possível sincronizar as métricas oficiais da Meta.',code});
+  }
 });
 
 app.post('/api/admin/social/intelligence/sync/youtube', requireAdmin, sameOriginOnly, async (req,res) => {

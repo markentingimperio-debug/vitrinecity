@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   externalMetricsProviderStatus,
+  fetchMetaAggregatedInsights,
   fetchYouTubeAggregatedInsights,
   youtubeMetricsConfig
 } from '../external-social-metrics.js';
@@ -72,7 +73,29 @@ assert.equal(config.intervalHours, 6);
 assert.equal(config.maxVideos, 500);
 const statuses = externalMetricsProviderStatus({ YOUTUBE_API_KEY: 'key', YOUTUBE_CHANNEL_ID: 'channel' });
 assert.equal(statuses.find(provider => provider.id === 'youtube').configured, true);
-assert.equal(statuses.find(provider => provider.id === 'instagram').implemented, false);
+assert.equal(statuses.find(provider => provider.id === 'instagram').implemented, true);
+assert.equal(externalMetricsProviderStatus({}, { facebook:true }).find(provider => provider.id === 'facebook').configured, true);
+
+const metaRequests=[];
+const metaResult=await fetchMetaAggregatedInsights({accounts:[{pageId:'page-1',instagramId:'ig-1',accessToken:'private-token'}],
+  measuredAt:'2026-08-23T15:00:00.000Z',fetchImpl:async input=>{const url=new URL(input);metaRequests.push(url);
+    if(url.pathname.endsWith('/page-1/posts'))return {ok:true,status:200,json:async()=>({data:[{id:'post-1',
+      reactions:{summary:{total_count:9}},comments:{summary:{total_count:2}},shares:{count:3},insights:{data:[
+        {name:'post_impressions',values:[{value:120}]},{name:'post_clicks',values:[{value:7}]}]}}]})};
+    if(url.pathname.endsWith('/ig-1/media'))return {ok:true,status:200,json:async()=>({data:[{id:'media-1',
+      like_count:12,comments_count:4,insights:{data:[{name:'views',values:[{value:80}]},{name:'reach',values:[{value:60}]},
+        {name:'shares',values:[{value:5}]}]}}]})};
+    throw new Error('unexpected_meta_request');
+  }});
+assert.equal(metaResult.facebook[0].views,120);
+assert.equal(metaResult.facebook[0].clicks,7);
+assert.equal(metaResult.instagram[0].views,80);
+assert.equal(metaResult.instagram[0].shares,5);
+assert(metaRequests.every(url=>url.searchParams.get('access_token')==='private-token'));
+
+await assert.rejects(fetchMetaAggregatedInsights({accounts:[{pageId:'p',accessToken:'do-not-leak'}],
+  fetchImpl:async()=>({ok:false,status:403,json:async()=>({error:'do-not-leak'})})}),
+  error=>error.message==='meta_api_403'&&!error.message.includes('do-not-leak'));
 
 await assert.rejects(
   fetchYouTubeAggregatedInsights({
