@@ -8,13 +8,18 @@ for(const expected of ['R$10 por mês','R$200 por pacote','VitrineCity Ads','Mar
 assert.match(page,/Nenhuma vaga ou oferta externa publicada no momento/);
 assert.match(page,/não cria anúncios fictícios/i);
 assert.match(page,/id="opportunity-form"/);
+assert.match(page,/id="tracking-form"/);
 assert.match(page,/\/api\/opportunities/);
+assert.match(page,/\/api\/opportunities\/status/);
+assert.match(page,/\/api\/opportunities\/revise/);
 assert.match(page,/application\/ld\+json/);
 assert.match(page,/https:\/\/vitrinecity\.com\/solucoes\.html/);
 assert.match(home,/href="\/solucoes\.html"/);
 assert.match(server,/'\/solucoes\.html'/);
 assert.match(server,/CREATE TABLE IF NOT EXISTS business_opportunities/);
 assert.match(server,/app\.post\('\/api\/opportunities'/);
+assert.match(server,/app\.post\('\/api\/opportunities\/status'/);
+assert.match(server,/app\.post\('\/api\/opportunities\/revise'/);
 assert.match(server,/app\.patch\('\/api\/admin\/opportunities\/:id'/);
 const admin=fs.readFileSync(new URL('../public/admin-oportunidades.html',import.meta.url),'utf8');
 assert.match(admin,/data-status="published"/);

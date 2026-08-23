@@ -1889,6 +1889,40 @@ app.post('/api/opportunities', sameOriginOnly, (req,res) => {
   return res.status(201).json({ok:true,protocol:`OP-${String(result.lastInsertRowid).padStart(6,'0')}`});
 });
 
+function opportunityOwner(body){
+  const match=/^OP-(\d{6,12})$/.exec(String(body?.protocol||'').trim().toUpperCase());
+  const email=String(body?.contactEmail||'').trim().toLowerCase().slice(0,160);
+  if(!match||!/^\S+@\S+\.\S+$/.test(email))return null;
+  return db.prepare(`SELECT id,kind,business_name businessName,title,description,city,contact_url contactUrl,
+    contact_email contactEmail,expires_on expiresOn,status,review_note reviewNote,submitted_at submittedAt,
+    reviewed_at reviewedAt,updated_at updatedAt FROM business_opportunities WHERE id=? AND contact_email=?`)
+    .get(Number(match[1]),email)||null;
+}
+
+app.post('/api/opportunities/status',sameOriginOnly,(req,res)=>{
+  if(!allowAttempt(authAttempts,`opportunity-status:${req.ip}`,12,15*60*1000))return res.set('Retry-After','900').status(429).json({error:'Muitas consultas em pouco tempo. Aguarde alguns minutos.'});
+  const item=opportunityOwner(req.body);
+  if(!item)return res.status(404).json({error:'O protocolo ou o e-mail não conferem.'});
+  return res.json({item:{...item,protocol:`OP-${String(item.id).padStart(6,'0')}`}});
+});
+
+app.post('/api/opportunities/revise',sameOriginOnly,(req,res)=>{
+  if(!allowAttempt(authAttempts,`opportunity-revise:${req.ip}`,6,60*60*1000))return res.set('Retry-After','3600').status(429).json({error:'Muitas correções em pouco tempo. Tente novamente mais tarde.'});
+  const current=opportunityOwner(req.body),body=req.body||{};
+  if(!current)return res.status(404).json({error:'O protocolo ou o e-mail não conferem.'});
+  if(current.status!=='changes_requested')return res.status(409).json({error:'Esta oportunidade não está aguardando correção.'});
+  const kind=String(body.kind||''),businessName=String(body.businessName||'').trim().slice(0,120);
+  const title=String(body.title||'').trim().slice(0,140),description=String(body.description||'').trim().slice(0,1500);
+  const city=String(body.city||'').trim().slice(0,100),contactUrl=safeExternalUrl(body.contactUrl,500);
+  const expiresOn=String(body.expiresOn||'').trim(),futureDate=/^\d{4}-\d{2}-\d{2}$/.test(expiresOn)&&expiresOn>new Date().toISOString().slice(0,10)?expiresOn:null;
+  if(!body.consent||!['offer','service','job'].includes(kind)||businessName.length<2||title.length<5||description.length<30||
+    !contactUrl||(kind==='job'&&!futureDate))return res.status(400).json({error:'Revise todos os dados obrigatórios antes de reenviar.'});
+  db.prepare(`UPDATE business_opportunities SET kind=?,business_name=?,title=?,description=?,city=?,contact_url=?,
+    expires_on=?,status='pending',review_note='',reviewed_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .run(kind,businessName,title,description,city,contactUrl,futureDate,current.id);
+  return res.json({ok:true,protocol:`OP-${String(current.id).padStart(6,'0')}`,status:'pending'});
+});
+
 app.get('/api/admin/opportunities',requireAdmin,(req,res)=>{
   const status=String(req.query.status||'').trim();
   const items=status?db.prepare('SELECT * FROM business_opportunities WHERE status=? ORDER BY id DESC LIMIT 300').all(status):
