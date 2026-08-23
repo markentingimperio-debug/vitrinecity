@@ -2544,6 +2544,24 @@ app.get('/api/admin/marketplace/shipping/status',requireAdmin,(_req,res)=>{
     connectUrl:'/api/admin/marketplace/shipping/connect'});
 });
 
+app.get('/api/admin/integrations/readiness',requireAdmin,(_req,res)=>{
+  const has=name=>Boolean(String(process.env[name]||'').trim()),missing=names=>names.filter(name=>!has(name));
+  const metaConnected=Boolean(db.prepare("SELECT 1 FROM social_accounts WHERE status='connected' LIMIT 1").get());
+  const googleConnected=Boolean(db.prepare("SELECT 1 FROM google_search_oauth WHERE id=1 AND status='connected'").get());
+  const shippingConnected=Boolean(db.prepare("SELECT 1 FROM melhor_envio_oauth WHERE id=1 AND status='connected'").get());
+  const integrations=[
+    {id:'meta',name:'Facebook e Instagram',ready:metaConnected,missing:metaConnected?[]:['Reautorizar Campo & Conhecimento'],action:'/api/social/login?returnTo=admin'},
+    {id:'youtube',name:'YouTube',ready:missing(['YOUTUBE_API_KEY','YOUTUBE_CHANNEL_ID']).length===0,missing:missing(['YOUTUBE_API_KEY','YOUTUBE_CHANNEL_ID'])},
+    {id:'tiktok',name:'TikTok',ready:missing(['TIKTOK_CONTENT_ACCESS_TOKEN']).length===0,missing:missing(['TIKTOK_CONTENT_ACCESS_TOKEN'])},
+    {id:'kwai',name:'Kwai',ready:missing(['KWAI_APP_ID','KWAI_ACCESS_TOKEN']).length===0,missing:missing(['KWAI_APP_ID','KWAI_ACCESS_TOKEN'])},
+    {id:'google',name:'Google Search Console',ready:googleConnected,missing:googleConnected?[]:missing(['GOOGLE_SEARCH_CONSOLE_CLIENT_ID','GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET']).concat(['Autorizar a conta']),callback:`${SITE_URL}/api/admin/social/intelligence/google/callback`,action:'/api/admin/social/intelligence/google/connect'},
+    {id:'shipping',name:'Melhor Envio',ready:shippingConnected&&melhorEnvioSenderReady(),missing:[...(shippingConnected?[]:missing(['MELHOR_ENVIO_CLIENT_ID','MELHOR_ENVIO_CLIENT_SECRET']).concat(['Autorizar a conta'])),...(melhorEnvioSenderReady()?[]:['Preencher dados completos do remetente'])],callback:`${SITE_URL}/api/admin/marketplace/shipping/callback`,action:'/api/admin/marketplace/shipping/connect'},
+    {id:'payments',name:'Mercado Pago Marketplace',ready:marketplaceOAuthConfigured(),missing:missing(['MERCADOPAGO_MARKETPLACE_CLIENT_ID','MERCADOPAGO_MARKETPLACE_CLIENT_SECRET']),callback:`${SITE_URL}/api/marketplace/mercadopago/callback`},
+    {id:'identity',name:'Verificação documental 18+',ready:ageVerificationConfigured(),missing:missing(['AGE_VERIFICATION_PROVIDER','AGE_VERIFICATION_START_URL','AGE_VERIFICATION_WEBHOOK_SECRET']),callback:`${SITE_URL}/api/identity/age-verification/webhook`}
+  ].map(item=>({...item,missing:[...new Set(item.missing)]}));
+  return res.json({integrations,ready:integrations.filter(item=>item.ready).length,total:integrations.length,generatedAt:new Date().toISOString()});
+});
+
 app.get('/api/admin/marketplace/shipping/connect',requireAdmin,(req,res)=>{
   const config=melhorEnvioOAuthConfig();
   if(!config.oauthConfigured)return res.status(503).send('Configure o aplicativo do Melhor Envio na VPS.');

@@ -13,6 +13,14 @@ import {
   youtubeMetricsConfig
 } from '../external-social-metrics.js';
 
+const readinessServer=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
+const readiness=fs.readFileSync(new URL('../public/admin-integracoes.html',import.meta.url),'utf8');
+assert.match(readinessServer,/\/api\/admin\/integrations\/readiness/);
+assert.match(readinessServer,/MERCADOPAGO_MARKETPLACE_CLIENT_ID/);
+assert.match(readinessServer,/AGE_VERIFICATION_WEBHOOK_SECRET/);
+assert.match(readiness,/Nenhum segredo ou token é exibido/);
+assert.match(readiness,/noindex,nofollow/);
+
 const requests = [];
 const mockFetch = async input => {
   const url = new URL(input);
