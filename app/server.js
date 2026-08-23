@@ -17,6 +17,11 @@ import { fileURLToPath } from 'node:url';
 import { originalCourse } from './course-content.js';
 import { setupAdminAnalytics } from './admin-analytics.js';
 import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marketplace-public.js';
+import {
+  externalMetricsProviderStatus,
+  fetchYouTubeAggregatedInsights,
+  youtubeMetricsConfig
+} from './external-social-metrics.js';
 
 const app = express();
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -559,6 +564,18 @@ CREATE TABLE IF NOT EXISTS social_external_insights (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (provider,content_key)
 );
+CREATE TABLE IF NOT EXISTS social_external_sync_runs (
+  id INTEGER PRIMARY KEY,
+  provider TEXT NOT NULL,
+  trigger_type TEXT NOT NULL DEFAULT 'admin',
+  status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','completed','failed')),
+  imported_count INTEGER NOT NULL DEFAULT 0,
+  error_code TEXT NOT NULL DEFAULT '',
+  started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_social_external_sync_runs_provider
+ON social_external_sync_runs(provider,started_at DESC);
 CREATE TABLE IF NOT EXISTS social_credit_allocations (
   post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
   batch_id INTEGER NOT NULL REFERENCES credit_batches(id),
@@ -5490,20 +5507,73 @@ app.post('/api/social/posts/:id/intelligence', sameOriginOnly, (req,res) => {
   return res.json({ok:true});
 });
 
+const EXTERNAL_METRIC_PROVIDERS = new Set(['instagram','facebook','tiktok','youtube','google','kwai']);
+const externalInsightUpsert=db.prepare(`INSERT INTO social_external_insights
+  (provider,content_key,category,views,watch_ms,completions,likes,comments,shares,clicks,conversions,measured_at)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(provider,content_key) DO UPDATE SET
+  category=excluded.category,views=excluded.views,watch_ms=excluded.watch_ms,completions=excluded.completions,
+  likes=excluded.likes,comments=excluded.comments,shares=excluded.shares,clicks=excluded.clicks,
+  conversions=excluded.conversions,measured_at=excluded.measured_at,updated_at=CURRENT_TIMESTAMP`);
+
+function persistExternalInsights(provider,items){
+  if(!EXTERNAL_METRIC_PROVIDERS.has(provider))throw new Error('unsupported_metrics_provider');
+  const number=value=>Math.max(0,Math.min(1e12,Math.round(Number(value)||0)));
+  let imported=0;
+  db.transaction(()=>{for(const item of items.slice(0,500)){const key=String(item?.contentKey||'').trim().slice(0,180);
+    if(!key)continue;const category=SOCIAL_CATEGORIES.has(String(item?.category||''))?String(item.category):'geral';
+    const measuredAt=/^\d{4}-\d{2}-\d{2}/.test(String(item?.measuredAt||''))?String(item.measuredAt).slice(0,30):new Date().toISOString();
+    externalInsightUpsert.run(provider,key,category,number(item.views),number(item.watchMs),number(item.completions),
+      number(item.likes),number(item.comments),number(item.shares),number(item.clicks),number(item.conversions),measuredAt);imported++;}})();
+  return imported;
+}
+
 app.post('/api/admin/social/intelligence/import', requireAdmin, sameOriginOnly, (req,res) => {
   const provider=String(req.body?.provider||'').trim().toLowerCase();
-  if(!['instagram','facebook','tiktok','youtube','google','kwai'].includes(provider))return res.status(400).json({error:'Rede não suportada.'});
+  if(!EXTERNAL_METRIC_PROVIDERS.has(provider))return res.status(400).json({error:'Rede não suportada.'});
   const items=Array.isArray(req.body?.items)?req.body.items.slice(0,500):[];
   if(!items.length)return res.status(400).json({error:'Envie pelo menos uma métrica agregada.'});
-  const number=value=>Math.max(0,Math.min(1e12,Math.round(Number(value)||0)));
-  const upsert=db.prepare(`INSERT INTO social_external_insights
-    (provider,content_key,category,views,watch_ms,completions,likes,comments,shares,clicks,conversions,measured_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(provider,content_key) DO UPDATE SET
-    category=excluded.category,views=excluded.views,watch_ms=excluded.watch_ms,completions=excluded.completions,
-    likes=excluded.likes,comments=excluded.comments,shares=excluded.shares,clicks=excluded.clicks,
-    conversions=excluded.conversions,measured_at=excluded.measured_at,updated_at=CURRENT_TIMESTAMP`);
-  let imported=0;db.transaction(()=>{for(const item of items){const key=String(item?.contentKey||'').trim().slice(0,180);if(!key)continue;const category=SOCIAL_CATEGORIES.has(String(item?.category||''))?String(item.category):'geral';const measuredAt=/^\d{4}-\d{2}-\d{2}/.test(String(item?.measuredAt||''))?String(item.measuredAt).slice(0,30):new Date().toISOString();upsert.run(provider,key,category,number(item.views),number(item.watchMs),number(item.completions),number(item.likes),number(item.comments),number(item.shares),number(item.clicks),number(item.conversions),measuredAt);imported++;}})();
-  return res.json({ok:true,provider,imported});
+  return res.json({ok:true,provider,imported:persistExternalInsights(provider,items)});
+});
+
+let youtubeMetricsSyncPromise=null;
+async function syncOfficialYouTubeMetrics(triggerType='admin'){
+  if(youtubeMetricsSyncPromise)return youtubeMetricsSyncPromise;
+  youtubeMetricsSyncPromise=(async()=>{
+    const runId=db.prepare(`INSERT INTO social_external_sync_runs(provider,trigger_type,status)
+      VALUES ('youtube',?,'running')`).run(String(triggerType).slice(0,30)).lastInsertRowid;
+    try{
+      const config=youtubeMetricsConfig(process.env);
+      if(!config.configured)throw new Error('youtube_not_configured');
+      const result=await fetchYouTubeAggregatedInsights(config);
+      const imported=persistExternalInsights('youtube',result.items);
+      db.prepare(`UPDATE social_external_sync_runs SET status='completed',imported_count=?,
+        finished_at=CURRENT_TIMESTAMP WHERE id=?`).run(imported,runId);
+      return {ok:true,provider:'youtube',channelTitle:result.channelTitle,imported,measuredAt:result.measuredAt};
+    }catch(error){
+      const errorCode=String(error?.message||'youtube_sync_failed').slice(0,80);
+      db.prepare(`UPDATE social_external_sync_runs SET status='failed',error_code=?,
+        finished_at=CURRENT_TIMESTAMP WHERE id=?`).run(errorCode,runId);
+      throw error;
+    }
+  })();
+  try{return await youtubeMetricsSyncPromise;}finally{youtubeMetricsSyncPromise=null;}
+}
+
+app.get('/api/admin/social/intelligence/providers', requireAdmin, (req,res) => {
+  const runs=db.prepare(`SELECT id,provider,trigger_type triggerType,status,imported_count importedCount,
+    error_code errorCode,started_at startedAt,finished_at finishedAt
+    FROM social_external_sync_runs ORDER BY id DESC LIMIT 30`).all();
+  return res.json({providers:externalMetricsProviderStatus(process.env),runs});
+});
+
+app.post('/api/admin/social/intelligence/sync/youtube', requireAdmin, sameOriginOnly, async (req,res) => {
+  try{return res.json(await syncOfficialYouTubeMetrics('admin'));}
+  catch(error){
+    const rawCode=String(error?.message||'youtube_sync_failed');
+    if(rawCode==='youtube_not_configured')return res.status(503).json({error:'Configure YOUTUBE_API_KEY e YOUTUBE_CHANNEL_ID na VPS.'});
+    const code=/^youtube_(?:[a-z0-9_]+|api_\d{3})$/.test(rawCode)?rawCode:'youtube_sync_failed';
+    return res.status(502).json({error:'Não foi possível sincronizar as métricas oficiais do YouTube.',code});
+  }
 });
 
 function refreshSocialIntelligenceAlerts(){
@@ -6189,4 +6259,16 @@ app.use((error, req, res, next) => {
   if (req.path.startsWith('/api/')) return res.status(500).json({ error: 'Não foi possível concluir a solicitação.' });
   return publicErrorPage(res, 500);
 });
-app.listen(process.env.PORT || 3000, () => console.log('VitrineCity online'));
+function scheduleOfficialMetricsSync(){
+  const config=youtubeMetricsConfig(process.env);
+  if(!config.configured||!config.autoSync)return;
+  const execute=()=>syncOfficialYouTubeMetrics('automatic').catch(error=>
+    console.error('Falha na sincronização oficial do YouTube:',String(error?.message||'youtube_sync_failed')));
+  const initialTimer=setTimeout(execute,30000);initialTimer.unref();
+  const intervalTimer=setInterval(execute,config.intervalMs);intervalTimer.unref();
+}
+
+app.listen(process.env.PORT || 3000, () => {
+  console.log('VitrineCity online');
+  scheduleOfficialMetricsSync();
+});
