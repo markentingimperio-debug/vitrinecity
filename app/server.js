@@ -1021,12 +1021,16 @@ db.exec(`CREATE TABLE IF NOT EXISTS business_opportunities (
   status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','changes_requested','published','rejected','expired')),
   consent INTEGER NOT NULL DEFAULT 1,
   review_note TEXT NOT NULL DEFAULT '',
+  notification_status TEXT NOT NULL DEFAULT 'not_sent',
+  notification_error TEXT NOT NULL DEFAULT '',
   submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   reviewed_at TEXT,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_business_opportunities_public ON business_opportunities(status,kind,expires_on,id DESC);
 CREATE INDEX IF NOT EXISTS idx_business_opportunities_review ON business_opportunities(status,id DESC);`);
+ensureColumn('business_opportunities','notification_status',"TEXT NOT NULL DEFAULT 'not_sent'");
+ensureColumn('business_opportunities','notification_error',"TEXT NOT NULL DEFAULT ''");
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -1930,14 +1934,31 @@ app.get('/api/admin/opportunities',requireAdmin,(req,res)=>{
   return res.json({items});
 });
 
-app.patch('/api/admin/opportunities/:id',requireAdmin,sameOriginOnly,(req,res)=>{
+async function notifyOpportunityDecision(item){
+  if(!mailTransport){db.prepare(`UPDATE business_opportunities SET notification_status='not_configured',
+    notification_error='smtp_not_configured' WHERE id=?`).run(item.id);return 'not_configured';}
+  const protocol=`OP-${String(item.id).padStart(6,'0')}`,url=`${SITE_URL}/solucoes.html#acompanhar`;
+  const labels={changes_requested:'Correção solicitada',published:'Oportunidade publicada',rejected:'Oportunidade não aprovada',expired:'Oportunidade encerrada'};
+  const subject=`${labels[item.status]||'Atualização da oportunidade'} — ${protocol}`;
+  const note=item.review_note?`\nObservação da análise: ${item.review_note}\n`:'';
+  try{await mailTransport.sendMail({from:process.env.EMAIL_FROM||`VitrineCity <${SMTP_USER}>`,to:item.contact_email,
+    replyTo:LOT_ADMIN_EMAIL||SMTP_USER,subject,text:`Olá, ${item.business_name}.\n\nA situação de “${item.title}” foi atualizada para: ${labels[item.status]||item.status}.${note}\nConsulte com o protocolo ${protocol} e seu e-mail em: ${url}\n\nVitrineCity`,
+    html:`<p>Olá, <strong>${escapeHtml(item.business_name)}</strong>.</p><p>A situação de “${escapeHtml(item.title)}” foi atualizada para: <strong>${escapeHtml(labels[item.status]||item.status)}</strong>.</p>${item.review_note?`<p><strong>Observação:</strong> ${escapeHtml(item.review_note)}</p>`:''}<p>Consulte usando o protocolo <strong>${escapeHtml(protocol)}</strong> e seu e-mail:</p><p><a href="${escapeHtml(url)}">Acompanhar oportunidade</a></p>`});
+    db.prepare(`UPDATE business_opportunities SET notification_status='sent',notification_error='' WHERE id=?`).run(item.id);return 'sent';
+  }catch(error){db.prepare(`UPDATE business_opportunities SET notification_status='failed',notification_error=? WHERE id=?`)
+    .run(String(error?.message||'email_failed').slice(0,240),item.id);return 'failed';}
+}
+
+app.patch('/api/admin/opportunities/:id',requireAdmin,sameOriginOnly,async(req,res)=>{
   const status=String(req.body?.status||''),reviewNote=String(req.body?.reviewNote||'').trim().slice(0,1000);
   if(!['changes_requested','published','rejected','expired'].includes(status))return res.status(400).json({error:'Decisão inválida.'});
   if(['changes_requested','rejected'].includes(status)&&reviewNote.length<10)return res.status(400).json({error:'Registre o motivo com pelo menos 10 caracteres.'});
   const result=db.prepare(`UPDATE business_opportunities SET status=?,review_note=?,reviewed_at=CURRENT_TIMESTAMP,
-    updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(status,reviewNote,Number(req.params.id));
+    notification_status='pending',notification_error='',updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(status,reviewNote,Number(req.params.id));
   if(!result.changes)return res.status(404).json({error:'Oportunidade não encontrada.'});
-  return res.json({ok:true});
+  const item=db.prepare('SELECT * FROM business_opportunities WHERE id=?').get(Number(req.params.id));
+  const notification=await notifyOpportunityDecision(item);
+  return res.json({ok:true,notification});
 });
 
 app.post('/api/auth/register', sameOriginOnly, (req, res) => {
