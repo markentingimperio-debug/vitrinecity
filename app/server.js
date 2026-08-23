@@ -1734,7 +1734,7 @@ app.get('/sitemap.xml', (_req, res) => {
   const fixedPaths = [
     '/', '/cidade', '/cidade/bairro-premium', '/cidade/praca-central', '/cidade/avenida-premium',
     '/social', '/descobrir', '/loja', '/centro-educacional.html', '/afiliados.html',
-    '/para-empresas.html', '/como-funciona.html', '/comprar-lote.html', '/sobre.html',
+    '/para-empresas.html', '/solucoes.html', '/como-funciona.html', '/comprar-lote.html', '/sobre.html',
     '/contato.html', '/privacy.html', '/termos-predio-digital.html', '/termos-marketplace.html',
     '/politica-vendedor-marketplace.html', '/politica-comprador-marketplace.html',
     '/politica-devolucao-marketplace.html', '/politica-cancelamento-marketplace.html',
