@@ -2523,6 +2523,7 @@ app.get('/api/social/status', requireUser, (req, res) => {
     FROM social_accounts WHERE user_id=? ORDER BY id`).all(req.user.id);
   return res.json({
     configured: Boolean(process.env.META_SOCIAL_APP_ID && process.env.META_SOCIAL_APP_SECRET &&
+      process.env.META_SOCIAL_LOGIN_CONFIG_ID &&
       (process.env.META_SOCIAL_TOKEN_ENCRYPTION_KEY || process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY)),
     appId: String(process.env.META_SOCIAL_APP_ID || ''),
     apiVersion: socialApiVersion(),
@@ -2615,7 +2616,8 @@ async function socialPagesFromToken(accessToken) {
 }
 
 app.get('/api/social/login', requireUser, (req, res) => {
-  if (!process.env.META_SOCIAL_APP_ID || !process.env.META_SOCIAL_APP_SECRET) {
+  if (!process.env.META_SOCIAL_APP_ID || !process.env.META_SOCIAL_APP_SECRET ||
+      !process.env.META_SOCIAL_LOGIN_CONFIG_ID) {
     return res.status(503).send('Integração da Meta ainda não configurada.');
   }
   const isAdmin = Boolean(req.user.is_admin || adminEmails.has(String(req.user.email).toLowerCase()));
@@ -2626,7 +2628,7 @@ app.get('/api/social/login', requireUser, (req, res) => {
   login.searchParams.set('redirect_uri',redirectUri);
   login.searchParams.set('state',socialOauthState(req.user.id,returnTo));
   login.searchParams.set('response_type','code');
-  login.searchParams.set('scope','pages_show_list,pages_read_engagement,pages_manage_metadata,pages_messaging,instagram_basic,instagram_manage_messages');
+  login.searchParams.set('config_id',String(process.env.META_SOCIAL_LOGIN_CONFIG_ID));
   return res.redirect(302,login.toString());
 });
 
