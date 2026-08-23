@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {
   externalMetricsProviderStatus,
   fetchGoogleSearchAggregatedInsights,
@@ -169,5 +170,16 @@ await assert.rejects(
   }),
   error => error.message === 'youtube_api_403' && !error.message.includes('do-not-leak')
 );
+
+const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
+const panel=fs.readFileSync(new URL('../public/admin-intelligence.html',import.meta.url),'utf8');
+assert.match(server,/CREATE TABLE IF NOT EXISTS google_search_oauth/);
+assert.match(server,/webmasters\.readonly/);
+assert.match(server,/access_type:'offline'/);
+assert.match(server,/google_search_oauth_states/);
+assert.match(server,/activeGoogleSearchAccessToken/);
+assert.match(server,/grant_type:'refresh_token'/);
+assert.match(server,/encryptGoogleSearchToken\(payload\.refresh_token\)/);
+assert.match(panel,/Conectar Google/);
 
 console.log('external-social-metrics: ok');

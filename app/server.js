@@ -1031,6 +1031,15 @@ CREATE INDEX IF NOT EXISTS idx_business_opportunities_public ON business_opportu
 CREATE INDEX IF NOT EXISTS idx_business_opportunities_review ON business_opportunities(status,id DESC);`);
 ensureColumn('business_opportunities','notification_status',"TEXT NOT NULL DEFAULT 'not_sent'");
 ensureColumn('business_opportunities','notification_error',"TEXT NOT NULL DEFAULT ''");
+db.exec(`CREATE TABLE IF NOT EXISTS google_search_oauth (
+  id INTEGER PRIMARY KEY CHECK(id=1), access_token_encrypted TEXT NOT NULL, refresh_token_encrypted TEXT NOT NULL,
+  expires_at INTEGER NOT NULL, scope TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'connected',
+  connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS google_search_oauth_states (
+  state_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_google_search_oauth_states_expiry ON google_search_oauth_states(expires_at);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -5728,6 +5737,45 @@ async function syncOfficialTikTokMetrics(triggerType='admin'){
   try{return await tiktokMetricsSyncPromise;}finally{tiktokMetricsSyncPromise=null;}
 }
 
+function googleSearchOAuthConfig(){
+  const clientId=String(process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_ID||process.env.GOOGLE_ADS_CLIENT_ID||'').trim();
+  const clientSecret=String(process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET||process.env.GOOGLE_ADS_CLIENT_SECRET||'').trim();
+  return {clientId,clientSecret,configured:Boolean(clientId&&clientSecret),
+    redirectUri:`${SITE_URL}/api/admin/social/intelligence/google/callback`};
+}
+function googleSearchTokenKey(){
+  const secret=String(process.env.GOOGLE_SEARCH_CONSOLE_TOKEN_ENCRYPTION_KEY||process.env.META_SOCIAL_TOKEN_ENCRYPTION_KEY||'');
+  if(secret.length<24)throw new Error('google_encryption_not_configured');
+  return createHash('sha256').update('google-search:'+secret).digest();
+}
+function googleSearchOAuthReady(){try{return googleSearchOAuthConfig().configured&&Boolean(googleSearchTokenKey());}catch{return false;}}
+function encryptGoogleSearchToken(value){
+  const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',googleSearchTokenKey(),iv);
+  const encrypted=Buffer.concat([cipher.update(String(value),'utf8'),cipher.final()]);
+  return [iv.toString('base64url'),cipher.getAuthTag().toString('base64url'),encrypted.toString('base64url')].join('.');
+}
+function decryptGoogleSearchToken(value){
+  const [iv,tag,data]=String(value||'').split('.');if(!iv||!tag||!data)throw new Error('google_token_invalid');
+  const decipher=createDecipheriv('aes-256-gcm',googleSearchTokenKey(),Buffer.from(iv,'base64url'));
+  decipher.setAuthTag(Buffer.from(tag,'base64url'));
+  return Buffer.concat([decipher.update(Buffer.from(data,'base64url')),decipher.final()]).toString('utf8');
+}
+async function activeGoogleSearchAccessToken(){
+  const account=db.prepare('SELECT * FROM google_search_oauth WHERE id=1 AND status=?').get('connected');
+  if(!account)throw new Error('google_not_configured');
+  if(Number(account.expires_at)>Date.now()+120000)return decryptGoogleSearchToken(account.access_token_encrypted);
+  const oauth=googleSearchOAuthConfig();if(!oauth.configured)throw new Error('google_oauth_not_configured');
+  const refreshToken=decryptGoogleSearchToken(account.refresh_token_encrypted);
+  let response;try{response=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},
+    body:new URLSearchParams({client_id:oauth.clientId,client_secret:oauth.clientSecret,refresh_token:refreshToken,grant_type:'refresh_token'}),signal:AbortSignal.timeout(12000)});}catch{throw new Error('google_oauth_unreachable');}
+  const payload=await response.json().catch(()=>null);
+  if(!response.ok||!payload?.access_token){db.prepare("UPDATE google_search_oauth SET status='expired',updated_at=CURRENT_TIMESTAMP WHERE id=1").run();throw new Error('google_oauth_refresh_failed');}
+  const expiresAt=Date.now()+Math.max(60,Number(payload.expires_in)||3600)*1000;
+  db.prepare(`UPDATE google_search_oauth SET access_token_encrypted=?,expires_at=?,scope=COALESCE(?,scope),
+    status='connected',updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(encryptGoogleSearchToken(payload.access_token),expiresAt,payload.scope||null);
+  return payload.access_token;
+}
+
 async function syncOfficialGoogleMetrics(triggerType='admin'){
   if(googleMetricsSyncPromise)return googleMetricsSyncPromise;
   googleMetricsSyncPromise=(async()=>{
@@ -5735,6 +5783,8 @@ async function syncOfficialGoogleMetrics(triggerType='admin'){
       VALUES ('google',?,'running')`).run(String(triggerType).slice(0,30)).lastInsertRowid;
     try{
       const config=googleSearchMetricsConfig(process.env);
+      if(!config.configured)config.accessToken=await activeGoogleSearchAccessToken();
+      config.configured=Boolean(config.accessToken&&config.siteUrl);
       if(!config.configured)throw new Error('google_not_configured');
       const result=await fetchGoogleSearchAggregatedInsights(config);
       const imported=persistExternalInsights('google',result.items);
@@ -5775,13 +5825,47 @@ async function syncOfficialKwaiMetrics(triggerType='admin'){
   try{return await kwaiMetricsSyncPromise;}finally{kwaiMetricsSyncPromise=null;}
 }
 
+app.get('/api/admin/social/intelligence/google/connect',requireAdmin,(req,res)=>{
+  const oauth=googleSearchOAuthConfig();if(!oauth.configured)return res.status(503).send('Configure o cliente OAuth do Google Search Console.');
+  try{googleSearchTokenKey();}catch{return res.status(503).send('Configure a chave de criptografia do Google Search Console.');}
+  const state=randomBytes(32).toString('base64url'),stateHash=createHash('sha256').update(state).digest('hex');
+  db.prepare('DELETE FROM google_search_oauth_states WHERE expires_at<=?').run(Date.now());
+  db.prepare('INSERT INTO google_search_oauth_states(state_hash,expires_at) VALUES (?,?)').run(stateHash,Date.now()+10*60*1000);
+  const url=new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  url.search=new URLSearchParams({client_id:oauth.clientId,redirect_uri:oauth.redirectUri,response_type:'code',
+    scope:'https://www.googleapis.com/auth/webmasters.readonly',access_type:'offline',include_granted_scopes:'true',
+    prompt:'consent',state}).toString();
+  return res.redirect(302,url.toString());
+});
+
+app.get('/api/admin/social/intelligence/google/callback',requireAdmin,async(req,res)=>{
+  const state=String(req.query.state||''),code=String(req.query.code||''),stateHash=createHash('sha256').update(state).digest('hex');
+  const valid=db.prepare('DELETE FROM google_search_oauth_states WHERE state_hash=? AND expires_at>?').run(stateHash,Date.now());
+  if(!valid.changes||!code)return res.redirect(302,'/admin-intelligence.html?google=invalid');
+  const oauth=googleSearchOAuthConfig();
+  try{const response=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},
+    body:new URLSearchParams({code,client_id:oauth.clientId,client_secret:oauth.clientSecret,redirect_uri:oauth.redirectUri,grant_type:'authorization_code'}),signal:AbortSignal.timeout(12000)});
+    const payload=await response.json().catch(()=>null);if(!response.ok||!payload?.access_token||!payload?.refresh_token)throw new Error('exchange_failed');
+    const expiresAt=Date.now()+Math.max(60,Number(payload.expires_in)||3600)*1000;
+    db.prepare(`INSERT INTO google_search_oauth(id,access_token_encrypted,refresh_token_encrypted,expires_at,scope,status)
+      VALUES (1,?,?,?,?,'connected') ON CONFLICT(id) DO UPDATE SET access_token_encrypted=excluded.access_token_encrypted,
+      refresh_token_encrypted=excluded.refresh_token_encrypted,expires_at=excluded.expires_at,scope=excluded.scope,
+      status='connected',updated_at=CURRENT_TIMESTAMP`).run(encryptGoogleSearchToken(payload.access_token),encryptGoogleSearchToken(payload.refresh_token),expiresAt,String(payload.scope||''));
+    return res.redirect(302,'/admin-intelligence.html?google=connected');
+  }catch{return res.redirect(302,'/admin-intelligence.html?google=failed');}
+});
+
 app.get('/api/admin/social/intelligence/providers', requireAdmin, (req,res) => {
   const runs=db.prepare(`SELECT id,provider,trigger_type triggerType,status,imported_count importedCount,
     error_code errorCode,started_at startedAt,finished_at finishedAt
     FROM social_external_sync_runs ORDER BY id DESC LIMIT 30`).all();
   const meta=db.prepare(`SELECT COUNT(*) pages,SUM(CASE WHEN instagram_id IS NOT NULL THEN 1 ELSE 0 END) instagram
     FROM social_accounts WHERE status='connected'`).get();
-  return res.json({providers:externalMetricsProviderStatus(process.env,{facebook:Number(meta.pages)>0,instagram:Number(meta.instagram)>0}),runs});
+  const googleConnected=Boolean(db.prepare("SELECT 1 FROM google_search_oauth WHERE id=1 AND status='connected'").get());
+  const providers=externalMetricsProviderStatus(process.env,{facebook:Number(meta.pages)>0,instagram:Number(meta.instagram)>0})
+    .map(provider=>provider.id==='google'?{...provider,configured:provider.configured||googleConnected,
+      oauthReady:googleSearchOAuthReady(),connectUrl:'/api/admin/social/intelligence/google/connect'}:provider);
+  return res.json({providers,runs});
 });
 
 app.post('/api/admin/social/intelligence/sync/meta', requireAdmin, sameOriginOnly, async (req,res) => {
