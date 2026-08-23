@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {
   externalMetricsProviderStatus,
+  fetchGoogleSearchAggregatedInsights,
   fetchMetaAggregatedInsights,
   fetchTikTokAggregatedInsights,
   fetchYouTubeAggregatedInsights,
+  googleSearchMetricsConfig,
   tiktokMetricsConfig,
   youtubeMetricsConfig
 } from '../external-social-metrics.js';
@@ -79,6 +81,25 @@ assert.equal(statuses.find(provider => provider.id === 'instagram').implemented,
 assert.equal(externalMetricsProviderStatus({}, { facebook:true }).find(provider => provider.id === 'facebook').configured, true);
 assert.equal(tiktokMetricsConfig({TIKTOK_CONTENT_ACCESS_TOKEN:'token',TIKTOK_METRICS_MAX_VIDEOS:'900'}).maxVideos,500);
 assert.equal(externalMetricsProviderStatus({TIKTOK_CONTENT_ACCESS_TOKEN:'token'}).find(provider=>provider.id==='tiktok').configured,true);
+assert.equal(googleSearchMetricsConfig({GOOGLE_SEARCH_CONSOLE_ACCESS_TOKEN:'token',GOOGLE_SEARCH_CONSOLE_SITE_URL:'sc-domain:vitrinecity.com'}).configured,true);
+assert.equal(externalMetricsProviderStatus({GOOGLE_SEARCH_CONSOLE_ACCESS_TOKEN:'token',GOOGLE_SEARCH_CONSOLE_SITE_URL:'sc-domain:vitrinecity.com'}).find(provider=>provider.id==='google').configured,true);
+
+let googleRequest;
+const googleResult=await fetchGoogleSearchAggregatedInsights({accessToken:'google-secret',siteUrl:'sc-domain:vitrinecity.com',
+  measuredAt:'2026-08-23T17:00:00.000Z',lookbackDays:28,fetchImpl:async(input,options)=>{googleRequest={url:new URL(input),options};
+    return {ok:true,status:200,json:async()=>({rows:[{keys:['https://vitrinecity.com/social'],clicks:32,impressions:900,ctr:.0355,position:7.2}]})};
+  }});
+assert.equal(googleResult.startDate,'2026-07-26');
+assert.equal(googleResult.endDate,'2026-08-22');
+assert.equal(googleResult.items[0].views,900);
+assert.equal(googleResult.items[0].clicks,32);
+assert.equal(googleRequest.options.headers.authorization,'Bearer google-secret');
+assert.deepEqual(JSON.parse(googleRequest.options.body).dimensions,['page']);
+assert(googleRequest.url.pathname.includes(encodeURIComponent('sc-domain:vitrinecity.com')));
+
+await assert.rejects(fetchGoogleSearchAggregatedInsights({accessToken:'do-not-leak',siteUrl:'sc-domain:vitrinecity.com',
+  fetchImpl:async()=>({ok:false,status:403,json:async()=>({error:'do-not-leak'})})}),
+  error=>error.message==='google_api_403'&&!error.message.includes('do-not-leak'));
 
 const tiktokRequests=[];
 const tiktokResult=await fetchTikTokAggregatedInsights({accessToken:'tiktok-secret',maxVideos:3,

@@ -19,9 +19,11 @@ import { setupAdminAnalytics } from './admin-analytics.js';
 import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marketplace-public.js';
 import {
   externalMetricsProviderStatus,
+  fetchGoogleSearchAggregatedInsights,
   fetchMetaAggregatedInsights,
   fetchTikTokAggregatedInsights,
   fetchYouTubeAggregatedInsights,
+  googleSearchMetricsConfig,
   tiktokMetricsConfig,
   youtubeMetricsConfig
 } from './external-social-metrics.js';
@@ -5550,6 +5552,7 @@ app.post('/api/admin/social/intelligence/import', requireAdmin, sameOriginOnly, 
 let youtubeMetricsSyncPromise=null;
 let metaMetricsSyncPromise=null;
 let tiktokMetricsSyncPromise=null;
+let googleMetricsSyncPromise=null;
 function connectedMetaMetricAccounts(){
   return db.prepare(`SELECT page_id pageId,instagram_id instagramId,token_encrypted tokenEncrypted
     FROM social_accounts WHERE status='connected' ORDER BY id`).all().map(account=>({
@@ -5625,6 +5628,30 @@ async function syncOfficialTikTokMetrics(triggerType='admin'){
   try{return await tiktokMetricsSyncPromise;}finally{tiktokMetricsSyncPromise=null;}
 }
 
+async function syncOfficialGoogleMetrics(triggerType='admin'){
+  if(googleMetricsSyncPromise)return googleMetricsSyncPromise;
+  googleMetricsSyncPromise=(async()=>{
+    const runId=db.prepare(`INSERT INTO social_external_sync_runs(provider,trigger_type,status)
+      VALUES ('google',?,'running')`).run(String(triggerType).slice(0,30)).lastInsertRowid;
+    try{
+      const config=googleSearchMetricsConfig(process.env);
+      if(!config.configured)throw new Error('google_not_configured');
+      const result=await fetchGoogleSearchAggregatedInsights(config);
+      const imported=persistExternalInsights('google',result.items);
+      db.prepare(`UPDATE social_external_sync_runs SET status='completed',imported_count=?,
+        finished_at=CURRENT_TIMESTAMP WHERE id=?`).run(imported,runId);
+      return {ok:true,provider:'google',siteUrl:result.siteUrl,imported,startDate:result.startDate,
+        endDate:result.endDate,measuredAt:result.measuredAt};
+    }catch(error){
+      const errorCode=String(error?.message||'google_sync_failed').slice(0,80);
+      db.prepare(`UPDATE social_external_sync_runs SET status='failed',error_code=?,
+        finished_at=CURRENT_TIMESTAMP WHERE id=?`).run(errorCode,runId);
+      throw error;
+    }
+  })();
+  try{return await googleMetricsSyncPromise;}finally{googleMetricsSyncPromise=null;}
+}
+
 app.get('/api/admin/social/intelligence/providers', requireAdmin, (req,res) => {
   const runs=db.prepare(`SELECT id,provider,trigger_type triggerType,status,imported_count importedCount,
     error_code errorCode,started_at startedAt,finished_at finishedAt
@@ -5661,6 +5688,16 @@ app.post('/api/admin/social/intelligence/sync/tiktok', requireAdmin, sameOriginO
     if(rawCode==='tiktok_not_configured')return res.status(503).json({error:'Conecte a conta oficial do TikTok à Vitriny City.'});
     const code=/^tiktok_(?:[a-z0-9_]+|api_\d{3})$/.test(rawCode)?rawCode:'tiktok_sync_failed';
     return res.status(502).json({error:'Não foi possível sincronizar as métricas oficiais do TikTok.',code});
+  }
+});
+
+app.post('/api/admin/social/intelligence/sync/google', requireAdmin, sameOriginOnly, async (req,res) => {
+  try{return res.json(await syncOfficialGoogleMetrics('admin'));}
+  catch(error){
+    const rawCode=String(error?.message||'google_sync_failed');
+    if(rawCode==='google_not_configured')return res.status(503).json({error:'Configure o acesso do Google Search Console na VPS.'});
+    const code=/^google_(?:[a-z0-9_]+|api_\d{3})$/.test(rawCode)?rawCode:'google_sync_failed';
+    return res.status(502).json({error:'Não foi possível sincronizar as métricas oficiais do Google.',code});
   }
 });
 

@@ -3,7 +3,7 @@ export const OFFICIAL_METRIC_PROVIDERS = Object.freeze([
   { id: 'facebook', label: 'Facebook', implemented: true },
   { id: 'tiktok', label: 'TikTok', implemented: true },
   { id: 'youtube', label: 'YouTube', implemented: true },
-  { id: 'google', label: 'Google', implemented: false },
+  { id: 'google', label: 'Google', implemented: true },
   { id: 'kwai', label: 'Kwai', implemented: false }
 ]);
 
@@ -45,9 +45,22 @@ export function tiktokMetricsConfig(env = process.env) {
   };
 }
 
+export function googleSearchMetricsConfig(env = process.env) {
+  const accessToken = String(env.GOOGLE_SEARCH_CONSOLE_ACCESS_TOKEN || '').trim();
+  const siteUrl = String(env.GOOGLE_SEARCH_CONSOLE_SITE_URL || '').trim();
+  return {
+    accessToken,
+    siteUrl,
+    configured: Boolean(accessToken && siteUrl),
+    lookbackDays: boundedInteger(env.GOOGLE_SEARCH_CONSOLE_LOOKBACK_DAYS, 28, 1, 90),
+    maxPages: boundedInteger(env.GOOGLE_SEARCH_CONSOLE_MAX_PAGES, 500, 1, 25000)
+  };
+}
+
 export function externalMetricsProviderStatus(env = process.env, capabilities = {}) {
   const youtube = youtubeMetricsConfig(env);
   const tiktok = tiktokMetricsConfig(env);
+  const google = googleSearchMetricsConfig(env);
   return OFFICIAL_METRIC_PROVIDERS.map(provider => {
     if (provider.id === 'youtube') return { ...provider, configured: youtube.configured, autoSync: youtube.autoSync,
       intervalHours: youtube.intervalHours, maxVideos: youtube.maxVideos };
@@ -56,6 +69,8 @@ export function externalMetricsProviderStatus(env = process.env, capabilities = 
     };
     if (provider.id === 'tiktok') return { ...provider, configured: tiktok.configured, autoSync: false,
       maxVideos: tiktok.maxVideos };
+    if (provider.id === 'google') return { ...provider, configured: google.configured, autoSync: false,
+      lookbackDays: google.lookbackDays, maxPages: google.maxPages };
     return { ...provider, configured: false, autoSync: false };
   });
 }
@@ -130,6 +145,46 @@ export async function fetchMetaAggregatedInsights({
     });
   }
   return { provider: 'meta', measuredAt, facebook, instagram };
+}
+
+export async function fetchGoogleSearchAggregatedInsights({
+  accessToken, siteUrl, fetchImpl = fetch, lookbackDays = 28, maxPages = 500,
+  timeoutMs = 12000, measuredAt = new Date().toISOString()
+}) {
+  const safeToken = String(accessToken || '').trim();
+  const safeSiteUrl = String(siteUrl || '').trim();
+  if (!safeToken || !safeSiteUrl) throw new Error('google_not_configured');
+  const safeMaximum = boundedInteger(maxPages, 500, 1, 25000);
+  const safeLookback = boundedInteger(lookbackDays, 28, 1, 90);
+  const end = new Date(measuredAt);
+  if (Number.isNaN(end.getTime())) throw new Error('google_invalid_measured_at');
+  end.setUTCDate(end.getUTCDate() - 1);
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - safeLookback + 1);
+  const date = value => value.toISOString().slice(0, 10);
+  const url = new URL(`https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(safeSiteUrl)}/searchAnalytics/query`);
+  let response;
+  try {
+    response = await fetchImpl(url, {
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${safeToken}` },
+      body: JSON.stringify({ startDate: date(start), endDate: date(end), dimensions: ['page'],
+        rowLimit: safeMaximum, dataState: 'final' }),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+  } catch {
+    throw new Error('google_api_unreachable');
+  }
+  if (!response?.ok) throw new Error(`google_api_${Number(response?.status) || 502}`);
+  const payload = await response.json().catch(() => null);
+  if (!payload || typeof payload !== 'object') throw new Error('google_api_invalid_response');
+  const items = (Array.isArray(payload.rows) ? payload.rows : []).slice(0, safeMaximum).map(row => ({
+    contentKey: String(row?.keys?.[0] || '').slice(0, 180), category: 'geral',
+    views: metricCount(row?.impressions), watchMs: 0, completions: 0,
+    likes: 0, comments: 0, shares: 0, clicks: metricCount(row?.clicks), conversions: 0,
+    measuredAt, ctr: Number(row?.ctr) || 0, position: Number(row?.position) || 0
+  })).filter(item => item.contentKey);
+  return { provider: 'google', siteUrl: safeSiteUrl, startDate: date(start), endDate: date(end), measuredAt, items };
 }
 
 async function tiktokRequest(body, { accessToken, fetchImpl, timeoutMs }) {
