@@ -1008,6 +1008,25 @@ db.exec(`CREATE TABLE IF NOT EXISTS seller_mfa_sessions (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_seller_mfa_sessions_store_expiry ON seller_mfa_sessions(store_reference,expires_at);`);
+db.exec(`CREATE TABLE IF NOT EXISTS business_opportunities (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL CHECK(kind IN ('offer','service','job')),
+  business_name TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  city TEXT NOT NULL DEFAULT '',
+  contact_url TEXT NOT NULL,
+  contact_email TEXT NOT NULL,
+  expires_on TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','changes_requested','published','rejected','expired')),
+  consent INTEGER NOT NULL DEFAULT 1,
+  review_note TEXT NOT NULL DEFAULT '',
+  submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  reviewed_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_business_opportunities_public ON business_opportunities(status,kind,expires_on,id DESC);
+CREATE INDEX IF NOT EXISTS idx_business_opportunities_review ON business_opportunities(status,id DESC);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -1843,6 +1862,48 @@ app.patch('/api/admin/contact-submissions/:id', requireAdmin, sameOriginOnly, (r
   const result = db.prepare('UPDATE contact_submissions SET status=? WHERE id=?').run(status, Number(req.params.id));
   if (!result.changes) return res.status(404).json({ error:'Solicitação não encontrada.' });
   return res.json({ ok:true });
+});
+
+app.get('/api/opportunities', (_req,res) => {
+  const items=db.prepare(`SELECT id,kind,business_name businessName,title,description,city,contact_url contactUrl,expires_on expiresOn
+    FROM business_opportunities WHERE status='published' AND (expires_on IS NULL OR expires_on>=DATE('now'))
+    ORDER BY CASE kind WHEN 'job' THEN 0 WHEN 'service' THEN 1 ELSE 2 END,id DESC LIMIT 100`).all();
+  return res.json({items});
+});
+
+app.post('/api/opportunities', sameOriginOnly, (req,res) => {
+  if(!allowAttempt(authAttempts,`opportunity:${req.ip}`,4,60*60*1000))return res.set('Retry-After','3600').status(429).json({error:'Muitos envios em pouco tempo. Tente novamente mais tarde.'});
+  const body=req.body||{};
+  if(String(body.website||'').trim())return res.status(201).json({ok:true});
+  const kind=String(body.kind||''),businessName=String(body.businessName||'').trim().slice(0,120);
+  const title=String(body.title||'').trim().slice(0,140),description=String(body.description||'').trim().slice(0,1500);
+  const city=String(body.city||'').trim().slice(0,100),contactEmail=String(body.contactEmail||'').trim().toLowerCase().slice(0,160);
+  const contactUrl=safeExternalUrl(body.contactUrl,500),expiresOn=String(body.expiresOn||'').trim();
+  const futureDate=/^\d{4}-\d{2}-\d{2}$/.test(expiresOn)&&expiresOn>new Date().toISOString().slice(0,10)?expiresOn:null;
+  if(!body.consent||!['offer','service','job'].includes(kind)||businessName.length<2||title.length<5||description.length<30||
+    !/^\S+@\S+\.\S+$/.test(contactEmail)||!contactUrl||(kind==='job'&&!futureDate))return res.status(400).json({error:'Preencha os dados da oportunidade, o contato oficial e aceite a análise antes do envio.'});
+  const result=db.prepare(`INSERT INTO business_opportunities
+    (kind,business_name,title,description,city,contact_url,contact_email,expires_on,consent) VALUES (?,?,?,?,?,?,?,?,1)`)
+    .run(kind,businessName,title,description,city,contactUrl,contactEmail,futureDate);
+  recordConsent(req,{email:contactEmail,purpose:'business_opportunity_review',version:'opportunities-2026-08-23',source:'opportunity_form',evidence:{kind,businessName}});
+  return res.status(201).json({ok:true,protocol:`OP-${String(result.lastInsertRowid).padStart(6,'0')}`});
+});
+
+app.get('/api/admin/opportunities',requireAdmin,(req,res)=>{
+  const status=String(req.query.status||'').trim();
+  const items=status?db.prepare('SELECT * FROM business_opportunities WHERE status=? ORDER BY id DESC LIMIT 300').all(status):
+    db.prepare('SELECT * FROM business_opportunities ORDER BY id DESC LIMIT 300').all();
+  return res.json({items});
+});
+
+app.patch('/api/admin/opportunities/:id',requireAdmin,sameOriginOnly,(req,res)=>{
+  const status=String(req.body?.status||''),reviewNote=String(req.body?.reviewNote||'').trim().slice(0,1000);
+  if(!['changes_requested','published','rejected','expired'].includes(status))return res.status(400).json({error:'Decisão inválida.'});
+  if(['changes_requested','rejected'].includes(status)&&reviewNote.length<10)return res.status(400).json({error:'Registre o motivo com pelo menos 10 caracteres.'});
+  const result=db.prepare(`UPDATE business_opportunities SET status=?,review_note=?,reviewed_at=CURRENT_TIMESTAMP,
+    updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(status,reviewNote,Number(req.params.id));
+  if(!result.changes)return res.status(404).json({error:'Oportunidade não encontrada.'});
+  return res.json({ok:true});
 });
 
 app.post('/api/auth/register', sameOriginOnly, (req, res) => {
