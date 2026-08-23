@@ -1,7 +1,7 @@
 export const OFFICIAL_METRIC_PROVIDERS = Object.freeze([
   { id: 'instagram', label: 'Instagram', implemented: true },
   { id: 'facebook', label: 'Facebook', implemented: true },
-  { id: 'tiktok', label: 'TikTok', implemented: false },
+  { id: 'tiktok', label: 'TikTok', implemented: true },
   { id: 'youtube', label: 'YouTube', implemented: true },
   { id: 'google', label: 'Google', implemented: false },
   { id: 'kwai', label: 'Kwai', implemented: false }
@@ -36,14 +36,26 @@ export function youtubeMetricsConfig(env = process.env) {
   };
 }
 
+export function tiktokMetricsConfig(env = process.env) {
+  const accessToken = String(env.TIKTOK_CONTENT_ACCESS_TOKEN || '').trim();
+  return {
+    accessToken,
+    configured: Boolean(accessToken),
+    maxVideos: boundedInteger(env.TIKTOK_METRICS_MAX_VIDEOS, 200, 1, 500)
+  };
+}
+
 export function externalMetricsProviderStatus(env = process.env, capabilities = {}) {
   const youtube = youtubeMetricsConfig(env);
+  const tiktok = tiktokMetricsConfig(env);
   return OFFICIAL_METRIC_PROVIDERS.map(provider => {
     if (provider.id === 'youtube') return { ...provider, configured: youtube.configured, autoSync: youtube.autoSync,
       intervalHours: youtube.intervalHours, maxVideos: youtube.maxVideos };
     if (provider.id === 'facebook' || provider.id === 'instagram') return {
       ...provider, configured: Boolean(capabilities[provider.id]), autoSync: false
     };
+    if (provider.id === 'tiktok') return { ...provider, configured: tiktok.configured, autoSync: false,
+      maxVideos: tiktok.maxVideos };
     return { ...provider, configured: false, autoSync: false };
   });
 }
@@ -118,6 +130,54 @@ export async function fetchMetaAggregatedInsights({
     });
   }
   return { provider: 'meta', measuredAt, facebook, instagram };
+}
+
+async function tiktokRequest(body, { accessToken, fetchImpl, timeoutMs }) {
+  const url = new URL('https://open.tiktokapis.com/v2/video/list/');
+  url.searchParams.set('fields', 'id,create_time,view_count,like_count,comment_count,share_count');
+  let response;
+  try {
+    response = await fetchImpl(url, {
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+  } catch {
+    throw new Error('tiktok_api_unreachable');
+  }
+  if (!response?.ok) throw new Error(`tiktok_api_${Number(response?.status) || 502}`);
+  const payload = await response.json().catch(() => null);
+  if (!payload || typeof payload !== 'object') throw new Error('tiktok_api_invalid_response');
+  if (String(payload.error?.code || 'ok') !== 'ok') throw new Error('tiktok_api_error');
+  return payload.data || {};
+}
+
+export async function fetchTikTokAggregatedInsights({
+  accessToken, fetchImpl = fetch, maxVideos = 200, timeoutMs = 12000,
+  measuredAt = new Date().toISOString()
+}) {
+  const safeToken = String(accessToken || '').trim();
+  if (!safeToken) throw new Error('tiktok_not_configured');
+  const safeMaximum = boundedInteger(maxVideos, 200, 1, 500);
+  const items = [];
+  let cursor;
+  while (items.length < safeMaximum) {
+    const body = { max_count: Math.min(20, safeMaximum - items.length) };
+    if (cursor !== undefined) body.cursor = cursor;
+    const data = await tiktokRequest(body, { accessToken: safeToken, fetchImpl, timeoutMs });
+    const videos = Array.isArray(data.videos) ? data.videos : [];
+    for (const video of videos) items.push({
+      contentKey: String(video?.id || ''), category: 'geral', views: metricCount(video?.view_count),
+      watchMs: 0, completions: 0, likes: metricCount(video?.like_count),
+      comments: metricCount(video?.comment_count), shares: metricCount(video?.share_count),
+      clicks: 0, conversions: 0, measuredAt
+    });
+    if (!data.has_more || !videos.length) break;
+    cursor = data.cursor;
+    if (cursor === undefined || cursor === null || cursor === '') break;
+  }
+  return { provider: 'tiktok', measuredAt, items: items.filter(item => item.contentKey).slice(0, safeMaximum) };
 }
 
 async function youtubeRequest(path, params, { apiKey, fetchImpl, timeoutMs }) {

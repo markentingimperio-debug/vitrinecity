@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import {
   externalMetricsProviderStatus,
   fetchMetaAggregatedInsights,
+  fetchTikTokAggregatedInsights,
   fetchYouTubeAggregatedInsights,
+  tiktokMetricsConfig,
   youtubeMetricsConfig
 } from '../external-social-metrics.js';
 
@@ -75,6 +77,26 @@ const statuses = externalMetricsProviderStatus({ YOUTUBE_API_KEY: 'key', YOUTUBE
 assert.equal(statuses.find(provider => provider.id === 'youtube').configured, true);
 assert.equal(statuses.find(provider => provider.id === 'instagram').implemented, true);
 assert.equal(externalMetricsProviderStatus({}, { facebook:true }).find(provider => provider.id === 'facebook').configured, true);
+assert.equal(tiktokMetricsConfig({TIKTOK_CONTENT_ACCESS_TOKEN:'token',TIKTOK_METRICS_MAX_VIDEOS:'900'}).maxVideos,500);
+assert.equal(externalMetricsProviderStatus({TIKTOK_CONTENT_ACCESS_TOKEN:'token'}).find(provider=>provider.id==='tiktok').configured,true);
+
+const tiktokRequests=[];
+const tiktokResult=await fetchTikTokAggregatedInsights({accessToken:'tiktok-secret',maxVideos:3,
+  measuredAt:'2026-08-23T16:00:00.000Z',fetchImpl:async(input,options)=>{tiktokRequests.push({url:new URL(input),options});
+    const body=JSON.parse(options.body);return {ok:true,status:200,json:async()=>body.cursor===undefined?
+      ({data:{videos:[{id:'tt-1',view_count:500,like_count:40,comment_count:8,share_count:6}],has_more:true,cursor:77},error:{code:'ok'}}):
+      ({data:{videos:[{id:'tt-2',view_count:300,like_count:20,comment_count:4,share_count:2}],has_more:false},error:{code:'ok'}})};
+  }});
+assert.equal(tiktokResult.items.length,2);
+assert.equal(tiktokResult.items[0].views,500);
+assert.equal(tiktokResult.items[1].shares,2);
+assert.equal(JSON.parse(tiktokRequests[1].options.body).cursor,77);
+assert.equal(tiktokRequests[0].options.headers.authorization,'Bearer tiktok-secret');
+assert(tiktokRequests.every(request=>request.url.searchParams.get('fields').includes('view_count')));
+
+await assert.rejects(fetchTikTokAggregatedInsights({accessToken:'do-not-leak',
+  fetchImpl:async()=>({ok:false,status:401,json:async()=>({error:'do-not-leak'})})}),
+  error=>error.message==='tiktok_api_401'&&!error.message.includes('do-not-leak'));
 
 const metaRequests=[];
 const metaResult=await fetchMetaAggregatedInsights({accounts:[{pageId:'page-1',instagramId:'ig-1',accessToken:'private-token'}],

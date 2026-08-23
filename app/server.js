@@ -20,7 +20,9 @@ import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marke
 import {
   externalMetricsProviderStatus,
   fetchMetaAggregatedInsights,
+  fetchTikTokAggregatedInsights,
   fetchYouTubeAggregatedInsights,
+  tiktokMetricsConfig,
   youtubeMetricsConfig
 } from './external-social-metrics.js';
 
@@ -5547,6 +5549,7 @@ app.post('/api/admin/social/intelligence/import', requireAdmin, sameOriginOnly, 
 
 let youtubeMetricsSyncPromise=null;
 let metaMetricsSyncPromise=null;
+let tiktokMetricsSyncPromise=null;
 function connectedMetaMetricAccounts(){
   return db.prepare(`SELECT page_id pageId,instagram_id instagramId,token_encrypted tokenEncrypted
     FROM social_accounts WHERE status='connected' ORDER BY id`).all().map(account=>({
@@ -5599,6 +5602,29 @@ async function syncOfficialYouTubeMetrics(triggerType='admin'){
   try{return await youtubeMetricsSyncPromise;}finally{youtubeMetricsSyncPromise=null;}
 }
 
+async function syncOfficialTikTokMetrics(triggerType='admin'){
+  if(tiktokMetricsSyncPromise)return tiktokMetricsSyncPromise;
+  tiktokMetricsSyncPromise=(async()=>{
+    const runId=db.prepare(`INSERT INTO social_external_sync_runs(provider,trigger_type,status)
+      VALUES ('tiktok',?,'running')`).run(String(triggerType).slice(0,30)).lastInsertRowid;
+    try{
+      const config=tiktokMetricsConfig(process.env);
+      if(!config.configured)throw new Error('tiktok_not_configured');
+      const result=await fetchTikTokAggregatedInsights(config);
+      const imported=persistExternalInsights('tiktok',result.items);
+      db.prepare(`UPDATE social_external_sync_runs SET status='completed',imported_count=?,
+        finished_at=CURRENT_TIMESTAMP WHERE id=?`).run(imported,runId);
+      return {ok:true,provider:'tiktok',imported,measuredAt:result.measuredAt};
+    }catch(error){
+      const errorCode=String(error?.message||'tiktok_sync_failed').slice(0,80);
+      db.prepare(`UPDATE social_external_sync_runs SET status='failed',error_code=?,
+        finished_at=CURRENT_TIMESTAMP WHERE id=?`).run(errorCode,runId);
+      throw error;
+    }
+  })();
+  try{return await tiktokMetricsSyncPromise;}finally{tiktokMetricsSyncPromise=null;}
+}
+
 app.get('/api/admin/social/intelligence/providers', requireAdmin, (req,res) => {
   const runs=db.prepare(`SELECT id,provider,trigger_type triggerType,status,imported_count importedCount,
     error_code errorCode,started_at startedAt,finished_at finishedAt
@@ -5625,6 +5651,16 @@ app.post('/api/admin/social/intelligence/sync/youtube', requireAdmin, sameOrigin
     if(rawCode==='youtube_not_configured')return res.status(503).json({error:'Configure YOUTUBE_API_KEY e YOUTUBE_CHANNEL_ID na VPS.'});
     const code=/^youtube_(?:[a-z0-9_]+|api_\d{3})$/.test(rawCode)?rawCode:'youtube_sync_failed';
     return res.status(502).json({error:'Não foi possível sincronizar as métricas oficiais do YouTube.',code});
+  }
+});
+
+app.post('/api/admin/social/intelligence/sync/tiktok', requireAdmin, sameOriginOnly, async (req,res) => {
+  try{return res.json(await syncOfficialTikTokMetrics('admin'));}
+  catch(error){
+    const rawCode=String(error?.message||'tiktok_sync_failed');
+    if(rawCode==='tiktok_not_configured')return res.status(503).json({error:'Conecte a conta oficial do TikTok à Vitriny City.'});
+    const code=/^tiktok_(?:[a-z0-9_]+|api_\d{3})$/.test(rawCode)?rawCode:'tiktok_sync_failed';
+    return res.status(502).json({error:'Não foi possível sincronizar as métricas oficiais do TikTok.',code});
   }
 });
 
