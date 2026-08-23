@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import {
   externalMetricsProviderStatus,
   fetchGoogleSearchAggregatedInsights,
+  fetchKwaiAggregatedInsights,
   fetchMetaAggregatedInsights,
   fetchTikTokAggregatedInsights,
   fetchYouTubeAggregatedInsights,
   googleSearchMetricsConfig,
+  kwaiMetricsConfig,
   tiktokMetricsConfig,
   youtubeMetricsConfig
 } from '../external-social-metrics.js';
@@ -83,6 +85,25 @@ assert.equal(tiktokMetricsConfig({TIKTOK_CONTENT_ACCESS_TOKEN:'token',TIKTOK_MET
 assert.equal(externalMetricsProviderStatus({TIKTOK_CONTENT_ACCESS_TOKEN:'token'}).find(provider=>provider.id==='tiktok').configured,true);
 assert.equal(googleSearchMetricsConfig({GOOGLE_SEARCH_CONSOLE_ACCESS_TOKEN:'token',GOOGLE_SEARCH_CONSOLE_SITE_URL:'sc-domain:vitrinecity.com'}).configured,true);
 assert.equal(externalMetricsProviderStatus({GOOGLE_SEARCH_CONSOLE_ACCESS_TOKEN:'token',GOOGLE_SEARCH_CONSOLE_SITE_URL:'sc-domain:vitrinecity.com'}).find(provider=>provider.id==='google').configured,true);
+assert.equal(kwaiMetricsConfig({KWAI_APP_ID:'app',KWAI_ACCESS_TOKEN:'token',KWAI_METRICS_MAX_VIDEOS:'800'}).maxVideos,500);
+assert.equal(externalMetricsProviderStatus({KWAI_APP_ID:'app',KWAI_ACCESS_TOKEN:'token'}).find(provider=>provider.id==='kwai').configured,true);
+
+const kwaiRequests=[];
+const kwaiResult=await fetchKwaiAggregatedInsights({appId:'kwai-app',accessToken:'kwai-secret',maxVideos:3,
+  measuredAt:'2026-08-23T18:00:00.000Z',fetchImpl:async input=>{const url=new URL(input);kwaiRequests.push(url);
+    return {ok:true,status:200,json:async()=>url.searchParams.has('cursor')?
+      ({result:1,video_list:[{photo_id:'kw-2',view_count:200,like_count:11,comment_count:3}]}):
+      ({result:1,last_cursor:'next-1',video_list:[{photo_id:'kw-1',view_count:400,like_count:25,comment_count:7}]})};
+  }});
+assert.equal(kwaiResult.items.length,2);
+assert.equal(kwaiResult.items[0].views,400);
+assert.equal(kwaiResult.items[1].comments,3);
+assert.equal(kwaiRequests[1].searchParams.get('cursor'),'next-1');
+assert(kwaiRequests.every(url=>url.searchParams.get('app_id')==='kwai-app'&&url.searchParams.get('access_token')==='kwai-secret'));
+
+await assert.rejects(fetchKwaiAggregatedInsights({appId:'app',accessToken:'do-not-leak',
+  fetchImpl:async()=>({ok:false,status:401,json:async()=>({error:'do-not-leak'})})}),
+  error=>error.message==='kwai_api_401'&&!error.message.includes('do-not-leak'));
 
 let googleRequest;
 const googleResult=await fetchGoogleSearchAggregatedInsights({accessToken:'google-secret',siteUrl:'sc-domain:vitrinecity.com',

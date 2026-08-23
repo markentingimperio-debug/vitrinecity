@@ -20,10 +20,12 @@ import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marke
 import {
   externalMetricsProviderStatus,
   fetchGoogleSearchAggregatedInsights,
+  fetchKwaiAggregatedInsights,
   fetchMetaAggregatedInsights,
   fetchTikTokAggregatedInsights,
   fetchYouTubeAggregatedInsights,
   googleSearchMetricsConfig,
+  kwaiMetricsConfig,
   tiktokMetricsConfig,
   youtubeMetricsConfig
 } from './external-social-metrics.js';
@@ -5553,6 +5555,7 @@ let youtubeMetricsSyncPromise=null;
 let metaMetricsSyncPromise=null;
 let tiktokMetricsSyncPromise=null;
 let googleMetricsSyncPromise=null;
+let kwaiMetricsSyncPromise=null;
 function connectedMetaMetricAccounts(){
   return db.prepare(`SELECT page_id pageId,instagram_id instagramId,token_encrypted tokenEncrypted
     FROM social_accounts WHERE status='connected' ORDER BY id`).all().map(account=>({
@@ -5652,6 +5655,29 @@ async function syncOfficialGoogleMetrics(triggerType='admin'){
   try{return await googleMetricsSyncPromise;}finally{googleMetricsSyncPromise=null;}
 }
 
+async function syncOfficialKwaiMetrics(triggerType='admin'){
+  if(kwaiMetricsSyncPromise)return kwaiMetricsSyncPromise;
+  kwaiMetricsSyncPromise=(async()=>{
+    const runId=db.prepare(`INSERT INTO social_external_sync_runs(provider,trigger_type,status)
+      VALUES ('kwai',?,'running')`).run(String(triggerType).slice(0,30)).lastInsertRowid;
+    try{
+      const config=kwaiMetricsConfig(process.env);
+      if(!config.configured)throw new Error('kwai_not_configured');
+      const result=await fetchKwaiAggregatedInsights(config);
+      const imported=persistExternalInsights('kwai',result.items);
+      db.prepare(`UPDATE social_external_sync_runs SET status='completed',imported_count=?,
+        finished_at=CURRENT_TIMESTAMP WHERE id=?`).run(imported,runId);
+      return {ok:true,provider:'kwai',imported,measuredAt:result.measuredAt};
+    }catch(error){
+      const errorCode=String(error?.message||'kwai_sync_failed').slice(0,80);
+      db.prepare(`UPDATE social_external_sync_runs SET status='failed',error_code=?,
+        finished_at=CURRENT_TIMESTAMP WHERE id=?`).run(errorCode,runId);
+      throw error;
+    }
+  })();
+  try{return await kwaiMetricsSyncPromise;}finally{kwaiMetricsSyncPromise=null;}
+}
+
 app.get('/api/admin/social/intelligence/providers', requireAdmin, (req,res) => {
   const runs=db.prepare(`SELECT id,provider,trigger_type triggerType,status,imported_count importedCount,
     error_code errorCode,started_at startedAt,finished_at finishedAt
@@ -5698,6 +5724,16 @@ app.post('/api/admin/social/intelligence/sync/google', requireAdmin, sameOriginO
     if(rawCode==='google_not_configured')return res.status(503).json({error:'Configure o acesso do Google Search Console na VPS.'});
     const code=/^google_(?:[a-z0-9_]+|api_\d{3})$/.test(rawCode)?rawCode:'google_sync_failed';
     return res.status(502).json({error:'Não foi possível sincronizar as métricas oficiais do Google.',code});
+  }
+});
+
+app.post('/api/admin/social/intelligence/sync/kwai', requireAdmin, sameOriginOnly, async (req,res) => {
+  try{return res.json(await syncOfficialKwaiMetrics('admin'));}
+  catch(error){
+    const rawCode=String(error?.message||'kwai_sync_failed');
+    if(rawCode==='kwai_not_configured')return res.status(503).json({error:'Conecte a conta oficial do Kwai à Vitriny City.'});
+    const code=/^kwai_(?:[a-z0-9_]+|api_\d{3})$/.test(rawCode)?rawCode:'kwai_sync_failed';
+    return res.status(502).json({error:'Não foi possível sincronizar as métricas oficiais do Kwai.',code});
   }
 });
 

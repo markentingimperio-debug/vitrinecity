@@ -4,7 +4,7 @@ export const OFFICIAL_METRIC_PROVIDERS = Object.freeze([
   { id: 'tiktok', label: 'TikTok', implemented: true },
   { id: 'youtube', label: 'YouTube', implemented: true },
   { id: 'google', label: 'Google', implemented: true },
-  { id: 'kwai', label: 'Kwai', implemented: false }
+  { id: 'kwai', label: 'Kwai', implemented: true }
 ]);
 
 function enabled(value) {
@@ -57,10 +57,18 @@ export function googleSearchMetricsConfig(env = process.env) {
   };
 }
 
+export function kwaiMetricsConfig(env = process.env) {
+  const appId = String(env.KWAI_APP_ID || '').trim();
+  const accessToken = String(env.KWAI_ACCESS_TOKEN || '').trim();
+  return { appId, accessToken, configured: Boolean(appId && accessToken),
+    maxVideos: boundedInteger(env.KWAI_METRICS_MAX_VIDEOS, 200, 1, 500) };
+}
+
 export function externalMetricsProviderStatus(env = process.env, capabilities = {}) {
   const youtube = youtubeMetricsConfig(env);
   const tiktok = tiktokMetricsConfig(env);
   const google = googleSearchMetricsConfig(env);
+  const kwai = kwaiMetricsConfig(env);
   return OFFICIAL_METRIC_PROVIDERS.map(provider => {
     if (provider.id === 'youtube') return { ...provider, configured: youtube.configured, autoSync: youtube.autoSync,
       intervalHours: youtube.intervalHours, maxVideos: youtube.maxVideos };
@@ -71,6 +79,8 @@ export function externalMetricsProviderStatus(env = process.env, capabilities = 
       maxVideos: tiktok.maxVideos };
     if (provider.id === 'google') return { ...provider, configured: google.configured, autoSync: false,
       lookbackDays: google.lookbackDays, maxPages: google.maxPages };
+    if (provider.id === 'kwai') return { ...provider, configured: kwai.configured, autoSync: false,
+      maxVideos: kwai.maxVideos };
     return { ...provider, configured: false, autoSync: false };
   });
 }
@@ -145,6 +155,50 @@ export async function fetchMetaAggregatedInsights({
     });
   }
   return { provider: 'meta', measuredAt, facebook, instagram };
+}
+
+export async function fetchKwaiAggregatedInsights({
+  appId, accessToken, fetchImpl = fetch, maxVideos = 200, timeoutMs = 12000,
+  measuredAt = new Date().toISOString()
+}) {
+  const safeAppId = String(appId || '').trim();
+  const safeToken = String(accessToken || '').trim();
+  if (!safeAppId || !safeToken) throw new Error('kwai_not_configured');
+  const safeMaximum = boundedInteger(maxVideos, 200, 1, 500);
+  const items = [];
+  let cursor = '';
+  const seenCursors = new Set();
+  while (items.length < safeMaximum) {
+    const url = new URL('https://open.kuaishou.com/openapi/photo/list');
+    url.searchParams.set('app_id', safeAppId);
+    url.searchParams.set('access_token', safeToken);
+    url.searchParams.set('count', String(Math.min(20, safeMaximum - items.length)));
+    if (cursor) url.searchParams.set('cursor', cursor);
+    let response;
+    try {
+      response = await fetchImpl(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+    } catch {
+      throw new Error('kwai_api_unreachable');
+    }
+    if (!response?.ok) throw new Error(`kwai_api_${Number(response?.status) || 502}`);
+    const payload = await response.json().catch(() => null);
+    if (!payload || typeof payload !== 'object') throw new Error('kwai_api_invalid_response');
+    if (payload.result !== undefined && ![0, 1, '0', '1'].includes(payload.result)) throw new Error('kwai_api_error');
+    const videos = Array.isArray(payload.video_list) ? payload.video_list :
+      Array.isArray(payload.videoList) ? payload.videoList : [];
+    for (const video of videos) items.push({
+      contentKey: String(video?.photo_id || video?.photoId || ''), category: 'geral',
+      views: metricCount(video?.view_count ?? video?.viewCount), watchMs: 0, completions: 0,
+      likes: metricCount(video?.like_count ?? video?.likeCount),
+      comments: metricCount(video?.comment_count ?? video?.commentCount), shares: 0,
+      clicks: 0, conversions: 0, measuredAt
+    });
+    const nextCursor = String(payload.last_cursor ?? payload.lastCursor ?? '');
+    if (!videos.length || !nextCursor || seenCursors.has(nextCursor)) break;
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+  return { provider: 'kwai', measuredAt, items: items.filter(item => item.contentKey).slice(0, safeMaximum) };
 }
 
 export async function fetchGoogleSearchAggregatedInsights({
