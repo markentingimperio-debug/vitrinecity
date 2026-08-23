@@ -4,6 +4,7 @@ import { automaticMarketplaceShipping, marketplaceShippingQuote, melhorEnvioConf
   quoteMelhorEnvio } from '../marketplace-shipping.js';
 
 const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8'),store=fs.readFileSync(new URL('../public/loja.html',import.meta.url),'utf8');
+const admin=fs.readFileSync(new URL('../public/admin-logistica.html',import.meta.url),'utf8');
 assert.match(server,/marketplaceShippingQuote/);
 assert.match(server,/\/api\/marketplace\/shipping\/quote/);
 assert.match(server,/shippingCents = shippingQuote\.shippingCents/);
@@ -14,6 +15,14 @@ assert.match(store,/id="postalCode"/);
 assert.match(store,/async function calculateShipping/);
 assert.match(store,/deliveryMinDays/);
 assert.match(store,/subtotal\+\(shippingQuote\?\.shippingCents\|\|0\)/);
+assert.match(server,/CREATE TABLE IF NOT EXISTS melhor_envio_oauth/);
+assert.match(server,/\/api\/admin\/marketplace\/shipping\/connect/);
+assert.match(server,/\/api\/admin\/marketplace\/shipping\/callback/);
+assert.match(server,/shipping-calculate shipping-companies/);
+assert.match(server,/grant_type:'refresh_token'/);
+assert.match(server,/createCipheriv\('aes-256-gcm'/);
+assert.match(admin,/Conectar Melhor Envio/);
+assert.match(admin,/noindex,nofollow/);
 
 const products=[{id:7,name:'Produto',price_cents:5000,weight_grams:750,delivery_min_days:3,delivery_max_days:6}];
 const quantities=new Map([[7,2]]);

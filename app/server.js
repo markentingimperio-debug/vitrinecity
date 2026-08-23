@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { originalCourse } from './course-content.js';
 import { setupAdminAnalytics } from './admin-analytics.js';
 import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marketplace-public.js';
-import { marketplaceShippingQuote } from './marketplace-shipping.js';
+import { marketplaceShippingQuote, melhorEnvioConfig } from './marketplace-shipping.js';
 import {
   externalMetricsProviderStatus,
   fetchGoogleSearchAggregatedInsights,
@@ -1040,6 +1040,15 @@ CREATE TABLE IF NOT EXISTS google_search_oauth_states (
   state_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_google_search_oauth_states_expiry ON google_search_oauth_states(expires_at);`);
+db.exec(`CREATE TABLE IF NOT EXISTS melhor_envio_oauth (
+  id INTEGER PRIMARY KEY CHECK(id=1), access_token_encrypted TEXT NOT NULL, refresh_token_encrypted TEXT NOT NULL,
+  expires_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'connected', connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS melhor_envio_oauth_states (
+  state_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_melhor_envio_oauth_states_expiry ON melhor_envio_oauth_states(expires_at);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -2473,6 +2482,90 @@ app.get('/api/marketplace/products', (req, res) => {
   return res.json({ products });
 });
 
+function melhorEnvioOAuthConfig(){
+  const base=melhorEnvioConfig(process.env),clientId=String(process.env.MELHOR_ENVIO_CLIENT_ID||'').trim();
+  const clientSecret=String(process.env.MELHOR_ENVIO_CLIENT_SECRET||'').trim();
+  return {...base,clientId,clientSecret,oauthConfigured:Boolean(clientId&&clientSecret),
+    redirectUri:`${SITE_URL}/api/admin/marketplace/shipping/callback`};
+}
+function melhorEnvioTokenKey(){
+  const secret=String(process.env.MELHOR_ENVIO_TOKEN_ENCRYPTION_KEY||process.env.META_SOCIAL_TOKEN_ENCRYPTION_KEY||'');
+  if(secret.length<24)throw new Error('melhor_envio_encryption_not_configured');
+  return createHash('sha256').update('melhor-envio:'+secret).digest();
+}
+function encryptMelhorEnvioToken(value){const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',melhorEnvioTokenKey(),iv);
+  const encrypted=Buffer.concat([cipher.update(String(value),'utf8'),cipher.final()]);return [iv.toString('base64url'),cipher.getAuthTag().toString('base64url'),encrypted.toString('base64url')].join('.');}
+function decryptMelhorEnvioToken(value){const [iv,tag,data]=String(value||'').split('.');if(!iv||!tag||!data)throw new Error('melhor_envio_token_invalid');
+  const decipher=createDecipheriv('aes-256-gcm',melhorEnvioTokenKey(),Buffer.from(iv,'base64url'));decipher.setAuthTag(Buffer.from(tag,'base64url'));
+  return Buffer.concat([decipher.update(Buffer.from(data,'base64url')),decipher.final()]).toString('utf8');}
+async function activeMelhorEnvioAccessToken(){
+  const direct=String(process.env.MELHOR_ENVIO_ACCESS_TOKEN||'').trim();if(direct)return direct;
+  const account=db.prepare("SELECT * FROM melhor_envio_oauth WHERE id=1 AND status='connected'").get();if(!account)throw new Error('melhor_envio_not_configured');
+  if(Number(account.expires_at)>Date.now()+24*60*60*1000)return decryptMelhorEnvioToken(account.access_token_encrypted);
+  const config=melhorEnvioOAuthConfig();if(!config.oauthConfigured)throw new Error('melhor_envio_oauth_not_configured');
+  let response;try{response=await fetch(`${config.endpoint}/oauth/token`,{method:'POST',headers:{accept:'application/json','content-type':'application/json','user-agent':config.userAgent},
+    body:JSON.stringify({grant_type:'refresh_token',client_id:config.clientId,client_secret:config.clientSecret,
+      refresh_token:decryptMelhorEnvioToken(account.refresh_token_encrypted)}),signal:AbortSignal.timeout(12000)});}catch{throw new Error('melhor_envio_oauth_unreachable');}
+  const payload=await response.json().catch(()=>null);if(!response.ok||!payload?.access_token||!payload?.refresh_token){db.prepare("UPDATE melhor_envio_oauth SET status='expired',updated_at=CURRENT_TIMESTAMP WHERE id=1").run();throw new Error('melhor_envio_oauth_refresh_failed');}
+  const expiresAt=Date.now()+Math.max(60,Number(payload.expires_in)||2592000)*1000;
+  db.prepare(`UPDATE melhor_envio_oauth SET access_token_encrypted=?,refresh_token_encrypted=?,expires_at=?,status='connected',
+    updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(encryptMelhorEnvioToken(payload.access_token),encryptMelhorEnvioToken(payload.refresh_token),expiresAt);
+  return payload.access_token;
+}
+async function officialMarketplaceShippingQuote(products,quantities,postalCode){
+  const config=melhorEnvioOAuthConfig();
+  if(!config.configured)try{config.accessToken=await activeMelhorEnvioAccessToken();config.configured=Boolean(config.accessToken&&config.originPostalCode);}catch{}
+  return marketplaceShippingQuote(products,quantities,postalCode,{config});
+}
+
+app.get('/api/admin/marketplace/shipping/status',requireAdmin,(_req,res)=>{
+  const config=melhorEnvioOAuthConfig();
+  const account=db.prepare("SELECT expires_at,status FROM melhor_envio_oauth WHERE id=1").get();
+  return res.json({provider:'Melhor Envio',appConfigured:config.oauthConfigured,
+    originConfigured:config.originPostalCode.length===8,connected:account?.status==='connected',
+    expiresAt:account?.expires_at||null,sandbox:config.sandbox,callback:config.redirectUri,
+    connectUrl:'/api/admin/marketplace/shipping/connect'});
+});
+
+app.get('/api/admin/marketplace/shipping/connect',requireAdmin,(req,res)=>{
+  const config=melhorEnvioOAuthConfig();
+  if(!config.oauthConfigured)return res.status(503).send('Configure o aplicativo do Melhor Envio na VPS.');
+  if(config.originPostalCode.length!==8)return res.status(503).send('Configure o CEP de origem da operação.');
+  try{melhorEnvioTokenKey();}catch{return res.status(503).send('Configure a chave de criptografia do Melhor Envio.');}
+  const state=randomBytes(32).toString('base64url'),stateHash=createHash('sha256').update(state).digest('hex');
+  db.prepare('DELETE FROM melhor_envio_oauth_states WHERE expires_at<=?').run(Date.now());
+  db.prepare('INSERT INTO melhor_envio_oauth_states(state_hash,expires_at) VALUES (?,?)').run(stateHash,Date.now()+10*60*1000);
+  const url=new URL(`${config.endpoint}/oauth/authorize`);
+  url.search=new URLSearchParams({client_id:config.clientId,redirect_uri:config.redirectUri,response_type:'code',
+    scope:'shipping-calculate shipping-companies',state}).toString();
+  return res.redirect(302,url.toString());
+});
+
+app.get('/api/admin/marketplace/shipping/callback',requireAdmin,async(req,res)=>{
+  const state=String(req.query.state||''),code=String(req.query.code||''),stateHash=createHash('sha256').update(state).digest('hex');
+  const valid=db.prepare('DELETE FROM melhor_envio_oauth_states WHERE state_hash=? AND expires_at>?').run(stateHash,Date.now());
+  if(!valid.changes||!code)return res.redirect(302,'/admin-logistica.html?status=invalid');
+  const config=melhorEnvioOAuthConfig();
+  try{
+    const response=await fetch(`${config.endpoint}/oauth/token`,{method:'POST',headers:{accept:'application/json','content-type':'application/json','user-agent':config.userAgent},
+      body:JSON.stringify({grant_type:'authorization_code',client_id:config.clientId,client_secret:config.clientSecret,
+        redirect_uri:config.redirectUri,code}),signal:AbortSignal.timeout(12000)});
+    const payload=await response.json().catch(()=>null);
+    if(!response.ok||!payload?.access_token||!payload?.refresh_token)throw new Error('exchange_failed');
+    const expiresAt=Date.now()+Math.max(60,Number(payload.expires_in)||2592000)*1000;
+    db.prepare(`INSERT INTO melhor_envio_oauth(id,access_token_encrypted,refresh_token_encrypted,expires_at,status)
+      VALUES (1,?,?,?,'connected') ON CONFLICT(id) DO UPDATE SET access_token_encrypted=excluded.access_token_encrypted,
+      refresh_token_encrypted=excluded.refresh_token_encrypted,expires_at=excluded.expires_at,status='connected',
+      updated_at=CURRENT_TIMESTAMP`).run(encryptMelhorEnvioToken(payload.access_token),encryptMelhorEnvioToken(payload.refresh_token),expiresAt);
+    return res.redirect(302,'/admin-logistica.html?status=connected');
+  }catch{return res.redirect(302,'/admin-logistica.html?status=failed');}
+});
+
+app.post('/api/admin/marketplace/shipping/disconnect',requireAdmin,sameOriginOnly,(_req,res)=>{
+  db.prepare("UPDATE melhor_envio_oauth SET status='revoked',updated_at=CURRENT_TIMESTAMP WHERE id=1").run();
+  return res.json({ok:true});
+});
+
 app.post('/api/marketplace/shipping/quote', sameOriginOnly, async (req,res) => {
   const requested=Array.isArray(req.body?.items)?req.body.items.slice(0,30):[];
   const quantities=new Map();
@@ -2484,7 +2577,7 @@ app.post('/api/marketplace/shipping/quote', sameOriginOnly, async (req,res) => {
     WHERE p.id IN (${ids.map(()=>'?').join(',')}) AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND s.review_status='published'`).all(...ids);
   if(products.length!==ids.length||products.some(p=>p.stock_quantity<quantities.get(p.id)))return res.status(409).json({error:'Revise a disponibilidade dos produtos.'});
   if(products.some(p=>p.store_reference!==products[0].store_reference))return res.status(400).json({error:'Calcule o frete de uma loja por vez.'});
-  try{return res.json({quote:await marketplaceShippingQuote(products,quantities,req.body?.postalCode)});}catch{return res.status(400).json({error:'Informe um CEP válido com 8 números.'});}
+  try{return res.json({quote:await officialMarketplaceShippingQuote(products,quantities,req.body?.postalCode)});}catch{return res.status(400).json({error:'Informe um CEP válido com 8 números.'});}
 });
 
 app.get('/api/marketplace/orders', requireUser, (req, res) => {
@@ -2541,7 +2634,7 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
   const platformPercentCents = Math.round(productsCents * MARKETPLACE_COMMISSION_BPS / 10000);
   const returnOperationCents = MARKETPLACE_RETURN_PROVISION_CENTS;
   let shippingQuote;
-  try { shippingQuote=await marketplaceShippingQuote(products,quantities,address.postal_code); }
+  try { shippingQuote=await officialMarketplaceShippingQuote(products,quantities,address.postal_code); }
   catch { return res.status(400).json({ error:'O CEP do endereço de entrega é inválido.' }); }
   const shippingCents = shippingQuote.shippingCents;
   const totalCents = productsCents + shippingCents;
