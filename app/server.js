@@ -1055,7 +1055,14 @@ db.exec(`CREATE TABLE IF NOT EXISTS melhor_envio_oauth (
 CREATE TABLE IF NOT EXISTS melhor_envio_oauth_states (
   state_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_melhor_envio_oauth_states_expiry ON melhor_envio_oauth_states(expires_at);`);
+CREATE INDEX IF NOT EXISTS idx_melhor_envio_oauth_states_expiry ON melhor_envio_oauth_states(expires_at);
+CREATE TABLE IF NOT EXISTS melhor_envio_sender_settings (
+  id INTEGER PRIMARY KEY CHECK(id=1), name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL,
+  document_type TEXT NOT NULL CHECK(document_type IN ('cpf','cnpj')), document_encrypted TEXT NOT NULL,
+  document_last4 TEXT NOT NULL, state_register TEXT NOT NULL DEFAULT '', postal_code TEXT NOT NULL,
+  street TEXT NOT NULL, number TEXT NOT NULL, complement TEXT NOT NULL DEFAULT '', neighborhood TEXT NOT NULL,
+  city TEXT NOT NULL, state TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 const LOT_PRICE_CENTS = 1500;
@@ -2492,7 +2499,8 @@ app.get('/api/marketplace/products', (req, res) => {
 function melhorEnvioOAuthConfig(){
   const base=melhorEnvioConfig(process.env),clientId=String(process.env.MELHOR_ENVIO_CLIENT_ID||'').trim();
   const clientSecret=String(process.env.MELHOR_ENVIO_CLIENT_SECRET||'').trim();
-  return {...base,clientId,clientSecret,oauthConfigured:Boolean(clientId&&clientSecret),
+  const originPostalCode=String(melhorEnvioSenderConfig().postalCode||base.originPostalCode).replace(/\D/g,'');
+  return {...base,originPostalCode,configured:Boolean(base.accessToken&&originPostalCode.length===8),clientId,clientSecret,oauthConfigured:Boolean(clientId&&clientSecret),
     redirectUri:`${SITE_URL}/api/admin/marketplace/shipping/callback`};
 }
 function melhorEnvioTokenKey(){
@@ -2524,7 +2532,12 @@ async function officialMarketplaceShippingQuote(products,quantities,postalCode){
   if(!config.configured)try{config.accessToken=await activeMelhorEnvioAccessToken();config.configured=Boolean(config.accessToken&&config.originPostalCode);}catch{}
   return marketplaceShippingQuote(products,quantities,postalCode,{config});
 }
-function melhorEnvioSenderConfig(){return {name:String(process.env.MELHOR_ENVIO_SENDER_NAME||'').trim(),
+function melhorEnvioSenderConfig(){
+  const saved=db.prepare('SELECT * FROM melhor_envio_sender_settings WHERE id=1').get();
+  if(saved)try{const document=decryptMelhorEnvioToken(saved.document_encrypted);return {name:saved.name,email:saved.email,phone:saved.phone,
+    document:saved.document_type==='cpf'?document:'',companyDocument:saved.document_type==='cnpj'?document:'',stateRegister:saved.state_register,
+    postalCode:saved.postal_code,street:saved.street,number:saved.number,complement:saved.complement,neighborhood:saved.neighborhood,city:saved.city,state:saved.state};}catch{}
+  return {name:String(process.env.MELHOR_ENVIO_SENDER_NAME||'').trim(),
   email:String(process.env.MELHOR_ENVIO_SENDER_EMAIL||'').trim(),phone:String(process.env.MELHOR_ENVIO_SENDER_PHONE||'').trim(),
   document:String(process.env.MELHOR_ENVIO_SENDER_DOCUMENT||'').trim(),companyDocument:String(process.env.MELHOR_ENVIO_SENDER_COMPANY_DOCUMENT||'').trim(),
   stateRegister:String(process.env.MELHOR_ENVIO_SENDER_STATE_REGISTER||'').trim(),postalCode:String(process.env.MELHOR_ENVIO_ORIGIN_POSTAL_CODE||'').trim(),
@@ -2538,10 +2551,33 @@ function melhorEnvioSenderReady(){const sender=melhorEnvioSenderConfig(),documen
 app.get('/api/admin/marketplace/shipping/status',requireAdmin,(_req,res)=>{
   const config=melhorEnvioOAuthConfig();
   const account=db.prepare("SELECT expires_at,status FROM melhor_envio_oauth WHERE id=1").get();
+  const sender=db.prepare('SELECT name,email,phone,document_type,document_last4,state_register,postal_code,street,number,complement,neighborhood,city,state,updated_at FROM melhor_envio_sender_settings WHERE id=1').get();
   return res.json({provider:'Melhor Envio',appConfigured:config.oauthConfigured,
     originConfigured:config.originPostalCode.length===8,senderConfigured:melhorEnvioSenderReady(),connected:account?.status==='connected',
     expiresAt:account?.expires_at||null,sandbox:config.sandbox,callback:config.redirectUri,
-    connectUrl:'/api/admin/marketplace/shipping/connect'});
+    connectUrl:'/api/admin/marketplace/shipping/connect',sender:sender?{name:sender.name,email:sender.email,phone:sender.phone,
+      documentType:sender.document_type,documentMasked:`***${sender.document_last4}`,stateRegister:sender.state_register,postalCode:sender.postal_code,
+      street:sender.street,number:sender.number,complement:sender.complement,neighborhood:sender.neighborhood,city:sender.city,state:sender.state,updatedAt:sender.updated_at}:null});
+});
+
+app.put('/api/admin/marketplace/shipping/sender',requireAdmin,sameOriginOnly,(req,res)=>{
+  const body=req.body||{},clean=(value,limit=160)=>String(value||'').trim().slice(0,limit),digits=(value,limit)=>String(value||'').replace(/\D/g,'').slice(0,limit);
+  const current=db.prepare('SELECT document_type,document_encrypted,document_last4 FROM melhor_envio_sender_settings WHERE id=1').get();
+  const documentType=clean(body.documentType,4).toLowerCase(),providedDocument=digits(body.document,14);
+  if(!['cpf','cnpj'].includes(documentType))return res.status(400).json({error:'Escolha CPF ou CNPJ do remetente.'});
+  if(providedDocument&&((documentType==='cpf'&&!validCpf(providedDocument))||(documentType==='cnpj'&&!validCnpj(providedDocument))))return res.status(400).json({error:`${documentType.toUpperCase()} inválido.`});
+  if(!providedDocument&&(!current||current.document_type!==documentType))return res.status(400).json({error:`Informe o ${documentType.toUpperCase()} do remetente.`});
+  const name=clean(body.name),email=clean(body.email),phone=digits(body.phone,15),postalCode=digits(body.postalCode,8),street=clean(body.street),number=clean(body.number,30),
+    complement=clean(body.complement),neighborhood=clean(body.neighborhood),city=clean(body.city),state=clean(body.state,2).toUpperCase(),stateRegister=clean(body.stateRegister,30);
+  if(name.length<2||!/^\S+@\S+\.\S+$/.test(email)||phone.length<10||postalCode.length!==8||!street||!number||!neighborhood||!city||state.length!==2)return res.status(400).json({error:'Preencha corretamente todos os dados obrigatórios do remetente.'});
+  let documentEncrypted=current?.document_encrypted,documentLast4=current?.document_last4;
+  try{if(providedDocument){documentEncrypted=encryptMelhorEnvioToken(providedDocument);documentLast4=providedDocument.slice(-4);}}catch{return res.status(503).json({error:'A proteção dos dados do remetente não está configurada.'});}
+  db.prepare(`INSERT INTO melhor_envio_sender_settings(id,name,email,phone,document_type,document_encrypted,document_last4,state_register,postal_code,street,number,complement,neighborhood,city,state)
+    VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,email=excluded.email,phone=excluded.phone,
+    document_type=excluded.document_type,document_encrypted=excluded.document_encrypted,document_last4=excluded.document_last4,state_register=excluded.state_register,
+    postal_code=excluded.postal_code,street=excluded.street,number=excluded.number,complement=excluded.complement,neighborhood=excluded.neighborhood,
+    city=excluded.city,state=excluded.state,updated_at=CURRENT_TIMESTAMP`).run(name,email,phone,documentType,documentEncrypted,documentLast4,stateRegister,postalCode,street,number,complement,neighborhood,city,state);
+  return res.json({ok:true,message:'Dados do remetente protegidos e salvos.',documentMasked:`***${documentLast4}`});
 });
 
 app.get('/api/admin/integrations/readiness',requireAdmin,(_req,res)=>{
