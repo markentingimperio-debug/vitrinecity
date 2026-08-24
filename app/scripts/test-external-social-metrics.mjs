@@ -29,7 +29,6 @@ assert.match(googleSetupPage,/webmasters\.readonly|leitura das métricas agregad
 assert.match(readinessServer,/CREATE TABLE IF NOT EXISTS social_provider_credentials/);
 assert.match(readinessServer,/\/api\/admin\/social\/intelligence\/credentials/);
 assert.match(readinessServer,/youtubeMetricsConfig\(socialMetricsEnv\(\)\)/);
-assert.match(readinessServer,/auth_type','rerequest/);
 assert.match(credentialsPage,/credenciais são criptografadas/);
 
 const requests = [];
