@@ -841,6 +841,10 @@ db.exec(`CREATE TABLE IF NOT EXISTS social_accounts (
   UNIQUE(user_id,page_id)
 );
 CREATE INDEX IF NOT EXISTS idx_social_accounts_user ON social_accounts(user_id,id);`);
+db.exec(`CREATE TABLE IF NOT EXISTS social_provider_credentials (
+  provider TEXT PRIMARY KEY CHECK(provider IN ('youtube','tiktok','kwai')),
+  credentials_encrypted TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`);
 db.exec(`CREATE TABLE IF NOT EXISTS social_webhook_events (
   id INTEGER PRIMARY KEY,
   object_type TEXT NOT NULL,
@@ -2610,6 +2614,30 @@ app.put('/api/admin/marketplace/shipping/sender',requireAdmin,sameOriginOnly,(re
   return res.json({ok:true,message:'Dados do remetente protegidos e salvos.',documentMasked:`***${documentLast4}`});
 });
 
+function socialMetricsEnv(){const env={...process.env},map={youtube:['YOUTUBE_API_KEY','YOUTUBE_CHANNEL_ID'],tiktok:['TIKTOK_CONTENT_ACCESS_TOKEN'],kwai:['KWAI_APP_ID','KWAI_ACCESS_TOKEN']};
+  for(const row of db.prepare('SELECT provider,credentials_encrypted FROM social_provider_credentials').all())try{const values=JSON.parse(decryptSocialToken(row.credentials_encrypted));
+    for(const name of map[row.provider]||[])if(values[name])env[name]=String(values[name]);}catch{}
+  return env;}
+
+app.get('/api/admin/social/intelligence/credentials',requireAdmin,(_req,res)=>{
+  const env=socialMetricsEnv(),saved=new Map(db.prepare('SELECT provider,updated_at FROM social_provider_credentials').all().map(row=>[row.provider,row.updated_at]));
+  return res.json({providers:[
+    {id:'youtube',name:'YouTube',configured:youtubeMetricsConfig(env).configured,fields:['API Key','Channel ID'],savedAt:saved.get('youtube')||null},
+    {id:'tiktok',name:'TikTok',configured:tiktokMetricsConfig(env).configured,fields:['Content Access Token'],savedAt:saved.get('tiktok')||null},
+    {id:'kwai',name:'Kwai',configured:kwaiMetricsConfig(env).configured,fields:['App ID','Access Token'],savedAt:saved.get('kwai')||null}
+  ]});
+});
+
+app.put('/api/admin/social/intelligence/credentials/:provider',requireAdmin,sameOriginOnly,(req,res)=>{
+  const provider=String(req.params.provider||''),definitions={youtube:['YOUTUBE_API_KEY','YOUTUBE_CHANNEL_ID'],tiktok:['TIKTOK_CONTENT_ACCESS_TOKEN'],kwai:['KWAI_APP_ID','KWAI_ACCESS_TOKEN']},fields=definitions[provider];
+  if(!fields)return res.status(404).json({error:'Provedor não reconhecido.'});const values={};
+  for(const name of fields){const value=String(req.body?.[name]||'').trim().slice(0,1000);if(value.length<3)return res.status(400).json({error:`Preencha ${name}.`});values[name]=value;}
+  let encrypted;try{encrypted=encryptSocialToken(JSON.stringify(values));}catch{return res.status(503).json({error:'A proteção das credenciais sociais não está configurada.'});}
+  db.prepare(`INSERT INTO social_provider_credentials(provider,credentials_encrypted) VALUES (?,?) ON CONFLICT(provider)
+    DO UPDATE SET credentials_encrypted=excluded.credentials_encrypted,updated_at=CURRENT_TIMESTAMP`).run(provider,encrypted);
+  return res.json({ok:true,message:`Credenciais de ${provider} protegidas e salvas.`});
+});
+
 app.get('/api/admin/integrations/readiness',requireAdmin,(_req,res)=>{
   const has=name=>Boolean(String(process.env[name]||'').trim()),missing=names=>names.filter(name=>!has(name));
   const metaConnected=Boolean(db.prepare("SELECT 1 FROM social_accounts WHERE status='connected' LIMIT 1").get());
@@ -2617,9 +2645,9 @@ app.get('/api/admin/integrations/readiness',requireAdmin,(_req,res)=>{
   const shippingConnected=Boolean(db.prepare("SELECT 1 FROM melhor_envio_oauth WHERE id=1 AND status='connected'").get());
   const integrations=[
     {id:'meta',name:'Facebook e Instagram',ready:metaConnected,missing:metaConnected?[]:['Reautorizar Campo & Conhecimento'],action:'/api/social/login?returnTo=admin'},
-    {id:'youtube',name:'YouTube',ready:missing(['YOUTUBE_API_KEY','YOUTUBE_CHANNEL_ID']).length===0,missing:missing(['YOUTUBE_API_KEY','YOUTUBE_CHANNEL_ID'])},
-    {id:'tiktok',name:'TikTok',ready:missing(['TIKTOK_CONTENT_ACCESS_TOKEN']).length===0,missing:missing(['TIKTOK_CONTENT_ACCESS_TOKEN'])},
-    {id:'kwai',name:'Kwai',ready:missing(['KWAI_APP_ID','KWAI_ACCESS_TOKEN']).length===0,missing:missing(['KWAI_APP_ID','KWAI_ACCESS_TOKEN'])},
+    {id:'youtube',name:'YouTube',ready:youtubeMetricsConfig(socialMetricsEnv()).configured,missing:youtubeMetricsConfig(socialMetricsEnv()).configured?[]:['Cadastrar API Key e Channel ID'],action:'/admin-metricas-externas.html'},
+    {id:'tiktok',name:'TikTok',ready:tiktokMetricsConfig(socialMetricsEnv()).configured,missing:tiktokMetricsConfig(socialMetricsEnv()).configured?[]:['Cadastrar token Content API'],action:'/admin-metricas-externas.html'},
+    {id:'kwai',name:'Kwai',ready:kwaiMetricsConfig(socialMetricsEnv()).configured,missing:kwaiMetricsConfig(socialMetricsEnv()).configured?[]:['Cadastrar App ID e Access Token'],action:'/admin-metricas-externas.html'},
     {id:'google',name:'Google Search Console',ready:googleConnected,missing:googleConnected?[]:(googleSearchOAuthConfig().configured?[]:['Cadastrar Client ID e Client Secret']).concat(['Autorizar a conta']),callback:`${SITE_URL}/api/admin/social/intelligence/google/callback`,action:'/admin-google-search.html'},
     {id:'shipping',name:'Melhor Envio',ready:shippingConnected&&melhorEnvioSenderReady(),missing:[...(shippingConnected?[]:(melhorEnvioOAuthConfig().oauthConfigured?[]:['Cadastrar Client ID e Client Secret']).concat(['Autorizar a conta'])),...(melhorEnvioSenderReady()?[]:['Preencher dados completos do remetente'])],callback:`${SITE_URL}/api/admin/marketplace/shipping/callback`,action:'/api/admin/marketplace/shipping/connect'},
     {id:'payments',name:'Mercado Pago Marketplace',ready:marketplaceOAuthConfigured(),missing:marketplaceOAuthConfigured()?[]:['Cadastrar Client ID e Client Secret'],callback:`${SITE_URL}/api/marketplace/mercadopago/callback`,action:'/admin-pagamentos.html'},
@@ -5942,7 +5970,7 @@ async function syncOfficialYouTubeMetrics(triggerType='admin'){
     const runId=db.prepare(`INSERT INTO social_external_sync_runs(provider,trigger_type,status)
       VALUES ('youtube',?,'running')`).run(String(triggerType).slice(0,30)).lastInsertRowid;
     try{
-      const config=youtubeMetricsConfig(process.env);
+      const config=youtubeMetricsConfig(socialMetricsEnv());
       if(!config.configured)throw new Error('youtube_not_configured');
       const result=await fetchYouTubeAggregatedInsights(config);
       const imported=persistExternalInsights('youtube',result.items);
@@ -5965,7 +5993,7 @@ async function syncOfficialTikTokMetrics(triggerType='admin'){
     const runId=db.prepare(`INSERT INTO social_external_sync_runs(provider,trigger_type,status)
       VALUES ('tiktok',?,'running')`).run(String(triggerType).slice(0,30)).lastInsertRowid;
     try{
-      const config=tiktokMetricsConfig(process.env);
+      const config=tiktokMetricsConfig(socialMetricsEnv());
       if(!config.configured)throw new Error('tiktok_not_configured');
       const result=await fetchTikTokAggregatedInsights(config);
       const imported=persistExternalInsights('tiktok',result.items);
@@ -6055,7 +6083,7 @@ async function syncOfficialKwaiMetrics(triggerType='admin'){
     const runId=db.prepare(`INSERT INTO social_external_sync_runs(provider,trigger_type,status)
       VALUES ('kwai',?,'running')`).run(String(triggerType).slice(0,30)).lastInsertRowid;
     try{
-      const config=kwaiMetricsConfig(process.env);
+      const config=kwaiMetricsConfig(socialMetricsEnv());
       if(!config.configured)throw new Error('kwai_not_configured');
       const result=await fetchKwaiAggregatedInsights(config);
       const imported=persistExternalInsights('kwai',result.items);
@@ -6129,7 +6157,7 @@ app.get('/api/admin/social/intelligence/providers', requireAdmin, (req,res) => {
   const meta=db.prepare(`SELECT COUNT(*) pages,SUM(CASE WHEN instagram_id IS NOT NULL THEN 1 ELSE 0 END) instagram
     FROM social_accounts WHERE status='connected'`).get();
   const googleConnected=Boolean(db.prepare("SELECT 1 FROM google_search_oauth WHERE id=1 AND status='connected'").get());
-  const providers=externalMetricsProviderStatus(process.env,{facebook:Number(meta.pages)>0,instagram:Number(meta.instagram)>0})
+  const providers=externalMetricsProviderStatus(socialMetricsEnv(),{facebook:Number(meta.pages)>0,instagram:Number(meta.instagram)>0})
     .map(provider=>provider.id==='google'?{...provider,configured:provider.configured||googleConnected,
       oauthReady:googleSearchOAuthReady(),connectUrl:'/api/admin/social/intelligence/google/connect'}:provider);
   return res.json({providers,runs});
@@ -6869,7 +6897,7 @@ app.use((error, req, res, next) => {
   return publicErrorPage(res, 500);
 });
 function scheduleOfficialMetricsSync(){
-  const config=youtubeMetricsConfig(process.env);
+  const config=youtubeMetricsConfig(socialMetricsEnv());
   if(config.configured&&config.autoSync){
     const executeYouTube=()=>syncOfficialYouTubeMetrics('automatic').catch(error=>
       console.error('Falha na sincronização oficial do YouTube:',String(error?.message||'youtube_sync_failed')));
