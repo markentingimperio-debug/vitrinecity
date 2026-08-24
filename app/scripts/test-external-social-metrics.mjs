@@ -15,11 +15,16 @@ import {
 
 const readinessServer=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
 const readiness=fs.readFileSync(new URL('../public/admin-integracoes.html',import.meta.url),'utf8');
+const googleSetupPage=fs.readFileSync(new URL('../public/admin-google-search.html',import.meta.url),'utf8');
 assert.match(readinessServer,/\/api\/admin\/integrations\/readiness/);
 assert.match(readinessServer,/MERCADOPAGO_MARKETPLACE_CLIENT_ID/);
 assert.match(readinessServer,/AGE_VERIFICATION_WEBHOOK_SECRET/);
 assert.match(readiness,/Nenhum segredo ou token é exibido/);
 assert.match(readiness,/noindex,nofollow/);
+assert.match(readinessServer,/CREATE TABLE IF NOT EXISTS google_search_app_settings/);
+assert.match(readinessServer,/\/api\/admin\/social\/intelligence\/google\/app/);
+assert.match(googleSetupPage,/Client Secret será criptografado/);
+assert.match(googleSetupPage,/webmasters\.readonly|leitura das métricas agregadas/);
 
 const requests = [];
 const mockFetch = async input => {

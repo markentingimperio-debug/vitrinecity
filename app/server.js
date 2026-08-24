@@ -1046,7 +1046,11 @@ db.exec(`CREATE TABLE IF NOT EXISTS google_search_oauth (
 CREATE TABLE IF NOT EXISTS google_search_oauth_states (
   state_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_google_search_oauth_states_expiry ON google_search_oauth_states(expires_at);`);
+CREATE INDEX IF NOT EXISTS idx_google_search_oauth_states_expiry ON google_search_oauth_states(expires_at);
+CREATE TABLE IF NOT EXISTS google_search_app_settings (
+  id INTEGER PRIMARY KEY CHECK(id=1), client_id TEXT NOT NULL, client_secret_encrypted TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`);
 db.exec(`CREATE TABLE IF NOT EXISTS melhor_envio_oauth (
   id INTEGER PRIMARY KEY CHECK(id=1), access_token_encrypted TEXT NOT NULL, refresh_token_encrypted TEXT NOT NULL,
   expires_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'connected', connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2609,7 +2613,7 @@ app.get('/api/admin/integrations/readiness',requireAdmin,(_req,res)=>{
     {id:'youtube',name:'YouTube',ready:missing(['YOUTUBE_API_KEY','YOUTUBE_CHANNEL_ID']).length===0,missing:missing(['YOUTUBE_API_KEY','YOUTUBE_CHANNEL_ID'])},
     {id:'tiktok',name:'TikTok',ready:missing(['TIKTOK_CONTENT_ACCESS_TOKEN']).length===0,missing:missing(['TIKTOK_CONTENT_ACCESS_TOKEN'])},
     {id:'kwai',name:'Kwai',ready:missing(['KWAI_APP_ID','KWAI_ACCESS_TOKEN']).length===0,missing:missing(['KWAI_APP_ID','KWAI_ACCESS_TOKEN'])},
-    {id:'google',name:'Google Search Console',ready:googleConnected,missing:googleConnected?[]:missing(['GOOGLE_SEARCH_CONSOLE_CLIENT_ID','GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET']).concat(['Autorizar a conta']),callback:`${SITE_URL}/api/admin/social/intelligence/google/callback`,action:'/api/admin/social/intelligence/google/connect'},
+    {id:'google',name:'Google Search Console',ready:googleConnected,missing:googleConnected?[]:(googleSearchOAuthConfig().configured?[]:['Cadastrar Client ID e Client Secret']).concat(['Autorizar a conta']),callback:`${SITE_URL}/api/admin/social/intelligence/google/callback`,action:'/admin-google-search.html'},
     {id:'shipping',name:'Melhor Envio',ready:shippingConnected&&melhorEnvioSenderReady(),missing:[...(shippingConnected?[]:(melhorEnvioOAuthConfig().oauthConfigured?[]:['Cadastrar Client ID e Client Secret']).concat(['Autorizar a conta'])),...(melhorEnvioSenderReady()?[]:['Preencher dados completos do remetente'])],callback:`${SITE_URL}/api/admin/marketplace/shipping/callback`,action:'/api/admin/marketplace/shipping/connect'},
     {id:'payments',name:'Mercado Pago Marketplace',ready:marketplaceOAuthConfigured(),missing:missing(['MERCADOPAGO_MARKETPLACE_CLIENT_ID','MERCADOPAGO_MARKETPLACE_CLIENT_SECRET']),callback:`${SITE_URL}/api/marketplace/mercadopago/callback`},
     {id:'identity',name:'Verificação documental 18+',ready:ageVerificationConfigured(),missing:missing(['AGE_VERIFICATION_PROVIDER','AGE_VERIFICATION_START_URL','AGE_VERIFICATION_WEBHOOK_SECRET']),callback:`${SITE_URL}/api/identity/age-verification/webhook`}
@@ -5953,8 +5957,10 @@ async function syncOfficialTikTokMetrics(triggerType='admin'){
 }
 
 function googleSearchOAuthConfig(){
-  const clientId=String(process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_ID||process.env.GOOGLE_ADS_CLIENT_ID||'').trim();
-  const clientSecret=String(process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET||process.env.GOOGLE_ADS_CLIENT_SECRET||'').trim();
+  const saved=db.prepare('SELECT * FROM google_search_app_settings WHERE id=1').get();let savedSecret='';
+  try{if(saved)savedSecret=decryptGoogleSearchToken(saved.client_secret_encrypted);}catch{}
+  const clientId=String(saved?.client_id||process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_ID||process.env.GOOGLE_ADS_CLIENT_ID||'').trim();
+  const clientSecret=String(savedSecret||process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET||process.env.GOOGLE_ADS_CLIENT_SECRET||'').trim();
   return {clientId,clientSecret,configured:Boolean(clientId&&clientSecret),
     redirectUri:`${SITE_URL}/api/admin/social/intelligence/google/callback`};
 }
@@ -6039,6 +6045,26 @@ async function syncOfficialKwaiMetrics(triggerType='admin'){
   })();
   try{return await kwaiMetricsSyncPromise;}finally{kwaiMetricsSyncPromise=null;}
 }
+
+app.get('/api/admin/social/intelligence/google/setup',requireAdmin,(_req,res)=>{
+  const config=googleSearchOAuthConfig(),saved=db.prepare('SELECT client_id,updated_at FROM google_search_app_settings WHERE id=1').get();
+  const account=db.prepare("SELECT expires_at,status FROM google_search_oauth WHERE id=1").get();
+  return res.json({configured:config.configured,connected:account?.status==='connected',expiresAt:account?.expires_at||null,
+    callback:config.redirectUri,client:saved?{clientIdMasked:saved.client_id.length>8?`${saved.client_id.slice(0,4)}…${saved.client_id.slice(-4)}`:'Configurado',clientSecretConfigured:true,updatedAt:saved.updated_at}:null,
+    connectUrl:'/api/admin/social/intelligence/google/connect'});
+});
+
+app.put('/api/admin/social/intelligence/google/app',requireAdmin,sameOriginOnly,(req,res)=>{
+  const clientId=String(req.body?.clientId||'').trim().slice(0,500),clientSecret=String(req.body?.clientSecret||'').trim().slice(0,500);
+  const current=db.prepare('SELECT client_secret_encrypted FROM google_search_app_settings WHERE id=1').get();
+  if(clientId.length<10)return res.status(400).json({error:'Informe o Client ID do Google.'});
+  if(!clientSecret&&!current)return res.status(400).json({error:'Informe o Client Secret no primeiro cadastro.'});
+  if(clientSecret&&clientSecret.length<8)return res.status(400).json({error:'O Client Secret informado é inválido.'});
+  let encrypted=current?.client_secret_encrypted;try{if(clientSecret)encrypted=encryptGoogleSearchToken(clientSecret);}catch{return res.status(503).json({error:'A proteção das credenciais do Google não está configurada.'});}
+  db.prepare(`INSERT INTO google_search_app_settings(id,client_id,client_secret_encrypted) VALUES (1,?,?) ON CONFLICT(id)
+    DO UPDATE SET client_id=excluded.client_id,client_secret_encrypted=excluded.client_secret_encrypted,updated_at=CURRENT_TIMESTAMP`).run(clientId,encrypted);
+  return res.json({ok:true,message:'Aplicativo Google protegido e salvo.',clientIdMasked:clientId.length>8?`${clientId.slice(0,4)}…${clientId.slice(-4)}`:'Configurado'});
+});
 
 app.get('/api/admin/social/intelligence/google/connect',requireAdmin,(req,res)=>{
   const oauth=googleSearchOAuthConfig();if(!oauth.configured)return res.status(503).send('Configure o cliente OAuth do Google Search Console.');
