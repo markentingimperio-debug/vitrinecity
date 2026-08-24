@@ -32,6 +32,7 @@ import {
   tiktokMetricsConfig,
   youtubeMetricsConfig
 } from './external-social-metrics.js';
+import { buildLegalReviewDossier } from './legal-review.js';
 
 const app = express();
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -2660,6 +2661,11 @@ app.put('/api/admin/identity/setup',requireAdmin,sameOriginOnly,(req,res)=>{
   db.prepare(`INSERT INTO age_verification_provider_settings(id,provider,start_url,webhook_secret_encrypted) VALUES (1,?,?,?) ON CONFLICT(id)
     DO UPDATE SET provider=excluded.provider,start_url=excluded.start_url,webhook_secret_encrypted=excluded.webhook_secret_encrypted,updated_at=CURRENT_TIMESTAMP`).run(provider,startUrl,encrypted);
   return res.json({ok:true,message:'Provedor documental protegido e salvo.'});
+});
+
+app.get('/api/admin/legal/review',requireAdmin,(_req,res)=>{
+  try{return res.set('Cache-Control','no-store').json(buildLegalReviewDossier(path.join(dir,'public')));}
+  catch{return res.status(500).json({error:'Não foi possível preparar o dossiê jurídico.'});}
 });
 
 app.get('/api/admin/integrations/readiness',requireAdmin,(_req,res)=>{
