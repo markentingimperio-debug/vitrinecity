@@ -1062,6 +1062,10 @@ CREATE TABLE IF NOT EXISTS melhor_envio_sender_settings (
   document_last4 TEXT NOT NULL, state_register TEXT NOT NULL DEFAULT '', postal_code TEXT NOT NULL,
   street TEXT NOT NULL, number TEXT NOT NULL, complement TEXT NOT NULL DEFAULT '', neighborhood TEXT NOT NULL,
   city TEXT NOT NULL, state TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS melhor_envio_app_settings (
+  id INTEGER PRIMARY KEY CHECK(id=1), client_id TEXT NOT NULL, client_secret_encrypted TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
@@ -2497,8 +2501,10 @@ app.get('/api/marketplace/products', (req, res) => {
 });
 
 function melhorEnvioOAuthConfig(){
-  const base=melhorEnvioConfig(process.env),clientId=String(process.env.MELHOR_ENVIO_CLIENT_ID||'').trim();
-  const clientSecret=String(process.env.MELHOR_ENVIO_CLIENT_SECRET||'').trim();
+  const base=melhorEnvioConfig(process.env),saved=db.prepare('SELECT * FROM melhor_envio_app_settings WHERE id=1').get();
+  let savedSecret='';try{if(saved)savedSecret=decryptMelhorEnvioToken(saved.client_secret_encrypted);}catch{}
+  const clientId=String(saved?.client_id||process.env.MELHOR_ENVIO_CLIENT_ID||'').trim();
+  const clientSecret=String(savedSecret||process.env.MELHOR_ENVIO_CLIENT_SECRET||'').trim();
   const originPostalCode=String(melhorEnvioSenderConfig().postalCode||base.originPostalCode).replace(/\D/g,'');
   return {...base,originPostalCode,configured:Boolean(base.accessToken&&originPostalCode.length===8),clientId,clientSecret,oauthConfigured:Boolean(clientId&&clientSecret),
     redirectUri:`${SITE_URL}/api/admin/marketplace/shipping/callback`};
@@ -2552,12 +2558,25 @@ app.get('/api/admin/marketplace/shipping/status',requireAdmin,(_req,res)=>{
   const config=melhorEnvioOAuthConfig();
   const account=db.prepare("SELECT expires_at,status FROM melhor_envio_oauth WHERE id=1").get();
   const sender=db.prepare('SELECT name,email,phone,document_type,document_last4,state_register,postal_code,street,number,complement,neighborhood,city,state,updated_at FROM melhor_envio_sender_settings WHERE id=1').get();
+  const savedApp=db.prepare('SELECT client_id,updated_at FROM melhor_envio_app_settings WHERE id=1').get();
   return res.json({provider:'Melhor Envio',appConfigured:config.oauthConfigured,
     originConfigured:config.originPostalCode.length===8,senderConfigured:melhorEnvioSenderReady(),connected:account?.status==='connected',
     expiresAt:account?.expires_at||null,sandbox:config.sandbox,callback:config.redirectUri,
-    connectUrl:'/api/admin/marketplace/shipping/connect',sender:sender?{name:sender.name,email:sender.email,phone:sender.phone,
+    connectUrl:'/api/admin/marketplace/shipping/connect',app:savedApp?{clientIdMasked:savedApp.client_id.length>8?`${savedApp.client_id.slice(0,4)}…${savedApp.client_id.slice(-4)}`:'Configurado',clientSecretConfigured:true,updatedAt:savedApp.updated_at}:null,sender:sender?{name:sender.name,email:sender.email,phone:sender.phone,
       documentType:sender.document_type,documentMasked:`***${sender.document_last4}`,stateRegister:sender.state_register,postalCode:sender.postal_code,
       street:sender.street,number:sender.number,complement:sender.complement,neighborhood:sender.neighborhood,city:sender.city,state:sender.state,updatedAt:sender.updated_at}:null});
+});
+
+app.put('/api/admin/marketplace/shipping/app',requireAdmin,sameOriginOnly,(req,res)=>{
+  const clientId=String(req.body?.clientId||'').trim().slice(0,300),clientSecret=String(req.body?.clientSecret||'').trim().slice(0,500);
+  const current=db.prepare('SELECT client_secret_encrypted FROM melhor_envio_app_settings WHERE id=1').get();
+  if(clientId.length<3)return res.status(400).json({error:'Informe o Client ID do aplicativo Melhor Envio.'});
+  if(!clientSecret&&!current)return res.status(400).json({error:'Informe o Client Secret no primeiro cadastro.'});
+  if(clientSecret&&clientSecret.length<8)return res.status(400).json({error:'O Client Secret informado é inválido.'});
+  let encrypted=current?.client_secret_encrypted;try{if(clientSecret)encrypted=encryptMelhorEnvioToken(clientSecret);}catch{return res.status(503).json({error:'A proteção das credenciais não está configurada.'});}
+  db.prepare(`INSERT INTO melhor_envio_app_settings(id,client_id,client_secret_encrypted) VALUES (1,?,?)
+    ON CONFLICT(id) DO UPDATE SET client_id=excluded.client_id,client_secret_encrypted=excluded.client_secret_encrypted,updated_at=CURRENT_TIMESTAMP`).run(clientId,encrypted);
+  return res.json({ok:true,message:'Aplicativo protegido e salvo.',clientIdMasked:clientId.length>8?`${clientId.slice(0,4)}…${clientId.slice(-4)}`:'Configurado'});
 });
 
 app.put('/api/admin/marketplace/shipping/sender',requireAdmin,sameOriginOnly,(req,res)=>{
@@ -2591,7 +2610,7 @@ app.get('/api/admin/integrations/readiness',requireAdmin,(_req,res)=>{
     {id:'tiktok',name:'TikTok',ready:missing(['TIKTOK_CONTENT_ACCESS_TOKEN']).length===0,missing:missing(['TIKTOK_CONTENT_ACCESS_TOKEN'])},
     {id:'kwai',name:'Kwai',ready:missing(['KWAI_APP_ID','KWAI_ACCESS_TOKEN']).length===0,missing:missing(['KWAI_APP_ID','KWAI_ACCESS_TOKEN'])},
     {id:'google',name:'Google Search Console',ready:googleConnected,missing:googleConnected?[]:missing(['GOOGLE_SEARCH_CONSOLE_CLIENT_ID','GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET']).concat(['Autorizar a conta']),callback:`${SITE_URL}/api/admin/social/intelligence/google/callback`,action:'/api/admin/social/intelligence/google/connect'},
-    {id:'shipping',name:'Melhor Envio',ready:shippingConnected&&melhorEnvioSenderReady(),missing:[...(shippingConnected?[]:missing(['MELHOR_ENVIO_CLIENT_ID','MELHOR_ENVIO_CLIENT_SECRET']).concat(['Autorizar a conta'])),...(melhorEnvioSenderReady()?[]:['Preencher dados completos do remetente'])],callback:`${SITE_URL}/api/admin/marketplace/shipping/callback`,action:'/api/admin/marketplace/shipping/connect'},
+    {id:'shipping',name:'Melhor Envio',ready:shippingConnected&&melhorEnvioSenderReady(),missing:[...(shippingConnected?[]:(melhorEnvioOAuthConfig().oauthConfigured?[]:['Cadastrar Client ID e Client Secret']).concat(['Autorizar a conta'])),...(melhorEnvioSenderReady()?[]:['Preencher dados completos do remetente'])],callback:`${SITE_URL}/api/admin/marketplace/shipping/callback`,action:'/api/admin/marketplace/shipping/connect'},
     {id:'payments',name:'Mercado Pago Marketplace',ready:marketplaceOAuthConfigured(),missing:missing(['MERCADOPAGO_MARKETPLACE_CLIENT_ID','MERCADOPAGO_MARKETPLACE_CLIENT_SECRET']),callback:`${SITE_URL}/api/marketplace/mercadopago/callback`},
     {id:'identity',name:'Verificação documental 18+',ready:ageVerificationConfigured(),missing:missing(['AGE_VERIFICATION_PROVIDER','AGE_VERIFICATION_START_URL','AGE_VERIFICATION_WEBHOOK_SECRET']),callback:`${SITE_URL}/api/identity/age-verification/webhook`}
   ].map(item=>({...item,missing:[...new Set(item.missing)]}));

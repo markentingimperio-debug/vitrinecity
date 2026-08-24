@@ -17,7 +17,9 @@ assert.match(store,/deliveryMinDays/);
 assert.match(store,/subtotal\+\(shippingQuote\?\.shippingCents\|\|0\)/);
 assert.match(server,/CREATE TABLE IF NOT EXISTS melhor_envio_oauth/);
 assert.match(server,/CREATE TABLE IF NOT EXISTS melhor_envio_sender_settings/);
+assert.match(server,/CREATE TABLE IF NOT EXISTS melhor_envio_app_settings/);
 assert.match(server,/\/api\/admin\/marketplace\/shipping\/sender/);
+assert.match(server,/\/api\/admin\/marketplace\/shipping\/app/);
 assert.match(server,/documentMasked/);
 assert.match(server,/\/api\/admin\/marketplace\/shipping\/connect/);
 assert.match(server,/\/api\/admin\/marketplace\/shipping\/callback/);
@@ -26,6 +28,7 @@ assert.match(server,/grant_type:'refresh_token'/);
 assert.match(server,/createCipheriv\('aes-256-gcm'/);
 assert.match(admin,/Conectar Melhor Envio/);
 assert.match(admin,/CPF ou CNPJ é criptografado/);
+assert.match(admin,/Client Secret será criptografado/);
 assert.match(admin,/noindex,nofollow/);
 
 const products=[{id:7,name:'Produto',price_cents:5000,weight_grams:750,delivery_min_days:3,delivery_max_days:6}];
