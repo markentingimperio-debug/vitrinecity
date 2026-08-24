@@ -130,6 +130,10 @@ CREATE TABLE IF NOT EXISTS age_verification_events (
   status TEXT NOT NULL,
   received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS age_verification_provider_settings (
+  id INTEGER PRIMARY KEY CHECK(id=1), provider TEXT NOT NULL, start_url TEXT NOT NULL,
+  webhook_secret_encrypted TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS sessions (
   id INTEGER PRIMARY KEY,
   token_hash TEXT NOT NULL UNIQUE,
@@ -2118,12 +2122,14 @@ function publicAgeVerification(row) {
     verifiedAt: row?.verified_at || null, expiresAt: row?.expires_at || null };
 }
 
-function ageVerificationConfigured() {
-  const startUrl = String(process.env.AGE_VERIFICATION_START_URL || '').trim();
-  return Boolean(String(process.env.AGE_VERIFICATION_PROVIDER || '').trim() &&
-    String(process.env.AGE_VERIFICATION_WEBHOOK_SECRET || '').trim() &&
-    /^https:\/\//i.test(startUrl) && startUrl.includes('{reference}'));
-}
+function ageVerificationEncryptionKey(){const secret=String(process.env.AGE_VERIFICATION_TOKEN_ENCRYPTION_KEY||process.env.META_SOCIAL_TOKEN_ENCRYPTION_KEY||'');
+  if(secret.length<24)throw new Error('age_verification_encryption_not_configured');return createHash('sha256').update('age-verification:'+secret).digest();}
+function encryptAgeVerificationSecret(value){const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',ageVerificationEncryptionKey(),iv),encrypted=Buffer.concat([cipher.update(String(value),'utf8'),cipher.final()]);
+  return [iv.toString('base64url'),cipher.getAuthTag().toString('base64url'),encrypted.toString('base64url')].join('.');}
+function decryptAgeVerificationSecret(value){const [iv,tag,data]=String(value||'').split('.');if(!iv||!tag||!data)throw new Error('age_secret_invalid');const decipher=createDecipheriv('aes-256-gcm',ageVerificationEncryptionKey(),Buffer.from(iv,'base64url'));decipher.setAuthTag(Buffer.from(tag,'base64url'));return Buffer.concat([decipher.update(Buffer.from(data,'base64url')),decipher.final()]).toString('utf8');}
+function ageVerificationConfig(){const saved=db.prepare('SELECT * FROM age_verification_provider_settings WHERE id=1').get();let savedSecret='';try{if(saved)savedSecret=decryptAgeVerificationSecret(saved.webhook_secret_encrypted);}catch{}
+  return {provider:String(saved?.provider||process.env.AGE_VERIFICATION_PROVIDER||'').trim(),startUrl:String(saved?.start_url||process.env.AGE_VERIFICATION_START_URL||'').trim(),webhookSecret:String(savedSecret||process.env.AGE_VERIFICATION_WEBHOOK_SECRET||'').trim()};}
+function ageVerificationConfigured() {const config=ageVerificationConfig();return Boolean(config.provider&&config.webhookSecret&&/^https:\/\//i.test(config.startUrl)&&config.startUrl.includes('{reference}'));}
 
 function hasCurrentAdultVerification(userId) {
   return Boolean(db.prepare(`SELECT 1 FROM age_verifications WHERE user_id=? AND status='verified'
@@ -2157,8 +2163,7 @@ app.get('/api/identity/age-verification', requireUser, (req, res) => {
 
 app.post('/api/identity/age-verification/start', sameOriginOnly, requireUser, (req, res) => {
   if (req.body?.consent !== true) return res.status(400).json({ error: 'Confirme o consentimento para iniciar a verificação.' });
-  const provider = String(process.env.AGE_VERIFICATION_PROVIDER || '').trim();
-  const startUrl = String(process.env.AGE_VERIFICATION_START_URL || '').trim();
+  const ageConfig=ageVerificationConfig(),provider=ageConfig.provider,startUrl=ageConfig.startUrl;
   if (!ageVerificationConfigured()) {
     return res.status(503).json({ error: 'A verificação documental ainda não está configurada.' });
   }
@@ -2178,7 +2183,7 @@ app.post('/api/identity/age-verification/start', sameOriginOnly, requireUser, (r
 });
 
 app.post('/api/identity/age-verification/webhook', (req, res) => {
-  const secret = String(process.env.AGE_VERIFICATION_WEBHOOK_SECRET || '');
+  const secret = ageVerificationConfig().webhookSecret;
   const timestamp = String(req.get('x-age-verification-timestamp') || '');
   const supplied = String(req.get('x-age-verification-signature') || '').replace(/^sha256=/, '');
   const timestampSeconds = Number(timestamp);
@@ -2638,6 +2643,25 @@ app.put('/api/admin/social/intelligence/credentials/:provider',requireAdmin,same
   return res.json({ok:true,message:`Credenciais de ${provider} protegidas e salvas.`});
 });
 
+app.get('/api/admin/identity/setup',requireAdmin,(_req,res)=>{
+  const config=ageVerificationConfig(),saved=db.prepare('SELECT provider,start_url,updated_at FROM age_verification_provider_settings WHERE id=1').get();
+  return res.json({configured:ageVerificationConfigured(),callback:`${SITE_URL}/api/identity/age-verification/webhook`,settings:saved?{
+    provider:saved.provider,startUrl:saved.start_url,webhookSecretConfigured:true,updatedAt:saved.updated_at}:null});
+});
+
+app.put('/api/admin/identity/setup',requireAdmin,sameOriginOnly,(req,res)=>{
+  const provider=String(req.body?.provider||'').trim().slice(0,80),startUrl=String(req.body?.startUrl||'').trim().slice(0,1000),webhookSecret=String(req.body?.webhookSecret||'').trim().slice(0,1000);
+  const current=db.prepare('SELECT webhook_secret_encrypted FROM age_verification_provider_settings WHERE id=1').get();
+  if(provider.length<2)return res.status(400).json({error:'Informe o nome do provedor de identidade.'});
+  if(!/^https:\/\//i.test(startUrl)||!startUrl.includes('{reference}'))return res.status(400).json({error:'A URL HTTPS precisa conter {reference}.'});
+  if(!webhookSecret&&!current)return res.status(400).json({error:'Informe o segredo do webhook no primeiro cadastro.'});
+  if(webhookSecret&&webhookSecret.length<16)return res.status(400).json({error:'Use um segredo de webhook com pelo menos 16 caracteres.'});
+  let encrypted=current?.webhook_secret_encrypted;try{if(webhookSecret)encrypted=encryptAgeVerificationSecret(webhookSecret);}catch{return res.status(503).json({error:'A proteção da configuração de identidade não está disponível.'});}
+  db.prepare(`INSERT INTO age_verification_provider_settings(id,provider,start_url,webhook_secret_encrypted) VALUES (1,?,?,?) ON CONFLICT(id)
+    DO UPDATE SET provider=excluded.provider,start_url=excluded.start_url,webhook_secret_encrypted=excluded.webhook_secret_encrypted,updated_at=CURRENT_TIMESTAMP`).run(provider,startUrl,encrypted);
+  return res.json({ok:true,message:'Provedor documental protegido e salvo.'});
+});
+
 app.get('/api/admin/integrations/readiness',requireAdmin,(_req,res)=>{
   const has=name=>Boolean(String(process.env[name]||'').trim()),missing=names=>names.filter(name=>!has(name));
   const metaConnected=Boolean(db.prepare("SELECT 1 FROM social_accounts WHERE status='connected' LIMIT 1").get());
@@ -2651,7 +2675,7 @@ app.get('/api/admin/integrations/readiness',requireAdmin,(_req,res)=>{
     {id:'google',name:'Google Search Console',ready:googleConnected,missing:googleConnected?[]:(googleSearchOAuthConfig().configured?[]:['Cadastrar Client ID e Client Secret']).concat(['Autorizar a conta']),callback:`${SITE_URL}/api/admin/social/intelligence/google/callback`,action:'/admin-google-search.html'},
     {id:'shipping',name:'Melhor Envio',ready:shippingConnected&&melhorEnvioSenderReady(),missing:[...(shippingConnected?[]:(melhorEnvioOAuthConfig().oauthConfigured?[]:['Cadastrar Client ID e Client Secret']).concat(['Autorizar a conta'])),...(melhorEnvioSenderReady()?[]:['Preencher dados completos do remetente'])],callback:`${SITE_URL}/api/admin/marketplace/shipping/callback`,action:'/api/admin/marketplace/shipping/connect'},
     {id:'payments',name:'Mercado Pago Marketplace',ready:marketplaceOAuthConfigured(),missing:marketplaceOAuthConfigured()?[]:['Cadastrar Client ID e Client Secret'],callback:`${SITE_URL}/api/marketplace/mercadopago/callback`,action:'/admin-pagamentos.html'},
-    {id:'identity',name:'Verificação documental 18+',ready:ageVerificationConfigured(),missing:missing(['AGE_VERIFICATION_PROVIDER','AGE_VERIFICATION_START_URL','AGE_VERIFICATION_WEBHOOK_SECRET']),callback:`${SITE_URL}/api/identity/age-verification/webhook`}
+    {id:'identity',name:'Verificação documental 18+',ready:ageVerificationConfigured(),missing:ageVerificationConfigured()?[]:['Escolher e cadastrar o provedor'],callback:`${SITE_URL}/api/identity/age-verification/webhook`,action:'/admin-identidade.html'}
   ].map(item=>({...item,missing:[...new Set(item.missing)]}));
   return res.json({integrations,ready:integrations.filter(item=>item.ready).length,total:integrations.length,generatedAt:new Date().toISOString()});
 });
