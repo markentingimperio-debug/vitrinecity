@@ -996,6 +996,10 @@ CREATE TABLE IF NOT EXISTS marketplace_payment_reconciliation (
   last_event_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_marketplace_reconciliation_status ON marketplace_payment_reconciliation(reconciliation_status,updated_at DESC);`);
+db.exec(`CREATE TABLE IF NOT EXISTS marketplace_app_settings (
+  id INTEGER PRIMARY KEY CHECK(id=1), client_id TEXT NOT NULL, client_secret_encrypted TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`);
 db.exec(`CREATE TABLE IF NOT EXISTS marketplace_seller_profiles (
   store_reference TEXT PRIMARY KEY REFERENCES store_profiles(order_reference) ON DELETE CASCADE,
   seller_type TEXT NOT NULL CHECK(seller_type IN ('cpf','cnpj')), legal_name TEXT NOT NULL,
@@ -1387,10 +1391,13 @@ function recordConsent(req,{userId=null,email='',purpose,version,granted=true,so
       granted?1:0,String(source).slice(0,100),JSON.stringify(evidence).slice(0,2000),requestFingerprint);
 }
 
-function marketplaceOAuthConfigured() {
-  return Boolean(process.env.MERCADOPAGO_MARKETPLACE_CLIENT_ID && process.env.MERCADOPAGO_MARKETPLACE_CLIENT_SECRET &&
-    process.env.MERCADOPAGO_MARKETPLACE_TOKEN_ENCRYPTION_KEY);
-}
+function marketplaceAppConfig(){const saved=db.prepare('SELECT * FROM marketplace_app_settings WHERE id=1').get();let savedSecret='';
+  try{if(saved)savedSecret=decryptMarketplaceToken(saved.client_secret_encrypted);}catch{}
+  const clientId=String(saved?.client_id||process.env.MERCADOPAGO_MARKETPLACE_CLIENT_ID||'').trim(),
+    clientSecret=String(savedSecret||process.env.MERCADOPAGO_MARKETPLACE_CLIENT_SECRET||'').trim();
+  return {clientId,clientSecret,configured:Boolean(clientId&&clientSecret&&process.env.MERCADOPAGO_MARKETPLACE_TOKEN_ENCRYPTION_KEY),
+    redirectUri:`${SITE_URL}/api/marketplace/mercadopago/callback`};}
+function marketplaceOAuthConfigured() {return marketplaceAppConfig().configured;}
 
 function marketplaceTokenKey() {
   const secret=String(process.env.MERCADOPAGO_MARKETPLACE_TOKEN_ENCRYPTION_KEY||'');
@@ -2615,10 +2622,29 @@ app.get('/api/admin/integrations/readiness',requireAdmin,(_req,res)=>{
     {id:'kwai',name:'Kwai',ready:missing(['KWAI_APP_ID','KWAI_ACCESS_TOKEN']).length===0,missing:missing(['KWAI_APP_ID','KWAI_ACCESS_TOKEN'])},
     {id:'google',name:'Google Search Console',ready:googleConnected,missing:googleConnected?[]:(googleSearchOAuthConfig().configured?[]:['Cadastrar Client ID e Client Secret']).concat(['Autorizar a conta']),callback:`${SITE_URL}/api/admin/social/intelligence/google/callback`,action:'/admin-google-search.html'},
     {id:'shipping',name:'Melhor Envio',ready:shippingConnected&&melhorEnvioSenderReady(),missing:[...(shippingConnected?[]:(melhorEnvioOAuthConfig().oauthConfigured?[]:['Cadastrar Client ID e Client Secret']).concat(['Autorizar a conta'])),...(melhorEnvioSenderReady()?[]:['Preencher dados completos do remetente'])],callback:`${SITE_URL}/api/admin/marketplace/shipping/callback`,action:'/api/admin/marketplace/shipping/connect'},
-    {id:'payments',name:'Mercado Pago Marketplace',ready:marketplaceOAuthConfigured(),missing:missing(['MERCADOPAGO_MARKETPLACE_CLIENT_ID','MERCADOPAGO_MARKETPLACE_CLIENT_SECRET']),callback:`${SITE_URL}/api/marketplace/mercadopago/callback`},
+    {id:'payments',name:'Mercado Pago Marketplace',ready:marketplaceOAuthConfigured(),missing:marketplaceOAuthConfigured()?[]:['Cadastrar Client ID e Client Secret'],callback:`${SITE_URL}/api/marketplace/mercadopago/callback`,action:'/admin-pagamentos.html'},
     {id:'identity',name:'Verificação documental 18+',ready:ageVerificationConfigured(),missing:missing(['AGE_VERIFICATION_PROVIDER','AGE_VERIFICATION_START_URL','AGE_VERIFICATION_WEBHOOK_SECRET']),callback:`${SITE_URL}/api/identity/age-verification/webhook`}
   ].map(item=>({...item,missing:[...new Set(item.missing)]}));
   return res.json({integrations,ready:integrations.filter(item=>item.ready).length,total:integrations.length,generatedAt:new Date().toISOString()});
+});
+
+app.get('/api/admin/marketplace/payments/setup',requireAdmin,(_req,res)=>{
+  const config=marketplaceAppConfig(),saved=db.prepare('SELECT client_id,updated_at FROM marketplace_app_settings WHERE id=1').get();
+  return res.json({configured:config.configured,callback:config.redirectUri,client:saved?{
+    clientIdMasked:saved.client_id.length>8?`${saved.client_id.slice(0,4)}…${saved.client_id.slice(-4)}`:'Configurado',
+    clientSecretConfigured:true,updatedAt:saved.updated_at}:null});
+});
+
+app.put('/api/admin/marketplace/payments/app',requireAdmin,sameOriginOnly,(req,res)=>{
+  const clientId=String(req.body?.clientId||'').trim().slice(0,300),clientSecret=String(req.body?.clientSecret||'').trim().slice(0,500);
+  const current=db.prepare('SELECT client_secret_encrypted FROM marketplace_app_settings WHERE id=1').get();
+  if(clientId.length<3)return res.status(400).json({error:'Informe o Client ID do Mercado Pago.'});
+  if(!clientSecret&&!current)return res.status(400).json({error:'Informe o Client Secret no primeiro cadastro.'});
+  if(clientSecret&&clientSecret.length<8)return res.status(400).json({error:'O Client Secret informado é inválido.'});
+  let encrypted=current?.client_secret_encrypted;try{if(clientSecret)encrypted=encryptMarketplaceToken(clientSecret);}catch{return res.status(503).json({error:'A proteção das credenciais do Marketplace não está configurada.'});}
+  db.prepare(`INSERT INTO marketplace_app_settings(id,client_id,client_secret_encrypted) VALUES (1,?,?) ON CONFLICT(id)
+    DO UPDATE SET client_id=excluded.client_id,client_secret_encrypted=excluded.client_secret_encrypted,updated_at=CURRENT_TIMESTAMP`).run(clientId,encrypted);
+  return res.json({ok:true,message:'Aplicativo Marketplace protegido e salvo.',clientIdMasked:clientId.length>8?`${clientId.slice(0,4)}…${clientId.slice(-4)}`:'Configurado'});
 });
 
 app.get('/api/admin/marketplace/shipping/connect',requireAdmin,(req,res)=>{
@@ -4618,9 +4644,9 @@ app.get('/api/store-portal/:reference/mercadopago/connect', (req,res) => {
   if(!marketplaceOAuthConfigured())return res.status(503).send('A aplicação Marketplace do Mercado Pago ainda não está configurada.');
   const sellerProfile=db.prepare("SELECT compliance_status FROM marketplace_seller_profiles WHERE store_reference=?").get(access.order.reference);
   if(sellerProfile?.compliance_status!=='verified')return res.status(409).send('O cadastro CPF/CNPJ precisa ser verificado antes de conectar os recebimentos.');
-  const redirectUri=SITE_URL+'/api/marketplace/mercadopago/callback';
+  const appConfig=marketplaceAppConfig(),redirectUri=appConfig.redirectUri;
   const authorization=new URL('https://auth.mercadopago.com.br/authorization');
-  authorization.searchParams.set('client_id',String(process.env.MERCADOPAGO_MARKETPLACE_CLIENT_ID));
+  authorization.searchParams.set('client_id',appConfig.clientId);
   authorization.searchParams.set('response_type','code');authorization.searchParams.set('platform_id','mp');
   authorization.searchParams.set('redirect_uri',redirectUri);authorization.searchParams.set('state',marketplaceOAuthState(access.order.reference));
   return res.redirect(302,authorization.toString());
@@ -4633,9 +4659,9 @@ app.get('/api/marketplace/mercadopago/callback', async (req,res) => {
   if(req.query.error)return res.redirect(302,destination('cancelled',state.reference));
   if(!marketplaceOAuthConfigured()||!req.query.code)return res.redirect(302,destination('configuration_error',state.reference));
   try{
-    const redirectUri=SITE_URL+'/api/marketplace/mercadopago/callback';
+    const appConfig=marketplaceAppConfig(),redirectUri=appConfig.redirectUri;
     const response=await fetch('https://api.mercadopago.com/oauth/token',{method:'POST',headers:{accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},
-      body:new URLSearchParams({client_id:String(process.env.MERCADOPAGO_MARKETPLACE_CLIENT_ID),client_secret:String(process.env.MERCADOPAGO_MARKETPLACE_CLIENT_SECRET),
+      body:new URLSearchParams({client_id:appConfig.clientId,client_secret:appConfig.clientSecret,
         grant_type:'authorization_code',code:String(req.query.code),redirect_uri:redirectUri}),signal:AbortSignal.timeout(12000)});
     const data=await response.json().catch(()=>({}));
     if(!response.ok||!data.access_token||!data.user_id)throw new Error(String(data.message||'oauth_exchange_failed'));
