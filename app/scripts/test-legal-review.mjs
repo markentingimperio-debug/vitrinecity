@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { buildLegalReviewDossier, LEGAL_DOCUMENTS } from '../legal-review.js';
 
-const publicDir = new URL('../public/', import.meta.url);
+const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
 const dossier = buildLegalReviewDossier(publicDir, { generatedAt: '2026-08-24T12:00:00.000Z' });
 
 assert.equal(dossier.status, 'pending_external_review');
