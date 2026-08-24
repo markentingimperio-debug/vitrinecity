@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Dossiê jurídico | VitrineCity</title>
+  <style>
+    :root{--navy:#071f4b;--blue:#1768e6;--line:#d8e5f4;--muted:#617590;--warn:#805600;--ok:#11653d}
+    *{box-sizing:border-box}body{margin:0;background:#f3f7fc;color:var(--navy);font:15px/1.5 system-ui}
+    header{padding:18px 5%;background:var(--navy);color:#fff;display:flex;justify-content:space-between}header a{color:#fff}
+    main{max-width:1100px;margin:32px auto;padding:0 20px}.summary,.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px}
+    .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:16px}.head{display:flex;justify-content:space-between;gap:12px}
+    .badge{height:max-content;padding:5px 9px;border-radius:99px;font-size:11px;font-weight:900}.ok{background:#def6e9;color:var(--ok)}
+    .pending{background:#fff1d3;color:var(--warn)}.muted{color:var(--muted)}code{display:block;overflow-wrap:anywhere;background:#f2f6fb;padding:8px;border-radius:8px}
+    button,.button{display:inline-block;border:0;background:var(--blue);color:#fff;text-decoration:none;padding:10px 13px;border-radius:9px;font-weight:800;cursor:pointer}
+    @media(max-width:760px){.grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <header><b>Dossiê de revisão jurídica</b><a href="/admin">← Painel</a></header>
+  <main>
+    <section class="summary">
+      <h1>Termos, políticas e evidências</h1>
+      <p id="summary">Preparando inventário…</p>
+      <p class="muted">Este dossiê organiza documentos e evidências técnicas. Ele não substitui a revisão jurídica nem representa aprovação legal.</p>
+      <button id="download" type="button" disabled>Baixar dossiê JSON</button>
+    </section>
+    <section id="items" class="grid" aria-live="polite"></section>
+  </main>
+  <script>
+    const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    let dossier=null;
+    async function load(){
+      const response=await fetch('/api/admin/legal/review');
+      if(response.status===401){location.href='/admin-login.html?returnTo=%2Fadmin-juridico.html';return}
+      if(!response.ok)throw new Error('Não foi possível preparar o dossiê.');
+      dossier=await response.json();
+      document.querySelector('#summary').textContent=`${dossier.summary.found} de ${dossier.summary.total} documentos localizados; ${dossier.summary.versioned} com a versão esperada. Aprovação jurídica: pendente.`;
+      document.querySelector('#items').innerHTML=dossier.documents.map(document=>`<article class="card">
+        <div class="head"><h2>${esc(document.title)}</h2><span class="badge ${document.versionDeclared?'ok':'pending'}">${document.versionDeclared?'VERSIONADO':'REVISAR VERSÃO'}</span></div>
+        <p>${esc(document.scope)}</p><p><a class="button" href="${esc(document.url)}" target="_blank" rel="noopener">Abrir documento</a></p>
+        <small>Versão esperada</small><code>${esc(document.expectedVersion)}</code>
+        <small>SHA-256</small><code>${esc(document.sha256||'arquivo ausente')}</code>
+        <p class="muted">${document.externalReviewNotice?'O documento declara revisão externa pendente.':'Adicionar aviso de revisão externa pendente.'}</p>
+      </article>`).join('');
+      document.querySelector('#download').disabled=false;
+    }
+    document.querySelector('#download').addEventListener('click',()=>{
+      if(!dossier)return;const blob=new Blob([JSON.stringify(dossier,null,2)],{type:'application/json'});
+      const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download='vitrinecity-dossie-juridico.json';link.click();URL.revokeObjectURL(url);
+    });
+    load().catch(error=>{document.querySelector('#summary').textContent=error.message});
+  </script>
+</body>
+</html>
