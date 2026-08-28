@@ -1341,15 +1341,15 @@ function recordAdminLogin(req,email,success,reason){
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
   if (!user) {
-    if (req.path === '/admin' || req.path === '/admin.html') return res.redirect(302, '/admin-login.html');
+    if (req.path === '/admin' || req.path === '/admin.html' || req.path === '/admin-agentes.html') return res.redirect(302, '/admin-login.html');
     return res.status(401).json({ error: 'Entre na conta administrativa.' });
   }
   if (!isAdministrativeUser(user)) {
-    if(req.path==='/admin'||req.path==='/admin.html')return res.redirect(302,'/admin-login.html?erro=restrito');
+    if(req.path==='/admin'||req.path==='/admin.html'||req.path==='/admin-agentes.html')return res.redirect(302,'/admin-login.html?erro=restrito');
     return res.status(403).json({ error: 'Acesso restrito à administração.' });
   }
   if(user.totp_enabled&&!privilegedSession(req,'admin')){
-    if(req.path==='/admin'||req.path==='/admin.html')return res.redirect(302,'/admin-login.html?erro=2fa');
+    if(req.path==='/admin'||req.path==='/admin.html'||req.path==='/admin-agentes.html')return res.redirect(302,'/admin-login.html?erro=2fa');
     return res.status(401).json({error:'Confirme o segundo fator administrativo.'});
   }
   req.user = user;
@@ -1803,6 +1803,7 @@ app.get(['/descobrir', '/descobrir-social.html'], enhancedPublicPage('descobrir-
 app.get(['/perfil', '/perfil-social.html'], enhancedPublicPage('perfil-social.html'));
 app.get('/chat-social.html', enhancedPublicPage('chat-social.html'));
 app.get('/admin-social-moderacao.html', enhancedPublicPage('admin-social-moderacao.html', ['/admin-moderation-enhanced.js']));
+app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
 app.get('/recursos-social.html', enhancedPublicPage('recursos-social.html'));
 app.get('/cidade', publicPage('cidade-exploravel.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
@@ -3204,7 +3205,7 @@ const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const AI_PUBLIC_ROOT = path.resolve(dir, 'public');
 const AI_BLOCKED_PAGES = new Set([
-  'admin.html', 'admin-lojas.html', 'carteira.html', 'painel-lojista.html',
+  'admin.html', 'admin-agentes.html', 'admin-lojas.html', 'carteira.html', 'painel-lojista.html',
   'painel-afiliado.html', 'pagamento.html', 'curso-player.html'
 ]);
 
