@@ -36,6 +36,9 @@ function normalizedPublicLink(value) {
   return cleanUrl(String(value || '').replaceAll('&amp;', '&').replaceAll('&#38;', '&'));
 }
 const safeDecode = value => { try { return decodeURIComponent(value); } catch { return value; } };
+const isWhatsAppGroupUrl = value => {
+  try { return new URL(value).hostname.toLowerCase() === 'chat.whatsapp.com'; } catch { return false; }
+};
 
 export function extractPublicBusinessContacts(html) {
   const source = String(html || '').slice(0, 1_000_000);
@@ -47,14 +50,15 @@ export function extractPublicBusinessContacts(html) {
     ...[...source.matchAll(/mailto:([^?"'\s<>]+)/gi)].map(match => safeDecode(match[1])),
     ...[...source.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)].map(match => match[0])
   ].map(value => cleanText(value, 180).toLowerCase()).filter(value => /^\S+@\S+\.\S+$/.test(value) && !/\.(png|jpe?g|gif|svg|webp)$/i.test(value));
-  const whatsappUrl = social(['wa.me', 'api.whatsapp.com', 'whatsapp.com']);
+  const whatsappUrl = social(['wa.me', 'api.whatsapp.com']);
+  const whatsappGroupUrl = social(['chat.whatsapp.com']);
   let whatsapp = '';
   try {
     const parsed = new URL(whatsappUrl), text = `${parsed.pathname} ${parsed.searchParams.get('phone') || ''}`;
     whatsapp = cleanPhone(text);
   } catch {}
   return {
-    email: emailCandidates[0] || '', whatsapp,
+    email: emailCandidates[0] || '', whatsapp, whatsappGroupUrl,
     instagramUrl: social(['instagram.com']), facebookUrl: social(['facebook.com', 'fb.com']),
     tiktokUrl: social(['tiktok.com'])
   };
@@ -124,6 +128,7 @@ export function setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly
     ['instagram_url', "TEXT NOT NULL DEFAULT ''"],
     ['facebook_url', "TEXT NOT NULL DEFAULT ''"],
     ['tiktok_url', "TEXT NOT NULL DEFAULT ''"],
+    ['whatsapp_group_url', "TEXT NOT NULL DEFAULT ''"],
     ['enrichment_status', "TEXT NOT NULL DEFAULT 'pending'"],
     ['enriched_at', 'TEXT']
   ]) {
@@ -135,6 +140,7 @@ export function setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly
     instagram_url=CASE WHEN instagram_url='' AND @instagramUrl<>'' THEN @instagramUrl ELSE instagram_url END,
     facebook_url=CASE WHEN facebook_url='' AND @facebookUrl<>'' THEN @facebookUrl ELSE facebook_url END,
     tiktok_url=CASE WHEN tiktok_url='' AND @tiktokUrl<>'' THEN @tiktokUrl ELSE tiktok_url END,
+    whatsapp_group_url=CASE WHEN whatsapp_group_url='' AND @whatsappGroupUrl<>'' THEN @whatsappGroupUrl ELSE whatsapp_group_url END,
     enrichment_status=@enrichmentStatus,enriched_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=@id`);
   async function enrichProspects(rows) {
     const queue = rows.filter(row => row.website_url), enriched = [];
@@ -147,7 +153,7 @@ export function setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly
           contacts = await fetchPublicBusinessContacts(row.website_url);
           if (Object.values(contacts).some(Boolean)) enrichmentStatus = 'found';
         } catch { enrichmentStatus = 'unavailable'; }
-        const values = { id: row.id, email: '', whatsapp: '', instagramUrl: '', facebookUrl: '', tiktokUrl: '', ...contacts, enrichmentStatus };
+        const values = { id: row.id, email: '', whatsapp: '', whatsappGroupUrl: '', instagramUrl: '', facebookUrl: '', tiktokUrl: '', ...contacts, enrichmentStatus };
         saveEnrichment.run(values);
         enriched.push(values);
       }
@@ -207,6 +213,7 @@ export function setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly
         const saved = findLead.get(item.placeId);
         return { ...item, email: saved.email, whatsapp: saved.whatsapp,
           instagramUrl: saved.instagram_url, facebookUrl: saved.facebook_url, tiktokUrl: saved.tiktok_url,
+          whatsappGroupUrl: saved.whatsapp_group_url,
           enrichmentStatus: saved.enrichment_status };
       });
       return res.json({ items: enrichedItems, autoSaved: items.length, source: 'google_places', searchedAt: new Date().toISOString() });
@@ -223,7 +230,7 @@ export function setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly
       return res.status(429).json({ error: 'A atualização automática poderá ser executada novamente mais tarde.' });
     }
     const rows = db.prepare(`SELECT * FROM business_prospects WHERE website_url<>'' AND
-      (email='' OR whatsapp='' OR instagram_url='' OR facebook_url='' OR tiktok_url='')
+      (email='' OR whatsapp='' OR instagram_url='' OR facebook_url='' OR tiktok_url='' OR whatsapp_group_url='')
       ORDER BY CASE enrichment_status WHEN 'pending' THEN 0 ELSE 1 END,updated_at ASC LIMIT 25`).all();
     const results = await enrichProspects(rows);
     return res.json({ checked: rows.length, found: results.filter(item => item.enrichmentStatus === 'found').length });
@@ -232,22 +239,24 @@ export function setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly
   app.post('/api/admin/prospecting/public-profiles', requireAdmin, sameOriginOnly, (req, res) => {
     const name = cleanText(req.body?.name, 180);
     const instagramUrl = cleanUrl(req.body?.instagramUrl), facebookUrl = cleanUrl(req.body?.facebookUrl);
-    const tiktokUrl = cleanUrl(req.body?.tiktokUrl), profileUrl = instagramUrl || facebookUrl || tiktokUrl;
+    const tiktokUrl = cleanUrl(req.body?.tiktokUrl), whatsappGroupUrl = cleanUrl(req.body?.whatsappGroupUrl);
+    if (whatsappGroupUrl && !isWhatsAppGroupUrl(whatsappGroupUrl)) return res.status(400).json({ error: 'Informe um convite público válido de grupo do WhatsApp.' });
+    const profileUrl = instagramUrl || facebookUrl || tiktokUrl || whatsappGroupUrl;
     if (!name || !profileUrl) return res.status(400).json({ error: 'Informe o nome e pelo menos um perfil público.' });
-    const source = instagramUrl ? 'instagram' : facebookUrl ? 'facebook' : 'tiktok';
+    const source = instagramUrl ? 'instagram' : facebookUrl ? 'facebook' : tiktokUrl ? 'tiktok' : 'whatsapp_group';
     const email = cleanText(req.body?.email, 180);
     if (email && !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'E-mail inválido.' });
     const placeId = `public:${source}:${Buffer.from(profileUrl).toString('base64url').slice(0, 250)}`;
     db.prepare(`INSERT INTO business_prospects
-      (place_id,name,address,category,phone_public,email,whatsapp,notes,source,instagram_url,facebook_url,tiktok_url,created_by)
-      VALUES (@placeId,@name,@address,@category,@phonePublic,@email,@whatsapp,@notes,@source,@instagramUrl,@facebookUrl,@tiktokUrl,@createdBy)
+      (place_id,name,address,category,phone_public,email,whatsapp,notes,source,instagram_url,facebook_url,tiktok_url,whatsapp_group_url,created_by)
+      VALUES (@placeId,@name,@address,@category,@phonePublic,@email,@whatsapp,@notes,@source,@instagramUrl,@facebookUrl,@tiktokUrl,@whatsappGroupUrl,@createdBy)
       ON CONFLICT(place_id) DO UPDATE SET name=excluded.name,address=excluded.address,category=excluded.category,
       phone_public=excluded.phone_public,email=excluded.email,whatsapp=excluded.whatsapp,notes=excluded.notes,
-      instagram_url=excluded.instagram_url,facebook_url=excluded.facebook_url,tiktok_url=excluded.tiktok_url,
+      instagram_url=excluded.instagram_url,facebook_url=excluded.facebook_url,tiktok_url=excluded.tiktok_url,whatsapp_group_url=excluded.whatsapp_group_url,
       updated_at=CURRENT_TIMESTAMP`).run({
         placeId, name, address: cleanText(req.body?.address, 300), category: cleanText(req.body?.category, 100),
         phonePublic: cleanPhone(req.body?.phonePublic), email, whatsapp: cleanPhone(req.body?.whatsapp),
-        notes: cleanText(req.body?.notes, 1200), source, instagramUrl, facebookUrl, tiktokUrl,
+        notes: cleanText(req.body?.notes, 1200), source, instagramUrl, facebookUrl, tiktokUrl, whatsappGroupUrl,
         createdBy: req.user.id
       });
     return res.status(201).json({ ok: true });

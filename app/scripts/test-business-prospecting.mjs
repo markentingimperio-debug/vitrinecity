@@ -7,9 +7,11 @@ const contacts = extractPublicBusinessContacts(`
   <a href="https://www.facebook.com/empresa">Facebook</a>
   <a href="https://www.tiktok.com/@empresa">TikTok</a>
   <a href="https://wa.me/5562999999999?text=Oi">WhatsApp</a>
+  <a href="https://chat.whatsapp.com/ConvitePublico123">Grupo público</a>
 `);
 assert.deepEqual(contacts, {
   email: 'comercial@empresa.com.br', whatsapp: '5562999999999',
+  whatsappGroupUrl: 'https://chat.whatsapp.com/ConvitePublico123',
   instagramUrl: 'https://instagram.com/empresa', facebookUrl: 'https://www.facebook.com/empresa',
   tiktokUrl: 'https://www.tiktok.com/@empresa'
 });
