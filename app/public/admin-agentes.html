@@ -344,6 +344,184 @@
       .network i:nth-child(3) {
         animation-delay: 0.5s;
       }
+      .neural-core {
+        position: relative;
+        display: grid;
+        grid-template-columns: minmax(220px, 0.65fr) minmax(0, 1.35fr);
+        min-height: 250px;
+        padding: 22px;
+        border-bottom: 1px solid #1b4668;
+        background:
+          radial-gradient(circle at 24% 50%, #4a38a744, transparent 24%),
+          linear-gradient(120deg, #061429, #092641);
+        overflow: hidden;
+      }
+      .brain-stage {
+        position: relative;
+        display: grid;
+        place-items: center;
+        min-height: 205px;
+      }
+      .brain-orbit {
+        position: absolute;
+        width: 178px;
+        height: 178px;
+        border: 1px solid #704cff88;
+        border-radius: 50%;
+        animation: orbit 9s linear infinite;
+      }
+      .brain-orbit:before,
+      .brain-orbit:after {
+        content: "";
+        position: absolute;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--cyan);
+        box-shadow: 0 0 16px var(--cyan);
+      }
+      .brain-orbit:before {
+        left: 19px;
+        top: 20px;
+      }
+      .brain-orbit:after {
+        right: 5px;
+        bottom: 50px;
+        background: var(--violet);
+      }
+      .brain-shell {
+        position: relative;
+        z-index: 2;
+        display: grid;
+        place-items: center;
+        width: 132px;
+        height: 118px;
+        padding: 18px;
+        text-align: center;
+        border: 1px solid #6d8dff;
+        border-radius: 48% 52% 45% 55% / 58% 48% 52% 42%;
+        background:
+          radial-gradient(circle at 35% 34%, #72f2ff55 0 3px, transparent 4px),
+          radial-gradient(circle at 67% 28%, #b27cff66 0 3px, transparent 4px),
+          radial-gradient(circle at 58% 68%, #72f2ff55 0 3px, transparent 4px),
+          linear-gradient(145deg, #1a78b9, #492584);
+        box-shadow:
+          0 0 28px #47e8ff55,
+          inset 0 0 25px #b983ff55;
+        animation: brain 2.2s ease-in-out infinite;
+      }
+      .brain-shell strong {
+        display: block;
+        font-size: 12px;
+      }
+      .brain-shell span {
+        display: block;
+        margin-top: 4px;
+        color: #c9f8ff;
+        font-size: 8px;
+        letter-spacing: 1px;
+      }
+      .brain-caption {
+        position: absolute;
+        bottom: 0;
+        color: var(--muted);
+        font-size: 9px;
+      }
+      .neural-console {
+        position: relative;
+        z-index: 2;
+        padding: 3px 0 3px 18px;
+      }
+      .neural-console h2 {
+        margin: 0 0 4px;
+        font-size: 16px;
+      }
+      .neural-console > p {
+        margin: 0 0 13px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .brain-focus {
+        margin-bottom: 12px;
+        padding: 9px 11px;
+        border: 1px solid #4b4f9b;
+        border-radius: 10px;
+        background: #221b4d88;
+      }
+      .brain-focus small {
+        display: block;
+        color: #a99fff;
+        font-size: 8px;
+        letter-spacing: 1.2px;
+      }
+      .brain-focus strong {
+        display: block;
+        margin-top: 4px;
+        font-size: 11px;
+      }
+      .neural-lanes {
+        display: grid;
+        gap: 6px;
+      }
+      .neural-lane {
+        display: grid;
+        grid-template-columns: 86px 1fr minmax(90px, auto);
+        align-items: center;
+        gap: 8px;
+        font-size: 9px;
+      }
+      .neural-lane b {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .axon {
+        position: relative;
+        height: 3px;
+        border-radius: 5px;
+        background: #173753;
+        overflow: visible;
+      }
+      .axon:before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          var(--lane, #47e8ff),
+          transparent
+        );
+        opacity: 0.45;
+      }
+      .neural-lane.busy .axon:after,
+      .neural-lane.queued .axon:after {
+        content: "";
+        position: absolute;
+        top: -3px;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 0 13px var(--lane, #47e8ff);
+        animation: impulse 1.8s linear infinite;
+      }
+      .neural-lane.queued .axon:after {
+        animation-duration: 3.2s;
+        opacity: 0.7;
+      }
+      .lane-state {
+        color: #85c8e4;
+        text-align: right;
+        white-space: nowrap;
+      }
+      .neural-lane.busy .lane-state {
+        color: var(--green);
+      }
+      .neural-lane.approval .lane-state {
+        color: var(--amber);
+      }
       .floor {
         position: relative;
         display: grid;
@@ -702,6 +880,25 @@
           box-shadow: 0 0 13px #47e8ff;
         }
       }
+      @keyframes orbit {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @keyframes brain {
+        50% {
+          transform: scale(1.045);
+          filter: brightness(1.18);
+        }
+      }
+      @keyframes impulse {
+        from {
+          left: 0;
+        }
+        to {
+          left: calc(100% - 8px);
+        }
+      }
       @media (max-width: 1050px) {
         .shell {
           grid-template-columns: 1fr;
@@ -738,6 +935,12 @@
         }
         .metrics {
           grid-template-columns: repeat(2, 1fr);
+        }
+        .neural-core {
+          grid-template-columns: 1fr;
+        }
+        .neural-console {
+          padding: 18px 0 0;
         }
         .boardroom {
           grid-template-columns: 1fr;
@@ -787,6 +990,13 @@
         }
         .control {
           grid-template-columns: 1fr;
+        }
+        .neural-lane {
+          grid-template-columns: 68px 1fr;
+        }
+        .lane-state {
+          grid-column: 2;
+          text-align: left;
         }
         .row {
           grid-template-columns: 1fr;
@@ -898,6 +1108,36 @@
                 <i></i><i></i><i></i>
               </div>
             </div>
+            <section
+              class="neural-core"
+              aria-label="Cérebro central e impulsos da equipe"
+            >
+              <div class="brain-stage">
+                <div class="brain-orbit" aria-hidden="true"></div>
+                <div class="brain-shell">
+                  <div>
+                    <strong>CODEX + IA</strong><span>CÉREBRO GESTOR</span>
+                  </div>
+                </div>
+                <span class="brain-caption"
+                  ><span class="pulse"></span>Orquestração ativa</span
+                >
+              </div>
+              <div class="neural-console">
+                <span class="eyebrow">SINAPSES OPERACIONAIS</span>
+                <h2>Impulsos para os departamentos</h2>
+                <p>
+                  Cada pulso representa uma missão real circulando pela empresa.
+                </p>
+                <div class="brain-focus">
+                  <small>PRIORIDADE EM FOCO</small
+                  ><strong id="brainFocus"
+                    >Aguardando leitura da operação…</strong
+                  >
+                </div>
+                <div class="neural-lanes" id="neuralLanes"></div>
+              </div>
+            </section>
             <div class="flow" aria-hidden="true">
               <i class="flow-dot"></i><i class="flow-dot"></i
               ><i class="flow-dot"></i>
@@ -1062,6 +1302,38 @@
         $("#mDone").textContent = tasks.filter(
           (t) => t.status === "completed",
         ).length;
+        const openTasks = tasks.filter((t) =>
+          ["queued", "in_progress", "awaiting_approval"].includes(t.status),
+        );
+        const priorityTask =
+          openTasks.find(
+            (t) => t.priority === "high" && t.status === "in_progress",
+          ) ||
+          openTasks.find((t) => t.status === "in_progress") ||
+          openTasks.find((t) => t.priority === "high") ||
+          openTasks[0];
+        $("#brainFocus").textContent = priorityTask
+          ? `${priorityTask.title} · ${priorityTask.agent_name}`
+          : "Monitorar o ecossistema e aguardar uma nova missão";
+        $("#neuralLanes").innerHTML = agents
+          .map((a) => {
+            const task = openTasks.find((t) => t.agent_id === a.id);
+            const laneClass =
+              task?.status === "in_progress"
+                ? "busy"
+                : task?.status === "queued"
+                  ? "queued"
+                  : task?.status === "awaiting_approval"
+                    ? "approval"
+                    : "";
+            const laneState = task
+              ? `${labels[task.status]} · ${task.title}`
+              : a.status === "active"
+                ? "Escutando a rede"
+                : "Conexão pausada";
+            return `<div class="neural-lane ${laneClass}" style="--lane:${colors[a.code] || "#47e8ff"}"><b>${esc(a.name.replace("Agente de ", ""))}</b><i class="axon"></i><span class="lane-state">${esc(laneState)}</span></div>`;
+          })
+          .join("");
         Object.values(floors).forEach((id, i, all) => {
           if (all.indexOf(id) === i) $("#" + id).innerHTML = "";
         });
