@@ -884,6 +884,8 @@ CREATE TABLE IF NOT EXISTS tiktok_oauth_account (
   scopes TEXT, expires_at INTEGER, refresh_expires_at INTEGER, status TEXT NOT NULL DEFAULT 'connected',
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`);
+ensureColumn('tiktok_app_settings','environment',"TEXT NOT NULL DEFAULT 'sandbox'");
+ensureColumn('tiktok_oauth_states','user_id','INTEGER REFERENCES users(id) ON DELETE CASCADE');
 db.exec(`CREATE TABLE IF NOT EXISTS social_webhook_events (
   id INTEGER PRIMARY KEY,
   object_type TEXT NOT NULL,
