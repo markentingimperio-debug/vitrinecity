@@ -793,6 +793,15 @@ db.exec(`CREATE TABLE IF NOT EXISTS admin_business_reviews (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_admin_business_reviews_created ON admin_business_reviews(id DESC);`);
+db.exec(`CREATE TABLE IF NOT EXISTS social_growth_plans (
+  id INTEGER PRIMARY KEY,
+  created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  objective TEXT NOT NULL,
+  budget_cents INTEGER NOT NULL DEFAULT 0,
+  analysis TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_social_growth_plans_created ON social_growth_plans(id DESC);`);
 const defaultSpecialistAgents = [
   ['gestora','IA Gestora','Coordenação','Define prioridades, delega e consolida o resumo executivo.'],
   ['atendimento','Agente de Atendimento','Relacionamento','Prepara respostas e identifica casos que precisam de atenção humana.'],
@@ -1341,15 +1350,15 @@ function recordAdminLogin(req,email,success,reason){
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
   if (!user) {
-    if (req.path === '/admin' || req.path === '/admin.html' || req.path === '/admin-agentes.html') return res.redirect(302, '/admin-login.html');
+    if (req.path === '/admin' || req.path === '/admin.html' || req.path === '/admin-agentes.html' || req.path === '/admin-growth.html') return res.redirect(302, '/admin-login.html');
     return res.status(401).json({ error: 'Entre na conta administrativa.' });
   }
   if (!isAdministrativeUser(user)) {
-    if(req.path==='/admin'||req.path==='/admin.html'||req.path==='/admin-agentes.html')return res.redirect(302,'/admin-login.html?erro=restrito');
+    if(req.path==='/admin'||req.path==='/admin.html'||req.path==='/admin-agentes.html'||req.path==='/admin-growth.html')return res.redirect(302,'/admin-login.html?erro=restrito');
     return res.status(403).json({ error: 'Acesso restrito à administração.' });
   }
   if(user.totp_enabled&&!privilegedSession(req,'admin')){
-    if(req.path==='/admin'||req.path==='/admin.html'||req.path==='/admin-agentes.html')return res.redirect(302,'/admin-login.html?erro=2fa');
+    if(req.path==='/admin'||req.path==='/admin.html'||req.path==='/admin-agentes.html'||req.path==='/admin-growth.html')return res.redirect(302,'/admin-login.html?erro=2fa');
     return res.status(401).json({error:'Confirme o segundo fator administrativo.'});
   }
   req.user = user;
@@ -1804,6 +1813,7 @@ app.get(['/perfil', '/perfil-social.html'], enhancedPublicPage('perfil-social.ht
 app.get('/chat-social.html', enhancedPublicPage('chat-social.html'));
 app.get('/admin-social-moderacao.html', enhancedPublicPage('admin-social-moderacao.html', ['/admin-moderation-enhanced.js']));
 app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
+app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
 app.get('/recursos-social.html', enhancedPublicPage('recursos-social.html'));
 app.get('/cidade', publicPage('cidade-exploravel.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
@@ -3205,7 +3215,7 @@ const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const AI_PUBLIC_ROOT = path.resolve(dir, 'public');
 const AI_BLOCKED_PAGES = new Set([
-  'admin.html', 'admin-agentes.html', 'admin-lojas.html', 'carteira.html', 'painel-lojista.html',
+  'admin.html', 'admin-agentes.html', 'admin-growth.html', 'admin-lojas.html', 'carteira.html', 'painel-lojista.html',
   'painel-afiliado.html', 'pagamento.html', 'curso-player.html'
 ]);
 
@@ -6410,6 +6420,59 @@ app.get('/api/admin/social/intelligence/status', requireAdmin, (_req,res) => {
   return res.json({engine:activeAlgorithm.version,generatedAt:new Date().toISOString(),
     internal,overview,daily,categories,growing,providers,newCreators,cities,alerts,
     algorithm:{currentVersion:activeAlgorithm.version,description:activeAlgorithm.description,config:activeAlgorithm.config,limits:SOCIAL_ALGORITHM_LIMITS,versions}});
+});
+
+function socialGrowthSnapshot(){
+  const internal=db.prepare(`SELECT COUNT(DISTINCT post_id) contents,COALESCE(SUM(impressions),0) views,
+    COALESCE(SUM(profile_clicks+cta_clicks),0) clicks,COALESCE(SUM(completions),0) completions,
+    COALESCE(SUM(skips),0) skips FROM social_engagement_events`).get();
+  const external=db.prepare(`SELECT provider,COUNT(*) contents,COALESCE(SUM(views),0) views,
+    COALESCE(SUM(clicks),0) clicks,COALESCE(SUM(conversions),0) conversions,MAX(updated_at) updatedAt
+    FROM social_external_insights GROUP BY provider ORDER BY provider`).all();
+  const categories=db.prepare(`SELECT p.category,COALESCE(SUM(e.impressions),0) views,
+    COALESCE(SUM(e.completions),0) completions,COALESCE(SUM(e.cta_clicks),0) clicks
+    FROM social_posts p LEFT JOIN social_engagement_events e ON e.post_id=p.id
+    WHERE p.status='ready' GROUP BY p.category ORDER BY views DESC LIMIT 10`).all();
+  const campaigns=db.prepare(`SELECT campaign_channel channel,COUNT(*) campaigns,
+    COALESCE(SUM((SELECT SUM(cost_units) FROM ad_delivery_events e WHERE e.campaign_id=ad_campaigns.id AND e.event_type='click')),0) spentUnits,
+    COALESCE(SUM((SELECT SUM(value_cents) FROM ad_campaign_conversions c WHERE c.campaign_id=ad_campaigns.id AND c.status='approved')),0) salesCents
+    FROM ad_campaigns GROUP BY campaign_channel`).all().map(row=>({...row,
+      spentCents:Math.round(Number(row.spentUnits||0)/9.6),
+      roas:Number(row.spentUnits||0)>0?Number((Number(row.salesCents||0)/(Number(row.spentUnits)/9.6)).toFixed(2)):null}));
+  const connected=externalMetricsProviderStatus(socialMetricsEnv(),{
+    facebook:Boolean(db.prepare("SELECT 1 FROM social_accounts WHERE status='connected' LIMIT 1").get()),
+    instagram:Boolean(db.prepare("SELECT 1 FROM social_accounts WHERE status='connected' AND instagram_id IS NOT NULL LIMIT 1").get())
+  });
+  return {generatedAt:new Date().toISOString(),internal:{provider:'vitrinecity',...internal},external,categories,campaigns,connected};
+}
+
+app.get('/api/admin/social/intelligence/growth',requireAdmin,(_req,res)=>{
+  const latest=db.prepare(`SELECT id,objective,budget_cents budgetCents,analysis,created_at createdAt
+    FROM social_growth_plans ORDER BY id DESC LIMIT 1`).get()||null;
+  return res.json({...socialGrowthSnapshot(),latest});
+});
+
+app.post('/api/admin/social/intelligence/growth-plan',requireAdmin,sameOriginOnly,async(req,res)=>{
+  if(!process.env.OPENAI_API_KEY)return res.status(503).json({error:'Configure a IA para gerar o plano omnichannel.'});
+  if(!allowAttempt(aiAttempts,`growth-plan:${req.user.id}`,8,10*60*1000))
+    return res.status(429).json({error:'Limite temporário de planos atingido. Aguarde alguns minutos.'});
+  const objective=String(req.body?.objective||'').trim(),budgetCents=Math.max(0,Math.min(100000000,Math.round(Number(req.body?.budget||0)*100)));
+  if(objective.length<10||objective.length>3000)return res.status(400).json({error:'Descreva o objetivo em pelo menos 10 caracteres.'});
+  const snapshot=socialGrowthSnapshot();
+  const instructions=`Você é o Conselho de Crescimento Omnichannel da VitrineCity. Responda em português do Brasil usando somente os dados agregados fornecidos. Nunca invente métricas nem prometa viralização, vendas ou ROAS. Quando faltarem dados ou conexão oficial, diga claramente "dados insuficientes".
+Crie um plano prático com os títulos exatos: DIAGNÓSTICO, INSTAGRAM, FACEBOOK, TIKTOK, YOUTUBE, VITRINECITY SOCIAL, SITE E SEO, FUNIL DE VENDAS, MÍDIA PAGA E ROAS, CALENDÁRIO DE 7 DIAS, TESTES E MÉTRICAS, PRÓXIMA DECISÃO.
+Para cada canal, recomende formato, tema, gancho, CTA, destino no site e métrica de sucesso. Compare os sinais entre canais sem assumir que seus algoritmos são iguais. Em mídia paga, trate orçamento como limite e proponha teste pequeno, critério de pausa e cálculo de ROAS. Diferencie alcance, clique, lead e venda. Não recomende spam, compra de seguidores, automação não autorizada ou coleta de dados pessoais.`;
+  try{
+    const data=await requestOpenAI({model:OPENAI_MODEL,instructions,
+      input:`OBJETIVO:\n${objective}\nORÇAMENTO MÁXIMO INFORMADO: R$ ${(budgetCents/100).toFixed(2)}\nDADOS DISPONÍVEIS:\n${JSON.stringify(snapshot)}`,
+      max_output_tokens:2200,store:false});
+    const analysis=responseOutputText(data).trim();
+    if(!analysis)return res.status(502).json({error:'A IA não concluiu o plano. Tente novamente.'});
+    const result=db.prepare(`INSERT INTO social_growth_plans(created_by_user_id,objective,budget_cents,analysis)
+      VALUES (?,?,?,?)`).run(req.user.id,objective,budgetCents,analysis.slice(0,30000));
+    return res.status(201).json({plan:{id:Number(result.lastInsertRowid),objective,budgetCents,analysis,createdAt:new Date().toISOString()}});
+  }catch(error){console.error('Social growth plan unavailable',error?.message||'unknown');
+    return res.status(502).json({error:'Não foi possível gerar o plano agora. Verifique a IA e tente novamente.'});}
 });
 
 const SOCIAL_ALGORITHM_LIMITS=Object.freeze({engagementMultiplier:[0.2,3],completionWeight:[0,50],watchMultiplier:[0.2,3],

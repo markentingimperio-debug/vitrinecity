@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>Growth Command | VitrineCity</title>
+    <style>
+      :root {
+        --bg: #030914;
+        --panel: #09182b;
+        --line: #1a3957;
+        --text: #eff9ff;
+        --muted: #87a5be;
+        --cyan: #43e4ff;
+        --green: #45e5a5;
+        --violet: #9a78ff;
+        --amber: #ffc75a;
+        --red: #ff6f86;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        font-family: Inter, system-ui, sans-serif;
+        background:
+          radial-gradient(circle at 78% 0, #173a6855, transparent 25%),
+          var(--bg);
+      }
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+      .shell {
+        display: grid;
+        grid-template-columns: 245px 1fr;
+        min-height: 100vh;
+      }
+      .side {
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        padding: 24px 16px;
+        background: #04101f;
+        border-right: 1px solid var(--line);
+      }
+      .brand {
+        padding: 0 9px 20px;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand strong {
+        display: block;
+        font-size: 19px;
+      }
+      .brand span {
+        display: block;
+        margin-top: 5px;
+        color: var(--cyan);
+        font-size: 9px;
+        letter-spacing: 2px;
+      }
+      .nav {
+        display: grid;
+        gap: 6px;
+        margin-top: 20px;
+      }
+      .nav a {
+        padding: 10px;
+        color: #a8c5da;
+        text-decoration: none;
+        border-radius: 10px;
+        font-size: 12px;
+        font-weight: 750;
+      }
+      .nav a:hover,
+      .nav a.active {
+        color: #fff;
+        background: #173755;
+      }
+      .nav small {
+        margin: 16px 10px 3px;
+        color: #517593;
+        font-size: 9px;
+        letter-spacing: 1.4px;
+      }
+      .live {
+        position: absolute;
+        bottom: 22px;
+        left: 18px;
+        right: 18px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        color: var(--green);
+        font-size: 10px;
+      }
+      .dot {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        margin-right: 7px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 12px var(--green);
+      }
+      main {
+        min-width: 0;
+        padding: 25px 3vw 60px;
+      }
+      .top {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        align-items: end;
+        margin-bottom: 20px;
+      }
+      .eyebrow {
+        color: var(--cyan);
+        font-size: 9px;
+        font-weight: 900;
+        letter-spacing: 2px;
+      }
+      .top h1 {
+        margin: 5px 0 4px;
+        font-size: clamp(28px, 4vw, 45px);
+        letter-spacing: -1.6px;
+      }
+      .top p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .sync-link {
+        padding: 10px 13px;
+        border: 1px solid #32688d;
+        border-radius: 10px;
+        color: #bce8fa;
+        text-decoration: none;
+        font-size: 11px;
+        font-weight: 850;
+      }
+      .kpis {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 10px;
+        margin-bottom: 15px;
+      }
+      .kpi {
+        padding: 15px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: linear-gradient(145deg, #0c2138, #071326);
+      }
+      .kpi small {
+        display: block;
+        color: var(--muted);
+        font-size: 9px;
+        text-transform: uppercase;
+      }
+      .kpi strong {
+        display: block;
+        margin: 7px 0 2px;
+        font-size: 23px;
+      }
+      .kpi span {
+        font-size: 9px;
+        color: #75bdd9;
+      }
+      .channels {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin-bottom: 15px;
+      }
+      .channel {
+        position: relative;
+        overflow: hidden;
+        padding: 15px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+      }
+      .channel:after {
+        content: "";
+        position: absolute;
+        right: -25px;
+        top: -25px;
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: var(--accent, #43e4ff);
+        filter: blur(35px);
+        opacity: 0.22;
+      }
+      .channel-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .channel h2 {
+        font-size: 14px;
+        margin: 0;
+      }
+      .state {
+        font-size: 8px;
+        font-weight: 900;
+        color: var(--amber);
+      }
+      .state.ok {
+        color: var(--green);
+      }
+      .channel dl {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 7px;
+        margin: 15px 0 0;
+      }
+      .channel dt {
+        color: var(--muted);
+        font-size: 8px;
+      }
+      .channel dd {
+        margin: 3px 0 0;
+        font-size: 14px;
+        font-weight: 900;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(320px, 0.7fr) minmax(0, 1.3fr);
+        gap: 15px;
+      }
+      .panel {
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 17px;
+        background: linear-gradient(145deg, #0b2037, #061225);
+      }
+      .panel h2 {
+        margin: 0 0 5px;
+        font-size: 17px;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1.5;
+      }
+      .field {
+        display: block;
+        margin-top: 11px;
+      }
+      .field span {
+        display: block;
+        color: #8db6d3;
+        font-size: 9px;
+        margin-bottom: 5px;
+      }
+      .field input,
+      .field textarea {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #28516f;
+        border-radius: 9px;
+        background: #030d19;
+        color: #fff;
+        outline: none;
+      }
+      .field textarea {
+        min-height: 115px;
+        resize: vertical;
+      }
+      .field input:focus,
+      .field textarea:focus {
+        border-color: var(--cyan);
+        box-shadow: 0 0 0 3px #43e4ff15;
+      }
+      .btn {
+        width: 100%;
+        margin-top: 12px;
+        padding: 11px;
+        border: 0;
+        border-radius: 10px;
+        color: white;
+        background: linear-gradient(110deg, #158acb, #7253ed);
+        font-weight: 900;
+        cursor: pointer;
+      }
+      .btn:disabled {
+        opacity: 0.55;
+        cursor: wait;
+      }
+      .report {
+        min-height: 365px;
+        max-height: 680px;
+        overflow: auto;
+      }
+      .report-empty {
+        display: grid;
+        place-items: center;
+        min-height: 330px;
+        text-align: center;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.6;
+      }
+      .report-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding-bottom: 12px;
+        margin-bottom: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .report-head strong {
+        display: block;
+      }
+      .report-head span {
+        color: var(--cyan);
+        font-size: 9px;
+      }
+      .report-body {
+        white-space: pre-wrap;
+        color: #cbe0ee;
+        font-size: 12px;
+        line-height: 1.7;
+      }
+      .compare {
+        margin-top: 15px;
+      }
+      .compare-row {
+        display: grid;
+        grid-template-columns: 150px repeat(4, 1fr);
+        gap: 8px;
+        padding: 8px;
+        border-bottom: 1px solid #14334e;
+        font-size: 10px;
+      }
+      .compare-row.head {
+        color: var(--muted);
+        font-size: 8px;
+        text-transform: uppercase;
+      }
+      .good {
+        color: var(--green);
+      }
+      .warn {
+        color: var(--amber);
+      }
+      .toast {
+        position: fixed;
+        right: 20px;
+        bottom: 20px;
+        padding: 12px 15px;
+        border: 1px solid #2f7190;
+        border-radius: 10px;
+        background: #0b2a42;
+        transform: translateY(100px);
+        opacity: 0;
+        transition: 0.25s;
+      }
+      .toast.show {
+        transform: none;
+        opacity: 1;
+      }
+      .toast.error {
+        background: #3d1420;
+        border-color: #a44056;
+      }
+      @media (max-width: 1050px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+        .side {
+          position: relative;
+          height: auto;
+          display: flex;
+          overflow: auto;
+          padding: 12px;
+        }
+        .brand {
+          min-width: 180px;
+          border: 0;
+          padding: 7px;
+        }
+        .nav {
+          display: flex;
+          margin: 0;
+        }
+        .nav small,
+        .live {
+          display: none;
+        }
+        .nav a {
+          white-space: nowrap;
+        }
+        .kpis {
+          grid-template-columns: repeat(3, 1fr);
+        }
+        .channels {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+      @media (max-width: 720px) {
+        main {
+          padding: 18px 12px 40px;
+        }
+        .top {
+          display: block;
+        }
+        .sync-link {
+          display: inline-block;
+          margin-top: 12px;
+        }
+        .kpis {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .channels,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .compare {
+          overflow: auto;
+        }
+        .compare-row {
+          min-width: 620px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="side">
+        <div class="brand">
+          <strong>▰ VitrineCity</strong><span>GROWTH COMMAND</span>
+        </div>
+        <nav class="nav">
+          <small>COMANDO</small><a href="/admin">← Central de gestão</a
+          ><a href="/admin-agentes.html">Edifício Neural</a
+          ><a class="active" href="/admin-growth.html"
+            >Crescimento Omnichannel</a
+          ><small>INTELIGÊNCIA</small
+          ><a href="/admin-intelligence.html">Algoritmo social</a
+          ><a href="/admin-integracoes.html">Integrações</a
+          ><a href="/admin-google-search.html">Google Search</a>
+        </nav>
+        <div class="live">
+          <i class="dot"></i>Monitoramento agregado e supervisionado
+        </div>
+      </aside>
+      <main>
+        <header class="top">
+          <div>
+            <span class="eyebrow">CONTEÚDO → TRÁFEGO → RECEITA</span>
+            <h1>Growth Command</h1>
+            <p>
+              Uma visão de Instagram, Facebook, TikTok, YouTube, VitrineCity
+              Social e site.
+            </p>
+          </div>
+          <a class="sync-link" href="/admin-intelligence.html#conexoes"
+            >Sincronizar fontes oficiais</a
+          >
+        </header>
+        <section class="kpis">
+          <article class="kpi">
+            <small>Visualizações</small><strong id="views">—</strong
+            ><span>todos os canais medidos</span>
+          </article>
+          <article class="kpi">
+            <small>Cliques</small><strong id="clicks">—</strong
+            ><span>interesse gerado</span>
+          </article>
+          <article class="kpi">
+            <small>Conversões</small><strong id="conversions">—</strong
+            ><span>resultados importados</span>
+          </article>
+          <article class="kpi">
+            <small>CTR agregado</small><strong id="ctr">—</strong
+            ><span>cliques ÷ visualizações</span>
+          </article>
+          <article class="kpi">
+            <small>Melhor ROAS</small><strong id="roas">—</strong
+            ><span>receita ÷ mídia medida</span>
+          </article>
+        </section>
+        <section class="channels" id="channels">
+          <article class="channel">Carregando canais…</article>
+        </section>
+        <section class="grid">
+          <article class="panel">
+            <span class="eyebrow">CONSELHO DE CRESCIMENTO</span>
+            <h2>Gerar plano omnichannel</h2>
+            <p class="hint">
+              A IA compara sinais reais, respeita as diferenças entre algoritmos
+              e cria recomendações específicas. Viralização e retorno não são
+              garantidos.
+            </p>
+            <form id="planForm">
+              <label class="field"
+                ><span>Objetivo principal</span
+                ><textarea
+                  id="objective"
+                  maxlength="3000"
+                  required
+                  placeholder="Ex.: aumentar vendas das lojas locais e levar o público das redes para páginas de produtos da VitrineCity."
+                ></textarea></label
+              ><label class="field"
+                ><span>Orçamento máximo para testes (R$)</span
+                ><input
+                  id="budget"
+                  type="number"
+                  min="0"
+                  max="1000000"
+                  step="0.01"
+                  value="0" /></label
+              ><button class="btn" type="submit">
+                Analisar tudo e criar estratégia
+              </button>
+            </form>
+            <div class="compare">
+              <h2 style="margin-top: 18px">Comparação do algoritmo</h2>
+              <p class="hint">
+                Versões da VitrineCity Social e seus resultados medidos.
+              </p>
+              <div id="versions"></div>
+            </div>
+          </article>
+          <article class="panel report" id="report">
+            <div class="report-empty">Conectando os sinais do ecossistema…</div>
+          </article>
+        </section>
+      </main>
+    </div>
+    <div class="toast" id="toast"></div>
+    <script>
+      const $ = (s) => document.querySelector(s),
+        nf = new Intl.NumberFormat("pt-BR"),
+        pct = (n) => (Number(n || 0) * 100).toFixed(1) + "%";
+      const esc = (v) =>
+        String(v ?? "").replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+      async function api(url, options) {
+        const r = await fetch(url, options),
+          d = await r.json().catch(() => ({}));
+        if (r.status === 401 || r.status === 403) {
+          location.href = "/admin-login.html?returnTo=%2Fadmin-growth.html";
+          throw Error("Acesso administrativo necessário.");
+        }
+        if (!r.ok) throw Error(d.error || "Não foi possível carregar.");
+        return d;
+      }
+      function toast(m, error = false) {
+        const t = $("#toast");
+        t.textContent = m;
+        t.className = "toast show" + (error ? " error" : "");
+        clearTimeout(t.timer);
+        t.timer = setTimeout(() => (t.className = "toast"), 2800);
+      }
+      const channelNames = {
+        vitrinecity: "VitrineCity Social",
+        instagram: "Instagram",
+        facebook: "Facebook",
+        tiktok: "TikTok",
+        youtube: "YouTube",
+        google: "Google / Site",
+        kwai: "Kwai",
+      };
+      const accents = {
+        vitrinecity: "#43e4ff",
+        instagram: "#ff66bc",
+        facebook: "#4385ff",
+        tiktok: "#d7fdff",
+        youtube: "#ff5368",
+        google: "#57d991",
+        kwai: "#ff9b48",
+      };
+      function renderPlan(p) {
+        if (!p)
+          return ($("#report").innerHTML =
+            '<div class="report-empty">Os dados estão prontos.<br>Informe seu objetivo para receber um plano por canal, calendário, funil e critérios de ROAS.</div>');
+        $("#report").innerHTML =
+          `<div class="report-head"><div><span>PLANO #${p.id}</span><strong>${esc(p.objective)}</strong></div><span>${new Date(p.createdAt).toLocaleString("pt-BR")}</span></div><div class="report-body">${esc(p.analysis)}</div>`;
+      }
+      async function load() {
+        const [g, s] = await Promise.all([
+          api("/api/admin/social/intelligence/growth"),
+          api("/api/admin/social/intelligence/status"),
+        ]);
+        const rows = [g.internal, ...g.external],
+          totals = rows.reduce(
+            (a, r) => ({
+              views: a.views + Number(r.views || 0),
+              clicks: a.clicks + Number(r.clicks || 0),
+              conversions: a.conversions + Number(r.conversions || 0),
+            }),
+            { views: 0, clicks: 0, conversions: 0 },
+          );
+        $("#views").textContent = nf.format(totals.views);
+        $("#clicks").textContent = nf.format(totals.clicks);
+        $("#conversions").textContent = nf.format(totals.conversions);
+        $("#ctr").textContent = totals.views
+          ? pct(totals.clicks / totals.views)
+          : "—";
+        const best = (g.campaigns || [])
+          .filter((x) => x.roas !== null)
+          .sort((a, b) => b.roas - a.roas)[0];
+        $("#roas").textContent = best ? best.roas.toFixed(2) + "x" : "—";
+        const connected = new Map((g.connected || []).map((x) => [x.id, x]));
+        const data = new Map(rows.map((x) => [x.provider, x]));
+        const ids = [
+          "instagram",
+          "facebook",
+          "tiktok",
+          "youtube",
+          "vitrinecity",
+          "google",
+        ];
+        $("#channels").innerHTML = ids
+          .map((id) => {
+            const r = data.get(id) || {},
+              ready =
+                id === "vitrinecity" ||
+                Boolean(
+                  connected.get(id)?.configured || connected.get(id)?.ready,
+                );
+            return `<article class="channel" style="--accent:${accents[id]}"><div class="channel-head"><h2>${channelNames[id]}</h2><span class="state ${ready ? "ok" : ""}">${ready ? "DADOS ATIVOS" : "CONECTAR"}</span></div><dl><div><dt>VISUALIZAÇÕES</dt><dd>${nf.format(r.views || 0)}</dd></div><div><dt>CLIQUES</dt><dd>${nf.format(r.clicks || 0)}</dd></div><div><dt>CONVERSÕES</dt><dd>${nf.format(r.conversions || 0)}</dd></div></dl></article>`;
+          })
+          .join("");
+        const versions = s.algorithm?.versions || [];
+        $("#versions").innerHTML =
+          `<div class="compare-row head"><b>Versão</b><span>Retenção</span><span>Conclusão</span><span>CTR</span><span>Conversão</span></div>` +
+          versions
+            .slice(0, 5)
+            .map(
+              (v) =>
+                `<div class="compare-row"><b class="${v.version === s.algorithm.currentVersion ? "good" : ""}">${esc(v.version)}</b><span>${pct(v.retentionRate)}</span><span>${pct(v.completionRate)}</span><span>${pct(v.clickRate)}</span><span>${pct(v.conversionRate)}</span></div>`,
+            )
+            .join("");
+        renderPlan(g.latest);
+      }
+      $("#planForm").onsubmit = async (e) => {
+        e.preventDefault();
+        const b = e.submitter;
+        b.disabled = true;
+        b.textContent = "Conselho analisando os canais…";
+        $("#report").innerHTML =
+          '<div class="report-empty"><span><i class="dot"></i>Cruzando audiência, conteúdo, funil, vendas e mídia paga…</span></div>';
+        try {
+          const d = await api("/api/admin/social/intelligence/growth-plan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              objective: $("#objective").value,
+              budget: Number($("#budget").value || 0),
+            }),
+          });
+          renderPlan(d.plan);
+          toast("Estratégia omnichannel concluída.");
+        } catch (x) {
+          toast(x.message, true);
+          $("#report").innerHTML =
+            '<div class="report-empty">Não foi possível concluir o plano agora.</div>';
+        } finally {
+          b.disabled = false;
+          b.textContent = "Analisar tudo e criar estratégia";
+        }
+      };
+      load().catch((e) => toast(e.message, true));
+    </script>
+  </body>
+</html>
