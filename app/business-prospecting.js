@@ -84,7 +84,17 @@ export function setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly
         mapsUrl: cleanUrl(place.googleMapsUri), rating: Number(place.rating || 0),
         reviews: Number(place.userRatingCount || 0), businessStatus: cleanText(place.businessStatus, 50)
       })).filter(place => place.placeId && place.name);
-      return res.json({ items, source: 'google_places', searchedAt: new Date().toISOString() });
+      const saveLead = db.prepare(`INSERT INTO business_prospects
+        (place_id,name,address,category,phone_public,website_url,maps_url,created_by)
+        VALUES (@placeId,@name,@address,@category,@phonePublic,@websiteUrl,@mapsUrl,@createdBy)
+        ON CONFLICT(place_id) DO UPDATE SET name=excluded.name,address=excluded.address,category=excluded.category,
+        phone_public=excluded.phone_public,website_url=excluded.website_url,maps_url=excluded.maps_url,
+        updated_at=CURRENT_TIMESTAMP`);
+      const saveResults = db.transaction(results => {
+        for (const item of results) saveLead.run({ ...item, createdBy: req.user.id });
+      });
+      saveResults(items);
+      return res.json({ items, autoSaved: items.length, source: 'google_places', searchedAt: new Date().toISOString() });
     } catch (error) { return res.status(502).json({ error: cleanText(error.message, 240) || 'Falha ao consultar o Google Places.' }); }
   });
 
@@ -105,8 +115,11 @@ export function setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly
     db.prepare(`INSERT INTO business_prospects(place_id,name,address,category,phone_public,website_url,maps_url,email,whatsapp,notes,created_by)
       VALUES (@placeId,@name,@address,@category,@phonePublic,@websiteUrl,@mapsUrl,@email,@whatsapp,@notes,@createdBy)
       ON CONFLICT(place_id) DO UPDATE SET name=excluded.name,address=excluded.address,category=excluded.category,
-      phone_public=excluded.phone_public,website_url=excluded.website_url,maps_url=excluded.maps_url,email=excluded.email,
-      whatsapp=excluded.whatsapp,notes=excluded.notes,updated_at=CURRENT_TIMESTAMP`).run({ ...values, createdBy: req.user.id });
+      phone_public=excluded.phone_public,website_url=excluded.website_url,maps_url=excluded.maps_url,
+      email=CASE WHEN excluded.email<>'' THEN excluded.email ELSE business_prospects.email END,
+      whatsapp=CASE WHEN excluded.whatsapp<>'' THEN excluded.whatsapp ELSE business_prospects.whatsapp END,
+      notes=CASE WHEN excluded.notes<>'' THEN excluded.notes ELSE business_prospects.notes END,
+      updated_at=CURRENT_TIMESTAMP`).run({ ...values, createdBy: req.user.id });
     return res.status(201).json({ ok: true });
   });
 
