@@ -871,6 +871,19 @@ db.exec(`CREATE TABLE IF NOT EXISTS social_provider_credentials (
   provider TEXT PRIMARY KEY CHECK(provider IN ('youtube','tiktok','kwai')),
   credentials_encrypted TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`);
+db.exec(`CREATE TABLE IF NOT EXISTS tiktok_app_settings (
+  id INTEGER PRIMARY KEY CHECK(id=1), client_key TEXT NOT NULL, client_secret_encrypted TEXT NOT NULL,
+  environment TEXT NOT NULL DEFAULT 'sandbox', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS tiktok_oauth_states (
+  state_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS tiktok_oauth_account (
+  id INTEGER PRIMARY KEY CHECK(id=1), open_id TEXT, refresh_token_encrypted TEXT,
+  scopes TEXT, expires_at INTEGER, refresh_expires_at INTEGER, status TEXT NOT NULL DEFAULT 'connected',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`);
 db.exec(`CREATE TABLE IF NOT EXISTS social_webhook_events (
   id INTEGER PRIMARY KEY,
   object_type TEXT NOT NULL,
@@ -1350,15 +1363,15 @@ function recordAdminLogin(req,email,success,reason){
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
   if (!user) {
-    if (req.path === '/admin' || req.path === '/admin.html' || req.path === '/admin-agentes.html' || req.path === '/admin-growth.html') return res.redirect(302, '/admin-login.html');
+    if (req.path === '/admin' || req.path === '/admin.html' || req.path === '/admin-agentes.html' || req.path === '/admin-growth.html' || req.path === '/admin-tiktok.html') return res.redirect(302, '/admin-login.html');
     return res.status(401).json({ error: 'Entre na conta administrativa.' });
   }
   if (!isAdministrativeUser(user)) {
-    if(req.path==='/admin'||req.path==='/admin.html'||req.path==='/admin-agentes.html'||req.path==='/admin-growth.html')return res.redirect(302,'/admin-login.html?erro=restrito');
+    if(req.path==='/admin'||req.path==='/admin.html'||req.path==='/admin-agentes.html'||req.path==='/admin-growth.html'||req.path==='/admin-tiktok.html')return res.redirect(302,'/admin-login.html?erro=restrito');
     return res.status(403).json({ error: 'Acesso restrito à administração.' });
   }
   if(user.totp_enabled&&!privilegedSession(req,'admin')){
-    if(req.path==='/admin'||req.path==='/admin.html'||req.path==='/admin-agentes.html'||req.path==='/admin-growth.html')return res.redirect(302,'/admin-login.html?erro=2fa');
+    if(req.path==='/admin'||req.path==='/admin.html'||req.path==='/admin-agentes.html'||req.path==='/admin-growth.html'||req.path==='/admin-tiktok.html')return res.redirect(302,'/admin-login.html?erro=2fa');
     return res.status(401).json({error:'Confirme o segundo fator administrativo.'});
   }
   req.user = user;
@@ -1814,6 +1827,7 @@ app.get('/chat-social.html', enhancedPublicPage('chat-social.html'));
 app.get('/admin-social-moderacao.html', enhancedPublicPage('admin-social-moderacao.html', ['/admin-moderation-enhanced.js']));
 app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
 app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
+app.get('/admin-tiktok.html',requireAdmin,publicPage('admin-tiktok.html'));
 app.get('/recursos-social.html', enhancedPublicPage('recursos-social.html'));
 app.get('/cidade', publicPage('cidade-exploravel.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
@@ -2668,6 +2682,49 @@ app.put('/api/admin/social/intelligence/credentials/:provider',requireAdmin,same
   return res.json({ok:true,message:`Credenciais de ${provider} protegidas e salvas.`});
 });
 
+function tiktokAppConfig(){const row=db.prepare('SELECT * FROM tiktok_app_settings WHERE id=1').get();if(!row)return {configured:false};
+  try{return {configured:true,clientKey:row.client_key,clientSecret:decryptSocialToken(row.client_secret_encrypted),environment:row.environment};}
+  catch{return {configured:false};}}
+app.get('/api/admin/social/intelligence/tiktok/setup',requireAdmin,(_req,res)=>{
+  const appConfig=tiktokAppConfig(),account=db.prepare('SELECT open_id,scopes,expires_at,status,updated_at FROM tiktok_oauth_account WHERE id=1').get();
+  return res.json({appConfigured:appConfig.configured,environment:appConfig.environment||'sandbox',clientKeyMasked:appConfig.configured?`${appConfig.clientKey.slice(0,4)}…${appConfig.clientKey.slice(-4)}`:null,
+    connected:account?.status==='connected'&&Number(account.expires_at||0)>Date.now(),account:account||null,
+    callback:`${SITE_URL}/api/admin/social/intelligence/tiktok/callback`,connectUrl:'/api/admin/social/intelligence/tiktok/connect'});
+});
+app.put('/api/admin/social/intelligence/tiktok/app',requireAdmin,sameOriginOnly,(req,res)=>{
+  const clientKey=String(req.body?.clientKey||'').trim().slice(0,200),clientSecret=String(req.body?.clientSecret||'').trim().slice(0,500),environment=String(req.body?.environment||'sandbox');
+  if(clientKey.length<8||clientSecret.length<16||!['sandbox','production'].includes(environment))return res.status(400).json({error:'Informe as credenciais válidas do aplicativo TikTok.'});
+  let encrypted;try{encrypted=encryptSocialToken(clientSecret);}catch{return res.status(503).json({error:'A proteção das credenciais sociais não está configurada.'});}
+  db.prepare(`INSERT INTO tiktok_app_settings(id,client_key,client_secret_encrypted,environment) VALUES (1,?,?,?) ON CONFLICT(id)
+    DO UPDATE SET client_key=excluded.client_key,client_secret_encrypted=excluded.client_secret_encrypted,environment=excluded.environment,updated_at=CURRENT_TIMESTAMP`)
+    .run(clientKey,encrypted,environment);
+  return res.json({ok:true,message:'Aplicativo TikTok protegido e salvo.'});
+});
+app.get('/api/admin/social/intelligence/tiktok/connect',requireAdmin,(req,res)=>{
+  const config=tiktokAppConfig();if(!config.configured)return res.redirect(302,'/admin-tiktok.html?erro=app');
+  const state=randomBytes(24).toString('base64url');db.prepare('DELETE FROM tiktok_oauth_states WHERE expires_at<?').run(Date.now());
+  db.prepare('INSERT INTO tiktok_oauth_states(state_hash,user_id,expires_at) VALUES (?,?,?)').run(createHash('sha256').update(state).digest('hex'),req.user.id,Date.now()+10*60*1000);
+  const url=new URL('https://www.tiktok.com/v2/auth/authorize/');url.searchParams.set('client_key',config.clientKey);url.searchParams.set('scope','user.info.basic,video.list');
+  url.searchParams.set('response_type','code');url.searchParams.set('redirect_uri',`${SITE_URL}/api/admin/social/intelligence/tiktok/callback`);url.searchParams.set('state',state);return res.redirect(302,url.toString());
+});
+app.get('/api/admin/social/intelligence/tiktok/callback',requireAdmin,async(req,res)=>{
+  const code=String(req.query.code||''),state=String(req.query.state||''),stateHash=createHash('sha256').update(state).digest('hex');
+  const stored=db.prepare('SELECT user_id,expires_at FROM tiktok_oauth_states WHERE state_hash=?').get(stateHash);db.prepare('DELETE FROM tiktok_oauth_states WHERE state_hash=?').run(stateHash);
+  if(!code||!stored||stored.user_id!==req.user.id||stored.expires_at<Date.now())return res.redirect(302,'/admin-tiktok.html?erro=oauth');
+  const config=tiktokAppConfig();if(!config.configured)return res.redirect(302,'/admin-tiktok.html?erro=app');
+  try{const body=new URLSearchParams({client_key:config.clientKey,client_secret:config.clientSecret,code,grant_type:'authorization_code',redirect_uri:`${SITE_URL}/api/admin/social/intelligence/tiktok/callback`});
+    const response=await fetch('https://open.tiktokapis.com/v2/oauth/token/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body,signal:AbortSignal.timeout(20000)}),data=await response.json().catch(()=>({}));
+    if(!response.ok||!data.access_token)throw new Error(`tiktok_oauth_${response.status}`);
+    const credentials=encryptSocialToken(JSON.stringify({TIKTOK_CONTENT_ACCESS_TOKEN:data.access_token})),refresh=data.refresh_token?encryptSocialToken(data.refresh_token):null;
+    db.transaction(()=>{db.prepare(`INSERT INTO social_provider_credentials(provider,credentials_encrypted) VALUES ('tiktok',?) ON CONFLICT(provider)
+      DO UPDATE SET credentials_encrypted=excluded.credentials_encrypted,updated_at=CURRENT_TIMESTAMP`).run(credentials);
+      db.prepare(`INSERT INTO tiktok_oauth_account(id,open_id,refresh_token_encrypted,scopes,expires_at,refresh_expires_at,status) VALUES (1,?,?,?,?,?,'connected') ON CONFLICT(id)
+      DO UPDATE SET open_id=excluded.open_id,refresh_token_encrypted=excluded.refresh_token_encrypted,scopes=excluded.scopes,expires_at=excluded.expires_at,refresh_expires_at=excluded.refresh_expires_at,status='connected',updated_at=CURRENT_TIMESTAMP`)
+      .run(String(data.open_id||''),refresh,String(data.scope||''),Date.now()+Number(data.expires_in||0)*1000,Date.now()+Number(data.refresh_expires_in||0)*1000);})();
+    return res.redirect(302,'/admin-tiktok.html?conectado=1');
+  }catch(error){console.error('TikTok OAuth failed',String(error?.message||'unknown'));return res.redirect(302,'/admin-tiktok.html?erro=token');}
+});
+
 app.get('/api/admin/identity/setup',requireAdmin,(_req,res)=>{
   const config=ageVerificationConfig(),saved=db.prepare('SELECT provider,start_url,updated_at FROM age_verification_provider_settings WHERE id=1').get();
   return res.json({configured:ageVerificationConfigured(),callback:`${SITE_URL}/api/identity/age-verification/webhook`,settings:saved?{
@@ -3215,7 +3272,7 @@ const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const AI_PUBLIC_ROOT = path.resolve(dir, 'public');
 const AI_BLOCKED_PAGES = new Set([
-  'admin.html', 'admin-agentes.html', 'admin-growth.html', 'admin-lojas.html', 'carteira.html', 'painel-lojista.html',
+  'admin.html', 'admin-agentes.html', 'admin-growth.html', 'admin-tiktok.html', 'admin-lojas.html', 'carteira.html', 'painel-lojista.html',
   'painel-afiliado.html', 'pagamento.html', 'curso-player.html'
 ]);
 
