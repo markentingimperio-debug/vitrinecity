@@ -5875,7 +5875,8 @@ app.get('/api/social/chat/files/:messageId', requireUser, (req, res) => {
 });
 
 app.post('/api/social/uploads', requireActiveSocialUser, sameOriginOnly, async (req, res) => {
-  if (!allowAttempt(socialAttempts, `upload:${req.user.id}`, 8, 24 * 60 * 60 * 1000)) {
+  const officialProfile = isAdministrativeUser(req.user);
+  if (!officialProfile && !allowAttempt(socialAttempts, `upload:${req.user.id}`, 8, 24 * 60 * 60 * 1000)) {
     return res.status(429).json({ error: 'Limite diário de vídeos atingido para esta conta.' });
   }
   const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
