@@ -1,1 +1,409 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Prospecção | VitrineCity</title><style>:root{--n:#071f4b;--b:#1768e6;--l:#d8e5f4;--m:#617590}*{box-sizing:border-box}body{margin:0;background:#f3f7fc;color:var(--n);font:15px/1.5 system-ui}header{padding:18px 5%;background:var(--n);color:#fff;display:flex;justify-content:space-between}header a{color:#fff}main{max-width:1180px;margin:28px auto;padding:0 18px}.card,.item{background:#fff;border:1px solid var(--l);border-radius:16px;padding:18px;margin:0 0 16px}.search,.row{display:flex;gap:9px;flex-wrap:wrap}input,textarea,select,button{font:inherit;padding:10px;border:1px solid #b8cae0;border-radius:9px}input,textarea{min-width:220px;flex:1}button{border:0;background:var(--b);color:white;font-weight:800;cursor:pointer}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}.item h2{font-size:17px;margin:0}.links a{color:var(--b);font-weight:700;margin-right:12px}.muted,small{color:var(--m)}details{margin-top:12px;border-top:1px solid var(--l);padding-top:10px}.notice{background:#fff6dc;border-left:4px solid #e6a900;padding:10px;margin:10px 0}.error{color:#a01717;font-weight:700}.lead{display:grid;grid-template-columns:1.5fr 1fr 150px;gap:10px;border-top:1px solid var(--l);padding:12px 0}.lead:first-child{border:0}@media(max-width:720px){.lead{grid-template-columns:1fr}.search button{width:100%}}</style></head><body><header><b>Central de Convites</b><a href="/admin">← Painel</a></header><main><section class="card"><h1>Buscar empresas</h1><p class="muted">Dados do Google e contatos comerciais conferidos por você. A Central apenas prepara a mensagem e abre o canal escolhido; ela não envia automaticamente.</p><form id="search" class="search"><input id="query" minlength="3" required placeholder="Ex.: clínicas veterinárias em Anápolis, GO"><button>Buscar no Maps</button></form><p id="state" class="muted"></p></section><section id="results" class="grid"></section><section class="card"><h2>Modelo de convite</h2><div class="row"><input id="templateTitle" maxlength="100" placeholder="Título"><button id="saveTemplate" type="button">Salvar modelo</button></div><textarea id="templateBody" rows="4" maxlength="1600" placeholder="Mensagem"></textarea><p class="muted">Use <code>{{empresa}}</code> para inserir o nome da empresa.</p></section><section class="card"><h2>Empresas salvas e convites</h2><div id="leads"><p class="muted">Carregando…</p></div></section></main><script>const $=s=>document.querySelector(s),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let template={code:'convite-inicial',title:'',body:''};const api=async(u,o)=>{const r=await fetch(u,o);if(r.status===401){location.href='/admin-login.html?returnTo=%2Fadmin-prospeccao.html';throw Error('Acesso administrativo necessário.')}const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Não foi possível concluir.');return d};async function loadTemplate(){const d=await api('/api/admin/prospecting/templates');template=d.items.find(x=>x.code==='convite-inicial')||d.items[0];$('#templateTitle').value=template.title;$('#templateBody').value=template.body}function searchCard(p){return `<article class="item"><h2>${esc(p.name)}</h2><small>${esc(p.category||'Empresa')} · ${esc(p.address)}</small><p>${p.phonePublic?`Telefone público: <b>${esc(p.phonePublic)}</b>`:'Sem telefone público'}</p><p class="links">${p.mapsUrl?`<a target="_blank" rel="noopener" href="${esc(p.mapsUrl)}">Google Maps</a>`:''}${p.websiteUrl?`<a target="_blank" rel="noopener" href="${esc(p.websiteUrl)}">Site oficial</a>`:''}</p><details><summary><b>Salvar empresa</b></summary><div class="row"><input class="email" type="email" placeholder="E-mail comercial publicado"><input class="wa" placeholder="WhatsApp comercial publicado"></div><textarea class="notes" maxlength="1200" placeholder="Anotação"></textarea><button type="button" class="save">Salvar para convite</button></details></article>`}function results(items){$('#results').innerHTML=items.map(searchCard).join('')||'<p class="muted">Nenhuma empresa encontrada.</p>';[...document.querySelectorAll('.save')].forEach((b,i)=>b.onclick=async()=>{const card=b.closest('.item');b.disabled=true;try{await api('/api/admin/prospecting/leads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...items[i],email:card.querySelector('.email').value,whatsapp:card.querySelector('.wa').value,notes:card.querySelector('.notes').value})});b.textContent='Salva';await loadLeads()}catch(e){alert(e.message);b.disabled=false}})}function lead(x){return `<article class="lead" data-id="${x.id}"><div><b>${esc(x.name)}</b><br><small>${esc(x.address)}</small><br><small>${esc(x.email||'')} ${esc(x.whatsapp||x.phone_public||'')}</small></div><div><label><input class="confirm" type="checkbox"> Confirmo que este contato foi publicado pela empresa ou autorizou receber o convite.</label><br><select class="channel"><option value="whatsapp">WhatsApp</option><option value="email">E-mail</option></select></div><div><select class="status">${['new','reviewed','contacted','interested','registered','discarded'].map(s=>`<option ${x.status===s?'selected':''}>${s}</option>`).join('')}</select><button class="invite" type="button">Preparar convite</button><button class="update" type="button">Atualizar</button></div></article>`}async function loadLeads(){const d=await api('/api/admin/prospecting/leads');$('#leads').innerHTML=d.items.map(lead).join('')||'<p class="muted">Nenhuma empresa salva ainda.</p>';[...document.querySelectorAll('.lead')].forEach(row=>{row.querySelector('.update').onclick=async()=>{await api('/api/admin/prospecting/leads/'+row.dataset.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:row.querySelector('.status').value,notes:''})});await loadLeads()};row.querySelector('.invite').onclick=async()=>{if(!row.querySelector('.confirm').checked)return alert('Confirme a origem/autorização do contato antes de preparar o convite.');try{const d=await api('/api/admin/prospecting/leads/'+row.dataset.id+'/prepare-invite',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:row.querySelector('.channel').value,templateCode:template.code,contactConfirmed:true})});window.open(d.actionUrl,'_blank','noopener');await loadLeads()}catch(e){alert(e.message)}}})}$('#search').onsubmit=async e=>{e.preventDefault();$('#state').textContent='Buscando…';try{const d=await api('/api/admin/prospecting/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:$('#query').value})});results(d.items);$('#state').textContent=`${d.items.length} empresas encontradas.`}catch(err){$('#state').className='error';$('#state').textContent=err.message}};$('#saveTemplate').onclick=async()=>{await api('/api/admin/prospecting/templates/'+template.code,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:$('#templateTitle').value,body:$('#templateBody').value})});await loadTemplate();alert('Modelo salvo.')};(async()=>{try{const s=await api('/api/admin/prospecting/status');if(!s.configured)$('#state').textContent='Módulo pronto; falta configurar GOOGLE_PLACES_API_KEY no servidor.';await loadTemplate();await loadLeads()}catch(e){$('#state').textContent=e.message}})();</script></body></html>
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>Prospecção | VitrineCity</title>
+    <style>
+      :root {
+        --n: #071f4b;
+        --b: #1768e6;
+        --l: #d8e5f4;
+        --m: #617590;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #f3f7fc;
+        color: var(--n);
+        font: 15px/1.5 system-ui;
+      }
+      header {
+        padding: 18px 5%;
+        background: var(--n);
+        color: #fff;
+        display: flex;
+        justify-content: space-between;
+      }
+      header a {
+        color: #fff;
+      }
+      main {
+        max-width: 1180px;
+        margin: 28px auto;
+        padding: 0 18px;
+      }
+      .card,
+      .item {
+        background: #fff;
+        border: 1px solid var(--l);
+        border-radius: 16px;
+        padding: 18px;
+        margin: 0 0 16px;
+      }
+      .search,
+      .row {
+        display: flex;
+        gap: 9px;
+        flex-wrap: wrap;
+      }
+      input,
+      textarea,
+      select,
+      button {
+        font: inherit;
+        padding: 10px;
+        border: 1px solid #b8cae0;
+        border-radius: 9px;
+      }
+      input,
+      textarea {
+        min-width: 220px;
+        flex: 1;
+      }
+      button {
+        border: 0;
+        background: var(--b);
+        color: white;
+        font-weight: 800;
+        cursor: pointer;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+        gap: 12px;
+      }
+      .item h2 {
+        font-size: 17px;
+        margin: 0;
+      }
+      .links a {
+        color: var(--b);
+        font-weight: 700;
+        margin-right: 12px;
+      }
+      .muted,
+      small {
+        color: var(--m);
+      }
+      details {
+        margin-top: 12px;
+        border-top: 1px solid var(--l);
+        padding-top: 10px;
+      }
+      .notice {
+        background: #fff6dc;
+        border-left: 4px solid #e6a900;
+        padding: 10px;
+        margin: 10px 0;
+      }
+      .error {
+        color: #a01717;
+        font-weight: 700;
+      }
+      .lead {
+        display: grid;
+        grid-template-columns: 1.5fr 1fr 150px;
+        gap: 10px;
+        border-top: 1px solid var(--l);
+        padding: 12px 0;
+      }
+      .lead:first-child {
+        border: 0;
+      }
+      @media (max-width: 720px) {
+        .lead {
+          grid-template-columns: 1fr;
+        }
+        .search button {
+          width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header><b>Central de Convites</b><a href="/admin">← Painel</a></header>
+    <main>
+      <section class="card">
+        <h1>Buscar empresas</h1>
+        <p class="muted">
+          Os resultados do Google são salvos automaticamente na VPS, sem
+          duplicar empresas. A Central apenas prepara a mensagem e abre o canal
+          escolhido; ela não envia automaticamente.
+        </p>
+        <form id="search" class="search">
+          <input
+            id="query"
+            minlength="3"
+            required
+            placeholder="Ex.: clínicas veterinárias em Anápolis, GO"
+          /><button>Buscar no Maps</button>
+        </form>
+        <p id="state" class="muted"></p>
+      </section>
+      <section id="results" class="grid"></section>
+      <section class="card">
+        <h2>Cadastrar perfil empresarial público</h2>
+        <p class="muted">
+          Use somente contatos e perfis publicados pela própria empresa ou
+          profissional.
+        </p>
+        <form id="publicProfile">
+          <div class="row">
+            <input
+              name="name"
+              maxlength="180"
+              required
+              placeholder="Nome da empresa ou profissional"
+            />
+            <input
+              name="category"
+              maxlength="100"
+              placeholder="Categoria: plantas, roupas…"
+            />
+            <input
+              name="address"
+              maxlength="300"
+              placeholder="Cidade ou localização"
+            />
+          </div>
+          <div class="row">
+            <input name="phonePublic" placeholder="Telefone público" />
+            <input name="whatsapp" placeholder="WhatsApp comercial" />
+            <input name="email" type="email" placeholder="E-mail comercial" />
+          </div>
+          <div class="row">
+            <input
+              name="instagramUrl"
+              type="url"
+              placeholder="Link público do Instagram"
+            />
+            <input
+              name="facebookUrl"
+              type="url"
+              placeholder="Link público do Facebook"
+            />
+            <input
+              name="tiktokUrl"
+              type="url"
+              placeholder="Link público do TikTok"
+            />
+          </div>
+          <div class="row">
+            <textarea
+              name="notes"
+              maxlength="1200"
+              placeholder="Observações"
+            ></textarea>
+            <button type="submit">Salvar perfil na VPS</button>
+          </div>
+          <p id="profileState" class="muted"></p>
+        </form>
+      </section>
+      <section class="card">
+        <h2>Modelo de convite</h2>
+        <div class="row">
+          <input
+            id="templateTitle"
+            maxlength="100"
+            placeholder="Título"
+          /><button id="saveTemplate" type="button">Salvar modelo</button>
+        </div>
+        <textarea
+          id="templateBody"
+          rows="4"
+          maxlength="1600"
+          placeholder="Mensagem"
+        ></textarea>
+        <p class="muted">
+          Use <code>{{empresa}}</code> para inserir o nome da empresa.
+        </p>
+      </section>
+      <section class="card">
+        <h2>Empresas salvas e convites</h2>
+        <div id="leads"><p class="muted">Carregando…</p></div>
+      </section>
+    </main>
+    <script>
+      const $ = (s) => document.querySelector(s),
+        esc = (v) =>
+          String(v ?? "").replace(
+            /[&<>"']/g,
+            (c) =>
+              ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;",
+              })[c],
+          );
+      let template = { code: "convite-inicial", title: "", body: "" };
+      const api = async (u, o) => {
+        const r = await fetch(u, o);
+        if (r.status === 401) {
+          location.href = "/admin-login.html?returnTo=%2Fadmin-prospeccao.html";
+          throw Error("Acesso administrativo necessário.");
+        }
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw Error(d.error || "Não foi possível concluir.");
+        return d;
+      };
+      async function loadTemplate() {
+        const d = await api("/api/admin/prospecting/templates");
+        template =
+          d.items.find((x) => x.code === "convite-inicial") || d.items[0];
+        $("#templateTitle").value = template.title;
+        $("#templateBody").value = template.body;
+      }
+      function searchCard(p) {
+        return `<article class="item"><h2>${esc(p.name)}</h2><small>${esc(p.category || "Empresa")} · ${esc(p.address)}</small><p>${p.phonePublic ? `Telefone público: <b>${esc(p.phonePublic)}</b>` : "Sem telefone público"}</p><p class="links">${p.mapsUrl ? `<a target="_blank" rel="noopener" href="${esc(p.mapsUrl)}">Google Maps</a>` : ""}${p.websiteUrl ? `<a target="_blank" rel="noopener" href="${esc(p.websiteUrl)}">Site oficial</a>` : ""}</p><details><summary><b>Adicionar contato comercial</b></summary><div class="row"><input class="email" type="email" placeholder="E-mail comercial publicado"><input class="wa" placeholder="WhatsApp comercial publicado"></div><textarea class="notes" maxlength="1200" placeholder="Anotação"></textarea><button type="button" class="save">Atualizar contato</button></details></article>`;
+      }
+      function results(items) {
+        $("#results").innerHTML =
+          items.map(searchCard).join("") ||
+          '<p class="muted">Nenhuma empresa encontrada.</p>';
+        [...document.querySelectorAll(".save")].forEach(
+          (b, i) =>
+            (b.onclick = async () => {
+              const card = b.closest(".item");
+              b.disabled = true;
+              try {
+                await api("/api/admin/prospecting/leads", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    ...items[i],
+                    email: card.querySelector(".email").value,
+                    whatsapp: card.querySelector(".wa").value,
+                    notes: card.querySelector(".notes").value,
+                  }),
+                });
+                b.textContent = "Atualizado";
+                await loadLeads();
+              } catch (e) {
+                alert(e.message);
+                b.disabled = false;
+              }
+            }),
+        );
+      }
+      function lead(x) {
+        return `<article class="lead" data-id="${x.id}"><div><b>${esc(x.name)}</b><br><small>${esc(x.category || "Empresa")} · ${esc(x.address)}</small><br><small>${esc(x.email || "")} ${esc(x.whatsapp || x.phone_public || "")}</small><br><span class="links">${x.instagram_url ? `<a target="_blank" rel="noopener" href="${esc(x.instagram_url)}">Instagram</a>` : ""}${x.facebook_url ? `<a target="_blank" rel="noopener" href="${esc(x.facebook_url)}">Facebook</a>` : ""}${x.tiktok_url ? `<a target="_blank" rel="noopener" href="${esc(x.tiktok_url)}">TikTok</a>` : ""}</span></div><div><label><input class="confirm" type="checkbox"> Confirmo que este contato foi publicado pela empresa ou autorizou receber o convite.</label><br><select class="channel"><option value="whatsapp">WhatsApp</option><option value="email">E-mail</option></select></div><div><select class="status">${["new", "reviewed", "contacted", "interested", "registered", "discarded"].map((s) => `<option ${x.status === s ? "selected" : ""}>${s}</option>`).join("")}</select><button class="invite" type="button">Preparar convite</button><button class="update" type="button">Atualizar</button></div></article>`;
+      }
+      async function loadLeads() {
+        const d = await api("/api/admin/prospecting/leads");
+        $("#leads").innerHTML =
+          d.items.map(lead).join("") ||
+          '<p class="muted">Nenhuma empresa salva ainda.</p>';
+        [...document.querySelectorAll(".lead")].forEach((row) => {
+          row.querySelector(".update").onclick = async () => {
+            await api("/api/admin/prospecting/leads/" + row.dataset.id, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                status: row.querySelector(".status").value,
+                notes: "",
+              }),
+            });
+            await loadLeads();
+          };
+          row.querySelector(".invite").onclick = async () => {
+            if (!row.querySelector(".confirm").checked)
+              return alert(
+                "Confirme a origem/autorização do contato antes de preparar o convite.",
+              );
+            try {
+              const d = await api(
+                "/api/admin/prospecting/leads/" +
+                  row.dataset.id +
+                  "/prepare-invite",
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    channel: row.querySelector(".channel").value,
+                    templateCode: template.code,
+                    contactConfirmed: true,
+                  }),
+                },
+              );
+              window.open(d.actionUrl, "_blank", "noopener");
+              await loadLeads();
+            } catch (e) {
+              alert(e.message);
+            }
+          };
+        });
+      }
+      $("#search").onsubmit = async (e) => {
+        e.preventDefault();
+        $("#state").textContent = "Buscando…";
+        try {
+          const d = await api("/api/admin/prospecting/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: $("#query").value }),
+          });
+          results(d.items);
+          $("#state").className = "muted";
+          $("#state").textContent =
+            `${d.items.length} empresas encontradas e salvas automaticamente na VPS.`;
+          await loadLeads();
+        } catch (err) {
+          $("#state").className = "error";
+          $("#state").textContent = err.message;
+        }
+      };
+      $("#publicProfile").onsubmit = async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const button = event.submitter;
+        button.disabled = true;
+        $("#profileState").textContent = "Salvando…";
+        try {
+          await api("/api/admin/prospecting/public-profiles", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(Object.fromEntries(new FormData(form))),
+          });
+          form.reset();
+          $("#profileState").textContent = "Perfil empresarial salvo na VPS.";
+          await loadLeads();
+        } catch (error) {
+          $("#profileState").className = "error";
+          $("#profileState").textContent = error.message;
+        } finally {
+          button.disabled = false;
+        }
+      };
+      $("#saveTemplate").onclick = async () => {
+        await api("/api/admin/prospecting/templates/" + template.code, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: $("#templateTitle").value,
+            body: $("#templateBody").value,
+          }),
+        });
+        await loadTemplate();
+        alert("Modelo salvo.");
+      };
+      (async () => {
+        try {
+          const s = await api("/api/admin/prospecting/status");
+          if (!s.configured)
+            $("#state").textContent =
+              "Módulo pronto; falta configurar GOOGLE_PLACES_API_KEY no servidor.";
+          await loadTemplate();
+          await loadLeads();
+        } catch (e) {
+          $("#state").textContent = e.message;
+        }
+      })();
+    </script>
+  </body>
+</html>

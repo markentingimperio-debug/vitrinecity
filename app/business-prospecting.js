@@ -48,6 +48,15 @@ export function setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
   CREATE INDEX IF NOT EXISTS idx_outreach_events_prospect_created ON outreach_events(prospect_id, created_at DESC);`);
+  const prospectColumns = new Set(db.prepare('PRAGMA table_info(business_prospects)').all().map(column => column.name));
+  for (const [name, definition] of [
+    ['source', "TEXT NOT NULL DEFAULT 'google_places'"],
+    ['instagram_url', "TEXT NOT NULL DEFAULT ''"],
+    ['facebook_url', "TEXT NOT NULL DEFAULT ''"],
+    ['tiktok_url', "TEXT NOT NULL DEFAULT ''"]
+  ]) {
+    if (!prospectColumns.has(name)) db.exec(`ALTER TABLE business_prospects ADD COLUMN ${name} ${definition}`);
+  }
   db.prepare(`INSERT OR IGNORE INTO outreach_templates(code,title,body) VALUES (?,?,?)`).run(
     'convite-inicial', 'Convite para a Vitrine City',
     'Olá, {{empresa}}! Encontrei sua empresa e gostaria de convidar você para conhecer a Vitrine City, nossa cidade digital para negócios locais. Posso lhe enviar os detalhes de cadastro?'
@@ -101,6 +110,30 @@ export function setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly
   app.get('/api/admin/prospecting/leads', requireAdmin, (_req, res) => {
     const items = db.prepare(`SELECT * FROM business_prospects ORDER BY updated_at DESC, id DESC LIMIT 300`).all();
     return res.json({ items });
+  });
+
+  app.post('/api/admin/prospecting/public-profiles', requireAdmin, sameOriginOnly, (req, res) => {
+    const name = cleanText(req.body?.name, 180);
+    const instagramUrl = cleanUrl(req.body?.instagramUrl), facebookUrl = cleanUrl(req.body?.facebookUrl);
+    const tiktokUrl = cleanUrl(req.body?.tiktokUrl), profileUrl = instagramUrl || facebookUrl || tiktokUrl;
+    if (!name || !profileUrl) return res.status(400).json({ error: 'Informe o nome e pelo menos um perfil público.' });
+    const source = instagramUrl ? 'instagram' : facebookUrl ? 'facebook' : 'tiktok';
+    const email = cleanText(req.body?.email, 180);
+    if (email && !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'E-mail inválido.' });
+    const placeId = `public:${source}:${Buffer.from(profileUrl).toString('base64url').slice(0, 250)}`;
+    db.prepare(`INSERT INTO business_prospects
+      (place_id,name,address,category,phone_public,email,whatsapp,notes,source,instagram_url,facebook_url,tiktok_url,created_by)
+      VALUES (@placeId,@name,@address,@category,@phonePublic,@email,@whatsapp,@notes,@source,@instagramUrl,@facebookUrl,@tiktokUrl,@createdBy)
+      ON CONFLICT(place_id) DO UPDATE SET name=excluded.name,address=excluded.address,category=excluded.category,
+      phone_public=excluded.phone_public,email=excluded.email,whatsapp=excluded.whatsapp,notes=excluded.notes,
+      instagram_url=excluded.instagram_url,facebook_url=excluded.facebook_url,tiktok_url=excluded.tiktok_url,
+      updated_at=CURRENT_TIMESTAMP`).run({
+        placeId, name, address: cleanText(req.body?.address, 300), category: cleanText(req.body?.category, 100),
+        phonePublic: cleanPhone(req.body?.phonePublic), email, whatsapp: cleanPhone(req.body?.whatsapp),
+        notes: cleanText(req.body?.notes, 1200), source, instagramUrl, facebookUrl, tiktokUrl,
+        createdBy: req.user.id
+      });
+    return res.status(201).json({ ok: true });
   });
 
   app.post('/api/admin/prospecting/leads', requireAdmin, sameOriginOnly, (req, res) => {
