@@ -33,6 +33,7 @@ import {
   youtubeMetricsConfig
 } from './external-social-metrics.js';
 import { buildLegalReviewDossier } from './legal-review.js';
+import { setupBusinessProspecting } from './business-prospecting.js';
 
 const app = express();
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -1769,6 +1770,7 @@ app.use((req, res, next) => {
   next();
 });
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
+setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly, allowAttempt });
 app.use('/vendor/three', express.static(path.join(dir, 'node_modules/three/build')));
 app.use('/uploads/social-media', express.static(socialMediaDir, { maxAge: '30d', immutable: true, fallthrough: false }));
 app.use('/uploads/store-assets', express.static(path.join(dataDir, 'store-assets'), {
