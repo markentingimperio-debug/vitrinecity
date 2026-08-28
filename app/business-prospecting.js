@@ -13,6 +13,76 @@ const cleanUrl = value => {
   try { const url = new URL(text); return /^https?:$/.test(url.protocol) ? url.toString() : ''; } catch { return ''; }
 };
 
+export const isPublicNetworkAddress = address => {
+  if (!net.isIP(address)) return false;
+  const normalized = address.toLowerCase();
+  if (normalized === '::1' || normalized === '::' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')) return false;
+  const ipv4 = normalized.startsWith('::ffff:') ? normalized.slice(7) : normalized;
+  if (!net.isIPv4(ipv4)) return true;
+  const [a, b] = ipv4.split('.').map(Number);
+  return !(a === 0 || a === 10 || a === 127 || a >= 224 || (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168));
+};
+
+async function assertPublicWebsite(url) {
+  const parsed = new URL(url);
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('website_not_public');
+  const addresses = await lookup(parsed.hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some(item => !isPublicNetworkAddress(item.address))) throw new Error('website_not_public');
+  return parsed;
+}
+
+function normalizedPublicLink(value) {
+  return cleanUrl(String(value || '').replaceAll('&amp;', '&').replaceAll('&#38;', '&'));
+}
+const safeDecode = value => { try { return decodeURIComponent(value); } catch { return value; } };
+
+export function extractPublicBusinessContacts(html) {
+  const source = String(html || '').slice(0, 1_000_000);
+  const hrefs = [...source.matchAll(/href\s*=\s*["']([^"']+)["']/gi)].map(match => normalizedPublicLink(match[1])).filter(Boolean);
+  const social = (hosts) => hrefs.find(value => {
+    try { const host = new URL(value).hostname.replace(/^www\./, '').toLowerCase(); return hosts.some(item => host === item || host.endsWith(`.${item}`)); } catch { return false; }
+  }) || '';
+  const emailCandidates = [
+    ...[...source.matchAll(/mailto:([^?"'\s<>]+)/gi)].map(match => safeDecode(match[1])),
+    ...[...source.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)].map(match => match[0])
+  ].map(value => cleanText(value, 180).toLowerCase()).filter(value => /^\S+@\S+\.\S+$/.test(value) && !/\.(png|jpe?g|gif|svg|webp)$/i.test(value));
+  const whatsappUrl = social(['wa.me', 'api.whatsapp.com', 'whatsapp.com']);
+  let whatsapp = '';
+  try {
+    const parsed = new URL(whatsappUrl), text = `${parsed.pathname} ${parsed.searchParams.get('phone') || ''}`;
+    whatsapp = cleanPhone(text);
+  } catch {}
+  return {
+    email: emailCandidates[0] || '', whatsapp,
+    instagramUrl: social(['instagram.com']), facebookUrl: social(['facebook.com', 'fb.com']),
+    tiktokUrl: social(['tiktok.com'])
+  };
+}
+
+async function fetchPublicBusinessContacts(initialUrl, fetchImpl = fetch) {
+  let current = cleanUrl(initialUrl);
+  if (!current) return {};
+  for (let redirects = 0; redirects < 4; redirects += 1) {
+    await assertPublicWebsite(current);
+    const response = await fetchImpl(current, {
+      redirect: 'manual', signal: AbortSignal.timeout(5000),
+      headers: { Accept: 'text/html,application/xhtml+xml', 'User-Agent': 'VitrineCityBusinessDirectory/1.0 (+https://vitrinecity.com)' }
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      if (!location) return {};
+      current = cleanUrl(new URL(location, current).toString());
+      continue;
+    }
+    if (!response.ok || !String(response.headers.get('content-type') || '').toLowerCase().includes('text/html')) return {};
+    const length = Number(response.headers.get('content-length') || 0);
+    if (length > 1_000_000) return {};
+    return extractPublicBusinessContacts((await response.text()).slice(0, 1_000_000));
+  }
+  return {};
+}
+
 export function setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly, allowAttempt }) {
   const searchAttempts = new Map();
   db.exec(`CREATE TABLE IF NOT EXISTS business_prospects (
@@ -53,9 +123,37 @@ export function setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly
     ['source', "TEXT NOT NULL DEFAULT 'google_places'"],
     ['instagram_url', "TEXT NOT NULL DEFAULT ''"],
     ['facebook_url', "TEXT NOT NULL DEFAULT ''"],
-    ['tiktok_url', "TEXT NOT NULL DEFAULT ''"]
+    ['tiktok_url', "TEXT NOT NULL DEFAULT ''"],
+    ['enrichment_status', "TEXT NOT NULL DEFAULT 'pending'"],
+    ['enriched_at', 'TEXT']
   ]) {
     if (!prospectColumns.has(name)) db.exec(`ALTER TABLE business_prospects ADD COLUMN ${name} ${definition}`);
+  }
+  const saveEnrichment = db.prepare(`UPDATE business_prospects SET
+    email=CASE WHEN email='' AND @email<>'' THEN @email ELSE email END,
+    whatsapp=CASE WHEN whatsapp='' AND @whatsapp<>'' THEN @whatsapp ELSE whatsapp END,
+    instagram_url=CASE WHEN instagram_url='' AND @instagramUrl<>'' THEN @instagramUrl ELSE instagram_url END,
+    facebook_url=CASE WHEN facebook_url='' AND @facebookUrl<>'' THEN @facebookUrl ELSE facebook_url END,
+    tiktok_url=CASE WHEN tiktok_url='' AND @tiktokUrl<>'' THEN @tiktokUrl ELSE tiktok_url END,
+    enrichment_status=@enrichmentStatus,enriched_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=@id`);
+  async function enrichProspects(rows) {
+    const queue = rows.filter(row => row.website_url), enriched = [];
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
+      while (cursor < queue.length) {
+        const row = queue[cursor++];
+        let contacts = {}, enrichmentStatus = 'not_found';
+        try {
+          contacts = await fetchPublicBusinessContacts(row.website_url);
+          if (Object.values(contacts).some(Boolean)) enrichmentStatus = 'found';
+        } catch { enrichmentStatus = 'unavailable'; }
+        const values = { id: row.id, email: '', whatsapp: '', instagramUrl: '', facebookUrl: '', tiktokUrl: '', ...contacts, enrichmentStatus };
+        saveEnrichment.run(values);
+        enriched.push(values);
+      }
+    });
+    await Promise.all(workers);
+    return enriched;
   }
   db.prepare(`INSERT OR IGNORE INTO outreach_templates(code,title,body) VALUES (?,?,?)`).run(
     'convite-inicial', 'Convite para a Vitrine City',
@@ -103,13 +201,32 @@ export function setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly
         for (const item of results) saveLead.run({ ...item, createdBy: req.user.id });
       });
       saveResults(items);
-      return res.json({ items, autoSaved: items.length, source: 'google_places', searchedAt: new Date().toISOString() });
+      const findLead = db.prepare('SELECT * FROM business_prospects WHERE place_id=?');
+      await enrichProspects(items.map(item => findLead.get(item.placeId)).filter(Boolean));
+      const enrichedItems = items.map(item => {
+        const saved = findLead.get(item.placeId);
+        return { ...item, email: saved.email, whatsapp: saved.whatsapp,
+          instagramUrl: saved.instagram_url, facebookUrl: saved.facebook_url, tiktokUrl: saved.tiktok_url,
+          enrichmentStatus: saved.enrichment_status };
+      });
+      return res.json({ items: enrichedItems, autoSaved: items.length, source: 'google_places', searchedAt: new Date().toISOString() });
     } catch (error) { return res.status(502).json({ error: cleanText(error.message, 240) || 'Falha ao consultar o Google Places.' }); }
   });
 
   app.get('/api/admin/prospecting/leads', requireAdmin, (_req, res) => {
     const items = db.prepare(`SELECT * FROM business_prospects ORDER BY updated_at DESC, id DESC LIMIT 300`).all();
     return res.json({ items });
+  });
+
+  app.post('/api/admin/prospecting/enrich', requireAdmin, sameOriginOnly, async (req, res) => {
+    if (!allowAttempt(searchAttempts, `enrich:${req.user.id}`, 3, 60 * 60 * 1000)) {
+      return res.status(429).json({ error: 'A atualização automática poderá ser executada novamente mais tarde.' });
+    }
+    const rows = db.prepare(`SELECT * FROM business_prospects WHERE website_url<>'' AND
+      (email='' OR whatsapp='' OR instagram_url='' OR facebook_url='' OR tiktok_url='')
+      ORDER BY CASE enrichment_status WHEN 'pending' THEN 0 ELSE 1 END,updated_at ASC LIMIT 25`).all();
+    const results = await enrichProspects(rows);
+    return res.json({ checked: rows.length, found: results.filter(item => item.enrichmentStatus === 'found').length });
   });
 
   app.post('/api/admin/prospecting/public-profiles', requireAdmin, sameOriginOnly, (req, res) => {
@@ -197,3 +314,5 @@ export function setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly
     res.json({ actionUrl, message });
   });
 }
+import { lookup } from 'node:dns/promises';
+import net from 'node:net';
