@@ -782,6 +782,17 @@ CREATE TABLE IF NOT EXISTS admin_agent_tasks (
   completed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_admin_agent_tasks_agent_status ON admin_agent_tasks(agent_id,status,id);`);
+db.exec(`CREATE TABLE IF NOT EXISTS admin_business_reviews (
+  id INTEGER PRIMARY KEY,
+  created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  idea TEXT NOT NULL,
+  context TEXT,
+  analysis TEXT NOT NULL,
+  verdict TEXT NOT NULL CHECK(verdict IN ('viable','validate','not_recommended')),
+  confidence INTEGER NOT NULL DEFAULT 50,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_admin_business_reviews_created ON admin_business_reviews(id DESC);`);
 const defaultSpecialistAgents = [
   ['gestora','IA Gestora','Coordenação','Define prioridades, delega e consolida o resumo executivo.'],
   ['atendimento','Agente de Atendimento','Relacionamento','Prepara respostas e identifica casos que precisam de atenção humana.'],
@@ -3757,6 +3768,49 @@ app.patch('/api/admin/agent-tasks/:id', requireAdmin, (req, res) => {
     .run(next, next, id);
   if (!result.changes) return res.status(404).json({ error: 'Tarefa não encontrada ou já encerrada.' });
   return res.json({ ok: true, status: next });
+});
+
+app.get('/api/admin/agents/business-reviews',requireAdmin,(_req,res)=>{
+  const reviews=db.prepare(`SELECT id,idea,context,analysis,verdict,confidence,created_at
+    FROM admin_business_reviews ORDER BY id DESC LIMIT 10`).all();
+  return res.json({reviews});
+});
+
+app.post('/api/admin/agents/business-reviews',requireAdmin,async(req,res)=>{
+  if(!process.env.OPENAI_API_KEY)return res.status(503).json({error:'A IA ainda precisa da chave OPENAI_API_KEY configurada na VPS.'});
+  if(!allowAttempt(aiAttempts,`business-review:${req.user.id}`,10,10*60*1000))
+    return res.status(429).json({error:'Limite temporário de análises atingido. Aguarde alguns minutos.'});
+  const idea=String(req.body?.idea||'').trim(),context=String(req.body?.context||'').trim();
+  if(idea.length<10||idea.length>4000||context.length>4000)
+    return res.status(400).json({error:'Descreva a ideia em pelo menos 10 caracteres (máximo de 4.000).'});
+  const instructions=`Você é o Conselho Neural supervisionado da VitrineCity. Analise ideias de negócio em português do Brasil como uma reunião entre seis áreas: Direção, Marketing, Vendas, Lojistas/Operação, Atendimento/Cliente e Tecnologia.
+Seja rigoroso e honesto. Não prometa lucro. Separe fatos fornecidos, premissas, estimativas e informações ausentes. Questione demanda, diferenciação, aquisição de clientes, preço, custos, margem, riscos legais/operacionais, complexidade técnica e sinergia com a VitrineCity.
+Entregue um parecer curto, útil e acionável com estes títulos exatos: "DIREÇÃO", "MARKETING", "VENDAS", "OPERAÇÃO", "CLIENTE", "TECNOLOGIA", "NÚMEROS A VALIDAR", "RISCOS", "EXPERIMENTO RECOMENDADO" e "DECISÃO DO CONSELHO".
+Na decisão, encerre com exatamente uma linha VEREDITO: VIÁVEL, VEREDITO: VALIDAR ou VEREDITO: NÃO RECOMENDADO, seguida por uma linha CONFIANÇA: N%, de 0 a 100. Considere rentável apenas quando houver caminho plausível de receita maior que custos, deixando claro o que precisa ser comprovado.`;
+  try{
+    const data=await requestOpenAI({model:OPENAI_MODEL,instructions,
+      input:`IDEIA:\n${idea}\n\nCONTEXTO E NÚMEROS INFORMADOS:\n${context||'Nenhum contexto adicional informado.'}`,
+      max_output_tokens:1800,store:false});
+    const analysis=responseOutputText(data).trim();
+    if(!analysis)return res.status(502).json({error:'O conselho não concluiu a análise. Tente detalhar melhor a ideia.'});
+    const verdictText=analysis.match(/VEREDITO:\s*(VIÁVEL|VALIDAR|NÃO RECOMENDADO)/i)?.[1]?.toUpperCase()||'VALIDAR';
+    const verdict=verdictText==='VIÁVEL'?'viable':verdictText==='NÃO RECOMENDADO'?'not_recommended':'validate';
+    const confidence=Math.max(0,Math.min(100,Number(analysis.match(/CONFIANÇA:\s*(\d{1,3})%/i)?.[1]||50)));
+    const result=db.prepare(`INSERT INTO admin_business_reviews
+      (created_by_user_id,idea,context,analysis,verdict,confidence) VALUES (?,?,?,?,?,?)`)
+      .run(req.user.id,idea,context||null,analysis.slice(0,30000),verdict,confidence);
+    const activeAgents=db.prepare(`SELECT id FROM admin_specialist_agents WHERE status='active'`).all();
+    const addTask=db.prepare(`INSERT INTO admin_agent_tasks
+      (agent_id,created_by_user_id,title,instructions,priority,status,result_summary,completed_at)
+      VALUES (?,?,?,?,?,'completed',?,CURRENT_TIMESTAMP)`);
+    db.transaction(()=>{for(const agent of activeAgents)addTask.run(agent.id,req.user.id,
+      `Conselho: ${idea.slice(0,130)}`,'Analisar a ideia sob a ótica do seu departamento.','high',
+      `Parecer incorporado à análise #${Number(result.lastInsertRowid)}.`);})();
+    return res.status(201).json({review:{id:Number(result.lastInsertRowid),idea,context,analysis,verdict,confidence,created_at:new Date().toISOString()}});
+  }catch(error){
+    console.error('Business review unavailable',error?.message||'unknown');
+    return res.status(502).json({error:'O Conselho Neural não conseguiu concluir a reunião agora. Verifique a IA e tente novamente.'});
+  }
 });
 
 app.post('/api/admin/ai/chat', requireAdmin, async (req, res) => {

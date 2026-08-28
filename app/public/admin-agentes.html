@@ -1,0 +1,1250 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Edifício Neural | VitrineCity</title>
+    <style>
+      :root {
+        --void: #020814;
+        --panel: #07162b;
+        --panel2: #0a203a;
+        --line: #173d61;
+        --cyan: #47e8ff;
+        --blue: #4385ff;
+        --violet: #a879ff;
+        --green: #47edac;
+        --amber: #ffc85c;
+        --red: #ff7589;
+        --text: #eef8ff;
+        --muted: #89a8c4;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        font-family: Inter, system-ui, sans-serif;
+        background:
+          radial-gradient(circle at 76% 2%, #143a6d 0, transparent 25%),
+          radial-gradient(circle at 15% 80%, #35186f55, transparent 26%),
+          var(--void);
+      }
+      body:before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.22;
+        background-image:
+          linear-gradient(#47e8ff0b 1px, transparent 1px),
+          linear-gradient(90deg, #47e8ff0b 1px, transparent 1px);
+        background-size: 32px 32px;
+      }
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+      .shell {
+        display: grid;
+        grid-template-columns: 250px minmax(0, 1fr);
+        min-height: 100vh;
+      }
+      .side {
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        padding: 24px 16px;
+        border-right: 1px solid #1c4165;
+        background: #030c1be8;
+        backdrop-filter: blur(18px);
+        z-index: 5;
+      }
+      .brand {
+        padding: 0 10px 22px;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand strong {
+        display: block;
+        font-size: 20px;
+      }
+      .brand span {
+        display: block;
+        color: var(--cyan);
+        font-size: 10px;
+        letter-spacing: 2px;
+        margin-top: 6px;
+      }
+      .nav {
+        display: grid;
+        gap: 6px;
+        margin-top: 22px;
+      }
+      .nav small {
+        color: #54799c;
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: 1.5px;
+        margin: 14px 10px 5px;
+      }
+      .nav a {
+        color: #aac5dc;
+        text-decoration: none;
+        padding: 11px;
+        border-radius: 11px;
+        font-size: 13px;
+        font-weight: 750;
+      }
+      .nav a:hover,
+      .nav a.active {
+        background: linear-gradient(90deg, #1684c933, transparent);
+        color: #fff;
+        box-shadow: inset 2px 0 var(--cyan);
+      }
+      .side-status {
+        position: absolute;
+        bottom: 22px;
+        left: 16px;
+        right: 16px;
+        padding: 13px;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: #07172d;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .pulse {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        margin-right: 7px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 0 5px #47edac18;
+        animation: pulse 2s infinite;
+      }
+      main {
+        min-width: 0;
+        padding: 24px 3vw 60px;
+      }
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 18px;
+        margin-bottom: 22px;
+      }
+      .eyebrow {
+        color: var(--cyan);
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: 2px;
+      }
+      .topbar h1 {
+        font-size: clamp(25px, 3vw, 40px);
+        margin: 5px 0 2px;
+        letter-spacing: -1.5px;
+      }
+      .topbar p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .live {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 9px 13px;
+        border: 1px solid #2e725e;
+        border-radius: 99px;
+        color: var(--green);
+        background: #13372888;
+        font-size: 11px;
+        font-weight: 900;
+        white-space: nowrap;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+      .metric {
+        position: relative;
+        overflow: hidden;
+        padding: 17px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: linear-gradient(145deg, #0b213b, #061326);
+      }
+      .metric:after {
+        content: "";
+        position: absolute;
+        right: -18px;
+        bottom: -26px;
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: var(--glow, #47e8ff);
+        filter: blur(34px);
+        opacity: 0.3;
+      }
+      .metric small {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .metric strong {
+        display: block;
+        font-size: 27px;
+        margin-top: 7px;
+      }
+      .metric span {
+        font-size: 11px;
+        color: #74c8e8;
+      }
+      .boardroom {
+        display: grid;
+        grid-template-columns: minmax(280px, 0.75fr) minmax(0, 1.25fr);
+        gap: 0;
+        margin-bottom: 18px;
+        border: 1px solid #315c7c;
+        border-radius: 20px;
+        overflow: hidden;
+        background: linear-gradient(135deg, #0b2440, #081327);
+        box-shadow: 0 22px 65px #0005;
+      }
+      .board-form {
+        padding: 20px;
+        border-right: 1px solid var(--line);
+      }
+      .board-form h2 {
+        margin: 4px 0 5px;
+        font-size: 20px;
+      }
+      .board-result {
+        padding: 20px;
+        min-height: 270px;
+        max-height: 520px;
+        overflow: auto;
+        background: radial-gradient(
+          circle at 90% 0,
+          #593da522,
+          transparent 35%
+        );
+      }
+      .board-empty {
+        height: 100%;
+        display: grid;
+        place-items: center;
+        text-align: center;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.6;
+        padding: 30px;
+      }
+      .verdict {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 11px 13px;
+        margin-bottom: 14px;
+        border: 1px solid #446481;
+        border-radius: 11px;
+        background: #07182b;
+      }
+      .verdict strong {
+        color: var(--amber);
+      }
+      .verdict.viable strong {
+        color: var(--green);
+      }
+      .verdict.not_recommended strong {
+        color: var(--red);
+      }
+      .report {
+        white-space: pre-wrap;
+        font-size: 12px;
+        line-height: 1.65;
+        color: #c7deed;
+      }
+      .report-title {
+        font-size: 15px;
+        font-weight: 900;
+        margin: 0 0 3px;
+      }
+      .history-select {
+        width: auto;
+        max-width: 230px;
+        color: #c7deed;
+        background: #07182b;
+        border: 1px solid #315676;
+        border-radius: 8px;
+        padding: 6px;
+        font-size: 10px;
+      }
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1.7fr) minmax(300px, 0.75fr);
+        gap: 16px;
+      }
+      .tower {
+        position: relative;
+        border: 1px solid #245070;
+        border-radius: 22px;
+        background: linear-gradient(180deg, #09213cdd, #030b18ee);
+        box-shadow:
+          0 30px 80px #0008,
+          0 0 50px #34bfff0d;
+        overflow: hidden;
+      }
+      .tower-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 15px;
+        padding: 18px 20px;
+        border-bottom: 1px solid var(--line);
+        background: #0b2440;
+      }
+      .tower-title {
+        font-weight: 900;
+      }
+      .tower-title small {
+        display: block;
+        color: var(--muted);
+        font-weight: 500;
+        margin-top: 4px;
+      }
+      .network {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .network i {
+        display: block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--cyan);
+        box-shadow: 0 0 12px var(--cyan);
+        animation: signal 1.5s infinite;
+      }
+      .network i:nth-child(2) {
+        animation-delay: 0.25s;
+      }
+      .network i:nth-child(3) {
+        animation-delay: 0.5s;
+      }
+      .floor {
+        position: relative;
+        display: grid;
+        grid-template-columns: 130px 1fr;
+        min-height: 154px;
+        border-bottom: 1px solid #153751;
+      }
+      .floor:last-child {
+        border-bottom: 0;
+      }
+      .floor-label {
+        padding: 20px 14px;
+        border-right: 1px solid #153751;
+        background: #061429;
+      }
+      .floor-label b {
+        display: block;
+        color: var(--cyan);
+        font-size: 10px;
+        letter-spacing: 1.5px;
+      }
+      .floor-label strong {
+        display: block;
+        font-size: 14px;
+        margin-top: 8px;
+      }
+      .floor-label span {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        margin-top: 5px;
+      }
+      .office {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        padding: 15px;
+        position: relative;
+      }
+      .office:before {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, #45e8ff33, transparent);
+      }
+      .person {
+        position: relative;
+        z-index: 1;
+        min-height: 120px;
+        padding: 13px;
+        border: 1px solid #1b4568;
+        border-radius: 14px;
+        background: linear-gradient(150deg, #0c2947, #07182c);
+        transition: 0.22s;
+        cursor: pointer;
+      }
+      .person:hover,
+      .person.selected {
+        transform: translateY(-3px);
+        border-color: var(--cyan);
+        box-shadow:
+          0 10px 30px #0008,
+          0 0 22px #47e8ff18;
+      }
+      .person-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 8px;
+      }
+      .avatar {
+        display: grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        border-radius: 12px;
+        background: linear-gradient(145deg, var(--accent, #4385ff), #162656);
+        font-weight: 950;
+        box-shadow: 0 0 20px
+          color-mix(in srgb, var(--accent, #4385ff) 30%, transparent);
+      }
+      .state {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 9px var(--green);
+      }
+      .person.paused {
+        opacity: 0.55;
+      }
+      .person.paused .state {
+        background: #61768a;
+        box-shadow: none;
+      }
+      .person h3 {
+        font-size: 12px;
+        margin: 10px 0 3px;
+      }
+      .person p {
+        font-size: 10px;
+        line-height: 1.35;
+        color: var(--muted);
+        margin: 0;
+      }
+      .desk {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid #173b5b;
+        color: #79bad6;
+        font-size: 9px;
+      }
+      .desk .work {
+        width: 18px;
+        height: 11px;
+        border: 1px solid #3a83aa;
+        border-radius: 2px;
+        background: #123e5d;
+        box-shadow: 0 0 8px #47e8ff33;
+      }
+      .person.busy .work {
+        animation: screen 1.2s infinite;
+      }
+      .task-count {
+        margin-left: auto;
+        color: #fff;
+        font-weight: 900;
+      }
+      .agent-toggle {
+        border: 0;
+        border-radius: 6px;
+        padding: 3px 6px;
+        background: #153957;
+        color: #9ed8ef;
+        font-size: 8px;
+        font-weight: 900;
+        cursor: pointer;
+      }
+      .flow {
+        position: absolute;
+        left: 126px;
+        top: 77px;
+        bottom: 77px;
+        width: 7px;
+        z-index: 2;
+      }
+      .flow:before {
+        content: "";
+        position: absolute;
+        left: 3px;
+        inset-block: 0;
+        width: 1px;
+        background: linear-gradient(var(--cyan), var(--violet), var(--cyan));
+        opacity: 0.55;
+      }
+      .flow-dot {
+        position: absolute;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 0 12px var(--cyan);
+        animation: travel 5s linear infinite;
+      }
+      .flow-dot:nth-child(2) {
+        animation-delay: -1.7s;
+      }
+      .flow-dot:nth-child(3) {
+        animation-delay: -3.4s;
+      }
+      .control {
+        display: grid;
+        align-content: start;
+        gap: 14px;
+      }
+      .panel {
+        padding: 17px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: linear-gradient(145deg, #0a2039ee, #061225ee);
+        box-shadow: 0 18px 50px #0004;
+      }
+      .panel h2 {
+        font-size: 15px;
+        margin: 0 0 4px;
+      }
+      .panel-note {
+        color: var(--muted);
+        font-size: 11px;
+        margin: 0 0 14px;
+        line-height: 1.45;
+      }
+      .field {
+        display: block;
+        margin-top: 10px;
+      }
+      .field span {
+        display: block;
+        color: #7ea7c7;
+        font-size: 10px;
+        margin-bottom: 5px;
+      }
+      .field input,
+      .field select,
+      .field textarea {
+        width: 100%;
+        color: #eaf8ff;
+        border: 1px solid #25506e;
+        border-radius: 10px;
+        background: #04101f;
+        padding: 10px;
+        outline: none;
+      }
+      .field textarea {
+        min-height: 78px;
+        resize: vertical;
+      }
+      .field input:focus,
+      .field select:focus,
+      .field textarea:focus {
+        border-color: var(--cyan);
+        box-shadow: 0 0 0 3px #47e8ff14;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .btn {
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: linear-gradient(120deg, #168bd8, #654cff);
+        color: white;
+        font-weight: 850;
+        cursor: pointer;
+      }
+      .btn:hover {
+        filter: brightness(1.13);
+      }
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: wait;
+      }
+      .btn.secondary {
+        background: #112e49;
+        color: #a8daf1;
+        border: 1px solid #25506e;
+      }
+      .activity {
+        max-height: 300px;
+        overflow: auto;
+        display: grid;
+        gap: 8px;
+      }
+      .activity-item {
+        padding: 10px;
+        border-left: 2px solid var(--blue);
+        background: #07182c;
+        border-radius: 0 10px 10px 0;
+      }
+      .activity-item.approval {
+        border-color: var(--amber);
+      }
+      .activity-item.done {
+        border-color: var(--green);
+      }
+      .activity-item b {
+        display: block;
+        font-size: 11px;
+      }
+      .activity-item span {
+        display: block;
+        color: var(--muted);
+        font-size: 9px;
+        margin-top: 4px;
+      }
+      .activity-actions {
+        display: flex;
+        gap: 5px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+      .activity-actions button {
+        border: 1px solid #285577;
+        border-radius: 7px;
+        background: #0d2942;
+        color: #bce5f7;
+        font-size: 9px;
+        padding: 5px 7px;
+        cursor: pointer;
+      }
+      .activity-actions button.primary {
+        border-color: #4baee0;
+        color: #fff;
+        background: #17668f;
+      }
+      .empty {
+        padding: 18px;
+        text-align: center;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .toast {
+        position: fixed;
+        right: 24px;
+        bottom: 24px;
+        max-width: 330px;
+        padding: 13px 16px;
+        border: 1px solid #2e6f8a;
+        border-radius: 12px;
+        background: #0b2740;
+        color: #dff9ff;
+        box-shadow: 0 18px 50px #0009;
+        transform: translateY(120px);
+        opacity: 0;
+        transition: 0.25s;
+        z-index: 20;
+      }
+      .toast.show {
+        transform: none;
+        opacity: 1;
+      }
+      .toast.error {
+        border-color: #a63c53;
+        background: #3b1420;
+      }
+      @keyframes pulse {
+        50% {
+          box-shadow: 0 0 0 8px #47edac05;
+        }
+      }
+      @keyframes signal {
+        50% {
+          transform: scale(1.8);
+          opacity: 0.25;
+        }
+      }
+      @keyframes travel {
+        from {
+          top: 0;
+        }
+        to {
+          top: 100%;
+        }
+      }
+      @keyframes screen {
+        50% {
+          background: #47e8ff;
+          box-shadow: 0 0 13px #47e8ff;
+        }
+      }
+      @media (max-width: 1050px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+        .side {
+          position: relative;
+          height: auto;
+          display: flex;
+          align-items: center;
+          overflow: auto;
+          padding: 12px;
+        }
+        .brand {
+          min-width: 190px;
+          border: 0;
+          padding: 8px;
+        }
+        .nav {
+          display: flex;
+          margin: 0;
+        }
+        .nav small,
+        .side-status {
+          display: none;
+        }
+        .nav a {
+          white-space: nowrap;
+        }
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+        .control {
+          grid-template-columns: 1fr 1fr;
+        }
+        .metrics {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .boardroom {
+          grid-template-columns: 1fr;
+        }
+        .board-form {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+      }
+      @media (max-width: 700px) {
+        main {
+          padding: 18px 12px 40px;
+        }
+        .topbar {
+          align-items: start;
+        }
+        .live {
+          display: none;
+        }
+        .metrics {
+          gap: 8px;
+        }
+        .metric {
+          padding: 13px;
+        }
+        .metric strong {
+          font-size: 22px;
+        }
+        .floor {
+          grid-template-columns: 80px 1fr;
+        }
+        .floor-label {
+          padding: 14px 8px;
+        }
+        .floor-label span {
+          display: none;
+        }
+        .office {
+          grid-template-columns: 1fr;
+          padding: 9px;
+        }
+        .flow {
+          left: 77px;
+        }
+        .person {
+          min-height: auto;
+        }
+        .control {
+          grid-template-columns: 1fr;
+        }
+        .row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="side">
+        <div class="brand">
+          <strong>▰ VitrineCity</strong><span>NEURAL HEADQUARTERS</span>
+        </div>
+        <nav class="nav">
+          <small>EMPRESA</small><a href="/admin">← Central de gestão</a
+          ><a class="active" href="/admin-agentes.html">Edifício neural</a
+          ><a href="/admin#ai-control">IA Gestora</a><small>DEPARTAMENTOS</small
+          ><a href="#direcao">Direção</a><a href="#crescimento">Crescimento</a
+          ><a href="#operacao">Operação</a>
+        </nav>
+        <div class="side-status">
+          <span class="pulse"></span>Rede interna operacional<br /><span
+            id="clock"
+            >Sincronizando horário…</span
+          >
+        </div>
+      </aside>
+      <main>
+        <header class="topbar">
+          <div>
+            <span class="eyebrow">CENTRAL HUMANO + IA</span>
+            <h1>Edifício Neural</h1>
+            <p>
+              Veja sua equipe digital trabalhando dentro da empresa em tempo
+              real.
+            </p>
+          </div>
+          <div class="live">
+            <span class="pulse"></span>OPERAÇÃO SUPERVISIONADA
+          </div>
+        </header>
+        <section class="boardroom" aria-label="Sala do Conselho Neural">
+          <form class="board-form" id="ideaForm">
+            <span class="eyebrow">REUNIÃO ESTRATÉGICA</span>
+            <h2>Sala do Conselho</h2>
+            <p class="panel-note">
+              Passe uma ideia. Todos os departamentos analisam viabilidade,
+              receita, custos, riscos e o melhor teste antes de investir.
+            </p>
+            <label class="field"
+              ><span>Ideia de negócio</span
+              ><textarea
+                id="idea"
+                maxlength="4000"
+                required
+                placeholder="Ex.: criar planos mensais de divulgação para lojas locais…"
+              ></textarea></label
+            ><label class="field"
+              ><span>Contexto e números disponíveis</span
+              ><textarea
+                id="ideaContext"
+                maxlength="4000"
+                placeholder="Público, preço, custos, cidade, concorrentes ou meta de receita…"
+              ></textarea></label
+            ><button
+              class="btn"
+              id="reviewIdea"
+              type="submit"
+              style="width: 100%; margin-top: 12px"
+            >
+              Reunir todos os departamentos
+            </button>
+          </form>
+          <div class="board-result" id="boardResult">
+            <div class="board-empty">
+              A mesa está pronta.<br />Ao enviar uma ideia, seis áreas
+              apresentam seus pareceres e a decisão final deixa claro o que é
+              fato, hipótese e o que precisa ser validado.
+            </div>
+          </div>
+        </section>
+        <section class="metrics" aria-label="Resumo da equipe">
+          <article class="metric">
+            <small>Equipe ativa</small><strong id="mActive">—</strong
+            ><span>especialistas disponíveis</span>
+          </article>
+          <article class="metric" style="--glow: #a879ff">
+            <small>Em execução</small><strong id="mWorking">—</strong
+            ><span>tarefas sendo analisadas</span>
+          </article>
+          <article class="metric" style="--glow: #ffc85c">
+            <small>Sala de aprovação</small><strong id="mApproval">—</strong
+            ><span>decisões aguardando você</span>
+          </article>
+          <article class="metric" style="--glow: #47edac">
+            <small>Concluídas</small><strong id="mDone">—</strong
+            ><span>entregas registradas</span>
+          </article>
+        </section>
+        <div class="workspace">
+          <section class="tower" aria-label="Departamentos da empresa">
+            <div class="tower-head">
+              <div class="tower-title">
+                VitrineCity Neural Tower<small
+                  >Selecione uma pessoa para delegar trabalho</small
+                >
+              </div>
+              <div class="network" aria-label="Rede conectada">
+                <i></i><i></i><i></i>
+              </div>
+            </div>
+            <div class="flow" aria-hidden="true">
+              <i class="flow-dot"></i><i class="flow-dot"></i
+              ><i class="flow-dot"></i>
+            </div>
+            <div class="floor" id="direcao">
+              <div class="floor-label">
+                <b>03º ANDAR</b><strong>Direção</strong
+                ><span>Estratégia e coordenação</span>
+              </div>
+              <div class="office" id="floorDirection"></div>
+            </div>
+            <div class="floor" id="crescimento">
+              <div class="floor-label">
+                <b>02º ANDAR</b><strong>Crescimento</strong
+                ><span>Marketing e vendas</span>
+              </div>
+              <div class="office" id="floorGrowth"></div>
+            </div>
+            <div class="floor" id="operacao">
+              <div class="floor-label">
+                <b>01º ANDAR</b><strong>Operação</strong
+                ><span>Clientes, lojas e tecnologia</span>
+              </div>
+              <div class="office" id="floorOps"></div>
+            </div>
+          </section>
+          <aside class="control">
+            <section class="panel">
+              <h2>Delegar nova missão</h2>
+              <p class="panel-note">
+                A equipe prepara o trabalho; ações externas continuam dependendo
+                da sua aprovação.
+              </p>
+              <form id="taskForm">
+                <label class="field"
+                  ><span>Pessoa responsável</span
+                  ><select id="agent" required></select></label
+                ><label class="field"
+                  ><span>Nome da missão</span
+                  ><input
+                    id="title"
+                    maxlength="180"
+                    placeholder="Ex.: revisar novas lojas"
+                    required
+                /></label>
+                <div class="row">
+                  <label class="field"
+                    ><span>Prioridade</span
+                    ><select id="priority">
+                      <option value="normal">Normal</option>
+                      <option value="high">Alta</option>
+                      <option value="low">Baixa</option>
+                    </select></label
+                  ><label class="field"
+                    ><span>Modo</span><input value="Supervisionado" disabled
+                  /></label>
+                </div>
+                <label class="field"
+                  ><span>Orientações</span
+                  ><textarea
+                    id="instructions"
+                    maxlength="4000"
+                    placeholder="Explique o resultado esperado…"
+                    required
+                  ></textarea></label
+                ><button
+                  class="btn"
+                  type="submit"
+                  style="width: 100%; margin-top: 12px"
+                >
+                  Enviar para o departamento
+                </button>
+              </form>
+            </section>
+            <section class="panel">
+              <h2>Fluxo de trabalho</h2>
+              <p class="panel-note">Atividade registrada da equipe neural.</p>
+              <div class="activity" id="activity">
+                <div class="empty">Carregando o expediente…</div>
+              </div>
+            </section>
+          </aside>
+        </div>
+      </main>
+    </div>
+    <div class="toast" id="toast" role="status"></div>
+    <script>
+      const $ = (s) => document.querySelector(s);
+      let agents = [],
+        tasks = [],
+        reviews = [],
+        selectedId = null;
+      const floors = {
+        gestora: "floorDirection",
+        marketing: "floorGrowth",
+        vendas: "floorGrowth",
+        atendimento: "floorOps",
+        lojistas: "floorOps",
+        tecnico: "floorOps",
+      };
+      const initials = {
+        gestora: "IG",
+        atendimento: "AT",
+        lojistas: "LJ",
+        marketing: "MK",
+        vendas: "VD",
+        tecnico: "TI",
+      };
+      const colors = {
+        gestora: "#a879ff",
+        atendimento: "#47e8ff",
+        lojistas: "#47edac",
+        marketing: "#ff69c8",
+        vendas: "#ffc85c",
+        tecnico: "#4385ff",
+      };
+      const labels = {
+        queued: "Na fila",
+        in_progress: "Trabalhando",
+        awaiting_approval: "Na sala de aprovação",
+        completed: "Concluída",
+        cancelled: "Cancelada",
+      };
+      const esc = (v) =>
+        String(v ?? "").replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+      async function api(url, options) {
+        const r = await fetch(url, options);
+        if (r.status === 401) {
+          location.href = "/carteira.html?admin=1";
+          throw Error("Entre na conta administrativa.");
+        }
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw Error(d.error || "Não foi possível carregar.");
+        return d;
+      }
+      function notify(message, error = false) {
+        const t = $("#toast");
+        t.textContent = message;
+        t.className = "toast show" + (error ? " error" : "");
+        clearTimeout(t.timer);
+        t.timer = setTimeout(() => (t.className = "toast"), 2600);
+      }
+      function render() {
+        const active = agents.filter((a) => a.status === "active").length;
+        $("#mActive").textContent = `${active}/${agents.length}`;
+        $("#mWorking").textContent = tasks.filter(
+          (t) => t.status === "in_progress",
+        ).length;
+        $("#mApproval").textContent = tasks.filter(
+          (t) => t.status === "awaiting_approval",
+        ).length;
+        $("#mDone").textContent = tasks.filter(
+          (t) => t.status === "completed",
+        ).length;
+        Object.values(floors).forEach((id, i, all) => {
+          if (all.indexOf(id) === i) $("#" + id).innerHTML = "";
+        });
+        agents.forEach((a) => {
+          const busy = tasks.some(
+              (t) => t.agent_id === a.id && t.status === "in_progress",
+            ),
+            card = document.createElement("article");
+          card.className = `person ${a.status === "paused" ? "paused" : ""} ${busy ? "busy" : ""} ${selectedId === a.id ? "selected" : ""}`;
+          card.style.setProperty("--accent", colors[a.code] || "#4385ff");
+          card.tabIndex = 0;
+          card.innerHTML = `<div class="person-top"><span class="avatar">${esc(initials[a.code] || a.name.slice(0, 2))}</span><span class="state" title="${a.status === "active" ? "Em expediente" : "Pausado"}"></span></div><h3>${esc(a.name)}</h3><p>${esc(a.specialty)}</p><div class="desk"><i class="work"></i>${busy ? "TRABALHANDO" : a.status === "active" ? "DISPONÍVEL" : "FORA DO EXPEDIENTE"}<span class="task-count">${a.open_tasks || 0}</span><button class="agent-toggle" data-toggle="${a.status === "active" ? "paused" : "active"}" data-agent="${a.id}">${a.status === "active" ? "PAUSAR" : "ATIVAR"}</button></div>`;
+          card.onclick = (e) => {
+            if (!e.target.closest("[data-toggle]")) selectAgent(a.id);
+          };
+          card.onkeydown = (e) => {
+            if (e.key === "Enter") selectAgent(a.id);
+          };
+          $("#" + (floors[a.code] || "floorOps")).appendChild(card);
+        });
+        const select = $("#agent"),
+          old = select.value;
+        select.innerHTML = agents
+          .filter((a) => a.status === "active")
+          .map(
+            (a) =>
+              `<option value="${a.id}">${esc(a.name)} — ${esc(a.specialty)}</option>`,
+          )
+          .join("");
+        if (
+          selectedId &&
+          agents.some((a) => a.id === selectedId && a.status === "active")
+        )
+          select.value = selectedId;
+        else if ([...select.options].some((o) => o.value === old))
+          select.value = old;
+        $("#activity").innerHTML = tasks.length
+          ? tasks
+              .map(
+                (t) =>
+                  `<article class="activity-item ${t.status === "awaiting_approval" ? "approval" : t.status === "completed" ? "done" : ""}"><b>${esc(t.title)}</b><span>${esc(t.agent_name)} · ${esc(labels[t.status] || t.status)} · prioridade ${esc(t.priority)}</span>${actions(t)}</article>`,
+              )
+              .join("")
+          : `<div class="empty">O expediente está livre. Delegue a primeira missão.</div>`;
+      }
+      function actions(t) {
+        let a = "";
+        if (t.status === "queued")
+          a = `<button class="primary" data-id="${t.id}" data-action="start">Iniciar</button><button data-id="${t.id}" data-action="cancel">Cancelar</button>`;
+        if (t.status === "in_progress")
+          a = `<button class="primary" data-id="${t.id}" data-action="request_approval">Enviar para aprovação</button><button data-id="${t.id}" data-action="complete">Concluir</button>`;
+        if (t.status === "awaiting_approval")
+          a = `<button class="primary" data-id="${t.id}" data-action="complete">Aprovar e concluir</button><button data-id="${t.id}" data-action="cancel">Recusar</button>`;
+        return a ? `<div class="activity-actions">${a}</div>` : "";
+      }
+      function selectAgent(id) {
+        selectedId = id;
+        $("#agent").value = id;
+        render();
+        $("#title").focus();
+      }
+      function renderReview(review) {
+        if (!review) return;
+        const verdictLabel =
+          {
+            viable: "VIÁVEL",
+            validate: "VALIDAR PRIMEIRO",
+            not_recommended: "NÃO RECOMENDADO",
+          }[review.verdict] || "EM ANÁLISE";
+        $("#boardResult").innerHTML =
+          `<div class="verdict ${esc(review.verdict)}"><div><div class="report-title">${esc(review.idea)}</div><small>Decisão do Conselho Neural</small></div><strong>${verdictLabel} · ${Number(review.confidence) || 0}% confiança</strong></div><div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:12px"><span class="eyebrow">PARECER CONSOLIDADO</span>${reviews.length > 1 ? `<select class="history-select" id="reviewHistory">${reviews.map((r) => `<option value="${r.id}" ${r.id === review.id ? "selected" : ""}>Análise #${r.id} — ${esc(r.idea.slice(0, 35))}</option>`).join("")}</select>` : ""}</div><div class="report">${esc(review.analysis)}</div>`;
+        $("#reviewHistory")?.addEventListener("change", (e) =>
+          renderReview(reviews.find((r) => r.id === Number(e.target.value))),
+        );
+      }
+      async function load() {
+        const [d, r] = await Promise.all([
+          api("/api/admin/agents"),
+          api("/api/admin/agents/business-reviews"),
+        ]);
+        agents = d.agents || [];
+        tasks = d.tasks || [];
+        reviews = r.reviews || [];
+        render();
+        if (reviews.length) renderReview(reviews[0]);
+      }
+      $("#ideaForm").onsubmit = async (e) => {
+        e.preventDefault();
+        const b = e.submitter;
+        b.disabled = true;
+        b.textContent = "Conselho em reunião…";
+        $("#boardResult").innerHTML =
+          '<div class="board-empty"><span><span class="pulse"></span>Os departamentos estão debatendo demanda, custos, riscos e rentabilidade…</span></div>';
+        try {
+          const d = await api("/api/admin/agents/business-reviews", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              idea: $("#idea").value,
+              context: $("#ideaContext").value,
+            }),
+          });
+          reviews.unshift(d.review);
+          renderReview(d.review);
+          notify("Parecer do Conselho Neural concluído.");
+          await load();
+        } catch (x) {
+          notify(x.message, true);
+          $("#boardResult").innerHTML =
+            '<div class="board-empty">A reunião não foi concluída. Revise os dados e tente novamente.</div>';
+        } finally {
+          b.disabled = false;
+          b.textContent = "Reunir todos os departamentos";
+        }
+      };
+      $("#taskForm").onsubmit = async (e) => {
+        e.preventDefault();
+        const b = e.submitter;
+        b.disabled = true;
+        try {
+          await api("/api/admin/agents/tasks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              agentId: Number($("#agent").value),
+              title: $("#title").value,
+              instructions: $("#instructions").value,
+              priority: $("#priority").value,
+            }),
+          });
+          $("#title").value = "";
+          $("#instructions").value = "";
+          notify("Missão enviada ao departamento.");
+          await load();
+        } catch (x) {
+          notify(x.message, true);
+        } finally {
+          b.disabled = false;
+        }
+      };
+      $("#activity").onclick = async (e) => {
+        const b = e.target.closest("[data-action]");
+        if (!b) return;
+        b.disabled = true;
+        try {
+          await api("/api/admin/agent-tasks/" + b.dataset.id, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: b.dataset.action }),
+          });
+          notify("Fluxo de trabalho atualizado.");
+          await load();
+        } catch (x) {
+          notify(x.message, true);
+          b.disabled = false;
+        }
+      };
+      $(".tower").onclick = async (e) => {
+        const b = e.target.closest("[data-toggle]");
+        if (!b) return;
+        b.disabled = true;
+        try {
+          await api("/api/admin/agents/" + b.dataset.agent, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: b.dataset.toggle }),
+          });
+          notify(
+            b.dataset.toggle === "active"
+              ? "Agente entrou em expediente."
+              : "Agente pausado.",
+          );
+          await load();
+        } catch (x) {
+          notify(x.message, true);
+          b.disabled = false;
+        }
+      };
+      setInterval(
+        () => ($("#clock").textContent = new Date().toLocaleString("pt-BR")),
+        1000,
+      );
+      load().catch((e) => notify(e.message, true));
+    </script>
+  </body>
+</html>
