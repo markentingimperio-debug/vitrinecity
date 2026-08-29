@@ -1877,6 +1877,9 @@ app.use('/uploads/social-media', express.static(socialMediaDir, { maxAge: '30d',
 app.use('/uploads/store-assets', express.static(path.join(dataDir, 'store-assets'), {
   immutable: true, maxAge: '30d', fallthrough: false
 }));
+app.use('/uploads/generated-videos', express.static(path.join(dataDir, 'generated-videos'), {
+  immutable: true, maxAge: '30d', fallthrough: false
+}));
 const publicPage = file => (_req, res) => res.sendFile(path.join(dir, 'public', file));
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
