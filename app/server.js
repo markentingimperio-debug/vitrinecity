@@ -1894,6 +1894,8 @@ app.get('/admin-social-moderacao.html', enhancedPublicPage('admin-social-moderac
 app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
 app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
 app.get('/admin-tiktok.html',requireAdmin,publicPage('admin-tiktok.html'));
+app.get('/admin-lojas.html',requireAdmin,publicPage('admin-lojas.html'));
+app.get('/admin-servicos.html',requireAdmin,publicPage('admin-servicos.html'));
 app.get('/recursos-social.html', enhancedPublicPage('recursos-social.html'));
 app.get('/cidade', publicPage('cidade-exploravel.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
