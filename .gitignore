@@ -4,4 +4,7 @@
 app/.binance-local-state.json
 app/.binance-local-heartbeat.json
 app/binance-local-executor.log
+app/binance-demo-analyst.log
+app/.binance-demo-state.json
+app/binance-demo-journal.jsonl
 node_modules/
