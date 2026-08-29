@@ -3197,7 +3197,7 @@ app.patch('/api/manual-assistant/profile', requireUser, (req, res) => {
 });
 
 app.post('/api/manual-assistant/suggest', requireUser, async (req, res) => {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!aiConfigured()) {
     return res.status(503).json({ error: 'A IA ainda precisa da chave OPENAI_API_KEY configurada.' });
   }
   if (!allowAttempt(aiAttempts, `manual-support:${req.user.id}`, 30, 60 * 60 * 1000)) {
@@ -3284,8 +3284,14 @@ const AD_CAMPAIGN_ACTIONS = Object.freeze({
   complete: Object.freeze({ from: ['funded', 'in_review', 'active', 'paused'], to: 'completed' })
 });
 
-const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
-const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
+const AI_PROVIDER = process.env.OPENROUTER_API_KEY ? 'openrouter' : 'openai';
+const AI_API_KEY = String(process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || '').trim();
+const OPENAI_MODEL = String(process.env.OPENROUTER_MODEL || process.env.OPENAI_MODEL ||
+  (AI_PROVIDER === 'openrouter' ? 'openai/gpt-4o-mini' : 'gpt-4o-mini')).trim();
+const OPENAI_RESPONSES_URL = AI_PROVIDER === 'openrouter'
+  ? 'https://openrouter.ai/api/v1/responses'
+  : 'https://api.openai.com/v1/responses';
+const aiConfigured = () => Boolean(AI_API_KEY);
 const AI_PUBLIC_ROOT = path.resolve(dir, 'public');
 const AI_BLOCKED_PAGES = new Set([
   'admin.html', 'admin-agentes.html', 'admin-growth.html', 'admin-tiktok.html', 'admin-lojas.html', 'carteira.html', 'painel-lojista.html',
@@ -3460,8 +3466,12 @@ async function requestOpenAI(body) {
   const response = await fetch(OPENAI_RESPONSES_URL, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      'Content-Type': 'application/json'
+      Authorization: `Bearer ${AI_API_KEY}`,
+      'Content-Type': 'application/json',
+      ...(AI_PROVIDER === 'openrouter' ? {
+        'HTTP-Referer': SITE_URL,
+        'X-OpenRouter-Title': 'VitrineCity Jarvis'
+      } : {})
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(60000)
@@ -3617,7 +3627,7 @@ app.get('/api/whatsapp/conversations/:contactId', requireUser, (req, res) => {
 });
 
 app.post('/api/whatsapp/conversations/:contactId/suggest', requireUser, async (req, res) => {
-  if (!process.env.OPENAI_API_KEY) return res.status(503).json({ error: 'A IA de atendimento ainda não está configurada.' });
+  if (!aiConfigured()) return res.status(503).json({ error: 'A IA de atendimento ainda não está configurada.' });
   if (!allowAttempt(aiAttempts, `whatsapp-suggest:${req.user.id}`, 30, 60 * 60 * 1000)) {
     return res.status(429).json({ error: 'Limite temporário de sugestões atingido.' });
   }
@@ -3741,7 +3751,8 @@ app.get('/api/admin/ai', requireAdmin, (req, res) => {
   const messages = db.prepare(`SELECT id,role,content,model,created_at FROM admin_ai_messages
     WHERE user_id=? ORDER BY id DESC LIMIT 60`).all(req.user.id).reverse();
   return res.json({
-    configured: Boolean(process.env.OPENAI_API_KEY),
+    configured: aiConfigured(),
+    provider: AI_PROVIDER,
     model: OPENAI_MODEL,
     readOnly: false,
     supervised: true,
@@ -3884,7 +3895,7 @@ app.get('/api/admin/agents/business-reviews',requireAdmin,(_req,res)=>{
 });
 
 app.post('/api/admin/agents/business-reviews',requireAdmin,async(req,res)=>{
-  if(!process.env.OPENAI_API_KEY)return res.status(503).json({error:'A IA ainda precisa da chave OPENAI_API_KEY configurada na VPS.'});
+  if(!aiConfigured())return res.status(503).json({error:'A IA ainda precisa de uma chave de provedor configurada na VPS.'});
   if(!allowAttempt(aiAttempts,`business-review:${req.user.id}`,10,10*60*1000))
     return res.status(429).json({error:'Limite temporário de análises atingido. Aguarde alguns minutos.'});
   const idea=String(req.body?.idea||'').trim(),context=String(req.body?.context||'').trim();
@@ -3921,8 +3932,8 @@ Na decisão, encerre com exatamente uma linha VEREDITO: VIÁVEL, VEREDITO: VALID
 });
 
 app.post('/api/admin/ai/chat', requireAdmin, async (req, res) => {
-  if (!process.env.OPENAI_API_KEY) {
-    return res.status(503).json({ error: 'A IA ainda precisa da chave OPENAI_API_KEY configurada na VPS.' });
+  if (!aiConfigured()) {
+    return res.status(503).json({ error: 'A IA ainda precisa de uma chave de provedor configurada na VPS.' });
   }
   if (!allowAttempt(aiAttempts, `admin-ai:${req.user.id}`, 20, 10 * 60 * 1000)) {
     return res.status(429).json({ error: 'Limite temporário de mensagens atingido. Aguarde alguns minutos.' });
@@ -6550,7 +6561,7 @@ app.get('/api/admin/social/intelligence/growth',requireAdmin,(_req,res)=>{
 });
 
 app.post('/api/admin/social/intelligence/growth-plan',requireAdmin,sameOriginOnly,async(req,res)=>{
-  if(!process.env.OPENAI_API_KEY)return res.status(503).json({error:'Configure a IA para gerar o plano omnichannel.'});
+  if(!aiConfigured())return res.status(503).json({error:'Configure a IA para gerar o plano omnichannel.'});
   if(!allowAttempt(aiAttempts,`growth-plan:${req.user.id}`,8,10*60*1000))
     return res.status(429).json({error:'Limite temporário de planos atingido. Aguarde alguns minutos.'});
   const objective=String(req.body?.objective||'').trim(),budgetCents=Math.max(0,Math.min(100000000,Math.round(Number(req.body?.budget||0)*100)));
@@ -6916,7 +6927,7 @@ function localSeoSuggestion(caption,category,city) {
 app.post('/api/social/seo-suggestion', requireActiveSocialUser, sameOriginOnly, async (req,res) => {
   const caption=String(req.body?.caption||'').trim().slice(0,500),category=SOCIAL_CATEGORIES.has(String(req.body?.category||''))?String(req.body.category):'geral';
   const city=String(req.body?.city||'').trim().slice(0,80),fallback=localSeoSuggestion(caption,category,city);
-  if(!process.env.OPENAI_API_KEY)return res.json({...fallback,source:'automatic'});
+  if(!aiConfigured())return res.json({...fallback,source:'automatic'});
   if(!allowAttempt(aiAttempts,`social-seo:${req.user.id}`,30,60*60*1000))return res.json({...fallback,source:'automatic'});
   try {const data=await requestOpenAI({model:OPENAI_MODEL,instructions:'Você é especialista em SEO local brasileiro. Responda somente JSON válido com title (até 60), description (até 155), keywords (array de até 8) e optimizedCaption (até 500). Não invente dados.',input:`Categoria: ${category}\nCidade: ${city||'não informada'}\nConteúdo: ${caption||'sem legenda'}`,max_output_tokens:400});
     const raw=responseOutputText(data).replace(/^```json\s*|```$/g,'').trim(),ai=JSON.parse(raw);
