@@ -1234,6 +1234,7 @@
       const floors = {
         gestora: "floorDirection",
         marketing: "floorGrowth",
+        midia: "floorGrowth",
         vendas: "floorGrowth",
         atendimento: "floorOps",
         lojistas: "floorOps",
@@ -1244,6 +1245,7 @@
         atendimento: "AT",
         lojistas: "LJ",
         marketing: "MK",
+        midia: "AV",
         vendas: "VD",
         tecnico: "TI",
       };
@@ -1252,6 +1254,7 @@
         atendimento: "#47e8ff",
         lojistas: "#47edac",
         marketing: "#ff69c8",
+        midia: "#ff5e7d",
         vendas: "#ffc85c",
         tecnico: "#4385ff",
       };
@@ -1375,7 +1378,7 @@
           ? tasks
               .map(
                 (t) =>
-                  `<article class="activity-item ${t.status === "awaiting_approval" ? "approval" : t.status === "completed" ? "done" : ""}"><b>${esc(t.title)}</b><span>${esc(t.agent_name)} · ${esc(labels[t.status] || t.status)} · prioridade ${esc(t.priority)}</span>${actions(t)}</article>`,
+                  `<article class="activity-item ${t.status === "awaiting_approval" ? "approval" : t.status === "completed" ? "done" : ""}"><b>${esc(t.title)}</b><span>${esc(t.agent_name)} · ${esc(labels[t.status] || t.status)} · prioridade ${esc(t.priority)}${t.media_status ? ` · produção: ${esc(t.media_status)}` : ""}</span>${actions(t)}</article>`,
               )
               .join("")
           : `<div class="empty">O expediente está livre. Delegue a primeira missão.</div>`;

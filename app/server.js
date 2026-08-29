@@ -782,6 +782,19 @@ CREATE TABLE IF NOT EXISTS admin_agent_tasks (
   completed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_admin_agent_tasks_agent_status ON admin_agent_tasks(agent_id,status,id);`);
+db.exec(`CREATE TABLE IF NOT EXISTS admin_media_projects (
+  id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL UNIQUE REFERENCES admin_agent_tasks(id) ON DELETE CASCADE,
+  format TEXT NOT NULL DEFAULT 'short_video' CHECK(format IN ('short_video','long_video','image','campaign_kit','audio')),
+  channels TEXT NOT NULL DEFAULT 'VitrineCity',
+  source_notes TEXT,
+  production_status TEXT NOT NULL DEFAULT 'briefing' CHECK(production_status IN ('briefing','script','assets','editing','review','approved','published','cancelled')),
+  script TEXT,
+  output_url TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_admin_media_projects_status ON admin_media_projects(production_status,id);`);
 db.exec(`CREATE TABLE IF NOT EXISTS admin_business_reviews (
   id INTEGER PRIMARY KEY,
   created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -807,6 +820,7 @@ const defaultSpecialistAgents = [
   ['atendimento','Agente de Atendimento','Relacionamento','Prepara respostas e identifica casos que precisam de atenção humana.'],
   ['lojistas','Agente de Lojistas','Cadastro e qualidade','Orienta cadastros, revisa informações e aponta pendências de lojas.'],
   ['marketing','Agente de Marketing','Conteúdo e campanhas','Cria pautas, ofertas e propostas de comunicação para aprovação.'],
+  ['midia','Estúdio Audiovisual','Vídeo, imagem e áudio','Transforma missões em roteiros, cenas, edições e versões para cada canal, sempre com revisão antes de publicar.'],
   ['vendas','Agente de Vendas','Conversão','Analisa oportunidades, funil e ações para aumentar vendas.'],
   ['tecnico','Agente Técnico','Site e integrações','Monitora integrações, erros e melhorias técnicas seguras.']
 ];
@@ -3797,7 +3811,10 @@ app.get('/api/admin/agents', requireAdmin, (_req, res) => {
     FROM admin_specialist_agents a ORDER BY CASE a.code WHEN 'gestora' THEN 0 ELSE 1 END,a.id`).all()
     .map(item => ({ ...item, approval_required: Boolean(item.approval_required), open_tasks: Number(item.open_tasks || 0) }));
   const tasks = db.prepare(`SELECT t.id,t.agent_id,t.title,t.instructions,t.priority,t.status,t.result_summary,t.created_at,t.updated_at,
-    a.name AS agent_name,a.code AS agent_code FROM admin_agent_tasks t JOIN admin_specialist_agents a ON a.id=t.agent_id
+    a.name AS agent_name,a.code AS agent_code,m.id AS media_project_id,m.format AS media_format,
+    m.channels AS media_channels,m.production_status AS media_status,m.output_url AS media_output_url
+    FROM admin_agent_tasks t JOIN admin_specialist_agents a ON a.id=t.agent_id
+    LEFT JOIN admin_media_projects m ON m.task_id=t.id
     ORDER BY CASE t.status WHEN 'awaiting_approval' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END,t.id DESC LIMIT 80`).all();
   return res.json({ mode: 'supervised', agents, tasks });
 });
@@ -3810,11 +3827,18 @@ app.post('/api/admin/agents/tasks', requireAdmin, (req, res) => {
   if (!Number.isInteger(agentId) || !title || !instructions || !['low','normal','high'].includes(priority)) {
     return res.status(400).json({ error: 'Informe o agente, a tarefa e as instruções.' });
   }
-  const agent = db.prepare(`SELECT id,status FROM admin_specialist_agents WHERE id=?`).get(agentId);
+  const agent = db.prepare(`SELECT id,code,status FROM admin_specialist_agents WHERE id=?`).get(agentId);
   if (!agent) return res.status(404).json({ error: 'Agente não encontrado.' });
   if (agent.status !== 'active') return res.status(409).json({ error: 'Este agente está pausado.' });
   const result = db.prepare(`INSERT INTO admin_agent_tasks (agent_id,created_by_user_id,title,instructions,priority)
     VALUES (?,?,?,?,?)`).run(agentId, req.user.id, title, instructions, priority);
+  if (agent.code === 'midia') {
+    const allowedFormats = new Set(['short_video','long_video','image','campaign_kit','audio']);
+    const format = allowedFormats.has(String(req.body?.mediaFormat || '')) ? String(req.body.mediaFormat) : 'short_video';
+    const channels = String(req.body?.mediaChannels || 'VitrineCity').trim().slice(0,300) || 'VitrineCity';
+    db.prepare(`INSERT INTO admin_media_projects (task_id,format,channels,source_notes) VALUES (?,?,?,?)`)
+      .run(Number(result.lastInsertRowid), format, channels, instructions);
+  }
   return res.status(201).json({ id: Number(result.lastInsertRowid), status: 'queued',
     message: 'Tarefa registrada. A execução permanece supervisionada e qualquer ação externa exige aprovação.' });
 });
@@ -3838,6 +3862,19 @@ app.patch('/api/admin/agent-tasks/:id', requireAdmin, (req, res) => {
     .run(next, next, id);
   if (!result.changes) return res.status(404).json({ error: 'Tarefa não encontrada ou já encerrada.' });
   return res.json({ ok: true, status: next });
+});
+
+app.patch('/api/admin/media-projects/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const productionStatus = String(req.body?.productionStatus || '');
+  const allowed = new Set(['briefing','script','assets','editing','review','approved','published','cancelled']);
+  if (!Number.isInteger(id) || !allowed.has(productionStatus)) return res.status(400).json({ error: 'Etapa de produção inválida.' });
+  const outputUrl = req.body?.outputUrl == null ? null : String(req.body.outputUrl).trim().slice(0,1000);
+  if (outputUrl && !/^https:\/\//i.test(outputUrl)) return res.status(400).json({ error: 'O arquivo final precisa usar uma URL HTTPS.' });
+  const result = db.prepare(`UPDATE admin_media_projects SET production_status=?,output_url=COALESCE(?,output_url),updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .run(productionStatus, outputUrl, id);
+  if (!result.changes) return res.status(404).json({ error: 'Projeto de mídia não encontrado.' });
+  return res.json({ ok: true, productionStatus });
 });
 
 app.get('/api/admin/agents/business-reviews',requireAdmin,(_req,res)=>{
