@@ -169,6 +169,34 @@
         font-weight: 900;
         white-space: nowrap;
       }
+      .wallet-box {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .wallet-button {
+        border: 1px solid #a879ff88;
+        border-radius: 99px;
+        padding: 9px 13px;
+        color: #eadcff;
+        background: #29174d99;
+        font-size: 11px;
+        font-weight: 900;
+        cursor: pointer;
+      }
+      .wallet-button.connected {
+        border-color: #47edac88;
+        color: var(--green);
+        background: #13372888;
+      }
+      .wallet-note {
+        width: 100%;
+        color: var(--muted);
+        font-size: 10px;
+        text-align: right;
+      }
       .metrics {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
@@ -1035,8 +1063,16 @@
               real.
             </p>
           </div>
-          <div class="live">
-            <span class="pulse"></span>OPERAÇÃO SUPERVISIONADA
+          <div class="wallet-box">
+            <div class="live">
+              <span class="pulse"></span>OPERAÇÃO SUPERVISIONADA
+            </div>
+            <button class="wallet-button" id="connectWallet" type="button">
+              🦊 Conectar MetaMask
+            </button>
+            <div class="wallet-note" id="walletStatus">
+              Somente leitura; transações exigem sua assinatura.
+            </div>
           </div>
         </header>
         <section class="boardroom" aria-label="Sala do Conselho Neural">
@@ -1294,6 +1330,59 @@
         clearTimeout(t.timer);
         t.timer = setTimeout(() => (t.className = "toast"), 2600);
       }
+      const shortWallet = (address) =>
+        `${address.slice(0, 6)}…${address.slice(-4)}`;
+      function showWallet(address, chainId) {
+        const button = $("#connectWallet");
+        if (!address) {
+          button.textContent = "🦊 Conectar MetaMask";
+          button.classList.remove("connected");
+          $("#walletStatus").textContent =
+            "Somente leitura; transações exigem sua assinatura.";
+          return;
+        }
+        button.textContent = `🦊 ${shortWallet(address)}`;
+        button.classList.add("connected");
+        $("#walletStatus").textContent =
+          `Carteira conectada nesta sessão · rede ${parseInt(chainId, 16)}`;
+      }
+      async function inspectWallet() {
+        if (!window.ethereum?.request) return showWallet();
+        const [accounts, chainId] = await Promise.all([
+          window.ethereum.request({ method: "eth_accounts" }),
+          window.ethereum.request({ method: "eth_chainId" }),
+        ]);
+        showWallet(accounts?.[0], chainId);
+      }
+      $("#connectWallet").onclick = async () => {
+        if (!window.ethereum?.request) {
+          notify("MetaMask não foi encontrada neste navegador.", true);
+          return;
+        }
+        try {
+          const accounts = await window.ethereum.request({
+            method: "eth_requestAccounts",
+          });
+          const chainId = await window.ethereum.request({
+            method: "eth_chainId",
+          });
+          showWallet(accounts?.[0], chainId);
+          notify("MetaMask conectada em modo supervisionado.");
+        } catch (error) {
+          notify(
+            error?.code === 4001
+              ? "Conexão cancelada na MetaMask."
+              : "Não foi possível conectar a MetaMask.",
+            true,
+          );
+        }
+      };
+      window.ethereum?.on?.("accountsChanged", (accounts) =>
+        inspectWallet().catch(() => showWallet(accounts?.[0])),
+      );
+      window.ethereum?.on?.("chainChanged", () =>
+        inspectWallet().catch(() => showWallet()),
+      );
       function render() {
         const active = agents.filter((a) => a.status === "active").length;
         $("#mActive").textContent = `${active}/${agents.length}`;
@@ -1521,6 +1610,7 @@
         1000,
       );
       load().catch((e) => notify(e.message, true));
+      inspectWallet().catch(() => showWallet());
     </script>
   </body>
 </html>
