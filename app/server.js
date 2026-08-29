@@ -1421,18 +1421,20 @@ function recordAdminLogin(req,email,success,reason){
   db.prepare("DELETE FROM admin_login_audit WHERE created_at<datetime('now','-180 days')").run();
 }
 
+const ADMIN_HTML_PATHS=new Set(['/admin','/admin.html','/admin-agentes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html']);
+
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
   if (!user) {
-    if (req.path === '/admin' || req.path === '/admin.html' || req.path === '/admin-agentes.html' || req.path === '/admin-growth.html' || req.path === '/admin-tiktok.html') return res.redirect(302, '/admin-login.html');
+    if (ADMIN_HTML_PATHS.has(req.path)) return res.redirect(302, '/admin-login.html');
     return res.status(401).json({ error: 'Entre na conta administrativa.' });
   }
   if (!isAdministrativeUser(user)) {
-    if(req.path==='/admin'||req.path==='/admin.html'||req.path==='/admin-agentes.html'||req.path==='/admin-growth.html'||req.path==='/admin-tiktok.html')return res.redirect(302,'/admin-login.html?erro=restrito');
+    if(ADMIN_HTML_PATHS.has(req.path))return res.redirect(302,'/admin-login.html?erro=restrito');
     return res.status(403).json({ error: 'Acesso restrito à administração.' });
   }
   if(user.totp_enabled&&!privilegedSession(req,'admin')){
-    if(req.path==='/admin'||req.path==='/admin.html'||req.path==='/admin-agentes.html'||req.path==='/admin-growth.html'||req.path==='/admin-tiktok.html')return res.redirect(302,'/admin-login.html?erro=2fa');
+    if(ADMIN_HTML_PATHS.has(req.path))return res.redirect(302,'/admin-login.html?erro=2fa');
     return res.status(401).json({error:'Confirme o segundo fator administrativo.'});
   }
   req.user = user;
