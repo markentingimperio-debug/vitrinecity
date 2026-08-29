@@ -5374,6 +5374,28 @@ app.get('/api/admin/store-submissions', requireAdmin, (req, res) => {
   return res.json({ submissions: rows });
 });
 
+app.put('/api/admin/store-submissions/:reference/content', requireAdmin, sameOriginOnly, (req,res)=>{
+  const reference=String(req.params.reference||'').trim(),body=req.body||{};
+  const current=db.prepare('SELECT * FROM store_profiles WHERE order_reference=?').get(reference);
+  if(!current)return res.status(404).json({error:'Loja não encontrada.'});
+  const businessName=String(body.businessName||'').trim().slice(0,100);
+  const description=String(body.description||'').trim().slice(0,1200);
+  if(businessName.length<2||description.length<20)return res.status(400).json({error:'Informe nome e uma descrição com pelo menos 20 caracteres.'});
+  let logoUrl=current.logo_url||'',facadeUrl=current.facade_url||'',gallery1Url=current.gallery_1_url||'',gallery2Url=current.gallery_2_url||'',gallery3Url=current.gallery_3_url||'';
+  try{
+    logoUrl=body.removeLogo?'':saveStoreImage(reference,'logo-admin',body.logo,logoUrl);
+    facadeUrl=body.removeFacade?'':saveStoreImage(reference,'facade-admin',body.facade,facadeUrl);
+    gallery1Url=body.removeGallery1?'':saveStoreImage(reference,'gallery-1-admin',body.gallery1,gallery1Url);
+    gallery2Url=body.removeGallery2?'':saveStoreImage(reference,'gallery-2-admin',body.gallery2,gallery2Url);
+    gallery3Url=body.removeGallery3?'':saveStoreImage(reference,'gallery-3-admin',body.gallery3,gallery3Url);
+  }catch(error){return res.status(400).json({error:error.message});}
+  const values={whatsapp:String(body.whatsapp||'').trim().slice(0,30),websiteUrl:safeExternalUrl(body.websiteUrl),instagramUrl:safeExternalUrl(body.instagramUrl),tiktokUrl:safeExternalUrl(body.tiktokUrl),googleMapsUrl:safeExternalUrl(body.googleMapsUrl),videoUrl:safeExternalUrl(body.videoUrl),promotionText:String(body.promotionText||'').trim().slice(0,120),address:String(body.address||'').trim().slice(0,240),city:String(body.city||'').trim().slice(0,100),state:String(body.state||'').trim().slice(0,2).toUpperCase(),postalCode:String(body.postalCode||'').replace(/\D/g,'').slice(0,8),locationNotes:String(body.locationNotes||'').trim().slice(0,500)};
+  db.prepare(`UPDATE store_profiles SET business_name=?,description=?,logo_url=?,facade_url=?,gallery_1_url=?,gallery_2_url=?,gallery_3_url=?,video_url=?,whatsapp=?,website_url=?,instagram_url=?,tiktok_url=?,google_maps_url=?,promotion_text=?,address=?,city=?,state=?,postal_code=?,location_notes=?,wants_website=?,wants_brand_art=?,wants_google_profile=?,admin_notes=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
+    .run(businessName,description,logoUrl,facadeUrl,gallery1Url,gallery2Url,gallery3Url,values.videoUrl,values.whatsapp,values.websiteUrl,values.instagramUrl,values.tiktokUrl,values.googleMapsUrl,values.promotionText,values.address,values.city,values.state,values.postalCode,values.locationNotes,body.wantsWebsite?1:0,body.wantsBrandArt?1:0,body.wantsGoogleProfile?1:0,String(body.adminNotes||'').trim().slice(0,1200),reference);
+  db.prepare('UPDATE lot_orders SET business_name=?,whatsapp=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?').run(businessName,values.whatsapp,reference);
+  return res.json({ok:true,submission:db.prepare(`SELECT p.*,o.email,o.name customer_name,o.lot_code,o.segment,o.plan_code,o.billing_type FROM store_profiles p JOIN lot_orders o ON o.reference=p.order_reference WHERE p.order_reference=?`).get(reference)});
+});
+
 app.get('/api/admin/marketplace/reconciliation', requireAdmin, (req,res) => {
   const status=String(req.query.status||'').trim();
   const allowed=new Set(['pending','matched','mismatch','reversed']);
@@ -7201,7 +7223,8 @@ function renderIndexableListingPage({ title, description, canonical, parentName,
 app.get(['/loja/:reference', '/loja/:reference/:slug'], (req, res) => {
   const reference = String(req.params.reference || '').trim().slice(0, 120);
   const store = db.prepare(`SELECT order_reference,business_name,description,logo_url,facade_url,
-      website_url,instagram_url,tiktok_url,promotion_text
+      website_url,instagram_url,tiktok_url,google_maps_url,whatsapp,promotion_text,address,city,state,
+      postal_code,location_notes,video_url,gallery_1_url,gallery_2_url,gallery_3_url
     FROM store_profiles WHERE order_reference=? AND review_status='published'`).get(reference);
   if (!store) return publicErrorPage(res, 404);
   const canonicalSlug = marketplaceSlug(store.business_name);
