@@ -821,6 +821,7 @@ const defaultSpecialistAgents = [
   ['lojistas','Agente de Lojistas','Cadastro e qualidade','Orienta cadastros, revisa informações e aponta pendências de lojas.'],
   ['marketing','Agente de Marketing','Conteúdo e campanhas','Cria pautas, ofertas e propostas de comunicação para aprovação.'],
   ['midia','Estúdio Audiovisual','Vídeo, imagem e áudio','Transforma missões em roteiros, cenas, edições e versões para cada canal, sempre com revisão antes de publicar.'],
+  ['cripto','Agente de Cripto e Tesouraria','Criptoativos e gestão de risco','Monitora a carteira operacional, pesquisa oportunidades e prepara propostas de alocação com risco, liquidez, custos e cenário de perda. Nunca promete retorno nem movimenta fundos fora das políticas da carteira.'],
   ['vendas','Agente de Vendas','Conversão','Analisa oportunidades, funil e ações para aumentar vendas.'],
   ['tecnico','Agente Técnico','Site e integrações','Monitora integrações, erros e melhorias técnicas seguras.']
 ];
