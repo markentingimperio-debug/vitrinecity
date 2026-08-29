@@ -704,6 +704,16 @@ ensureColumn('social_posts', 'image_url', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('social_posts', 'seo_title', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('social_posts', 'seo_description', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('social_posts', 'seo_keywords', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'address', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'city', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'state', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'postal_code', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'location_notes', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'video_url', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'gallery_1_url', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'gallery_2_url', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'gallery_3_url', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'wants_google_profile', 'INTEGER NOT NULL DEFAULT 0');
 db.exec(`CREATE TABLE IF NOT EXISTS ad_delivery_events (
   id INTEGER PRIMARY KEY,
   campaign_id INTEGER NOT NULL REFERENCES ad_campaigns(id) ON DELETE CASCADE,
@@ -1186,6 +1196,10 @@ const ADS_MAX_TOPUP_CENTS = 500000;
 const ADS_INTERNAL_CLICK_COST_UNITS = 480;
 const COURSE_PRICE_CENTS = 2399;
 const VIDEO_PACKAGE = Object.freeze({ slug: '10-videos-loja', amountCents: 20000, quantity: 10 });
+const DIGITAL_SERVICE_PACKAGES = Object.freeze({
+  'google-maps-essencial': Object.freeze({ title:'Otimização Google e Maps', amountCents:15000, description:'Diagnóstico, palavras-chave, informações, fotos e plano de otimização do Perfil da Empresa no Google' }),
+  'pagina-empresa': Object.freeze({ title:'Página profissional da empresa', amountCents:50000, description:'Criação de página empresarial responsiva com apresentação, contatos, localização e chamada para ação' })
+});
 const REFERRAL_RATE_BPS = 600;
 const COURSE_REFERRAL_RATE_BPS = 4500;
 const VIDEO_CREATOR_RATE_BPS = 8500;
@@ -1621,7 +1635,12 @@ function publicStoreProfile(reference) {
       facadeUrl: profile.facade_url || '', whatsapp: profile.whatsapp || '', websiteUrl: profile.website_url || '',
       instagramUrl: profile.instagram_url || '', tiktokUrl: profile.tiktok_url || '',
       googleMapsUrl: profile.google_maps_url || '', promotionText: profile.promotion_text || '',
+      address: profile.address || '', city: profile.city || '', state: profile.state || '',
+      postalCode: profile.postal_code || '', locationNotes: profile.location_notes || '',
+      videoUrl: profile.video_url || '', gallery1Url: profile.gallery_1_url || '',
+      gallery2Url: profile.gallery_2_url || '', gallery3Url: profile.gallery_3_url || '',
       wantsWebsite: Boolean(profile.wants_website), wantsBrandArt: Boolean(profile.wants_brand_art),
+      wantsGoogleProfile: Boolean(profile.wants_google_profile),
       reviewStatus: profile.review_status, adminNotes: profile.admin_notes || '',
       submittedAt: profile.submitted_at, publishedAt: profile.published_at
     } : null
@@ -3325,7 +3344,7 @@ const OPENAI_RESPONSES_URL = AI_PROVIDER === 'openrouter'
 const aiConfigured = () => Boolean(AI_API_KEY);
 const AI_PUBLIC_ROOT = path.resolve(dir, 'public');
 const AI_BLOCKED_PAGES = new Set([
-  'admin.html', 'admin-agentes.html', 'admin-growth.html', 'admin-tiktok.html', 'admin-lojas.html', 'carteira.html', 'painel-lojista.html',
+  'admin.html', 'admin-agentes.html', 'admin-growth.html', 'admin-tiktok.html', 'admin-lojas.html', 'admin-servicos.html', 'carteira.html', 'painel-lojista.html',
   'painel-afiliado.html', 'pagamento.html', 'curso-player.html'
 ]);
 
@@ -4726,6 +4745,29 @@ app.post('/api/services/videos/checkout', async (req, res) => {
   }
 });
 
+app.post('/api/services/digital/:slug/checkout', sameOriginOnly, async (req,res)=>{
+  const service=DIGITAL_SERVICE_PACKAGES[String(req.params.slug||'')];
+  if(!service)return res.status(404).json({error:'Serviço não encontrado.'});
+  if(!process.env.MERCADOPAGO_ACCESS_TOKEN||!process.env.MERCADOPAGO_WEBHOOK_SECRET)return res.status(503).json({error:'Pagamento temporariamente indisponível.'});
+  if(!allowAttempt(checkoutAttempts,`digital-service:${req.ip}`,5,10*60*1000))return res.status(429).json({error:'Muitas tentativas. Aguarde alguns minutos.'});
+  const {name,email,whatsapp='',consent,termsAccepted}=req.body||{},normalizedEmail=String(email||'').trim().toLowerCase();
+  if(!consent||!termsAccepted||String(name||'').trim().length<2||!/^\S+@\S+\.\S+$/.test(normalizedEmail))return res.status(400).json({error:'Informe seus dados e aceite os termos do serviço.'});
+  recordConsent(req,{email:normalizedEmail,purpose:'digital_service_terms',version:'digital-services-2026-08-29',source:'education_service_checkout',evidence:{serviceSlug:req.params.slug}});
+  const reference=`service_${randomUUID()}`;
+  db.prepare(`INSERT INTO service_orders(reference,service_slug,name,email,whatsapp,amount_cents,status,delivery_status) VALUES (?,?,?,?,?,?,'created','awaiting_payment')`)
+    .run(reference,req.params.slug,String(name).trim().slice(0,100),normalizedEmail.slice(0,160),String(whatsapp).trim().slice(0,30),service.amountCents);
+  adminAnalytics.recordCheckout(req,reference,'digital_service',service.amountCents);
+  try{
+    const response=await fetch('https://api.mercadopago.com/checkout/preferences',{method:'POST',headers:{...mpHeaders(),'X-Idempotency-Key':reference},body:JSON.stringify({items:[{id:`vitrinecity-${req.params.slug}`,title:service.title,description:service.description,category_id:'services',quantity:1,currency_id:'BRL',unit_price:service.amountCents/100}],payer:{name:String(name).trim().slice(0,100),email:normalizedEmail},external_reference:reference,notification_url:`${SITE_URL}/api/payments/mercadopago/webhook`,back_urls:{success:`${SITE_URL}/pagamento.html?resultado=sucesso&servico=${encodeURIComponent(req.params.slug)}`,pending:`${SITE_URL}/pagamento.html?resultado=pendente&servico=${encodeURIComponent(req.params.slug)}`,failure:`${SITE_URL}/centro-educacional.html?resultado=falha#consultoria`},auto_return:'approved',statement_descriptor:'VITRINECITY',metadata:{product:'digital_service',service_slug:req.params.slug}}),signal:AbortSignal.timeout(12000)});
+    const data=await response.json();if(!response.ok||!data.id||!data.init_point)throw new Error(data?.message||'preference_failed');
+    db.prepare("UPDATE service_orders SET status='pending',mp_preference_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(data.id,reference);
+    return res.status(201).json({checkoutUrl:data.init_point,reference});
+  }catch(error){db.prepare("UPDATE service_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);console.error('Mercado Pago digital service error',error?.message||'unknown');return res.status(502).json({error:'Não foi possível iniciar o pagamento agora.'});}
+});
+
+app.get('/api/admin/service-orders',requireAdmin,(_req,res)=>res.json({orders:db.prepare('SELECT * FROM service_orders ORDER BY id DESC LIMIT 300').all()}));
+app.patch('/api/admin/service-orders/:reference',requireAdmin,sameOriginOnly,(req,res)=>{const status=String(req.body?.deliveryStatus||''),allowed=new Set(['awaiting_payment','awaiting_brief','brief_received','in_production','awaiting_approval','delivered','cancelled']);if(!allowed.has(status))return res.status(400).json({error:'Etapa inválida.'});const result=db.prepare('UPDATE service_orders SET delivery_status=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?').run(status,req.params.reference);if(!result.changes)return res.status(404).json({error:'Pedido não encontrado.'});return res.json({ok:true});});
+
 function validMercadoPagoSignature(req, dataId, secret = process.env.MERCADOPAGO_WEBHOOK_SECRET) {
   const signature = String(req.get('x-signature') || '');
   const requestId = String(req.get('x-request-id') || '');
@@ -4915,7 +4957,7 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'course', order.amount_cents);
       return res.sendStatus(200);
     }
-    if (reference.startsWith('video_')) {
+    if (reference.startsWith('video_') || reference.startsWith('service_')) {
       const order = db.prepare('SELECT * FROM service_orders WHERE reference=?').get(reference);
       if (!order) return res.sendStatus(200);
       if (amountCents !== order.amount_cents || payment.currency_id !== 'BRL') return res.sendStatus(400);
@@ -4924,9 +4966,9 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
         ['refunded', 'charged_back', 'cancelled', 'rejected'].includes(status) ? 'cancelled' : order.delivery_status;
       db.prepare(`UPDATE service_orders SET status=?,delivery_status=?,mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?`)
         .run(status, deliveryStatus, String(payment.id), order.reference);
-      syncAffiliateCommission({ affiliateId: order.affiliate_id, orderType: 'video_package', orderReference: order.reference,
+      if(reference.startsWith('video_'))syncAffiliateCommission({ affiliateId: order.affiliate_id, orderType: 'video_package', orderReference: order.reference,
         grossAmountCents: order.amount_cents, rateBps: VIDEO_CREATOR_RATE_BPS, payment });
-      if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'video_package', order.amount_cents);
+      if (status === 'approved') adminAnalytics.recordPurchase(order.reference, reference.startsWith('video_')?'video_package':'digital_service', order.amount_cents);
       return res.sendStatus(200);
     }
     const order = db.prepare('SELECT * FROM lot_orders WHERE reference=?').get(reference);
@@ -5245,9 +5287,15 @@ app.put('/api/store-portal/:reference', async (req, res) => {
   const current = db.prepare('SELECT * FROM store_profiles WHERE order_reference=?').get(access.order.reference);
   let logoUrl;
   let facadeUrl;
+  let gallery1Url;
+  let gallery2Url;
+  let gallery3Url;
   try {
     logoUrl = saveStoreImage(access.order.reference, 'logo', body.logo, current?.logo_url);
     facadeUrl = saveStoreImage(access.order.reference, 'facade', body.facade, current?.facade_url);
+    gallery1Url = saveStoreImage(access.order.reference, 'gallery-1', body.gallery1, current?.gallery_1_url);
+    gallery2Url = saveStoreImage(access.order.reference, 'gallery-2', body.gallery2, current?.gallery_2_url);
+    gallery3Url = saveStoreImage(access.order.reference, 'gallery-3', body.gallery3, current?.gallery_3_url);
   } catch (error) {
     return res.status(400).json({ error: error.message });
   }
@@ -5257,22 +5305,31 @@ app.put('/api/store-portal/:reference', async (req, res) => {
     websiteUrl: safeExternalUrl(body.websiteUrl), instagramUrl: safeExternalUrl(body.instagramUrl),
     tiktokUrl: safeExternalUrl(body.tiktokUrl), googleMapsUrl: safeExternalUrl(body.googleMapsUrl),
     promotionText: String(body.promotionText || '').trim().slice(0, 120),
-    wantsWebsite: body.wantsWebsite ? 1 : 0, wantsBrandArt: body.wantsBrandArt ? 1 : 0
+    address: String(body.address || '').trim().slice(0, 240), city: String(body.city || '').trim().slice(0, 100),
+    state: String(body.state || '').trim().slice(0, 2).toUpperCase(), postalCode: String(body.postalCode || '').replace(/[^0-9]/g,'').slice(0,8),
+    locationNotes: String(body.locationNotes || '').trim().slice(0, 500), videoUrl: safeExternalUrl(body.videoUrl),
+    wantsWebsite: body.wantsWebsite ? 1 : 0, wantsBrandArt: body.wantsBrandArt ? 1 : 0,
+    wantsGoogleProfile: body.wantsGoogleProfile ? 1 : 0
   };
   db.prepare(`INSERT INTO store_profiles
     (order_reference,business_name,description,logo_url,facade_url,whatsapp,website_url,instagram_url,
-     tiktok_url,google_maps_url,promotion_text,wants_website,wants_brand_art,review_status,submitted_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',CURRENT_TIMESTAMP)
+     tiktok_url,google_maps_url,promotion_text,wants_website,wants_brand_art,address,city,state,postal_code,
+     location_notes,video_url,gallery_1_url,gallery_2_url,gallery_3_url,wants_google_profile,review_status,submitted_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',CURRENT_TIMESTAMP)
     ON CONFLICT(order_reference) DO UPDATE SET business_name=excluded.business_name,
       description=excluded.description,logo_url=excluded.logo_url,facade_url=excluded.facade_url,
       whatsapp=excluded.whatsapp,website_url=excluded.website_url,instagram_url=excluded.instagram_url,
       tiktok_url=excluded.tiktok_url,google_maps_url=excluded.google_maps_url,
       promotion_text=excluded.promotion_text,wants_website=excluded.wants_website,
-      wants_brand_art=excluded.wants_brand_art,review_status='pending',admin_notes=NULL,
+      wants_brand_art=excluded.wants_brand_art,address=excluded.address,city=excluded.city,state=excluded.state,
+      postal_code=excluded.postal_code,location_notes=excluded.location_notes,video_url=excluded.video_url,
+      gallery_1_url=excluded.gallery_1_url,gallery_2_url=excluded.gallery_2_url,gallery_3_url=excluded.gallery_3_url,
+      wants_google_profile=excluded.wants_google_profile,review_status='pending',admin_notes=NULL,
       submitted_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP`)
     .run(access.order.reference, businessName, values.description, logoUrl, facadeUrl, values.whatsapp,
       values.websiteUrl, values.instagramUrl, values.tiktokUrl, values.googleMapsUrl, values.promotionText,
-      values.wantsWebsite, values.wantsBrandArt);
+      values.wantsWebsite, values.wantsBrandArt, values.address, values.city, values.state, values.postalCode,
+      values.locationNotes, values.videoUrl, gallery1Url, gallery2Url, gallery3Url, values.wantsGoogleProfile);
   db.prepare(`UPDATE lot_orders SET business_name=?,whatsapp=?,fulfillment_status='pending_review',
     updated_at=CURRENT_TIMESTAMP WHERE reference=?`).run(businessName, values.whatsapp, access.order.reference);
   if (mailTransport) {
