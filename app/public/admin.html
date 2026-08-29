@@ -1033,6 +1033,16 @@
           <article class="metric"><small>LIMITE PREPARADO</small><strong id="binanceLocalLimit">US$ 50</strong><span>Teto máximo antes de liberar operações</span></article>
           <article class="metric"><small>PROTEÇÕES</small><strong id="binanceLocalSafety">—</strong><span>IP restrito e saques desativados</span></article>
         </div>
+        <div class="filters" style="margin-top: 16px">
+          <button id="binanceDemoToggle" type="button">Carregando demo…</button>
+          <button id="binanceRealToggle" class="secondary" type="button" disabled>REAL BLOQUEADO</button>
+          <span id="binanceControlMessage" class="ai-warning">O modo real exige autorização financeira separada.</span>
+        </div>
+        <div class="grid kpis" style="margin-top: 16px">
+          <article class="metric"><small>ÚLTIMA DECISÃO DEMO</small><strong id="binanceDemoAction">—</strong><span id="binanceDemoReason">Aguardando análise</span></article>
+          <article class="metric"><small>RESULTADO REALIZADO</small><strong id="binanceDemoPnl">US$ 0,00</strong><span>Somente fundos fictícios</span></article>
+        </div>
+        <div class="table-wrap" style="margin-top: 16px"><table><thead><tr><th>Ativo</th><th>Score</th><th>Positivos</th><th>Negativos</th></tr></thead><tbody id="binanceDemoReports"><tr><td colspan="4">Aguardando primeira análise.</td></tr></tbody></table></div>
       </section>
       <section id="ia-gestora" class="ai-shell">
         <article class="card ai-info">
@@ -1742,6 +1752,20 @@
         $('#binanceLocalSafety').textContent = data.ipRestricted && !data.keyCanWithdraw ? 'SEGURA' : 'REVISAR';
         $('#binanceLocalChecked').textContent = data.checkedAt ? `Última verificação: ${new Date(data.checkedAt).toLocaleString('pt-BR')}` : 'Aguardando executor';
       }
+      let binanceDemoEnabled = false;
+      async function loadBinanceTrading() {
+        const data = await api('/api/admin/integrations/binance-trading');
+        binanceDemoEnabled = data.demoEnabled;
+        const toggle = $('#binanceDemoToggle');
+        toggle.textContent = data.demoEnabled ? 'DESLIGAR DEMO' : 'LIGAR DEMO';
+        toggle.className = data.demoEnabled ? '' : 'secondary';
+        const report = data.report;
+        $('#binanceDemoAction').textContent = report?.action?.type || '—';
+        $('#binanceDemoReason').textContent = report?.action?.reason || 'Aguardando análise';
+        $('#binanceDemoPnl').textContent = `US$ ${Number(report?.realizedPnlUsd || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        rows('#binanceDemoReports', report?.reports || [], item =>
+          `<tr><td><strong>${esc(item.symbol)}</strong><br><small>RSI ${Number(item.rsi).toFixed(1)}</small></td><td>${num(item.score)}</td><td>${(item.positives || []).map(esc).join('<br>') || '—'}</td><td>${(item.negatives || []).map(esc).join('<br>') || '—'}</td></tr>`, 4);
+      }
       let specialistAgents = [];
       const agentStatusLabel = {
         queued: "Na fila",
@@ -2250,6 +2274,15 @@
           $("#metaWalletMessage").textContent = address;
         }
       };
+      $('#binanceDemoToggle').onclick = async () => {
+        const button = $('#binanceDemoToggle'); button.disabled = true;
+        try {
+          const data = await api('/api/admin/integrations/binance-trading', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ demoEnabled: !binanceDemoEnabled }) });
+          $('#binanceControlMessage').textContent = data.demoEnabled ? 'Demo ligado. O próximo ciclo ocorrerá em até 15 minutos.' : 'Demo desligado. Nenhuma nova ordem fictícia será criada.';
+          await loadBinanceTrading();
+        } catch (error) { $('#binanceControlMessage').textContent = error.message; }
+        finally { button.disabled = false; }
+      };
       $("#apply").onclick = load;
       $("#campaignStatus").onchange = loadManagedCampaigns;
       $("#refreshCampaigns").onclick = loadManagedCampaigns;
@@ -2282,6 +2315,7 @@
         loadAiControl(),
         loadAgents(),
         loadBinanceLocal(),
+        loadBinanceTrading(),
         loadExperiments(),
         loadAdminWhatsapp(),
         loadAdminSocial(),

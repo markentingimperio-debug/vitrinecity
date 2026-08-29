@@ -841,6 +841,23 @@ db.exec(`CREATE TABLE IF NOT EXISTS binance_local_heartbeat (
   executor_checked_at TEXT,
   received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`);
+db.exec(`CREATE TABLE IF NOT EXISTS binance_trading_control (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  demo_enabled INTEGER NOT NULL DEFAULT 1,
+  real_enabled INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT OR IGNORE INTO binance_trading_control (id,demo_enabled,real_enabled) VALUES (1,1,0);
+CREATE TABLE IF NOT EXISTS binance_demo_report (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  checked_at TEXT,
+  action_type TEXT NOT NULL DEFAULT 'HOLD',
+  action_json TEXT NOT NULL DEFAULT '{}',
+  reports_json TEXT NOT NULL DEFAULT '[]',
+  positions_json TEXT NOT NULL DEFAULT '{}',
+  realized_pnl_usd REAL NOT NULL DEFAULT 0,
+  received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`);
 db.exec(`CREATE TABLE IF NOT EXISTS whatsapp_accounts (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -3883,6 +3900,75 @@ app.get('/api/admin/integrations/binance-local', requireAdmin, (_req, res) => {
     keyCanTradeSpot: Boolean(row.key_can_trade_spot), keyCanWithdraw: Boolean(row.key_can_withdraw),
     assetsWithBalance: row.assets_with_balance, checkedAt: row.executor_checked_at, receivedAt: row.received_at
   });
+});
+
+function requireBinanceLocalToken(req, res) {
+  const configured = String(process.env.BINANCE_LOCAL_HEARTBEAT_TOKEN || '');
+  const supplied = String(req.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  const valid = configured && supplied && timingSafeEqual(
+    createHash('sha256').update(configured).digest(),
+    createHash('sha256').update(supplied).digest()
+  );
+  if (!valid) res.status(401).json({ error: 'Credencial do executor inválida.' });
+  return Boolean(valid);
+}
+
+app.get('/api/integrations/binance-local/control', (req, res) => {
+  if (!requireBinanceLocalToken(req, res)) return;
+  const row = db.prepare('SELECT demo_enabled,real_enabled,updated_at FROM binance_trading_control WHERE id=1').get();
+  return res.json({ demoEnabled: Boolean(row.demo_enabled), realEnabled: false, realLocked: true, updatedAt: row.updated_at });
+});
+
+app.post('/api/integrations/binance-local/demo-report', (req, res) => {
+  if (!requireBinanceLocalToken(req, res)) return;
+  const body = req.body || {};
+  const reports = Array.isArray(body.reports) ? body.reports.slice(0, 3).map(item => ({
+    symbol: String(item.symbol || '').slice(0, 20), price: Number(item.price) || 0,
+    score: Number(item.score) || 0, rsi: Number(item.rsi) || 0,
+    momentum1hPct: Number(item.momentum1hPct) || 0,
+    positives: Array.isArray(item.positives) ? item.positives.slice(0, 5).map(x => String(x).slice(0, 160)) : [],
+    negatives: Array.isArray(item.negatives) ? item.negatives.slice(0, 5).map(x => String(x).slice(0, 160)) : []
+  })) : [];
+  const action = body.action && typeof body.action === 'object' ? {
+    type: ['BUY','SELL','HOLD','OFF'].includes(body.action.type) ? body.action.type : 'HOLD',
+    symbol: String(body.action.symbol || '').slice(0, 20),
+    reason: String(body.action.reason || '').slice(0, 300),
+    orderId: String(body.action.orderId || '').slice(0, 40),
+    quoteUsd: Number(body.action.quoteUsd) || 0,
+    pnlUsd: Number(body.action.pnlUsd) || 0
+  } : { type: 'HOLD', reason: 'Sem decisão registrada.' };
+  const positions = body.positions && typeof body.positions === 'object' ? body.positions : {};
+  db.prepare(`INSERT INTO binance_demo_report
+    (id,checked_at,action_type,action_json,reports_json,positions_json,realized_pnl_usd,received_at)
+    VALUES (1,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET checked_at=excluded.checked_at,action_type=excluded.action_type,
+      action_json=excluded.action_json,reports_json=excluded.reports_json,positions_json=excluded.positions_json,
+      realized_pnl_usd=excluded.realized_pnl_usd,received_at=CURRENT_TIMESTAMP`).run(
+        String(body.checkedAt || '').slice(0, 40), action.type, JSON.stringify(action),
+        JSON.stringify(reports), JSON.stringify(positions).slice(0, 10000), Number(body.realizedPnlUsd) || 0
+      );
+  return res.json({ received: true });
+});
+
+app.get('/api/admin/integrations/binance-trading', requireAdmin, (_req, res) => {
+  const control = db.prepare('SELECT demo_enabled,real_enabled,updated_at FROM binance_trading_control WHERE id=1').get();
+  const report = db.prepare('SELECT * FROM binance_demo_report WHERE id=1').get();
+  return res.json({
+    demoEnabled: Boolean(control.demo_enabled), realEnabled: false, realLocked: true,
+    updatedAt: control.updated_at,
+    report: report ? { checkedAt: report.checked_at, action: JSON.parse(report.action_json),
+      reports: JSON.parse(report.reports_json), positions: JSON.parse(report.positions_json),
+      realizedPnlUsd: report.realized_pnl_usd, receivedAt: report.received_at } : null
+  });
+});
+
+app.patch('/api/admin/integrations/binance-trading', requireAdmin, (req, res) => {
+  if (Object.hasOwn(req.body || {}, 'realEnabled')) {
+    return res.status(403).json({ error: 'O modo real permanece bloqueado. Exige uma autorização financeira separada.' });
+  }
+  const demoEnabled = Boolean(req.body?.demoEnabled);
+  db.prepare('UPDATE binance_trading_control SET demo_enabled=?,real_enabled=0,updated_at=CURRENT_TIMESTAMP WHERE id=1').run(demoEnabled ? 1 : 0);
+  return res.json({ demoEnabled, realEnabled: false, realLocked: true });
 });
 
 app.post('/api/admin/agents/tasks', requireAdmin, (req, res) => {

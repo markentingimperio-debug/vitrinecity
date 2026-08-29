@@ -20,7 +20,10 @@ const cfg = {
   secret: cfgRaw.BINANCE_TESTNET_API_SECRET,
   base: cfgRaw.BINANCE_TESTNET_BASE_URL || 'https://testnet.binance.vision',
   maxUsd: Math.min(50, Number(cfgRaw.BINANCE_TESTNET_MAX_USD || 50)),
-  orderUsd: Math.min(10, Number(cfgRaw.BINANCE_TESTNET_ORDER_USD || 10))
+  orderUsd: Math.min(10, Number(cfgRaw.BINANCE_TESTNET_ORDER_USD || 10)),
+  controlUrl: cfgRaw.VITRINECITY_DEMO_CONTROL_URL || '',
+  reportUrl: cfgRaw.VITRINECITY_DEMO_REPORT_URL || '',
+  panelToken: cfgRaw.VITRINECITY_HEARTBEAT_TOKEN || ''
 };
 if (!cfg.key || !cfg.secret || !cfg.base.includes('testnet.binance.vision')) throw new Error('Executor demo exige credenciais e URL do Binance Testnet.');
 
@@ -30,6 +33,15 @@ async function state() {
 }
 async function saveState(value) { await writeFile(statePath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 }); }
 async function journal(value) { await appendFile(journalPath, `${JSON.stringify(value)}\n`, { mode: 0o600 }); }
+async function panelRequest(url, options = {}) {
+  if (!url || !cfg.panelToken) return null;
+  const response = await fetch(url, { ...options, headers: { ...(options.headers || {}), authorization: `Bearer ${cfg.panelToken}` } });
+  if (!response.ok) throw new Error(`Painel VitrineCity HTTP ${response.status}`);
+  return response.json();
+}
+async function publish(record) {
+  return panelRequest(cfg.reportUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(record) });
+}
 function ema(values, period) {
   const k = 2 / (period + 1); return values.reduce((v, x, i) => i ? x * k + v * (1 - k) : x, values[0]);
 }
@@ -67,7 +79,15 @@ async function order(params) {
 }
 
 async function run() {
-  const current = await state(); const reports = await Promise.all(symbols.map(analysis));
+  const current = await state();
+  const control = await panelRequest(cfg.controlUrl);
+  if (control && !control.demoEnabled) {
+    const record = { checkedAt: new Date().toISOString(), environment: 'Binance Spot Testnet', maxExposureUsd: cfg.maxUsd,
+      reports: [], action: { type: 'OFF', reason: 'Robô demo desligado pelo painel administrativo.' },
+      positions: current.positions, realizedPnlUsd: current.realizedPnlUsd };
+    await journal(record); await publish(record); console.log(JSON.stringify(record)); return;
+  }
+  const reports = await Promise.all(symbols.map(analysis));
   const exposure = Object.values(current.positions).reduce((sum, p) => sum + p.entryQuoteUsd, 0);
   let action = { type: 'HOLD', reason: 'Nenhum sinal atingiu os critérios.' };
   for (const report of reports) {
@@ -92,6 +112,6 @@ async function run() {
     }
   }
   const record = { checkedAt: new Date().toISOString(), environment: 'Binance Spot Testnet', maxExposureUsd: cfg.maxUsd, reports, action, positions: current.positions, realizedPnlUsd: current.realizedPnlUsd };
-  await saveState(current); await journal(record); console.log(JSON.stringify(record));
+  await saveState(current); await journal(record); await publish(record); console.log(JSON.stringify(record));
 }
 await run();
