@@ -797,6 +797,7 @@
       </nav>
       <nav class="side-group">
         <small>Governança</small
+        ><a href="#meta-wallet"><i class="side-dot"></i>Carteira Meta</a
         ><a href="/admin-identidade.html"
           ><i class="side-dot"></i>Identidade 18+</a
         ><a href="/admin-security.html"><i class="side-dot"></i>Segurança</a
@@ -902,6 +903,12 @@
             ><span class="module-tag">Ativo</span><strong>Pagamentos</strong>
             <p>Mercado Pago, repasses, saldos e reconciliação.</p></a
           >
+          <a class="module-card" href="#meta-wallet"
+            ><span class="module-icon">🦊</span
+            ><span class="module-tag">Guard Mode</span
+            ><strong>Carteira Meta</strong>
+            <p>Saldo operacional dos agentes, limites e proteção 2FA.</p></a
+          >
           <a class="module-card" href="/admin-logistica.html"
             ><span class="module-icon">🚚</span
             ><span class="module-tag">Ativo</span><strong>Logística</strong>
@@ -968,6 +975,50 @@
         </div>
       </section>
       <div id="error" class="error"></div>
+      <section class="card" id="meta-wallet" style="margin-top: 16px">
+        <div class="hero" style="margin-bottom: 15px">
+          <div>
+            <h2 style="font-size: 24px">🦊 Carteira Meta dos agentes</h2>
+            <p>
+              Carteira operacional separada da sua MetaMask principal, criada
+              para despesas autorizadas do ecossistema.
+            </p>
+          </div>
+          <span class="status ok">GUARD MODE ATIVO</span>
+        </div>
+        <div class="grid kpis">
+          <article class="metric">
+            <small>ENDEREÇO OPERACIONAL</small
+            ><strong id="metaWalletShort">0x1852…8be9</strong
+            ><span>MetaMask Agent Wallet</span>
+          </article>
+          <article class="metric">
+            <small>LIMITE DE SAÍDA / 24H</small><strong>US$ 0</strong
+            ><span>Nenhum gasto liberado ainda</span>
+          </article>
+          <article class="metric">
+            <small>PROTEÇÃO</small><strong>2FA</strong
+            ><span>Exceções exigem aprovação por e-mail</span>
+          </article>
+          <article class="metric">
+            <small>CARTEIRA PRINCIPAL</small><strong>ISOLADA</strong
+            ><span>Chaves nunca ficam no servidor</span>
+          </article>
+        </div>
+        <div class="filters" style="margin-top: 16px">
+          <button id="copyMetaWallet" type="button">Copiar endereço para adicionar saldo</button>
+          <a
+            class="button secondary"
+            href="https://docs.metamask.io/agent-wallet/quickstart/"
+            target="_blank"
+            rel="noopener"
+            >Documentação oficial</a
+          >
+          <span id="metaWalletMessage" class="ai-warning"
+            >Envie primeiro um valor pequeno e somente pela rede escolhida.</span
+          >
+        </div>
+      </section>
       <section id="ia-gestora" class="ai-shell">
         <article class="card ai-info">
           <span id="aiStatus" class="ai-status">VERIFICANDO API</span>
@@ -2157,6 +2208,21 @@
             $("#aiInput").focus();
           }),
       );
+      $("#copyMetaWallet").onclick = async () => {
+        const address = "0x1852cea04740993aa4cbad391cce1aecde8e8be9";
+        try {
+          await navigator.clipboard.writeText(address);
+          $("#metaWalletMessage").textContent =
+            "Endereço copiado. Confira os primeiros e últimos caracteres antes de enviar.";
+          $("#copyMetaWallet").textContent = "Endereço copiado";
+          setTimeout(
+            () => ($("#copyMetaWallet").textContent = "Copiar endereço para adicionar saldo"),
+            1800,
+          );
+        } catch {
+          $("#metaWalletMessage").textContent = address;
+        }
+      };
       $("#apply").onclick = load;
       $("#campaignStatus").onchange = loadManagedCampaigns;
       $("#refreshCampaigns").onclick = loadManagedCampaigns;
