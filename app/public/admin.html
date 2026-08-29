@@ -1019,6 +1019,21 @@
           >
         </div>
       </section>
+      <section class="card" id="binance-local" style="margin-top: 16px">
+        <div class="hero" style="margin-bottom: 15px">
+          <div>
+            <h2 style="font-size: 24px">🟡 Binance · Executor local</h2>
+            <p>Status seguro do agente de cripto executado neste computador. Nenhuma credencial é exibida ou enviada ao navegador.</p>
+          </div>
+          <span id="binanceLocalStatus" class="status">VERIFICANDO</span>
+        </div>
+        <div class="grid kpis">
+          <article class="metric"><small>CONEXÃO</small><strong id="binanceLocalConnection">—</strong><span id="binanceLocalChecked">Aguardando executor</span></article>
+          <article class="metric"><small>MODO</small><strong id="binanceLocalMode">LEITURA</strong><span>Ordens desabilitadas no executor</span></article>
+          <article class="metric"><small>LIMITE PREPARADO</small><strong id="binanceLocalLimit">US$ 50</strong><span>Teto máximo antes de liberar operações</span></article>
+          <article class="metric"><small>PROTEÇÕES</small><strong id="binanceLocalSafety">—</strong><span>IP restrito e saques desativados</span></article>
+        </div>
+      </section>
       <section id="ia-gestora" class="ai-shell">
         <article class="card ai-info">
           <span id="aiStatus" class="ai-status">VERIFICANDO API</span>
@@ -1715,6 +1730,18 @@
               }),
           );
       }
+      async function loadBinanceLocal() {
+        const data = await api('/api/admin/integrations/binance-local');
+        const healthy = data.connected && !data.stale && data.mode === 'read_only' && data.ipRestricted && !data.keyCanWithdraw;
+        const status = $('#binanceLocalStatus');
+        status.textContent = healthy ? 'CONECTADO · SOMENTE LEITURA' : data.stale ? 'EXECUTOR OFFLINE' : 'PROTEÇÃO ATIVA';
+        status.className = 'status' + (healthy ? ' ok' : ' off');
+        $('#binanceLocalConnection').textContent = healthy ? 'ONLINE' : 'OFFLINE';
+        $('#binanceLocalMode').textContent = data.mode === 'read_only' ? 'LEITURA' : 'BLOQUEADO';
+        $('#binanceLocalLimit').textContent = `US$ ${Number(data.maxUsd || 50).toLocaleString('pt-BR')}`;
+        $('#binanceLocalSafety').textContent = data.ipRestricted && !data.keyCanWithdraw ? 'SEGURA' : 'REVISAR';
+        $('#binanceLocalChecked').textContent = data.checkedAt ? `Última verificação: ${new Date(data.checkedAt).toLocaleString('pt-BR')}` : 'Aguardando executor';
+      }
       let specialistAgents = [];
       const agentStatusLabel = {
         queued: "Na fila",
@@ -2254,6 +2281,7 @@
         loadAi(),
         loadAiControl(),
         loadAgents(),
+        loadBinanceLocal(),
         loadExperiments(),
         loadAdminWhatsapp(),
         loadAdminSocial(),

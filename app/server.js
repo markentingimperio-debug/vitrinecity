@@ -828,6 +828,19 @@ const defaultSpecialistAgents = [
 const upsertSpecialistAgent = db.prepare(`INSERT INTO admin_specialist_agents (code,name,specialty,description)
   VALUES (?,?,?,?) ON CONFLICT(code) DO NOTHING`);
 for (const agent of defaultSpecialistAgents) upsertSpecialistAgent.run(...agent);
+db.exec(`CREATE TABLE IF NOT EXISTS binance_local_heartbeat (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  ok INTEGER NOT NULL DEFAULT 0,
+  mode TEXT NOT NULL DEFAULT 'read_only',
+  max_usd REAL NOT NULL DEFAULT 50,
+  ip_restricted INTEGER NOT NULL DEFAULT 0,
+  key_can_trade_spot INTEGER NOT NULL DEFAULT 0,
+  key_can_withdraw INTEGER NOT NULL DEFAULT 0,
+  connected INTEGER NOT NULL DEFAULT 0,
+  assets_with_balance INTEGER NOT NULL DEFAULT 0,
+  executor_checked_at TEXT,
+  received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`);
 db.exec(`CREATE TABLE IF NOT EXISTS whatsapp_accounts (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -3829,6 +3842,47 @@ app.get('/api/admin/agents', requireAdmin, (_req, res) => {
     LEFT JOIN admin_media_projects m ON m.task_id=t.id
     ORDER BY CASE t.status WHEN 'awaiting_approval' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END,t.id DESC LIMIT 80`).all();
   return res.json({ mode: 'supervised', agents, tasks });
+});
+
+app.post('/api/integrations/binance-local/heartbeat', (req, res) => {
+  const configured = String(process.env.BINANCE_LOCAL_HEARTBEAT_TOKEN || '');
+  const supplied = String(req.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  const configuredHash = createHash('sha256').update(configured).digest();
+  const suppliedHash = createHash('sha256').update(supplied).digest();
+  if (!configured || !supplied || !timingSafeEqual(configuredHash, suppliedHash)) {
+    return res.status(401).json({ error: 'Credencial do executor inválida.' });
+  }
+  const body = req.body || {};
+  const mode = body.mode === 'read_only' ? 'read_only' : 'blocked';
+  const maxUsd = Math.min(50, Math.max(0, Number(body.maxUsd) || 0));
+  const checkedAt = /^\d{4}-\d{2}-\d{2}T/.test(String(body.checkedAt || '')) ? String(body.checkedAt).slice(0, 40) : null;
+  db.prepare(`INSERT INTO binance_local_heartbeat
+    (id,ok,mode,max_usd,ip_restricted,key_can_trade_spot,key_can_withdraw,connected,assets_with_balance,executor_checked_at,received_at)
+    VALUES (1,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET ok=excluded.ok,mode=excluded.mode,max_usd=excluded.max_usd,
+      ip_restricted=excluded.ip_restricted,key_can_trade_spot=excluded.key_can_trade_spot,
+      key_can_withdraw=excluded.key_can_withdraw,connected=excluded.connected,
+      assets_with_balance=excluded.assets_with_balance,executor_checked_at=excluded.executor_checked_at,
+      received_at=CURRENT_TIMESTAMP`).run(
+        body.ok ? 1 : 0, mode, maxUsd, body.ipRestricted ? 1 : 0,
+        body.keyCanTradeSpot ? 1 : 0, body.keyCanWithdraw ? 1 : 0,
+        body.connected ? 1 : 0, Math.max(0, Math.min(1000, Number(body.assetsWithBalance) || 0)), checkedAt
+      );
+  return res.json({ received: true });
+});
+
+app.get('/api/admin/integrations/binance-local', requireAdmin, (_req, res) => {
+  const row = db.prepare('SELECT * FROM binance_local_heartbeat WHERE id=1').get();
+  if (!row) return res.json({ configured: true, connected: false, stale: true, mode: 'read_only', maxUsd: 50 });
+  const received = new Date(`${row.received_at}Z`).getTime();
+  return res.json({
+    configured: true,
+    connected: Boolean(row.connected && row.ok && !row.key_can_withdraw),
+    stale: !Number.isFinite(received) || Date.now() - received > 12 * 60 * 1000,
+    mode: row.mode, maxUsd: row.max_usd, ipRestricted: Boolean(row.ip_restricted),
+    keyCanTradeSpot: Boolean(row.key_can_trade_spot), keyCanWithdraw: Boolean(row.key_can_withdraw),
+    assetsWithBalance: row.assets_with_balance, checkedAt: row.executor_checked_at, receivedAt: row.received_at
+  });
 });
 
 app.post('/api/admin/agents/tasks', requireAdmin, (req, res) => {

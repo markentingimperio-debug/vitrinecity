@@ -1,2 +1,6 @@
 .env
+.env.binance.local
+app/.binance-local-state.json
+app/.binance-local-heartbeat.json
+app/binance-local-executor.log
 node_modules/
