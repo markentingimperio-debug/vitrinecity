@@ -1,5 +1,6 @@
 .env
 .env.binance.local
+.env.binance.testnet
 app/.binance-local-state.json
 app/.binance-local-heartbeat.json
 app/binance-local-executor.log
