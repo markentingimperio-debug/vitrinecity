@@ -259,6 +259,20 @@ CREATE TABLE IF NOT EXISTS course_enrollments (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS managed_courses (
+  slug TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  audience TEXT NOT NULL DEFAULT '',
+  price_cents INTEGER NOT NULL DEFAULT 2399,
+  modules INTEGER NOT NULL DEFAULT 1,
+  cover_url TEXT NOT NULL DEFAULT '',
+  video_url TEXT NOT NULL DEFAULT '',
+  material_url TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS course_progress (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   course_slug TEXT NOT NULL,
@@ -1297,6 +1311,24 @@ const COURSES = Object.freeze({
     license: 'Conteúdo original VitrineCity. Acesso individual; proibida a redistribuição.'
   })
 });
+for (const course of Object.values(COURSES)) {
+  const original = originalCourse(course.slug);
+  db.prepare(`INSERT OR IGNORE INTO managed_courses
+    (slug,title,description,audience,price_cents,modules,status) VALUES (?,?,?,?,?,?,'active')`)
+    .run(course.slug, course.title, original?.description || '', original?.audience || '', course.priceCents, course.modules);
+}
+function managedCourse(slug) {
+  const row = db.prepare('SELECT * FROM managed_courses WHERE slug=?').get(String(slug || ''));
+  if (!row) return null;
+  return { slug: row.slug, title: row.title, description: row.description, audience: row.audience,
+    priceCents: row.price_cents, modules: row.modules, coverUrl: row.cover_url,
+    videoUrl: row.video_url, materialUrl: row.material_url, status: row.status,
+    license: COURSES[row.slug]?.license || 'Conteúdo VitrineCity. Acesso individual; proibida a redistribuição.' };
+}
+function managedCourses(activeOnly = false) {
+  const sql = `SELECT * FROM managed_courses ${activeOnly ? "WHERE status='active'" : ''} ORDER BY created_at,title`;
+  return db.prepare(sql).all().map(row => managedCourse(row.slug));
+}
 const COURSE_FILE_EXTENSIONS = new Set(['.pdf', '.mp4', '.webm', '.m4v', '.mp3', '.jpg', '.jpeg', '.png', '.zip']);
 const SESSION_COOKIE = 'vc_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
@@ -1328,7 +1360,7 @@ function allowAttempt(store, key, limit, windowMs) {
 }
 
 function courseRoot(slug) {
-  if (!COURSES[slug]) return null;
+  if (!managedCourse(slug)) return null;
   return path.join(courseFilesDir, slug);
 }
 
@@ -1355,7 +1387,8 @@ function listCourseFiles(slug) {
 }
 
 function courseReady(slug) {
-  return Boolean(originalCourse(slug)?.lessons?.length) || listCourseFiles(slug).length > 0;
+  const course = managedCourse(slug);
+  return course?.status === 'active' && (Boolean(originalCourse(slug)?.lessons?.length) || listCourseFiles(slug).length > 0 || Boolean(course.materialUrl || course.videoUrl));
 }
 
 function activeEnrollment(userId, slug) {
@@ -1924,6 +1957,7 @@ app.get(['/perfil', '/perfil-social.html'], enhancedPublicPage('perfil-social.ht
 app.get('/chat-social.html', enhancedPublicPage('chat-social.html'));
 app.get('/admin-social-moderacao.html', enhancedPublicPage('admin-social-moderacao.html', ['/admin-moderation-enhanced.js']));
 app.get('/admin-afiliados.html',requireAdmin,publicPage('admin-afiliados.html'));
+app.get('/admin-cursos.html',requireAdmin,publicPage('admin-cursos.html'));
 app.get('/afiliados.html', enhancedPublicPage('afiliados.html', ['/affiliate-creator.js']));
 app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
 app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
@@ -1993,19 +2027,56 @@ app.get('/r/:code', (req, res) => {
   };
   let destination = destinations[String(req.query.to || '')] || '/';
   const slug = String(req.query.slug || '');
-  if (destination === destinations.courses && COURSES[slug]) destination += `#${encodeURIComponent(slug)}`;
+  if (destination === destinations.courses && managedCourse(slug)) destination += `#${encodeURIComponent(slug)}`;
   res.append('Set-Cookie', `${AFFILIATE_COOKIE}=${encodeURIComponent(affiliate.code)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${AFFILIATE_COOKIE_AGE_SECONDS}`);
   return res.redirect(302, destination);
 });
 
 app.get('/api/courses', (_req, res) => res.json({
   priceCents: COURSE_PRICE_CENTS,
-  courses: Object.values(COURSES).map(({ slug, title, priceCents, modules, license }) =>
+  courses: managedCourses(true).map(({ slug, title, priceCents, modules, license, description, audience, coverUrl, videoUrl }) =>
     ({ slug, title, priceCents, modules, available: courseReady(slug), license,
-      description: originalCourse(slug)?.description || '',
-      audience: originalCourse(slug)?.audience || '',
+      description, audience, coverUrl, videoUrl,
       contentType: originalCourse(slug) ? 'original' : 'licensed' }))
 }));
+
+app.get('/api/admin/courses', requireAdmin, (_req, res) => {
+  const metrics = db.prepare(`SELECT c.slug,
+    (SELECT COUNT(DISTINCT e.user_id) FROM course_enrollments e WHERE e.course_slug=c.slug AND e.status='active') AS students,
+    (SELECT COUNT(*) FROM course_orders o WHERE o.course_slug=c.slug AND o.status IN ('approved','paid')) AS sales,
+    (SELECT COALESCE(SUM(o.amount_cents),0) FROM course_orders o WHERE o.course_slug=c.slug AND o.status IN ('approved','paid')) AS revenue_cents
+    FROM managed_courses c`).all();
+  const bySlug = new Map(metrics.map(item => [item.slug, item]));
+  return res.json({ items: managedCourses().map(course => ({ ...course, ...(bySlug.get(course.slug) || { students:0, sales:0, revenue_cents:0 }) })) });
+});
+function validCoursePayload(body, existingSlug = '') {
+  const slug = String(existingSlug || body?.slug || '').trim().toLowerCase();
+  const title = String(body?.title || '').trim();
+  const priceCents = Math.round(Number(body?.priceCents));
+  const modules = Math.round(Number(body?.modules));
+  const status = String(body?.status || 'draft');
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || title.length < 3 || title.length > 140 ||
+      !Number.isInteger(priceCents) || priceCents < 0 || priceCents > 100000000 ||
+      !Number.isInteger(modules) || modules < 1 || modules > 200 || !['draft','active','paused'].includes(status)) return null;
+  const cleanUrl = value => { const url=String(value || '').trim(); return url && !/^(https?:\/\/|\/)/i.test(url) ? null : url.slice(0,1000); };
+  const coverUrl=cleanUrl(body?.coverUrl),videoUrl=cleanUrl(body?.videoUrl),materialUrl=cleanUrl(body?.materialUrl);
+  if (coverUrl===null || videoUrl===null || materialUrl===null) return null;
+  return { slug,title,description:String(body?.description||'').trim().slice(0,2000),audience:String(body?.audience||'').trim().slice(0,500),priceCents,modules,coverUrl,videoUrl,materialUrl,status };
+}
+app.post('/api/admin/courses', requireAdmin, sameOriginOnly, (req,res) => {
+  const item=validCoursePayload(req.body); if(!item)return res.status(400).json({error:'Revise os dados do curso.'});
+  try{db.prepare(`INSERT INTO managed_courses (slug,title,description,audience,price_cents,modules,cover_url,video_url,material_url,status)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(item.slug,item.title,item.description,item.audience,item.priceCents,item.modules,item.coverUrl,item.videoUrl,item.materialUrl,item.status);
+    return res.status(201).json({ok:true,item:managedCourse(item.slug)});}catch(error){if(String(error?.message).includes('UNIQUE'))return res.status(409).json({error:'Já existe um curso com esse identificador.'});throw error;}
+});
+app.patch('/api/admin/courses/:slug', requireAdmin, sameOriginOnly, (req,res) => {
+  const item=validCoursePayload(req.body,req.params.slug); if(!item)return res.status(400).json({error:'Revise os dados do curso.'});
+  const result=db.prepare(`UPDATE managed_courses SET title=?,description=?,audience=?,price_cents=?,modules=?,cover_url=?,video_url=?,material_url=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE slug=?`)
+    .run(item.title,item.description,item.audience,item.priceCents,item.modules,item.coverUrl,item.videoUrl,item.materialUrl,item.status,item.slug);
+  if(!result.changes)return res.status(404).json({error:'Curso não encontrado.'}); return res.json({ok:true,item:managedCourse(item.slug)});
+});
+app.get('/api/admin/courses/:slug/students', requireAdmin, (req,res) => res.json({items:db.prepare(`SELECT u.name,u.email,e.status,e.created_at,o.reference,o.status AS payment_status,o.amount_cents
+  FROM course_enrollments e JOIN users u ON u.id=e.user_id JOIN course_orders o ON o.reference=e.order_reference WHERE e.course_slug=? ORDER BY e.id DESC`).all(req.params.slug)}));
 
 app.post('/api/leads', sameOriginOnly, (req, res) => {
   if (!allowAttempt(authAttempts, `lead:${req.ip}`, 6, 60 * 60 * 1000)) {
@@ -4747,8 +4818,8 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
 });
 
 app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
-  const course = COURSES[String(req.params.slug || '')];
-  if (!course) return res.status(404).json({ error: 'Curso não encontrado.' });
+  const course = managedCourse(String(req.params.slug || ''));
+  if (!course || course.status !== 'active') return res.status(404).json({ error: 'Curso não encontrado.' });
   if (!courseReady(course.slug)) return res.status(409).json({ error: 'Este curso está em preparação. A compra será liberada quando as aulas estiverem na área privada.' });
   if (!req.body?.termsAccepted) return res.status(400).json({ error: 'Aceite os termos da compra para continuar.' });
   recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'course_purchase_terms',version:'course-purchase-2026-08-22',source:'course_checkout',evidence:{course:course.slug}});
@@ -4794,6 +4865,35 @@ app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
     console.error('Mercado Pago course preference error', error?.message || 'unknown');
     return res.status(502).json({ error: 'Não foi possível iniciar o pagamento agora.' });
   }
+});
+
+const buyCourseWithCoins = db.transaction((userId, course) => {
+  expireCreditBatches(userId);
+  if (activeEnrollment(userId, course.slug)) return { alreadyEnrolled:true };
+  const wallet=db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId);
+  const requiredUnits=course.priceCents;
+  if(!wallet || wallet.balance_units<requiredUnits) throw new Error('Saldo insuficiente de VitrinyCoins.');
+  const reference=`course_coin_${randomUUID()}`;
+  db.prepare(`INSERT INTO course_orders(reference,user_id,course_slug,course_title,amount_cents,status,mp_payment_id)
+    VALUES (?,?,?,?,?,'approved','vitrinycoins')`).run(reference,userId,course.slug,course.title,course.priceCents);
+  let remaining=requiredUnits;
+  const batches=db.prepare(`SELECT id,remaining_units FROM credit_batches WHERE user_id=? AND status='active' AND remaining_units>0 ORDER BY expires_at,id`).all(userId);
+  for(const batch of batches){if(!remaining)break;const used=Math.min(remaining,batch.remaining_units),next=batch.remaining_units-used;
+    db.prepare(`UPDATE credit_batches SET remaining_units=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(next,next?'active':'used',batch.id);remaining-=used;}
+  const balanceAfter=wallet.balance_units-requiredUnits;
+  db.prepare('UPDATE wallets SET balance_units=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(balanceAfter,userId);
+  db.prepare(`INSERT INTO wallet_ledger(user_id,delta_units,balance_after_units,kind,description,order_reference)
+    VALUES (?,?,?,?,?,?)`).run(userId,-requiredUnits,balanceAfter,'course_purchase',`Curso: ${course.title}`,reference);
+  db.prepare(`INSERT INTO course_enrollments(user_id,course_slug,order_reference,status) VALUES (?,?,?,'active')`).run(userId,course.slug,reference);
+  return {reference,balanceAfter};
+});
+app.post('/api/courses/:slug/checkout-coins',requireUser,sameOriginOnly,(req,res)=>{
+  const course=managedCourse(req.params.slug);
+  if(!course||course.status!=='active'||!courseReady(course.slug))return res.status(404).json({error:'Curso indisponível.'});
+  if(!req.body?.termsAccepted)return res.status(400).json({error:'Aceite os termos da compra para continuar.'});
+  try{const purchase=buyCourseWithCoins(req.user.id,course);if(purchase.alreadyEnrolled)return res.json({ok:true,alreadyEnrolled:true,accessUrl:'/meus-cursos.html'});
+    adminAnalytics.recordPurchase(purchase.reference,'course_coins',course.priceCents);return res.status(201).json({ok:true,reference:purchase.reference,accessUrl:'/meus-cursos.html',balanceCoins:purchase.balanceAfter/100});
+  }catch(error){return res.status(402).json({error:error.message||'Não foi possível concluir com moedas.',requiredCoins:course.priceCents/100});}
 });
 
 app.post('/api/services/videos/checkout', async (req, res) => {
@@ -5588,11 +5688,12 @@ app.get('/api/my-courses', requireUser, (req, res) => {
 
 app.get('/api/my-courses/:slug/materials', requireUser, (req, res) => {
   const slug = String(req.params.slug || '');
-  if (!COURSES[slug]) return res.status(404).json({ error: 'Curso não encontrado.' });
+  const catalogCourse=managedCourse(slug);
+  if (!catalogCourse) return res.status(404).json({ error: 'Curso não encontrado.' });
   if (!activeEnrollment(req.user.id, slug)) return res.status(403).json({ error: 'Acesso disponível somente para alunos matriculados.' });
   const original = originalCourse(slug);
   return res.json({
-    course: { slug, title: COURSES[slug].title },
+    course: { slug, title: catalogCourse.title, videoUrl: catalogCourse.videoUrl, materialUrl: catalogCourse.materialUrl },
     lessons: (original?.lessons || []).map(({ slug: lessonSlug, title, duration, objective }) =>
       ({ slug: lessonSlug, title, duration, objective })),
     files: listCourseFiles(slug)
