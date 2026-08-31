@@ -981,6 +981,12 @@ db.exec(`CREATE TABLE IF NOT EXISTS whatsapp_qr_schedules (
   provider_message_id TEXT, error TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_schedules_due ON whatsapp_qr_schedules(status,scheduled_at);`);
+ensureColumn('whatsapp_qr_schedules','campaign_id','TEXT');
+db.exec(`CREATE TABLE IF NOT EXISTS whatsapp_qr_campaigns (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, days INTEGER NOT NULL, interval_hours INTEGER NOT NULL,
+  start_hour INTEGER NOT NULL, end_hour INTEGER NOT NULL, groups_count INTEGER NOT NULL,
+  schedules_count INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`);
 db.exec(`CREATE TABLE IF NOT EXISTS omnichannel_automation_settings (
   channel TEXT PRIMARY KEY CHECK(channel IN ('facebook','instagram','whatsapp_qr')),
   enabled INTEGER NOT NULL DEFAULT 0, instructions TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -3118,6 +3124,37 @@ app.post('/api/admin/whatsapp-qr/schedules',requireAdmin,sameOriginOnly,async(re
   if(Number.isNaN(scheduledAt.getTime())||scheduledAt.getTime()<Date.now()-30000)return res.status(400).json({error:'Escolha uma data e hora futura.'});
   const id=randomUUID();db.prepare(`INSERT INTO whatsapp_qr_schedules (id,group_jid,group_name,sitemap_url,message,scheduled_at) VALUES (?,?,?,?,?,?)`).run(id,groupJid,groupName,sitemapUrl,message,scheduledAt.toISOString());return res.status(201).json({ok:true,id});
 });
+app.post('/api/admin/whatsapp-qr/campaigns/sitemap',requireAdmin,sameOriginOnly,async(_req,res)=>{
+  const existing=db.prepare(`SELECT id,schedules_count schedulesCount FROM whatsapp_qr_campaigns WHERE name='VitrineCity · 3 dias · 2 horas' AND status='active' ORDER BY created_at DESC LIMIT 1`).get();
+  if(existing)return res.status(409).json({error:'Esta campanha já foi programada.',campaign:existing});
+  let links;try{links=await whatsappQrSitemapLinks()}catch{return res.status(502).json({error:'Não foi possível consultar o sitemap.'})}
+  const preferred=['/para-empresas.html','/loja','/solucoes.html','/como-funciona.html','/cidade','/social','/descobrir','/centro-educacional.html','/afiliados.html','/sobre.html','/comprar-lote.html','/contato.html'];
+  const marketingLinks=preferred.map(path=>links.find(link=>new URL(link).pathname===path)).filter(Boolean);
+  if(marketingLinks.length<6)return res.status(409).json({error:'O sitemap ainda não possui páginas suficientes para a campanha.'});
+  let history;try{history=whatsappQrData(await whatsappQrRequest('/chat/history?chat_jid=index'))}catch{return res.status(502).json({error:'Não foi possível listar os grupos conectados.'})}
+  const groups=[...new Set(Object.values(history).flatMap(value=>Array.isArray(value)?value:[]).map(item=>String(item.chat_jid||'')).filter(jid=>/@g\.us$/.test(jid)))];
+  if(!groups.length)return res.status(409).json({error:'Nenhum grupo conectado foi encontrado.'});
+  const campaignId=randomUUID(),now=Date.now(),slots=[];
+  for(let day=0;day<3;day++){const local=new Date(Date.now()-3*60*60*1000+day*86400000),date=local.toISOString().slice(0,10);for(const hour of [9,11,13,15,17,19]){const at=new Date(`${date}T${String(hour).padStart(2,'0')}:00:00-03:00`);if(at.getTime()>now+60000)slots.push(at)}}
+  const descriptions={
+    '/para-empresas.html':'Veja por que ter sua loja dentro da VitrineCity pode ampliar sua presença digital e aproximar sua empresa de novos clientes.',
+    '/loja':'Conheça o marketplace da VitrineCity e descubra produtos, serviços e oportunidades reunidos em um só lugar.',
+    '/solucoes.html':'Conheça as soluções digitais da VitrineCity para empresas, profissionais e empreendedores.',
+    '/como-funciona.html':'Entenda como funciona a VitrineCity e como sua empresa pode participar do ecossistema.',
+    '/cidade':'Explore a cidade digital da VitrineCity e veja como negócios ganham uma presença própria na plataforma.',
+    '/social':'Conheça a Vitrine Social, o espaço para conteúdo, relacionamento e descoberta dentro da VitrineCity.',
+    '/descobrir':'Descubra novidades, empresas e oportunidades publicadas na VitrineCity.',
+    '/centro-educacional.html':'Conheça os cursos e conteúdos disponíveis no Centro Educacional da VitrineCity.',
+    '/afiliados.html':'Veja como funciona o programa de afiliados da VitrineCity.',
+    '/sobre.html':'Conheça a proposta e o ecossistema da VitrineCity.',
+    '/comprar-lote.html':'Conheça os espaços digitais disponíveis para construir sua presença na VitrineCity.',
+    '/contato.html':'Fale com a equipe da VitrineCity e tire suas dúvidas sobre como participar.'
+  };
+  const insert=db.prepare(`INSERT INTO whatsapp_qr_schedules(id,group_jid,group_name,sitemap_url,message,scheduled_at,campaign_id) VALUES (?,?,?,?,?,?,?)`);
+  const create=db.transaction(()=>{let count=0;for(let index=0;index<slots.length;index++){const link=marketingLinks[index%marketingLinks.length],pathname=new URL(link).pathname,tracked=new URL(link);tracked.searchParams.set('utm_source','whatsapp');tracked.searchParams.set('utm_medium','group');tracked.searchParams.set('utm_campaign','vitrinecity_3d');tracked.searchParams.set('utm_content',`slot_${index+1}`);const message=`🏙️ VitrineCity\n\n${descriptions[pathname]||'Conheça uma nova área da VitrineCity e descubra oportunidades dentro do nosso ecossistema digital.'}\n\nConteúdo informativo. Se não for adequado ao grupo, avise para interrompermos os próximos envios.`;for(const jid of groups){insert.run(randomUUID(),jid,jid.split('@')[0],tracked.toString(),message,slots[index].toISOString(),campaignId);count++}}db.prepare(`INSERT INTO whatsapp_qr_campaigns(id,name,days,interval_hours,start_hour,end_hour,groups_count,schedules_count) VALUES (?,?,?,?,?,?,?,?)`).run(campaignId,'VitrineCity · 3 dias · 2 horas',3,2,9,19,groups.length,count);return count});
+  const count=create();return res.status(201).json({ok:true,campaignId,groups:groups.length,slots:slots.length,schedules:count});
+});
+app.get('/api/admin/whatsapp-qr/campaigns',requireAdmin,(_req,res)=>res.json({campaigns:db.prepare(`SELECT c.id,c.name,c.days,c.interval_hours intervalHours,c.groups_count groupsCount,c.schedules_count schedulesCount,c.status,c.created_at createdAt,SUM(CASE WHEN s.status='pending' THEN 1 ELSE 0 END) pending,SUM(CASE WHEN s.status='sent' THEN 1 ELSE 0 END) sent,SUM(CASE WHEN s.status='failed' THEN 1 ELSE 0 END) failed,SUM(CASE WHEN s.status='cancelled' THEN 1 ELSE 0 END) cancelled FROM whatsapp_qr_campaigns c LEFT JOIN whatsapp_qr_schedules s ON s.campaign_id=c.id GROUP BY c.id ORDER BY c.created_at DESC LIMIT 20`).all()}));
 app.delete('/api/admin/whatsapp-qr/schedules/:id',requireAdmin,sameOriginOnly,(req,res)=>{const result=db.prepare(`UPDATE whatsapp_qr_schedules SET status='cancelled' WHERE id=? AND status='pending'`).run(String(req.params.id||''));if(!result.changes)return res.status(409).json({error:'Somente agendamentos pendentes podem ser cancelados.'});return res.json({ok:true})});
 let whatsappScheduleRunning=false;
 async function processWhatsAppQrSchedules(){
