@@ -1923,6 +1923,7 @@ app.get(['/descobrir', '/descobrir-social.html'], enhancedPublicPage('descobrir-
 app.get(['/perfil', '/perfil-social.html'], enhancedPublicPage('perfil-social.html'));
 app.get('/chat-social.html', enhancedPublicPage('chat-social.html'));
 app.get('/admin-social-moderacao.html', enhancedPublicPage('admin-social-moderacao.html', ['/admin-moderation-enhanced.js']));
+app.get('/admin-afiliados.html',requireAdmin,publicPage('admin-afiliados.html'));
 app.get('/afiliados.html', enhancedPublicPage('afiliados.html', ['/affiliate-creator.js']));
 app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
 app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
@@ -4269,6 +4270,41 @@ app.get('/api/affiliates/content/campaigns', (_req,res) => {
   const items=db.prepare(`SELECT c.*,(SELECT COUNT(*) FROM affiliate_content_submissions s WHERE s.campaign_id=c.id AND s.status IN ('pending','approved')) submissions
     FROM affiliate_content_campaigns c WHERE c.status='active' ORDER BY c.id DESC`).all();
   return res.json({items:items.map(c=>({...c,rewardCoins:Number(c.reward_units)/100,commissionPercent:Number(c.commission_bps)/100,spotsLeft:Math.max(0,c.max_videos-Number(c.submissions||0))}))});
+});
+
+function affiliateCampaignInput(body={}){
+  const productName=String(body.productName||'').trim().slice(0,120),productUrl=String(body.productUrl||'').trim().slice(0,500);
+  const rewardCoins=Number(body.rewardCoins),commissionPercent=Number(body.commissionPercent),maxVideos=Math.round(Number(body.maxVideos));
+  const requirements=String(body.requirements||'').trim().slice(0,1200),status=['draft','active','paused','closed'].includes(String(body.status))?String(body.status):'draft';
+  if(productName.length<3)throw Error('Informe o produto da campanha.');
+  if(!productUrl.startsWith('/')&&!validSocialUrl(productUrl))throw Error('Informe um link válido para o produto.');
+  if(!Number.isFinite(rewardCoins)||rewardCoins<0||rewardCoins>100000)throw Error('A recompensa deve ficar entre 0 e 100.000 moedas.');
+  if(!Number.isFinite(commissionPercent)||commissionPercent<0||commissionPercent>100)throw Error('A comissão deve ficar entre 0% e 100%.');
+  if(!Number.isFinite(maxVideos)||maxVideos<1||maxVideos>100000)throw Error('Informe entre 1 e 100.000 vagas.');
+  if(requirements.length<10)throw Error('Descreva os requisitos da campanha.');
+  return {productName,productUrl,rewardUnits:Math.round(rewardCoins*100),commissionBps:Math.round(commissionPercent*100),maxVideos,requirements,status};
+}
+
+app.get('/api/admin/affiliates/campaigns',requireAdmin,(_req,res)=>{
+  const items=db.prepare(`SELECT c.*,
+    (SELECT COUNT(*) FROM affiliate_content_submissions s WHERE s.campaign_id=c.id) submissions,
+    (SELECT COUNT(*) FROM affiliate_content_submissions s WHERE s.campaign_id=c.id AND s.status='approved') approved
+    FROM affiliate_content_campaigns c ORDER BY c.id DESC`).all();
+  return res.json({items:items.map(c=>({...c,rewardCoins:Number(c.reward_units)/100,commissionPercent:Number(c.commission_bps)/100}))});
+});
+
+app.post('/api/admin/affiliates/campaigns',requireAdmin,sameOriginOnly,(req,res)=>{
+  try{const v=affiliateCampaignInput(req.body);const result=db.prepare(`INSERT INTO affiliate_content_campaigns
+    (product_name,product_url,reward_units,commission_bps,requirements,max_videos,status) VALUES (?,?,?,?,?,?,?)`)
+    .run(v.productName,v.productUrl,v.rewardUnits,v.commissionBps,v.requirements,v.maxVideos,v.status);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});}
+  catch(error){return res.status(400).json({error:error.message||'Dados inválidos.'});}
+});
+
+app.patch('/api/admin/affiliates/campaigns/:id',requireAdmin,sameOriginOnly,(req,res)=>{
+  const id=Number(req.params.id);if(!db.prepare('SELECT 1 FROM affiliate_content_campaigns WHERE id=?').get(id))return res.status(404).json({error:'Campanha não encontrada.'});
+  try{const v=affiliateCampaignInput(req.body);db.prepare(`UPDATE affiliate_content_campaigns SET product_name=?,product_url=?,reward_units=?,commission_bps=?,requirements=?,max_videos=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .run(v.productName,v.productUrl,v.rewardUnits,v.commissionBps,v.requirements,v.maxVideos,v.status,id);return res.json({ok:true,id});}
+  catch(error){return res.status(400).json({error:error.message||'Dados inválidos.'});}
 });
 
 app.post('/api/affiliates/content/submissions',requireUser,sameOriginOnly,(req,res)=>{
