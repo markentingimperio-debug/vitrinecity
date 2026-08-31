@@ -974,6 +974,24 @@ CREATE TABLE IF NOT EXISTS whatsapp_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_contact ON whatsapp_messages(contact_id,id);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_contacts_account ON whatsapp_contacts(account_id,last_message_at);`);
+db.exec(`CREATE TABLE IF NOT EXISTS whatsapp_qr_schedules (
+  id TEXT PRIMARY KEY, group_jid TEXT NOT NULL, group_name TEXT NOT NULL, sitemap_url TEXT NOT NULL,
+  message TEXT NOT NULL, scheduled_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','sent','failed','cancelled')),
+  provider_message_id TEXT, error TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_schedules_due ON whatsapp_qr_schedules(status,scheduled_at);`);
+db.exec(`CREATE TABLE IF NOT EXISTS omnichannel_automation_settings (
+  channel TEXT PRIMARY KEY CHECK(channel IN ('facebook','instagram','whatsapp_qr')),
+  enabled INTEGER NOT NULL DEFAULT 0, instructions TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT OR IGNORE INTO omnichannel_automation_settings(channel) VALUES ('facebook'),('instagram'),('whatsapp_qr');
+CREATE TABLE IF NOT EXISTS omnichannel_automation_jobs (
+  id TEXT PRIMARY KEY, channel TEXT NOT NULL, external_id TEXT NOT NULL UNIQUE, destination TEXT NOT NULL,
+  source_text TEXT NOT NULL, account_id INTEGER, status TEXT NOT NULL DEFAULT 'pending', error TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, processed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_omnichannel_jobs_status ON omnichannel_automation_jobs(status,created_at);`);
 db.exec(`CREATE TABLE IF NOT EXISTS social_accounts (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -3075,6 +3093,58 @@ app.get('/api/admin/whatsapp-qr/conversations/:jid/messages',requireAdmin,async(
   }catch(error){return res.status(502).json({error:'Não foi possível abrir a conversa: '+String(error?.message||'').slice(0,160)});}
 });
 
+async function whatsappQrSitemapLinks(){
+  const origin=new URL(SITE_URL).origin,response=await fetch(origin+'/sitemap.xml',{signal:AbortSignal.timeout(10000)});
+  if(!response.ok)throw new Error('sitemap_unavailable');
+  const xml=await response.text(),links=[];
+  for(const match of xml.matchAll(/<loc>([^<]+)<\/loc>/g)){const url=new URL(match[1].replaceAll('&amp;','&'));if(url.origin===origin)links.push(url.toString())}
+  return [...new Set(links)].slice(0,1000);
+}
+app.get('/api/admin/whatsapp-qr/sitemap-links',requireAdmin,async(_req,res)=>{try{return res.json({links:await whatsappQrSitemapLinks()})}catch{return res.status(502).json({error:'Não foi possível ler o sitemap agora.'})}});
+app.get('/api/admin/whatsapp-qr/schedules',requireAdmin,(_req,res)=>res.json({schedules:db.prepare(`SELECT id,group_jid groupJid,group_name groupName,sitemap_url sitemapUrl,message,scheduled_at scheduledAt,status,error,created_at createdAt,sent_at sentAt FROM whatsapp_qr_schedules ORDER BY scheduled_at DESC LIMIT 100`).all()}));
+app.get('/api/admin/omnichannel-automation',requireAdmin,(_req,res)=>res.json({configured:aiConfigured(),channels:db.prepare(`SELECT channel,enabled,instructions,updated_at updatedAt FROM omnichannel_automation_settings ORDER BY channel`).all().map(item=>({...item,enabled:Boolean(item.enabled)}))}));
+app.put('/api/admin/omnichannel-automation/:channel',requireAdmin,sameOriginOnly,(req,res)=>{
+  const channel=String(req.params.channel||'');if(!['facebook','instagram','whatsapp_qr'].includes(channel))return res.status(400).json({error:'Canal inválido.'});
+  const enabled=req.body?.enabled===true?1:0,instructions=String(req.body?.instructions||'').trim().slice(0,4000);
+  if(enabled&&!aiConfigured())return res.status(503).json({error:'A chave da OpenRouter/OpenAI ainda não está configurada.'});
+  db.prepare(`UPDATE omnichannel_automation_settings SET enabled=?,instructions=?,updated_at=CURRENT_TIMESTAMP WHERE channel=?`).run(enabled,instructions,channel);return res.json({ok:true});
+});
+app.post('/api/admin/whatsapp-qr/schedules',requireAdmin,sameOriginOnly,async(req,res)=>{
+  const groupJid=String(req.body?.groupJid||''),groupName=String(req.body?.groupName||'Grupo do WhatsApp').trim().slice(0,160),sitemapUrl=String(req.body?.sitemapUrl||'').trim(),message=String(req.body?.message||'').trim().slice(0,3500),scheduledAt=new Date(String(req.body?.scheduledAt||''));
+  if(!/^[0-9A-Za-z._:-]+@g\.us$/.test(groupJid))return res.status(400).json({error:'Selecione um grupo válido do WhatsApp.'});
+  let allowedLinks;try{allowedLinks=await whatsappQrSitemapLinks()}catch{return res.status(502).json({error:'O sitemap não pôde ser consultado.'})}
+  if(!allowedLinks.includes(sitemapUrl))return res.status(400).json({error:'Selecione um link publicado no sitemap da VitrineCity.'});
+  if(!message)return res.status(400).json({error:'Escreva a mensagem que acompanhará o link.'});
+  if(Number.isNaN(scheduledAt.getTime())||scheduledAt.getTime()<Date.now()-30000)return res.status(400).json({error:'Escolha uma data e hora futura.'});
+  const id=randomUUID();db.prepare(`INSERT INTO whatsapp_qr_schedules (id,group_jid,group_name,sitemap_url,message,scheduled_at) VALUES (?,?,?,?,?,?)`).run(id,groupJid,groupName,sitemapUrl,message,scheduledAt.toISOString());return res.status(201).json({ok:true,id});
+});
+app.delete('/api/admin/whatsapp-qr/schedules/:id',requireAdmin,sameOriginOnly,(req,res)=>{const result=db.prepare(`UPDATE whatsapp_qr_schedules SET status='cancelled' WHERE id=? AND status='pending'`).run(String(req.params.id||''));if(!result.changes)return res.status(409).json({error:'Somente agendamentos pendentes podem ser cancelados.'});return res.json({ok:true})});
+let whatsappScheduleRunning=false;
+async function processWhatsAppQrSchedules(){
+  if(whatsappScheduleRunning)return;whatsappScheduleRunning=true;
+  try{const due=db.prepare(`SELECT * FROM whatsapp_qr_schedules WHERE status='pending' AND scheduled_at<=? ORDER BY scheduled_at LIMIT 3`).all(new Date().toISOString());for(const item of due){const claimed=db.prepare(`UPDATE whatsapp_qr_schedules SET status='processing',error=NULL WHERE id=? AND status='pending'`).run(item.id);if(!claimed.changes)continue;try{const body=`${item.message}\n\n${item.sitemap_url}`.slice(0,4000),payload=await whatsappQrRequest('/chat/send/text',{method:'POST',body:JSON.stringify({Phone:item.group_jid,Body:body,Id:randomUUID().replaceAll('-','').toUpperCase()})}),data=whatsappQrData(payload);db.prepare(`UPDATE whatsapp_qr_schedules SET status='sent',provider_message_id=?,sent_at=CURRENT_TIMESTAMP WHERE id=?`).run(String(data.Id||data.id||'').slice(0,160),item.id)}catch(error){db.prepare(`UPDATE whatsapp_qr_schedules SET status='failed',error=? WHERE id=?`).run(String(error?.message||'send_failed').slice(0,300),item.id)}}}finally{whatsappScheduleRunning=false}
+}
+
+function enqueueOmnichannelJob(channel,externalId,destination,sourceText,accountId=null){
+  if(!externalId||!destination||!sourceText)return;
+  db.prepare(`INSERT OR IGNORE INTO omnichannel_automation_jobs(id,channel,external_id,destination,source_text,account_id) VALUES (?,?,?,?,?,?)`).run(randomUUID(),channel,String(externalId).slice(0,200),String(destination).slice(0,200),String(sourceText).slice(0,4000),accountId);
+}
+let omnichannelAutomationRunning=false;
+async function generateServiceReply(channel,text,instructions){
+  const data=await requestOpenAI({model:OPENAI_MODEL,instructions:`Você atende clientes da VitrineCity em português do Brasil pelo canal ${channel}. Responda com no máximo 600 caracteres, seja cordial e objetivo. Não invente preços, prazos ou políticas. Não peça senha, documento ou dados bancários. Se faltar informação ou houver reclamação, peça apenas nome e assunto e diga que encaminhará para atendimento humano. ${instructions||''}`,input:text,max_output_tokens:250,store:false});
+  return responseOutputText(data).trim().slice(0,900);
+}
+async function discoverWhatsAppQrAutomationJobs(){
+  const setting=db.prepare(`SELECT * FROM omnichannel_automation_settings WHERE channel='whatsapp_qr' AND enabled=1`).get();if(!setting)return;
+  const index=whatsappQrData(await whatsappQrRequest('/chat/history?chat_jid=index')),
+    chats=Object.values(index).flatMap(value=>Array.isArray(value)?value:[]).slice(0,60),cutoff=Date.now()-3*60*1000;
+  for(const chat of chats){const jid=String(chat.chat_jid||'');if(!/@(s\.whatsapp\.net|lid)$/.test(jid))continue;const raw=whatsappQrData(await whatsappQrRequest('/chat/history?chat_jid='+encodeURIComponent(jid)+'&limit=3')),items=Array.isArray(raw)?raw:[];for(const item of items){const timestamp=Date.parse(String(item.timestamp||''));if(!timestamp||timestamp<cutoff)continue;let fromMe=String(item.sender_jid||'')==='me';try{fromMe=fromMe||Boolean(JSON.parse(item.datajson||'{}')?.Info?.IsFromMe)}catch{}if(!fromMe)enqueueOmnichannelJob('whatsapp_qr',String(item.message_id||''),jid,String(item.text_content||''))}}
+}
+async function processOmnichannelAutomation(){
+  if(omnichannelAutomationRunning)return;omnichannelAutomationRunning=true;
+  try{await discoverWhatsAppQrAutomationJobs().catch(()=>{});const jobs=db.prepare(`SELECT j.*,s.instructions FROM omnichannel_automation_jobs j JOIN omnichannel_automation_settings s ON s.channel=j.channel AND s.enabled=1 WHERE j.status='pending' ORDER BY j.created_at LIMIT 3`).all();for(const job of jobs){db.prepare(`UPDATE omnichannel_automation_jobs SET status='processing' WHERE id=? AND status='pending'`).run(job.id);try{const reply=await generateServiceReply(job.channel,job.source_text,job.instructions);if(!reply)throw new Error('empty_ai_reply');if(job.channel==='whatsapp_qr')await whatsappQrRequest('/chat/send/text',{method:'POST',body:JSON.stringify({Phone:job.destination,Body:reply,Id:randomUUID().replaceAll('-','').toUpperCase()})});else{const account=db.prepare(`SELECT token_encrypted FROM social_accounts WHERE id=? AND status='connected'`).get(job.account_id);if(!account)throw new Error('meta_account_missing');const response=await fetch(`https://graph.facebook.com/${socialApiVersion()}/${encodeURIComponent(job.destination)}/private_replies`,{method:'POST',headers:{Authorization:`Bearer ${decryptSocialToken(account.token_encrypted)}`,'Content-Type':'application/json'},body:JSON.stringify({message:reply}),signal:AbortSignal.timeout(30000)});if(!response.ok){const detail=await response.json().catch(()=>({}));throw new Error(String(detail?.error?.message||`meta_${response.status}`))}}db.prepare(`UPDATE omnichannel_automation_jobs SET status='sent',processed_at=CURRENT_TIMESTAMP WHERE id=?`).run(job.id)}catch(error){db.prepare(`UPDATE omnichannel_automation_jobs SET status='failed',error=?,processed_at=CURRENT_TIMESTAMP WHERE id=?`).run(String(error?.message||'automation_failed').slice(0,300),job.id)}}}finally{omnichannelAutomationRunning=false}
+}
+
 app.get('/api/admin/marketplace/payments/setup',requireAdmin,(_req,res)=>{
   const config=marketplaceAppConfig(),saved=db.prepare('SELECT client_id,updated_at FROM marketplace_app_settings WHERE id=1').get();
   return res.json({configured:config.configured,callback:config.redirectUri,client:saved?{
@@ -3337,6 +3407,14 @@ app.post('/api/webhooks/social', (req, res) => {
         for (const change of changes) {
           const field = String(change?.field || (objectType === 'instagram' ? 'messaging' : 'event')).slice(0, 100);
           insert.run(objectType, objectId, field, JSON.stringify({ entry, change }).slice(0, 500000));
+          const value=change?.value||{},isInstagram=objectType==='instagram',channel=isInstagram?'instagram':'facebook';
+          const isComment=isInstagram?Boolean(value.id&&value.text):Boolean(value.item==='comment'&&(value.comment_id||value.post_id));
+          const commentId=String(value.comment_id||value.id||''),commentText=String(value.message||value.text||'').trim();
+          const setting=db.prepare(`SELECT enabled FROM omnichannel_automation_settings WHERE channel=?`).get(channel);
+          if(isComment&&commentId&&commentText&&setting?.enabled){
+            const account=isInstagram?db.prepare(`SELECT id FROM social_accounts WHERE instagram_id=? AND status='connected' LIMIT 1`).get(objectId):db.prepare(`SELECT id FROM social_accounts WHERE page_id=? AND status='connected' LIMIT 1`).get(objectId);
+            if(account)enqueueOmnichannelJob(channel,`${channel}:${commentId}`,commentId,commentText,account.id);
+          }
         }
       }
     })(entries);
@@ -7915,4 +7993,8 @@ function scheduleOfficialMetricsSync(){
 app.listen(process.env.PORT || 3000, () => {
   console.log('VitrineCity online');
   scheduleOfficialMetricsSync();
+  const whatsappScheduleInitial=setTimeout(()=>processWhatsAppQrSchedules().catch(()=>{}),15000);whatsappScheduleInitial.unref();
+  const whatsappScheduleTimer=setInterval(()=>processWhatsAppQrSchedules().catch(()=>{}),30000);whatsappScheduleTimer.unref();
+  const automationInitial=setTimeout(()=>processOmnichannelAutomation().catch(()=>{}),20000);automationInitial.unref();
+  const automationTimer=setInterval(()=>processOmnichannelAutomation().catch(()=>{}),60000);automationTimer.unref();
 });
