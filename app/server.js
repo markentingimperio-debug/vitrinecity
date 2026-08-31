@@ -2978,6 +2978,20 @@ app.get('/api/admin/integrations/readiness',requireAdmin,(_req,res)=>{
   return res.json({integrations,ready:integrations.filter(item=>item.ready).length,total:integrations.length,generatedAt:new Date().toISOString()});
 });
 
+app.get('/api/admin/chatbotx/config',requireAdmin,(_req,res)=>{
+  const fallback='https://chat.vitrinecity.com';
+  let dashboardUrl=fallback;
+  try {
+    const configured=new URL(String(process.env.CHATBOTX_DASHBOARD_URL||fallback));
+    if(configured.protocol==='https:'&&configured.hostname==='chat.vitrinecity.com')dashboardUrl=configured.toString();
+  } catch {}
+  return res.set('Cache-Control','no-store').json({
+    dashboardUrl,
+    workspaceConfigured:new URL(dashboardUrl).pathname.startsWith('/space/'),
+    channels:['whatsapp','facebook','instagram','tiktok','telegram','email','api','webchat']
+  });
+});
+
 app.get('/api/admin/marketplace/payments/setup',requireAdmin,(_req,res)=>{
   const config=marketplaceAppConfig(),saved=db.prepare('SELECT client_id,updated_at FROM marketplace_app_settings WHERE id=1').get();
   return res.json({configured:config.configured,callback:config.redirectUri,client:saved?{

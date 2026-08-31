@@ -12,7 +12,7 @@
   <div class="layout">
     <aside><strong>ChatbotX</strong><div style="color:#8fb5e8;margin-top:5px;font-size:12px">CENTRAL OMNICHANNEL</div><nav><a href="/admin">Dashboard</a><a href="/admin-agentes.html">Edifício Neural</a><a class="active" href="/admin-chatbotx.html">ChatbotX</a><a href="/admin-integracoes.html">Integrações</a><a href="/admin-metricas-externas.html">Métricas externas</a></nav></aside>
     <main>
-      <section class="hero"><div><h1>ChatbotX Omnichannel</h1><p>Gerencie conversas, automações, contatos e conexões sociais em uma única central.</p></div><div class="actions"><button class="btn secondary" id="reload">Atualizar</button><a class="btn" href="https://chat.vitrinecity.com" target="_blank" rel="noopener">Abrir em tela cheia</a></div></section>
+      <section class="hero"><div><h1>ChatbotX Omnichannel</h1><p>Gerencie conversas, automações, contatos e conexões sociais em uma única central.</p></div><div class="actions"><button class="btn secondary" id="reload">Atualizar</button><a class="btn" id="fullScreen" href="https://chat.vitrinecity.com" target="_blank" rel="noopener">Abrir em tela cheia</a></div></section>
       <div class="status" id="status">Verificando o serviço ChatbotX…</div>
       <section class="connections" aria-labelledby="connectionsTitle">
         <div class="connections-head"><div><h2 id="connectionsTitle">Canais do ecossistema</h2><p>Conecte as contas oficiais e acompanhe a prontidão sem exibir tokens ou senhas.</p></div><a class="btn secondary" href="/admin-integracoes.html">Ver todas as integrações</a></div>
@@ -23,7 +23,7 @@
     </main>
   </div>
   <script>
-    const frame=document.querySelector('#chatbotx'),status=document.querySelector('#status'),networkGrid=document.querySelector('#networkGrid');
+    const frame=document.querySelector('#chatbotx'),status=document.querySelector('#status'),networkGrid=document.querySelector('#networkGrid'),fullScreen=document.querySelector('#fullScreen');
     const channelInfo={
       meta:{title:'Facebook e Instagram',description:'Mensagens, comentários e métricas das contas profissionais.'},
       whatsapp:{title:'WhatsApp Business',description:'Atendimento oficial, histórico e respostas assistidas por IA.',action:'/admin#admin-whatsapp'},
@@ -40,13 +40,14 @@
       if(action.href.startsWith('https://')){action.target='_blank';action.rel='noopener'}card.append(top,detail,action);networkGrid.append(card);
     }}
     async function loadReadiness(){
-      const [authResponse,readinessResponse,whatsAppResponse]=await Promise.all([fetch('/api/admin/agents'),fetch('/api/admin/integrations/readiness'),fetch('/api/whatsapp/status')]);
+      const [authResponse,readinessResponse,whatsAppResponse,chatbotResponse]=await Promise.all([fetch('/api/admin/agents'),fetch('/api/admin/integrations/readiness'),fetch('/api/whatsapp/status'),fetch('/api/admin/chatbotx/config')]);
       if(authResponse.status===401||readinessResponse.status===401){location.href='/admin-login.html?returnTo=%2Fadmin-chatbotx.html';return}
       if(!authResponse.ok||!readinessResponse.ok)throw Error('admin_unavailable');
       const readiness=await readinessResponse.json(),items=Array.isArray(readiness.integrations)?readiness.integrations:[];
       let whatsApp={id:'whatsapp',ready:false,missing:['Autorizar uma conta do WhatsApp Business'],action:'/admin#admin-whatsapp'};
       if(whatsAppResponse.ok){const data=await whatsAppResponse.json();whatsApp={...whatsApp,ready:Boolean(data.account&&data.account.status==='connected'),missing:data.configured?['Autorizar uma conta do WhatsApp Business']:['Cadastrar o aplicativo oficial da Meta'],action:'/admin#admin-whatsapp'}}
-      renderChannels([...items,whatsApp]);status.textContent='Painel autorizado · canais verificados · ChatbotX carregando…';
+      if(chatbotResponse.ok){const config=await chatbotResponse.json();if(config.dashboardUrl){frame.src=config.dashboardUrl;fullScreen.href=config.dashboardUrl}}
+      renderChannels([...items,whatsApp]);status.textContent='Painel autorizado · canais verificados · abrindo VitrineCity Omnichannel…';
     }
     loadReadiness().catch(()=>{status.textContent='Não foi possível consultar as conexões agora.';renderChannels([])});
     frame.addEventListener('load',()=>{status.textContent='ChatbotX carregado. As conexões de redes sociais são autorizadas diretamente pelos provedores.';status.classList.add('online')});
