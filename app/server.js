@@ -338,6 +338,18 @@ function ensureColumn(table, column, definition) {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all();
   if (!columns.some(item => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
+ensureColumn('managed_courses','slug',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('managed_courses','title',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('managed_courses','description',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('managed_courses','audience',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('managed_courses','price_cents','INTEGER NOT NULL DEFAULT 2399');
+ensureColumn('managed_courses','modules','INTEGER NOT NULL DEFAULT 1');
+ensureColumn('managed_courses','cover_url',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('managed_courses','video_url',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('managed_courses','material_url',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('managed_courses','status',"TEXT NOT NULL DEFAULT 'draft'");
+ensureColumn('managed_courses','created_at','TEXT');
+ensureColumn('managed_courses','updated_at','TEXT');
 ensureColumn('lot_orders', 'affiliate_id', 'INTEGER REFERENCES affiliates(id)');
 ensureColumn('lot_orders', 'lot_code', 'TEXT');
 ensureColumn('lot_orders', 'business_name', 'TEXT');
