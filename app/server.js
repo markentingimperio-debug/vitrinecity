@@ -998,6 +998,14 @@ CREATE TABLE IF NOT EXISTS omnichannel_automation_jobs (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, processed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_omnichannel_jobs_status ON omnichannel_automation_jobs(status,created_at);`);
+ensureColumn('omnichannel_automation_settings','campaign_mode',"TEXT NOT NULL DEFAULT 'site'");
+ensureColumn('omnichannel_automation_settings','site_url',"TEXT NOT NULL DEFAULT 'https://vitrinecity.com'");
+ensureColumn('omnichannel_automation_settings','whatsapp_group_url',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('omnichannel_automation_settings','daily_limit','INTEGER NOT NULL DEFAULT 30');
+ensureColumn('omnichannel_automation_settings','start_hour','INTEGER NOT NULL DEFAULT 9');
+ensureColumn('omnichannel_automation_settings','end_hour','INTEGER NOT NULL DEFAULT 20');
+ensureColumn('omnichannel_automation_settings','approval_required','INTEGER NOT NULL DEFAULT 1');
+ensureColumn('omnichannel_automation_jobs','reply_text',"TEXT NOT NULL DEFAULT ''");
 db.exec(`CREATE TABLE IF NOT EXISTS social_accounts (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -3114,12 +3122,22 @@ async function whatsappQrSitemapLinks(){
 }
 app.get('/api/admin/whatsapp-qr/sitemap-links',requireAdmin,async(_req,res)=>{try{return res.json({links:await whatsappQrSitemapLinks()})}catch{return res.status(502).json({error:'Não foi possível ler o sitemap agora.'})}});
 app.get('/api/admin/whatsapp-qr/schedules',requireAdmin,(_req,res)=>res.json({schedules:db.prepare(`SELECT id,group_jid groupJid,group_name groupName,sitemap_url sitemapUrl,message,scheduled_at scheduledAt,status,error,created_at createdAt,sent_at sentAt FROM whatsapp_qr_schedules ORDER BY scheduled_at DESC LIMIT 100`).all()}));
-app.get('/api/admin/omnichannel-automation',requireAdmin,(_req,res)=>res.json({configured:aiConfigured(),channels:db.prepare(`SELECT channel,enabled,instructions,updated_at updatedAt FROM omnichannel_automation_settings ORDER BY channel`).all().map(item=>({...item,enabled:Boolean(item.enabled)}))}));
+app.get('/api/admin/omnichannel-automation',requireAdmin,(_req,res)=>res.json({configured:aiConfigured(),provider:AI_PROVIDER,model:OPENAI_MODEL,channels:db.prepare(`SELECT channel,enabled,instructions,campaign_mode campaignMode,site_url siteUrl,whatsapp_group_url whatsappGroupUrl,daily_limit dailyLimit,start_hour startHour,end_hour endHour,approval_required approvalRequired,updated_at updatedAt FROM omnichannel_automation_settings ORDER BY channel`).all().map(item=>({...item,enabled:Boolean(item.enabled),approvalRequired:Boolean(item.approvalRequired)})),jobs:db.prepare(`SELECT id,channel,source_text sourceText,reply_text replyText,status,error,created_at createdAt,processed_at processedAt FROM omnichannel_automation_jobs ORDER BY created_at DESC LIMIT 40`).all()}));
 app.put('/api/admin/omnichannel-automation/:channel',requireAdmin,sameOriginOnly,(req,res)=>{
   const channel=String(req.params.channel||'');if(!['facebook','instagram','whatsapp_qr'].includes(channel))return res.status(400).json({error:'Canal inválido.'});
-  const enabled=req.body?.enabled===true?1:0,instructions=String(req.body?.instructions||'').trim().slice(0,4000);
+  const enabled=req.body?.enabled===true?1:0,instructions=String(req.body?.instructions||'').trim().slice(0,4000),campaignMode=String(req.body?.campaignMode||'site');
+  const cleanCampaignUrl=(value,group=false)=>{try{const url=new URL(String(value||'').trim());if(url.protocol!=='https:')return '';if(group&&url.hostname!=='chat.whatsapp.com')return '';if(!group&&url.hostname!=='vitrinecity.com')return '';return url.toString().slice(0,1000)}catch{return ''}};
+  const siteUrl=cleanCampaignUrl(req.body?.siteUrl||SITE_URL),whatsappGroupUrl=cleanCampaignUrl(req.body?.whatsappGroupUrl,true),dailyLimit=Math.round(Number(req.body?.dailyLimit||30)),startHour=Math.round(Number(req.body?.startHour??9)),endHour=Math.round(Number(req.body?.endHour??20)),approvalRequired=req.body?.approvalRequired!==false?1:0;
+  if(!['site','group','mixed','service'].includes(campaignMode)||!siteUrl||!Number.isInteger(dailyLimit)||dailyLimit<1||dailyLimit>200||startHour<0||startHour>23||endHour<1||endHour>24||startHour>=endHour)return res.status(400).json({error:'Revise destino, limite e horário da campanha.'});
+  if(['group','mixed'].includes(campaignMode)&&!whatsappGroupUrl)return res.status(400).json({error:'Informe um convite válido de grupo em chat.whatsapp.com.'});
   if(enabled&&!aiConfigured())return res.status(503).json({error:'A chave da OpenRouter/OpenAI ainda não está configurada.'});
-  db.prepare(`UPDATE omnichannel_automation_settings SET enabled=?,instructions=?,updated_at=CURRENT_TIMESTAMP WHERE channel=?`).run(enabled,instructions,channel);return res.json({ok:true});
+  db.prepare(`UPDATE omnichannel_automation_settings SET enabled=?,instructions=?,campaign_mode=?,site_url=?,whatsapp_group_url=?,daily_limit=?,start_hour=?,end_hour=?,approval_required=?,updated_at=CURRENT_TIMESTAMP WHERE channel=?`).run(enabled,instructions,campaignMode,siteUrl,whatsappGroupUrl,dailyLimit,startHour,endHour,approvalRequired,channel);return res.json({ok:true});
+});
+app.post('/api/admin/omnichannel-automation/jobs/:id/approve',requireAdmin,sameOriginOnly,async(req,res)=>{
+  const job=db.prepare(`SELECT j.*,s.enabled FROM omnichannel_automation_jobs j JOIN omnichannel_automation_settings s ON s.channel=j.channel WHERE j.id=?`).get(String(req.params.id||''));
+  if(!job||job.status!=='awaiting_approval'||!job.enabled)return res.status(409).json({error:'Esta resposta não está aguardando aprovação.'});
+  try{await sendOmnichannelReply(job,job.reply_text);db.prepare(`UPDATE omnichannel_automation_jobs SET status='sent',processed_at=CURRENT_TIMESTAMP,error=NULL WHERE id=?`).run(job.id);return res.json({ok:true})}
+  catch(error){db.prepare(`UPDATE omnichannel_automation_jobs SET status='failed',error=?,processed_at=CURRENT_TIMESTAMP WHERE id=?`).run(String(error?.message||'send_failed').slice(0,300),job.id);return res.status(502).json({error:'Não foi possível enviar a resposta aprovada.'})}
 });
 app.post('/api/admin/whatsapp-qr/schedules',requireAdmin,sameOriginOnly,async(req,res)=>{
   const groupJid=String(req.body?.groupJid||''),groupName=String(req.body?.groupName||'Grupo do WhatsApp').trim().slice(0,160),sitemapUrl=String(req.body?.sitemapUrl||'').trim(),message=String(req.body?.message||'').trim().slice(0,3500),scheduledAt=new Date(String(req.body?.scheduledAt||''));
@@ -3173,9 +3191,16 @@ function enqueueOmnichannelJob(channel,externalId,destination,sourceText,account
   db.prepare(`INSERT OR IGNORE INTO omnichannel_automation_jobs(id,channel,external_id,destination,source_text,account_id) VALUES (?,?,?,?,?,?)`).run(randomUUID(),channel,String(externalId).slice(0,200),String(destination).slice(0,200),String(sourceText).slice(0,4000),accountId);
 }
 let omnichannelAutomationRunning=false;
-async function generateServiceReply(channel,text,instructions){
-  const data=await requestOpenAI({model:OPENAI_MODEL,instructions:`Você atende clientes da VitrineCity em português do Brasil pelo canal ${channel}. Responda com no máximo 600 caracteres, seja cordial e objetivo. Não invente preços, prazos ou políticas. Não peça senha, documento ou dados bancários. Se faltar informação ou houver reclamação, peça apenas nome e assunto e diga que encaminhará para atendimento humano. ${instructions||''}`,input:text,max_output_tokens:250,store:false});
+async function generateServiceReply(channel,text,setting){
+  const destination=setting.campaign_mode==='group'?setting.whatsapp_group_url:setting.campaign_mode==='mixed'?`${setting.site_url} ou ${setting.whatsapp_group_url}`:setting.campaign_mode==='service'?'sem convite promocional':setting.site_url;
+  const data=await requestOpenAI({model:OPENAI_MODEL,instructions:`Você atende clientes da VitrineCity em português do Brasil pelo canal ${channel}. Responda com no máximo 600 caracteres, seja cordial, natural e objetivo. Primeiro responda ao comentário; somente depois, se houver interesse real, convide uma única vez para ${destination}. Não diga que é humano. Não invente preços, prazos ou políticas. Não peça senha, documento ou dados bancários. Não envie convite em reclamação, crise, tema sensível, mensagem negativa ou pedido de suporte; nesses casos encaminhe para atendimento humano. Não use pressão, promessa de resultado ou spam. ${setting.instructions||''}`,input:text,max_output_tokens:250,store:false});
   return responseOutputText(data).trim().slice(0,900);
+}
+async function sendOmnichannelReply(job,reply){
+  if(job.channel==='whatsapp_qr')return whatsappQrRequest('/chat/send/text',{method:'POST',body:JSON.stringify({Phone:job.destination,Body:reply,Id:randomUUID().replaceAll('-','').toUpperCase()})});
+  const account=db.prepare(`SELECT token_encrypted FROM social_accounts WHERE id=? AND status='connected'`).get(job.account_id);if(!account)throw new Error('meta_account_missing');
+  const response=await fetch(`https://graph.facebook.com/${socialApiVersion()}/${encodeURIComponent(job.destination)}/private_replies`,{method:'POST',headers:{Authorization:`Bearer ${decryptSocialToken(account.token_encrypted)}`,'Content-Type':'application/json'},body:JSON.stringify({message:reply}),signal:AbortSignal.timeout(30000)});
+  if(!response.ok){const detail=await response.json().catch(()=>({}));throw new Error(String(detail?.error?.message||`meta_${response.status}`))}
 }
 async function discoverWhatsAppQrAutomationJobs(){
   const setting=db.prepare(`SELECT * FROM omnichannel_automation_settings WHERE channel='whatsapp_qr' AND enabled=1`).get();if(!setting)return;
@@ -3185,7 +3210,7 @@ async function discoverWhatsAppQrAutomationJobs(){
 }
 async function processOmnichannelAutomation(){
   if(omnichannelAutomationRunning)return;omnichannelAutomationRunning=true;
-  try{await discoverWhatsAppQrAutomationJobs().catch(()=>{});const jobs=db.prepare(`SELECT j.*,s.instructions FROM omnichannel_automation_jobs j JOIN omnichannel_automation_settings s ON s.channel=j.channel AND s.enabled=1 WHERE j.status='pending' ORDER BY j.created_at LIMIT 3`).all();for(const job of jobs){db.prepare(`UPDATE omnichannel_automation_jobs SET status='processing' WHERE id=? AND status='pending'`).run(job.id);try{const reply=await generateServiceReply(job.channel,job.source_text,job.instructions);if(!reply)throw new Error('empty_ai_reply');if(job.channel==='whatsapp_qr')await whatsappQrRequest('/chat/send/text',{method:'POST',body:JSON.stringify({Phone:job.destination,Body:reply,Id:randomUUID().replaceAll('-','').toUpperCase()})});else{const account=db.prepare(`SELECT token_encrypted FROM social_accounts WHERE id=? AND status='connected'`).get(job.account_id);if(!account)throw new Error('meta_account_missing');const response=await fetch(`https://graph.facebook.com/${socialApiVersion()}/${encodeURIComponent(job.destination)}/private_replies`,{method:'POST',headers:{Authorization:`Bearer ${decryptSocialToken(account.token_encrypted)}`,'Content-Type':'application/json'},body:JSON.stringify({message:reply}),signal:AbortSignal.timeout(30000)});if(!response.ok){const detail=await response.json().catch(()=>({}));throw new Error(String(detail?.error?.message||`meta_${response.status}`))}}db.prepare(`UPDATE omnichannel_automation_jobs SET status='sent',processed_at=CURRENT_TIMESTAMP WHERE id=?`).run(job.id)}catch(error){db.prepare(`UPDATE omnichannel_automation_jobs SET status='failed',error=?,processed_at=CURRENT_TIMESTAMP WHERE id=?`).run(String(error?.message||'automation_failed').slice(0,300),job.id)}}}finally{omnichannelAutomationRunning=false}
+  try{await discoverWhatsAppQrAutomationJobs().catch(()=>{});const jobs=db.prepare(`SELECT j.*,s.instructions,s.campaign_mode,s.site_url,s.whatsapp_group_url,s.daily_limit,s.start_hour,s.end_hour,s.approval_required FROM omnichannel_automation_jobs j JOIN omnichannel_automation_settings s ON s.channel=j.channel AND s.enabled=1 WHERE j.status='pending' ORDER BY j.created_at LIMIT 3`).all();for(const job of jobs){const hour=new Date().getHours(),sentToday=db.prepare(`SELECT COUNT(*) total FROM omnichannel_automation_jobs WHERE channel=? AND status='sent' AND processed_at>=date('now','localtime')`).get(job.channel).total;if(hour<job.start_hour||hour>=job.end_hour||sentToday>=job.daily_limit)continue;db.prepare(`UPDATE omnichannel_automation_jobs SET status='processing' WHERE id=? AND status='pending'`).run(job.id);try{const reply=await generateServiceReply(job.channel,job.source_text,job);if(!reply)throw new Error('empty_ai_reply');if(job.approval_required){db.prepare(`UPDATE omnichannel_automation_jobs SET status='awaiting_approval',reply_text=?,processed_at=CURRENT_TIMESTAMP WHERE id=?`).run(reply,job.id);continue}await sendOmnichannelReply(job,reply);db.prepare(`UPDATE omnichannel_automation_jobs SET status='sent',reply_text=?,processed_at=CURRENT_TIMESTAMP WHERE id=?`).run(reply,job.id)}catch(error){db.prepare(`UPDATE omnichannel_automation_jobs SET status='failed',error=?,processed_at=CURRENT_TIMESTAMP WHERE id=?`).run(String(error?.message||'automation_failed').slice(0,300),job.id)}}}finally{omnichannelAutomationRunning=false}
 }
 
 app.get('/api/admin/marketplace/payments/setup',requireAdmin,(_req,res)=>{
