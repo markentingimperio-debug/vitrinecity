@@ -210,6 +210,32 @@ CREATE TABLE IF NOT EXISTS affiliate_commissions (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(order_type, order_reference)
 );
+CREATE TABLE IF NOT EXISTS affiliate_content_campaigns (
+  id INTEGER PRIMARY KEY,
+  product_name TEXT NOT NULL,
+  product_url TEXT NOT NULL,
+  reward_units INTEGER NOT NULL DEFAULT 25000,
+  commission_bps INTEGER NOT NULL DEFAULT 1000,
+  requirements TEXT NOT NULL DEFAULT '',
+  max_videos INTEGER NOT NULL DEFAULT 100,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS affiliate_content_submissions (
+  id INTEGER PRIMARY KEY,
+  affiliate_id INTEGER NOT NULL REFERENCES affiliates(id),
+  campaign_id INTEGER NOT NULL REFERENCES affiliate_content_campaigns(id),
+  social_post_id TEXT NOT NULL UNIQUE REFERENCES social_posts(id),
+  publication_url TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  reward_units INTEGER NOT NULL DEFAULT 0,
+  moderation_note TEXT NOT NULL DEFAULT '',
+  reviewed_by INTEGER REFERENCES users(id),
+  reviewed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS course_orders (
   id INTEGER PRIMARY KEY,
   reference TEXT NOT NULL UNIQUE,
@@ -291,6 +317,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_credit_orders_user ON credit_orders(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_wallet_ledger_user ON wallet_ledger(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_affiliate_commissions_affiliate ON affiliate_commissions(affiliate_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_affiliate_content_status ON affiliate_content_submissions(status,created_at);
 CREATE INDEX IF NOT EXISTS idx_course_orders_user ON course_orders(user_id, created_at);`);
 
 function ensureColumn(table, column, definition) {
@@ -1896,6 +1923,7 @@ app.get(['/descobrir', '/descobrir-social.html'], enhancedPublicPage('descobrir-
 app.get(['/perfil', '/perfil-social.html'], enhancedPublicPage('perfil-social.html'));
 app.get('/chat-social.html', enhancedPublicPage('chat-social.html'));
 app.get('/admin-social-moderacao.html', enhancedPublicPage('admin-social-moderacao.html', ['/admin-moderation-enhanced.js']));
+app.get('/afiliados.html', enhancedPublicPage('afiliados.html', ['/affiliate-creator.js']));
 app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
 app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
 app.get('/admin-tiktok.html',requireAdmin,publicPage('admin-tiktok.html'));
@@ -4232,6 +4260,33 @@ app.patch('/api/admin/ad-campaigns/:id', requireAdmin, (req, res) => {
   return res.json({ ok: true, id, status: rule.to, statusLabel: AD_CAMPAIGN_STATUS_LABELS[rule.to] });
 });
 
+db.prepare(`INSERT INTO affiliate_content_campaigns
+  (id,product_name,product_url,reward_units,commission_bps,requirements,max_videos,status)
+  VALUES (1,'Produtos da VitrineCity','/loja.html',25000,1000,'Mostre o produto, explique como usar e mantenha a publicação pública por 30 dias.',100,'active')
+  ON CONFLICT(id) DO NOTHING`).run();
+
+app.get('/api/affiliates/content/campaigns', (_req,res) => {
+  const items=db.prepare(`SELECT c.*,(SELECT COUNT(*) FROM affiliate_content_submissions s WHERE s.campaign_id=c.id AND s.status IN ('pending','approved')) submissions
+    FROM affiliate_content_campaigns c WHERE c.status='active' ORDER BY c.id DESC`).all();
+  return res.json({items:items.map(c=>({...c,rewardCoins:Number(c.reward_units)/100,commissionPercent:Number(c.commission_bps)/100,spotsLeft:Math.max(0,c.max_videos-Number(c.submissions||0))}))});
+});
+
+app.post('/api/affiliates/content/submissions',requireUser,sameOriginOnly,(req,res)=>{
+  const affiliate=db.prepare("SELECT id FROM affiliates WHERE user_id=? AND status='active'").get(req.user.id);
+  if(!affiliate)return res.status(403).json({error:'Ative primeiro sua participação no programa de afiliados.'});
+  const campaignId=Number(req.body?.campaignId),socialPostId=String(req.body?.socialPostId||'').trim(),publicationUrl=String(req.body?.publicationUrl||'').trim();
+  const campaign=db.prepare("SELECT * FROM affiliate_content_campaigns WHERE id=? AND status='active'").get(campaignId);
+  const post=db.prepare('SELECT id,status FROM social_posts WHERE id=? AND user_id=?').get(socialPostId,req.user.id);
+  if(!campaign)return res.status(404).json({error:'Campanha indisponível.'});
+  if(!post)return res.status(404).json({error:'Vídeo da Vitriny Social não encontrado na sua conta.'});
+  if(!validSocialUrl(publicationUrl))return res.status(400).json({error:'Informe o link público da publicação.'});
+  try{const result=db.prepare(`INSERT INTO affiliate_content_submissions(affiliate_id,campaign_id,social_post_id,publication_url,reward_units)
+    VALUES (?,?,?,?,?)`).run(affiliate.id,campaign.id,post.id,publicationUrl,campaign.reward_units);
+    db.prepare("UPDATE social_posts SET status='pending_review',moderation_status='pending',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(post.id);
+    return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});
+  }catch(error){if(String(error?.message||'').includes('UNIQUE'))return res.status(409).json({error:'Este vídeo já foi enviado para uma campanha.'});throw error;}
+});
+
 app.post('/api/affiliates/register', requireUser, (req, res) => {
   if (!req.user.adult_confirmed || !req.body?.termsAccepted) {
     return res.status(400).json({ error: 'Confirme que é maior de 18 anos e aceite os termos do programa.' });
@@ -4266,13 +4321,18 @@ app.get('/api/affiliates/me', requireUser, (req, res) => {
     COALESCE(SUM(CASE WHEN status IN ('pending','approved','awaiting_delivery') THEN commission_cents ELSE 0 END),0) pending_cents,
     COALESCE(SUM(CASE WHEN status='paid' THEN commission_cents ELSE 0 END),0) paid_cents
     FROM affiliate_commissions WHERE affiliate_id=?`).get(affiliate.id);
+  const content=db.prepare(`SELECT s.id,s.status,s.reward_units,s.publication_url,s.created_at,c.product_name,p.caption,p.id social_post_id
+    FROM affiliate_content_submissions s JOIN affiliate_content_campaigns c ON c.id=s.campaign_id JOIN social_posts p ON p.id=s.social_post_id
+    WHERE s.affiliate_id=? ORDER BY s.id DESC LIMIT 100`).all(affiliate.id);
+  const contentTotals=db.prepare(`SELECT COALESCE(SUM(CASE WHEN status='approved' THEN reward_units ELSE 0 END),0) approved_units,
+    COALESCE(SUM(CASE WHEN status='pending' THEN reward_units ELSE 0 END),0) pending_units FROM affiliate_content_submissions WHERE affiliate_id=?`).get(affiliate.id);
   return res.json({
     affiliate: { code: affiliate.code, status: affiliate.status, createdAt: affiliate.created_at },
     links: {
       lot: `${SITE_URL}/r/${affiliate.code}?to=lot`,
       courses: `${SITE_URL}/r/${affiliate.code}?to=courses`,
       videos: `${SITE_URL}/r/${affiliate.code}?to=videos`
-    }, totals, commissions
+    }, totals, commissions, content, contentTotals
   });
 });
 
@@ -6945,8 +7005,8 @@ app.patch('/api/admin/social/posts/:id/moderation', requireAdmin, sameOriginOnly
   }
   db.transaction(() => {
     let status=post.status,moderationStatus=post.moderation_status;
-    if(action==='approve'){status='ready';moderationStatus='approved';notifyFollowers(post.user_id,'new_post',post.media_type==='image'?'publicou uma nova foto':'publicou um novo vídeo',post.id);}
-    if(action==='reject'){status='rejected';moderationStatus='rejected';refundSocialLink(post.id,note);}
+    if(action==='approve'){status='ready';moderationStatus='approved';notifyFollowers(post.user_id,'new_post',post.media_type==='image'?'publicou uma nova foto':'publicou um novo vídeo',post.id);db.prepare(`UPDATE affiliate_content_submissions SET status='approved',moderation_note=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE social_post_id=? AND status='pending'`).run(note,req.user.id,post.id);}
+    if(action==='reject'){status='rejected';moderationStatus='rejected';refundSocialLink(post.id,note);db.prepare(`UPDATE affiliate_content_submissions SET status='rejected',moderation_note=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE social_post_id=? AND status='pending'`).run(note,req.user.id,post.id);}
     if(action==='remove'){status='deleted';moderationStatus='removed';refundSocialLink(post.id,note);}
     if(action==='suspend'){
       status='rejected';moderationStatus='suspended';refundSocialLink(post.id,note);
