@@ -33,7 +33,14 @@ services:
       - caddy_config:/config
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - chatbotx
 volumes:
   vitrinecity_data:
   caddy_data:
   caddy_config:
+networks:
+  chatbotx:
+    external: true
+    name: chatbotx_main
