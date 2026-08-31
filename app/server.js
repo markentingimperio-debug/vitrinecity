@@ -3650,7 +3650,8 @@ async function requestOpenAI(body) {
     [body.model,OPENROUTER_FALLBACK_MODEL]:[body.model];
   let lastStatus=502;
   for(const model of models){
-    const response = await fetch(OPENAI_RESPONSES_URL, {
+    let response;
+    try{response = await fetch(OPENAI_RESPONSES_URL, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${AI_API_KEY}`,
@@ -3661,8 +3662,8 @@ async function requestOpenAI(body) {
         } : {})
       },
       body: JSON.stringify({...body,model}),
-      signal: AbortSignal.timeout(60000)
-    });
+      signal: AbortSignal.timeout(AI_PROVIDER==='openrouter'?30000:60000)
+    });}catch(error){console.error(`IA ${model} unavailable`,String(error?.name||error?.message||'network_error'));lastStatus=504;continue;}
     const data = await response.json().catch(() => ({}));
     if(response.ok)return data;
     lastStatus=response.status;
