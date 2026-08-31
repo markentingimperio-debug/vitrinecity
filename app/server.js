@@ -1327,7 +1327,8 @@ const COURSES = Object.freeze({
 // migradas recebem updated_at nulo; somente nesse caso ativamos o catálogo
 // legado, sem reativar rascunhos que o administrador pausar depois.
 db.prepare(`UPDATE managed_courses SET status='active',updated_at=CURRENT_TIMESTAMP
-  WHERE status='draft' AND updated_at IS NULL AND slug IN (${Object.keys(COURSES).map(() => '?').join(',')})`)
+  WHERE (CAST(status AS TEXT)='1' OR (status='draft' AND updated_at IS NULL))
+  AND slug IN (${Object.keys(COURSES).map(() => '?').join(',')})`)
   .run(...Object.keys(COURSES));
 for (const course of Object.values(COURSES)) {
   const original = originalCourse(course.slug);
