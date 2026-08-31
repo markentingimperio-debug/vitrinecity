@@ -2,3 +2,16 @@ vitrinecity.com, www.vitrinecity.com {
     encode zstd gzip
     reverse_proxy app:3000
 }
+
+chat.vitrinecity.com {
+    encode zstd gzip
+    handle_path /storage/* {
+        reverse_proxy host.docker.internal:9000
+    }
+    reverse_proxy host.docker.internal:3123
+}
+
+ws-chat.vitrinecity.com {
+    encode zstd gzip
+    reverse_proxy host.docker.internal:1999
+}
