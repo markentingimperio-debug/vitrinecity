@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ChatbotX Omnichannel | VitrineCity</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,sans-serif;background:#eef6ff;color:#09224a}header{height:74px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;background:#071e43;color:#fff}header a{color:#bdeaff;text-decoration:none}.layout{display:grid;grid-template-columns:260px 1fr;min-height:calc(100vh - 74px)}aside{background:#0b2a59;color:#fff;padding:24px 16px}aside strong{font-size:20px}nav{display:grid;gap:8px;margin-top:28px}nav a{padding:12px;border-radius:10px;color:#dbeaff;text-decoration:none}nav a.active,nav a:hover{background:#173d75;color:#fff}main{padding:24px}.hero{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:16px}.hero h1{margin:0 0 6px;font-size:30px}.hero p{margin:0;color:#526b8c}.actions{display:flex;gap:10px;flex-wrap:wrap}.btn{border:0;border-radius:10px;padding:12px 16px;font-weight:800;background:#1477ff;color:#fff;text-decoration:none;cursor:pointer}.btn.secondary{background:#fff;color:#123866;border:1px solid #c9dbed}.status{margin:14px 0;padding:12px 14px;border-radius:12px;background:#fff;border:1px solid #d5e3f1;font-size:13px}.status.online{background:#eafbf3;color:#08754b}.frame{height:calc(100vh - 190px);min-height:620px;background:#fff;border:1px solid #cfdeed;border-radius:16px;overflow:hidden;box-shadow:0 15px 40px #1747771a}.frame iframe{width:100%;height:100%;border:0}.notice{padding:26px;text-align:center;color:#526b8c}@media(max-width:850px){.layout{grid-template-columns:1fr}aside{display:none}.hero{align-items:flex-start;flex-direction:column}.frame{height:72vh}main{padding:14px}}
+  </style>
+</head>
+<body>
+  <header><strong>▰ VitrineCity · Central de gestão</strong><a href="/admin">Voltar ao painel →</a></header>
+  <div class="layout">
+    <aside><strong>ChatbotX</strong><div style="color:#8fb5e8;margin-top:5px;font-size:12px">CENTRAL OMNICHANNEL</div><nav><a href="/admin">Dashboard</a><a href="/admin-agentes.html">Edifício Neural</a><a class="active" href="/admin-chatbotx.html">ChatbotX</a><a href="/admin-integracoes.html">Integrações</a><a href="/admin-metricas-externas.html">Métricas externas</a></nav></aside>
+    <main>
+      <section class="hero"><div><h1>ChatbotX Omnichannel</h1><p>Gerencie conversas, automações, contatos e conexões sociais em uma única central.</p></div><div class="actions"><button class="btn secondary" id="reload">Atualizar</button><a class="btn" href="https://chat.vitrinecity.com" target="_blank" rel="noopener">Abrir em tela cheia</a></div></section>
+      <div class="status" id="status">Verificando o serviço ChatbotX…</div>
+      <section class="frame"><iframe id="chatbotx" title="ChatbotX Omnichannel" src="https://chat.vitrinecity.com" allow="clipboard-read; clipboard-write" referrerpolicy="strict-origin-when-cross-origin"></iframe><noscript><div class="notice">Ative JavaScript para abrir o ChatbotX.</div></noscript></section>
+    </main>
+  </div>
+  <script>
+    const frame=document.querySelector('#chatbotx'),status=document.querySelector('#status');
+    fetch('/api/admin/agents').then(r=>{if(r.status===401)location.href='/carteira.html?admin=1';if(!r.ok)throw Error();return r.json()}).then(()=>{status.textContent='Painel administrativo autorizado · conectando ao ChatbotX…'}).catch(()=>{status.textContent='Não foi possível validar a sessão administrativa.'});
+    frame.addEventListener('load',()=>{status.textContent='ChatbotX carregado. As conexões de redes sociais são autorizadas diretamente pelos provedores.';status.classList.add('online')});
+    frame.addEventListener('error',()=>{status.textContent='O ChatbotX ainda está iniciando. Use “Atualizar” em alguns instantes.';status.classList.remove('online')});
+    document.querySelector('#reload').onclick=()=>{status.textContent='Atualizando ChatbotX…';status.classList.remove('online');frame.src=frame.src};
+  </script>
+</body></html>

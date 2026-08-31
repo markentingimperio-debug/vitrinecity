@@ -31,6 +31,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 volumes:
   vitrinecity_data:
   caddy_data:
