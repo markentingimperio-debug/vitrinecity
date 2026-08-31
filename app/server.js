@@ -1977,6 +1977,7 @@ app.get('/chat-social.html', enhancedPublicPage('chat-social.html'));
 app.get('/admin-social-moderacao.html', enhancedPublicPage('admin-social-moderacao.html', ['/admin-moderation-enhanced.js']));
 app.get('/admin-afiliados.html',requireAdmin,publicPage('admin-afiliados.html'));
 app.get('/admin-cursos.html',requireAdmin,publicPage('admin-cursos.html'));
+app.get('/admin-curso-preview.html',requireAdmin,publicPage('admin-curso-preview.html'));
 app.get('/afiliados.html', enhancedPublicPage('afiliados.html', ['/affiliate-creator.js']));
 app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
 app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
@@ -2096,6 +2097,11 @@ app.patch('/api/admin/courses/:slug', requireAdmin, sameOriginOnly, (req,res) =>
 });
 app.get('/api/admin/courses/:slug/students', requireAdmin, (req,res) => res.json({items:db.prepare(`SELECT u.name,u.email,e.status,e.created_at,o.reference,o.status AS payment_status,o.amount_cents
   FROM course_enrollments e JOIN users u ON u.id=e.user_id JOIN course_orders o ON o.reference=e.order_reference WHERE e.course_slug=? ORDER BY e.id DESC`).all(req.params.slug)}));
+app.get('/api/admin/courses/:slug/preview',requireAdmin,(req,res)=>{
+  const course=managedCourse(req.params.slug);if(!course)return res.status(404).json({error:'Curso não encontrado.'});
+  const original=originalCourse(course.slug);
+  return res.json({course,lessons:(original?.lessons||[]).map(({slug,title,duration,objective,content})=>({slug,title,duration,objective,content})),files:listCourseFiles(course.slug)});
+});
 
 app.post('/api/leads', sameOriginOnly, (req, res) => {
   if (!allowAttempt(authAttempts, `lead:${req.ip}`, 6, 60 * 60 * 1000)) {
