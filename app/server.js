@@ -1276,6 +1276,8 @@ CREATE TABLE IF NOT EXISTS melhor_envio_app_settings (
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
 db.prepare(`UPDATE omnichannel_automation_settings SET site_url=? WHERE site_url IN ('https://vitrinecity.com','https://vitrinecity.com/')`).run(`${SITE_URL.replace(/\/$/,'')}/grupos-whatsapp.html`);
+const COMMUNITY_WHATSAPP_URL = 'https://chat.whatsapp.com/KKk3NusgA7LLCI2pUSumx6';
+db.prepare(`UPDATE omnichannel_automation_settings SET whatsapp_group_url=? WHERE whatsapp_group_url=''`).run(COMMUNITY_WHATSAPP_URL);
 const LOT_PRICE_CENTS = 1500;
 const LOT_PLANS = Object.freeze({
   founder: Object.freeze({ code: 'founder', name: 'Prédio Fundador', amountCents: 1500, billingType: 'one_time' }),
@@ -2180,6 +2182,15 @@ app.post('/api/community/capture',sameOriginOnly,(req,res)=>{
   adminAnalytics.recordLead(req,`grupo:${interest}`);
   const row=db.prepare(`SELECT whatsapp_group_url FROM omnichannel_automation_settings WHERE whatsapp_group_url LIKE 'https://chat.whatsapp.com/%' ORDER BY updated_at DESC LIMIT 1`).get();
   return res.status(201).json({ok:true,joinUrl:row?.whatsapp_group_url||'',message:row?.whatsapp_group_url?'Inscrição concluída. Entre no grupo pelo botão abaixo.':'Inscrição concluída. Enviaremos o convite assim que a próxima turma abrir.'});
+});
+
+app.get('/api/community/campaign-video',(_req,res)=>{
+  const project=db.prepare(`SELECT m.output_url outputUrl,m.caption,t.title
+    FROM admin_media_projects m JOIN admin_agent_tasks t ON t.id=m.task_id
+    WHERE m.format='short_video' AND m.output_url<>'' AND m.production_status IN ('approved','published')
+      AND t.title='Convite Grupo VIP VitrineCity'
+    ORDER BY m.updated_at DESC,m.id DESC LIMIT 1`).get();
+  return res.json({video:project||null});
 });
 
 app.post('/api/contact', sameOriginOnly, (req, res) => {
