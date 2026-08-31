@@ -1372,6 +1372,12 @@ for (const course of Object.values(COURSES)) {
   db.prepare(`INSERT OR IGNORE INTO managed_courses
     (slug,title,description,audience,price_cents,modules,status) VALUES (?,?,?,?,?,?,'active')`)
     .run(course.slug, course.title, original?.description || '', original?.audience || '', course.priceCents, course.modules);
+  db.prepare(`UPDATE managed_courses SET
+    description=CASE WHEN TRIM(description)='' THEN ? ELSE description END,
+    audience=CASE WHEN TRIM(audience)='' THEN ? ELSE audience END,
+    cover_url=CASE WHEN TRIM(cover_url)='' THEN ? ELSE cover_url END,
+    updated_at=CURRENT_TIMESTAMP WHERE slug=?`)
+    .run(original?.description || '', original?.audience || '', original?.coverUrl || '', course.slug);
 }
 function managedCourse(slug) {
   const row = db.prepare('SELECT * FROM managed_courses WHERE slug=?').get(String(slug || ''));
@@ -2137,7 +2143,7 @@ app.get('/api/admin/courses/:slug/students', requireAdmin, (req,res) => res.json
 app.get('/api/admin/courses/:slug/preview',requireAdmin,(req,res)=>{
   const course=managedCourse(req.params.slug);if(!course)return res.status(404).json({error:'Curso não encontrado.'});
   const original=originalCourse(course.slug);
-  return res.json({course,lessons:(original?.lessons||[]).map(({slug,title,duration,objective,content})=>({slug,title,duration,objective,content})),files:listCourseFiles(course.slug)});
+  return res.json({course,methodology:original?.methodology||'',lessons:original?.lessons||[],files:listCourseFiles(course.slug)});
 });
 
 app.post('/api/leads', sameOriginOnly, (req, res) => {

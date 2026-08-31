@@ -358,6 +358,41 @@ export const ORIGINAL_COURSES = Object.freeze({
   })
 });
 
+const COURSE_COVERS = Object.freeze({
+  'geladinhos-gourmet': '/assets/courses/geladinhos-gourmet.png',
+  'logo-no-canva': '/assets/courses/logo-no-canva.png',
+  'ia-para-pequenos-negocios': '/assets/courses/ia-para-pequenos-negocios.png',
+  'canva-para-lojas': '/assets/courses/canva-para-lojas.png',
+  'vendas-pelo-whatsapp': '/assets/courses/vendas-pelo-whatsapp.png',
+  'precificacao-e-lucro': '/assets/courses/precificacao-e-lucro.png',
+  'shopee-do-zero': '/assets/courses/shopee-do-zero.png',
+  'videos-curtos-que-vendem': '/assets/courses/videos-curtos-que-vendem.png'
+});
+
+function enrichLesson(lesson) {
+  const steps = (lesson.checklist || []).map((item, index) => ({
+    title: `Passo ${index + 1}`,
+    instruction: item,
+    evidence: index === (lesson.checklist?.length || 0) - 1
+      ? 'Revise o resultado e guarde uma cópia para comparar sua evolução.'
+      : 'Execute este passo antes de avançar e anote qualquer dúvida.'
+  }));
+  return {
+    ...lesson,
+    steps,
+    practicalExample: `Aplicação guiada: ${lesson.activity}`,
+    completionCriteria: `A aula está concluída quando você executar os ${steps.length} passos e entregar a atividade prática.`,
+    videoGuide: { needed: false, reason: 'A leitura prática, os passos e o exercício formam uma aula completa. Vídeo complementar pode ser adicionado sem bloquear o aprendizado.' }
+  };
+}
+
 export function originalCourse(slug) {
-  return ORIGINAL_COURSES[slug] || GROWTH_COURSES[slug] || null;
+  const course = ORIGINAL_COURSES[slug] || GROWTH_COURSES[slug] || null;
+  if (!course) return null;
+  return {
+    ...course,
+    coverUrl: COURSE_COVERS[slug] || '',
+    methodology: 'Aprenda, execute o passo a passo, produza a atividade e marque a aula como concluída.',
+    lessons: course.lessons.map(enrichLesson)
+  };
 }
