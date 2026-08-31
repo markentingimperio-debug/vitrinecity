@@ -77,4 +77,8 @@
     send(eventName, { assetType: link.dataset.assetType || '', assetId: link.dataset.assetId || href.slice(0, 120),
       metadata: { label: (link.textContent || '').trim().slice(0, 120) } });
   }, { passive: true });
+  document.addEventListener('vc:analytics', event => {
+    const detail = event.detail || {};
+    if (typeof detail.eventName === 'string') send(detail.eventName.slice(0, 80), detail.payload || {});
+  });
 })();
