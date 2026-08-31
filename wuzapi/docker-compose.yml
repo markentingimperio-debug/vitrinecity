@@ -8,14 +8,19 @@ services:
       TZ: America/Sao_Paulo
       WEBHOOK_FORMAT: json
       SESSION_DEVICE_NAME: VitrineCity
-    ports:
-      - "127.0.0.1:8082:8080"
     volumes:
       - whatsapp_qr_data:/app/dbdata
       - whatsapp_qr_files:/app/files
     security_opt:
       - no-new-privileges:true
+    networks:
+      - default
 
 volumes:
   whatsapp_qr_data:
   whatsapp_qr_files:
+
+networks:
+  default:
+    external: true
+    name: vitrinecity_default
