@@ -1275,6 +1275,7 @@ CREATE TABLE IF NOT EXISTS melhor_envio_app_settings (
 );`);
 
 const SITE_URL = process.env.SITE_URL || 'https://vitrinecity.com';
+db.prepare(`UPDATE omnichannel_automation_settings SET site_url=? WHERE site_url IN ('https://vitrinecity.com','https://vitrinecity.com/')`).run(`${SITE_URL.replace(/\/$/,'')}/grupos-whatsapp.html`);
 const LOT_PRICE_CENTS = 1500;
 const LOT_PLANS = Object.freeze({
   founder: Object.freeze({ code: 'founder', name: 'Prédio Fundador', amountCents: 1500, billingType: 'one_time' }),
@@ -2057,7 +2058,7 @@ app.get('/sitemap.xml', (_req, res) => {
   const origin = new URL(SITE_URL).origin;
   const fixedPaths = [
     '/', '/cidade', '/cidade/bairro-premium', '/cidade/praca-central', '/cidade/avenida-premium',
-    '/social', '/descobrir', '/loja', '/centro-educacional.html', '/afiliados.html',
+    '/social', '/descobrir', '/loja', '/centro-educacional.html', '/afiliados.html', '/grupos-whatsapp.html',
     '/para-empresas.html', '/solucoes.html', '/como-funciona.html', '/comprar-lote.html', '/sobre.html',
     '/contato.html', '/privacy.html', '/termos-predio-digital.html', '/termos-marketplace.html',
     '/politica-vendedor-marketplace.html', '/politica-comprador-marketplace.html',
@@ -2168,6 +2169,17 @@ app.post('/api/leads', sameOriginOnly, (req, res) => {
   recordConsent(req,{email,purpose:'marketing_communications',version:'privacy-2026-08-22',source:'lead_form',evidence:{interest:String(interest).slice(0,80)}});
   adminAnalytics.recordLead(req, String(interest).slice(0, 80));
   return res.status(201).json({ ok: true });
+});
+
+app.post('/api/community/capture',sameOriginOnly,(req,res)=>{
+  if(!allowAttempt(authAttempts,`community:${req.ip}`,5,60*60*1000))return res.status(429).json({error:'Muitas inscrições em pouco tempo. Tente novamente mais tarde.'});
+  const name=String(req.body?.name||'').trim().slice(0,100),email=String(req.body?.email||'').trim().toLowerCase().slice(0,160),whatsapp=String(req.body?.whatsapp||'').replace(/[^0-9+]/g,'').slice(0,20),interest=String(req.body?.interest||'empreendedorismo').trim().slice(0,80);
+  if(req.body?.consent!==true||name.length<2||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||whatsapp.replace(/\D/g,'').length<10)return res.status(400).json({error:'Informe nome, e-mail, WhatsApp válido e aceite o contato.'});
+  db.prepare('INSERT INTO leads (name,email,whatsapp,interest,consent) VALUES (?,?,?,?,1)').run(name,email,whatsapp,`grupo:${interest}`);
+  recordConsent(req,{email,purpose:'whatsapp_community_invite',version:'privacy-2026-08-22',source:'community_capture',evidence:{interest}});
+  adminAnalytics.recordLead(req,`grupo:${interest}`);
+  const row=db.prepare(`SELECT whatsapp_group_url FROM omnichannel_automation_settings WHERE whatsapp_group_url LIKE 'https://chat.whatsapp.com/%' ORDER BY updated_at DESC LIMIT 1`).get();
+  return res.status(201).json({ok:true,joinUrl:row?.whatsapp_group_url||'',message:row?.whatsapp_group_url?'Inscrição concluída. Entre no grupo pelo botão abaixo.':'Inscrição concluída. Enviaremos o convite assim que a próxima turma abrir.'});
 });
 
 app.post('/api/contact', sameOriginOnly, (req, res) => {
