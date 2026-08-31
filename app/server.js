@@ -3469,7 +3469,8 @@ const AD_CAMPAIGN_ACTIONS = Object.freeze({
 const AI_PROVIDER = process.env.OPENROUTER_API_KEY ? 'openrouter' : 'openai';
 const AI_API_KEY = String(process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || '').trim();
 const OPENAI_MODEL = String(process.env.OPENROUTER_MODEL || process.env.OPENAI_MODEL ||
-  (AI_PROVIDER === 'openrouter' ? 'openai/gpt-4o-mini' : 'gpt-4o-mini')).trim();
+  (AI_PROVIDER === 'openrouter' ? 'nvidia/nemotron-3.5-lightning:free' : 'gpt-4o-mini')).trim();
+const OPENROUTER_FALLBACK_MODEL = String(process.env.OPENROUTER_FALLBACK_MODEL || 'openrouter/free').trim();
 const OPENAI_RESPONSES_URL = AI_PROVIDER === 'openrouter'
   ? 'https://openrouter.ai/api/v1/responses'
   : 'https://api.openai.com/v1/responses';
@@ -3645,28 +3646,31 @@ function executeAdminAiTool(name, args = {}, userId = null) {
 }
 
 async function requestOpenAI(body) {
-  const response = await fetch(OPENAI_RESPONSES_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${AI_API_KEY}`,
-      'Content-Type': 'application/json',
-      ...(AI_PROVIDER === 'openrouter' ? {
-        'HTTP-Referer': SITE_URL,
-        'X-OpenRouter-Title': 'VitrineCity Jarvis'
-      } : {})
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60000)
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = String(data?.error?.message || `OpenAI status ${response.status}`).slice(0, 300);
-    console.error('OpenAI admin assistant error', detail);
-    const error = new Error('OPENAI_REQUEST_FAILED');
-    error.status = response.status;
-    throw error;
+  const models=AI_PROVIDER==='openrouter'&&OPENROUTER_FALLBACK_MODEL&&body.model!==OPENROUTER_FALLBACK_MODEL?
+    [body.model,OPENROUTER_FALLBACK_MODEL]:[body.model];
+  let lastStatus=502;
+  for(const model of models){
+    const response = await fetch(OPENAI_RESPONSES_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${AI_API_KEY}`,
+        'Content-Type': 'application/json',
+        ...(AI_PROVIDER === 'openrouter' ? {
+          'HTTP-Referer': SITE_URL,
+          'X-OpenRouter-Title': 'VitrineCity Jarvis'
+        } : {})
+      },
+      body: JSON.stringify({...body,model}),
+      signal: AbortSignal.timeout(60000)
+    });
+    const data = await response.json().catch(() => ({}));
+    if(response.ok)return data;
+    lastStatus=response.status;
+    const detail = String(data?.error?.message || `IA status ${response.status}`).slice(0, 300);
+    console.error(`IA ${model} error`, detail);
+    if(AI_PROVIDER!=='openrouter'||![404,408,429,502,503].includes(response.status))break;
   }
-  return data;
+  const error = new Error('OPENAI_REQUEST_FAILED');error.status=lastStatus;throw error;
 }
 
 const WHATSAPP_MESSAGE_CREDIT_UNITS = 100;
