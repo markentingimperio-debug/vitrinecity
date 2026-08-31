@@ -4,12 +4,13 @@
   const input = document.getElementById('q');
   if (!peopleSection || !postsSection || !input) return;
 
-  const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[character]));
+  const { element, empty, safeInternalPath, safeImageUrl } = window.VitrineDiscoverRenderer;
   const makeSection = (title, id, className) => {
     const section = document.createElement('section');
-    section.innerHTML = `<h2>${title}</h2><div class="${className}" id="${id}"></div>`;
+    section.append(
+      element('h2', { text: title }),
+      element('div', { className, attributes: { id } })
+    );
     return section;
   };
 
@@ -29,34 +30,96 @@
   style.textContent = '.discover-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.discover-card{display:flex;align-items:center;gap:12px;min-height:78px;padding:14px;background:var(--panel);border:1px solid var(--line);border-radius:16px}.discover-card span{min-width:0}.discover-card b,.discover-card small{display:block;overflow:hidden;text-overflow:ellipsis}.discover-card small{color:var(--muted);margin-top:3px}#discover-result-state{margin-top:12px;color:var(--muted)}#discover-result-state .no-results{padding:20px;border:1px dashed var(--line);border-radius:15px;text-align:center}#discover-result-state button{margin-top:10px}@media(max-width:720px){.discover-cards{grid-template-columns:1fr}}';
   document.head.append(style);
 
+  let enhanceController;
   async function enhance() {
-    const [response, suggestionsResponse] = await Promise.all([
-      fetch('/api/social/discover?q=' + encodeURIComponent(input.value.trim())),
-      fetch('/api/social/profile-suggestions')
-    ]);
+    enhanceController?.abort();
+    const controller = new AbortController();
+    enhanceController = controller;
+    const query = input.value.trim();
+    let response;
+    let suggestionsResponse;
+    try {
+      [response, suggestionsResponse] = await Promise.all([
+        fetch('/api/social/discover?q=' + encodeURIComponent(query), { signal: controller.signal }),
+        fetch('/api/social/profile-suggestions', { signal: controller.signal })
+      ]);
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+      throw error;
+    }
+    if (controller.signal.aborted) return;
     if (!response.ok) return;
     const data = await response.json();
     const suggestionData = suggestionsResponse.ok ? await suggestionsResponse.json() : { suggestions: [] };
-    const query = input.value.trim();
+    if (controller.signal.aborted) return;
     const resultCount = ['profiles', 'hashtags', 'cities', 'categories', 'stores', 'posts']
       .reduce((total, key) => total + (data[key]?.length || 0), 0);
-    resultState.innerHTML = query && resultCount === 0
-      ? `<div class="no-results"><b>Nenhum resultado para “${escapeHtml(query)}”</b><br>Tente outro nome, cidade, categoria ou hashtag.<br><button class="btn" id="clear-discover-search" type="button">Limpar busca</button></div>`
-      : query ? `${resultCount} resultados encontrados para “${escapeHtml(query)}”.` : '';
-    document.getElementById('cities').innerHTML = (data.cities || []).map(item =>
-      `<a class="discover-card" href="${escapeHtml(item.url)}"><span class="avatar">⌖</span><span><b>${escapeHtml(item.city)}</b><small>${Number(item.count)} conteúdos e perfis</small></span></a>`
-    ).join('') || '<div class="empty">Nenhuma cidade encontrada.</div>';
-    document.getElementById('categories').innerHTML = (data.categories || []).map(item =>
-      `<button class="tag" type="button" data-discover-query="${escapeHtml(item.category)}">${escapeHtml(item.category)} · ${Number(item.count)}</button>`
-    ).join('') || '<span class="empty">Nenhuma categoria encontrada.</span>';
-    document.getElementById('stores').innerHTML = (data.stores || []).map(store =>
-      `<a class="discover-card" href="${escapeHtml(store.url)}">${store.logoUrl ? `<img class="avatar" src="${escapeHtml(store.logoUrl)}" alt="">` : '<span class="avatar">▣</span>'}<span><b>${escapeHtml(store.name)}</b><small>${escapeHtml(store.category || 'Loja local')}</small></span></a>`
-    ).join('') || '<div class="empty">Nenhuma loja encontrada.</div>';
-    document.getElementById('profile-suggestions').innerHTML = (suggestionData.suggestions || []).map(profile =>
-      `<article class="discover-card" data-suggestion-id="${Number(profile.id)}">${profile.avatarUrl ? `<img class="avatar" src="${escapeHtml(profile.avatarUrl)}" alt="">` : `<span class="avatar">${escapeHtml(profile.name.slice(0, 1))}</span>`}<span><a href="/perfil/${encodeURIComponent(profile.handle)}"><b>${escapeHtml(profile.name)}</b><small>@${escapeHtml(profile.handle)} · ${Number(profile.followers)} seguidores</small></a><button class="tag suggestion-follow" type="button">Seguir</button></span></article>`
-    ).join('') || '<div class="empty">Você já acompanha todos os perfis sugeridos.</div>';
-    document.querySelectorAll('#posts .post').forEach((post, index) => {
-      const record = data.posts?.[index];
+    if (query && resultCount === 0) {
+      const noResults = element('div', { className: 'no-results' }, [
+        element('b', { text: `Nenhum resultado para “${query}”` }),
+        document.createElement('br'),
+        document.createTextNode('Tente outro nome, cidade, categoria ou hashtag.'),
+        document.createElement('br'),
+        element('button', { className: 'btn', text: 'Limpar busca', attributes: { id: 'clear-discover-search', type: 'button' } })
+      ]);
+      resultState.replaceChildren(noResults);
+    } else {
+      resultState.textContent = query ? `${resultCount} resultados encontrados para “${query}”.` : '';
+    }
+
+    const cityCards = (data.cities || []).map(item => {
+      const href = safeInternalPath(item.url);
+      const details = element('span', {}, [
+        element('b', { text: item.city }),
+        element('small', { text: `${Number(item.count)} conteúdos e perfis` })
+      ]);
+      return element('a', { className: 'discover-card', attributes: { href: href || '#' } }, [
+        element('span', { className: 'avatar', text: '⌖' }), details
+      ]);
+    });
+    document.getElementById('cities').replaceChildren(...(cityCards.length ? cityCards : [empty('div', 'empty', 'Nenhuma cidade encontrada.')]));
+
+    const categoryCards = (data.categories || []).map(item => element('button', {
+      className: 'tag', text: `${item.category} · ${Number(item.count)}`,
+      attributes: { type: 'button', 'data-discover-query': item.category }
+    }));
+    document.getElementById('categories').replaceChildren(...(categoryCards.length ? categoryCards : [empty('span', 'empty', 'Nenhuma categoria encontrada.')]));
+
+    const storeCards = (data.stores || []).map(store => {
+      const logoUrl = safeImageUrl(store.logoUrl);
+      const avatar = logoUrl
+        ? element('img', { className: 'avatar', attributes: { src: logoUrl, alt: '' } })
+        : element('span', { className: 'avatar', text: '▣' });
+      return element('a', { className: 'discover-card', attributes: { href: safeInternalPath(store.url) || '#' } }, [
+        avatar,
+        element('span', {}, [
+          element('b', { text: store.name }),
+          element('small', { text: store.category || 'Loja local' })
+        ])
+      ]);
+    });
+    document.getElementById('stores').replaceChildren(...(storeCards.length ? storeCards : [empty('div', 'empty', 'Nenhuma loja encontrada.')]));
+
+    const suggestionCards = (suggestionData.suggestions || []).map(profile => {
+      const avatarUrl = safeImageUrl(profile.avatarUrl);
+      const avatar = avatarUrl
+        ? element('img', { className: 'avatar', attributes: { src: avatarUrl, alt: '' } })
+        : element('span', { className: 'avatar', text: String(profile.name || '').slice(0, 1) });
+      return element('article', { className: 'discover-card', attributes: { 'data-suggestion-id': Number(profile.id) } }, [
+        avatar,
+        element('span', {}, [
+          element('a', { attributes: { href: `/perfil/${encodeURIComponent(profile.handle)}` } }, [
+            element('b', { text: profile.name }),
+            element('small', { text: `@${profile.handle} · ${Number(profile.followers)} seguidores` })
+          ]),
+          element('button', { className: 'tag suggestion-follow', text: 'Seguir', attributes: { type: 'button' } })
+        ])
+      ]);
+    });
+    document.getElementById('profile-suggestions').replaceChildren(...(suggestionCards.length ? suggestionCards : [empty('div', 'empty', 'Você já acompanha todos os perfis sugeridos.')]));
+    const postsById = new Map((data.posts || []).map(record => [String(record.id), record]));
+    document.querySelectorAll('#posts .post').forEach(post => {
+      const record = postsById.get(post.dataset.postId);
       const label = post.querySelector('span');
       if (record && label) label.prepend(`${Number(record.engagement || 0)} interações · `);
     });
