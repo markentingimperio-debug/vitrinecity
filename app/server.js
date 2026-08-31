@@ -3013,7 +3013,11 @@ app.get('/api/admin/whatsapp-qr/status',requireAdmin,async(_req,res)=>{
   }catch{return res.json({configured:true,connected:false,unavailable:true});}
 });
 app.post('/api/admin/whatsapp-qr/connect',requireAdmin,sameOriginOnly,async(_req,res)=>{
-  try{await whatsappQrRequest('/session/connect',{method:'POST',body:JSON.stringify({Subscribe:['Message','ReadReceipt'],Immediate:true})});return res.json({ok:true});}
+  try{
+    await whatsappQrRequest('/session/connect',{method:'POST',body:JSON.stringify({Subscribe:['Message','ReadReceipt','HistorySync'],Immediate:true})});
+    await whatsappQrRequest('/session/history',{method:'POST',body:JSON.stringify({history:500})}).catch(()=>null);
+    return res.json({ok:true});
+  }
   catch(error){return res.status(502).json({error:'Não foi possível iniciar a sessão QR: '+String(error?.message||'').slice(0,160)});}
 });
 app.get('/api/admin/whatsapp-qr/code',requireAdmin,async(_req,res)=>{
@@ -3021,6 +3025,54 @@ app.get('/api/admin/whatsapp-qr/code',requireAdmin,async(_req,res)=>{
     if(!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(qr)||qr.length>1000000)return res.status(409).json({error:'O QR Code ainda não está disponível. Tente novamente em alguns segundos.'});
     return res.set('Cache-Control','no-store').json({qr});
   }catch{return res.status(502).json({error:'Não foi possível obter o QR Code agora.'});}
+});
+
+function whatsappQrData(payload){
+  let data=payload?.data??payload;
+  if(typeof data==='string'){try{data=JSON.parse(data)}catch{return {}}}
+  return data&&typeof data==='object'?data:{};
+}
+
+app.post('/api/admin/whatsapp-qr/sync',requireAdmin,sameOriginOnly,async(_req,res)=>{
+  try{
+    await whatsappQrRequest('/session/history',{method:'POST',body:JSON.stringify({history:500})});
+    await whatsappQrRequest('/session/connect',{method:'POST',body:JSON.stringify({Subscribe:['Message','ReadReceipt','HistorySync'],Immediate:true})}).catch(()=>null);
+    return res.json({ok:true,message:'Sincronização ativada. O WhatsApp pode levar alguns minutos para entregar o histórico.'});
+  }catch(error){return res.status(502).json({error:'Não foi possível sincronizar agora: '+String(error?.message||'').slice(0,160)});}
+});
+
+app.get('/api/admin/whatsapp-qr/conversations',requireAdmin,async(_req,res)=>{
+  try{
+    const [historyPayload,contactsPayload]=await Promise.all([
+      whatsappQrRequest('/chat/history?chat_jid=index'),whatsappQrRequest('/user/contacts').catch(()=>({data:{}}))
+    ]);
+    const history=whatsappQrData(historyPayload),contacts=whatsappQrData(contactsPayload);
+    const contactMap=contacts?.Contacts||contacts;
+    const chats=[];
+    for(const values of Object.values(history))for(const item of Array.isArray(values)?values:[]){
+      const jid=String(item.chat_jid||item.ChatJID||'').slice(0,160);if(!jid)continue;
+      const contact=contactMap?.[jid]||{};
+      const name=String(contact.FullName||contact.BusinessName||contact.PushName||contact.FirstName||jid.split('@')[0]).slice(0,160);
+      chats.push({jid,name,lastUpdated:String(item.last_updated||item.LastUpdated||'').slice(0,80),isGroup:jid.endsWith('@g.us')});
+    }
+    chats.sort((a,b)=>String(b.lastUpdated).localeCompare(String(a.lastUpdated)));
+    return res.set('Cache-Control','no-store').json({conversations:chats.slice(0,200)});
+  }catch(error){return res.status(502).json({error:'Não foi possível carregar as conversas: '+String(error?.message||'').slice(0,160)});}
+});
+
+app.get('/api/admin/whatsapp-qr/conversations/:jid/messages',requireAdmin,async(req,res)=>{
+  const jid=String(req.params.jid||'');
+  if(!/^[0-9A-Za-z._:-]+@(s\.whatsapp\.net|g\.us|broadcast)$/.test(jid))return res.status(400).json({error:'Conversa inválida.'});
+  try{
+    const payload=await whatsappQrRequest('/chat/history?chat_jid='+encodeURIComponent(jid)+'&limit=100');
+    const raw=whatsappQrData(payload),items=Array.isArray(raw)?raw:(Array.isArray(raw?.messages)?raw.messages:[]);
+    const messages=items.map(item=>({
+      id:String(item.message_id||item.MessageID||item.id||''),sender:String(item.sender_jid||item.SenderJID||''),
+      type:String(item.message_type||item.MessageType||'text'),body:String(item.text_content||item.TextContent||''),
+      createdAt:String(item.timestamp||item.Timestamp||''),fromMe:String(item.sender_jid||item.SenderJID||'')==='me'
+    })).reverse();
+    return res.set('Cache-Control','no-store').json({messages});
+  }catch(error){return res.status(502).json({error:'Não foi possível abrir a conversa: '+String(error?.message||'').slice(0,160)});}
 });
 
 app.get('/api/admin/marketplace/payments/setup',requireAdmin,(_req,res)=>{
