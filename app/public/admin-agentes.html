@@ -853,6 +853,16 @@
         color: #fff;
         background: #17668f;
       }
+      .factory-grid { display:grid; gap:10px; grid-template-columns:1fr 1fr; }
+      .factory-grid .wide { grid-column:1/-1; }
+      .budget-box { margin:10px 0; padding:10px 12px; border-radius:12px; background:#eef7ff; color:#17365d; font-size:12px; }
+      .factory-jobs { display:grid; gap:10px; margin-top:14px; }
+      .factory-job { border:1px solid #dce8f5; border-radius:14px; padding:12px; background:#fff; }
+      .factory-job img,.factory-job video { width:100%; max-height:220px; object-fit:cover; border-radius:10px; margin-top:8px; background:#071b38; }
+      .factory-meta { color:#60748e; font-size:11px; margin-top:4px; }
+      .factory-progress { height:7px; background:#e5edf6; border-radius:9px; overflow:hidden; margin:9px 0; }
+      .factory-progress i { display:block; height:100%; background:linear-gradient(90deg,#367cff,#35d7b0); }
+      .factory-error { color:#b42318; font-size:11px; margin:6px 0; }
       .empty {
         padding: 18px;
         text-align: center;
@@ -1249,6 +1259,25 @@
                 </button>
               </form>
             </section>
+            <section class="panel" id="fabrica-neural">
+              <h2>Fábrica Neural</h2>
+              <p class="panel-note">Crie imagens e vídeos com OpenRouter, acompanhe o processamento e aprove antes de publicar.</p>
+              <div class="budget-box" id="factoryBudget">Consultando limite do OpenRouter…</div>
+              <form id="factoryForm">
+                <div class="factory-grid">
+                  <label class="field"><span>Formato</span><select id="factoryFormat"><option value="image">Imagem</option><option value="short_video">Vídeo curto</option></select></label>
+                  <label class="field"><span>Proporção</span><select id="factoryRatio"><option value="9:16">Vertical 9:16</option><option value="16:9">Horizontal 16:9</option><option value="1:1">Quadrado 1:1</option></select></label>
+                  <label class="field wide"><span>Modelo integrado</span><select id="factoryModel"></select></label>
+                  <label class="field wide"><span>Nome da criação</span><input id="factoryTitle" maxlength="180" placeholder="Ex.: campanha de lançamento" required></label>
+                  <label class="field wide"><span>Prompt detalhado</span><textarea id="factoryPrompt" maxlength="5000" placeholder="Descreva cena, estilo, iluminação, texto e objetivo…" required></textarea></label>
+                  <label class="field"><span>Duração do vídeo</span><select id="factoryDuration"><option value="4">4 segundos</option><option value="6">6 segundos</option><option value="8">8 segundos</option></select></label>
+                  <label class="field"><span>Canais planejados</span><input id="factoryChannels" value="VitrineCity, Instagram, TikTok, Kwai"></label>
+                  <label class="field wide"><span>Legenda para publicação</span><textarea id="factoryCaption" maxlength="500" placeholder="Legenda opcional"></textarea></label>
+                </div>
+                <button class="btn" type="submit" style="width:100%;margin-top:12px">Criar projeto supervisionado</button>
+              </form>
+              <div class="factory-jobs" id="factoryJobs"><div class="empty">Nenhuma criação carregada.</div></div>
+            </section>
             <section class="panel">
               <h2>Fluxo de trabalho</h2>
               <p class="panel-note">Atividade registrada da equipe neural.</p>
@@ -1266,6 +1295,7 @@
       let agents = [],
         tasks = [],
         reviews = [],
+        mediaProjects = [],
         selectedId = null;
       const floors = {
         gestora: "floorDirection",
@@ -1506,16 +1536,50 @@
         );
       }
       async function load() {
-        const [d, r] = await Promise.all([
+        const [d, r, factory] = await Promise.all([
           api("/api/admin/agents"),
           api("/api/admin/agents/business-reviews"),
+          api("/api/admin/media-factory"),
         ]);
         agents = d.agents || [];
         tasks = d.tasks || [];
         reviews = r.reviews || [];
+        mediaProjects = factory.projects || [];
         render();
+        renderFactory(factory);
         if (reviews.length) renderReview(reviews[0]);
       }
+      function usd(value) { return Number(value || 0).toLocaleString("pt-BR", { style:"currency", currency:"USD", minimumFractionDigits:3 }); }
+      function updateFactoryModels(models = {}) {
+        const options=$("#factoryFormat").value==="image"?(models.imageOptions||["qwen/qwen-image-3"]):(models.videoOptions||["google/veo-3.1-lite"]);
+        const preferred=$("#factoryFormat").value==="image"?models.image:models.video;
+        $("#factoryModel").innerHTML=options.map(model=>`<option value="${esc(model)}" ${model===preferred?"selected":""}>${esc(model)}</option>`).join("");
+      }
+      function renderFactory(factory = {}) {
+        window.factoryModels=factory.models||window.factoryModels||{}; updateFactoryModels(window.factoryModels);
+        const budget = factory.budget;
+        $("#factoryBudget").textContent = !factory.configured ? "OpenRouter ainda não configurado." : budget?.unavailable ? "OpenRouter conectado; limite temporariamente indisponível." : budget?.remaining != null ? `OpenRouter · disponível: ${usd(budget.remaining)} · usado: ${usd(budget.usage)}` : `OpenRouter conectado · usado: ${usd(budget?.usage)}`;
+        $("#factoryJobs").innerHTML = mediaProjects.length ? mediaProjects.map(p => {
+          const isVideo=p.format!=="image", ready=Boolean(p.output_url), actions=[];
+          if (["briefing","script","assets"].includes(p.production_status)) actions.push(`<button class="primary" data-media="${p.id}" data-media-action="generate">Gerar agora</button>`);
+          if (p.production_status==="editing") actions.push(`<button class="primary" data-media="${p.id}" data-media-action="sync">Atualizar processamento</button>`);
+          if (p.production_status==="review") actions.push(`<button class="primary" data-media="${p.id}" data-media-action="approve">Aprovar criação</button>`);
+          if (p.production_status==="approved") actions.push(`<button class="primary" data-media="${p.id}" data-media-action="publish-vitriny">Publicar na Vitrine Social</button>`);
+          const preview=ready ? (isVideo?`<video controls preload="metadata" src="${esc(p.output_url)}"></video>`:`<img src="${esc(p.output_url)}" alt="${esc(p.title)}">`) : "";
+          return `<article class="factory-job"><b>${esc(p.title)}</b><div class="factory-meta">${isVideo?"Vídeo":"Imagem"} · ${esc(p.aspect_ratio)} · ${esc(p.model)} · etapa: ${esc(p.production_status)}</div><div class="factory-progress"><i style="width:${Math.max(0,Math.min(100,Number(p.progress)||0))}%"></i></div>${p.usage_cost_usd?`<div class="factory-meta">Custo desta criação: ${usd(p.usage_cost_usd)}</div>`:""}${p.error_message?`<div class="factory-error">${esc(p.error_message)}</div>`:""}${preview}${actions.length?`<div class="activity-actions">${actions.join("")}</div>`:""}${p.production_status==="published"?`<div class="factory-meta">✓ Publicado na Vitrine Social</div>`:""}</article>`;
+        }).join("") : `<div class="empty">Crie o primeiro projeto. O custo só ocorre ao clicar em “Gerar agora”.</div>`;
+      }
+      $("#factoryForm").onsubmit = async (e) => {
+        e.preventDefault(); const b=e.submitter; b.disabled=true;
+        try { await api("/api/admin/media-factory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({format:$("#factoryFormat").value,model:$("#factoryModel").value,title:$("#factoryTitle").value,prompt:$("#factoryPrompt").value,aspectRatio:$("#factoryRatio").value,durationSeconds:Number($("#factoryDuration").value),channels:$("#factoryChannels").value,caption:$("#factoryCaption").value})}); notify("Projeto criado. Revise e clique em Gerar agora."); await load(); }
+        catch(x){notify(x.message,true)} finally{b.disabled=false}
+      };
+      $("#factoryFormat").onchange=()=>updateFactoryModels(window.factoryModels||{});
+      $("#factoryJobs").onclick = async (e) => {
+        const b=e.target.closest("[data-media-action]"); if(!b)return; b.disabled=true;
+        try { await api(`/api/admin/media-projects/${b.dataset.media}/${b.dataset.mediaAction}`,{method:"POST",headers:{"Content-Type":"application/json"}}); notify(b.dataset.mediaAction==="generate"?"Geração iniciada.":b.dataset.mediaAction==="approve"?"Criação aprovada.":b.dataset.mediaAction==="publish-vitriny"?"Publicado na Vitrine Social.":"Processamento atualizado."); await load(); }
+        catch(x){notify(x.message,true);await load().catch(()=>{})} finally{b.disabled=false}
+      };
       $("#ideaForm").onsubmit = async (e) => {
         e.preventDefault();
         const b = e.submitter;

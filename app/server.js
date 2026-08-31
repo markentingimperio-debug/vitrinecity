@@ -44,6 +44,8 @@ const socialMediaDir = path.join(dataDir, 'social-media');
 fs.mkdirSync(socialMediaDir, { recursive: true });
 const socialChatDir = path.join(dataDir, 'social-chat');
 fs.mkdirSync(socialChatDir, { recursive: true });
+const generatedMediaDir = path.join(dataDir, 'generated-videos');
+fs.mkdirSync(generatedMediaDir, { recursive: true });
 const db = new Database(path.join(dataDir, 'vitrinecity.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -858,6 +860,17 @@ db.exec(`CREATE TABLE IF NOT EXISTS admin_media_projects (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_admin_media_projects_status ON admin_media_projects(production_status,id);`);
+ensureColumn('admin_media_projects', 'prompt', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('admin_media_projects', 'aspect_ratio', "TEXT NOT NULL DEFAULT '9:16'");
+ensureColumn('admin_media_projects', 'duration_seconds', 'INTEGER NOT NULL DEFAULT 4');
+ensureColumn('admin_media_projects', 'model', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('admin_media_projects', 'remote_job_id', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('admin_media_projects', 'polling_url', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('admin_media_projects', 'progress', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('admin_media_projects', 'usage_cost_usd', 'REAL NOT NULL DEFAULT 0');
+ensureColumn('admin_media_projects', 'error_message', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('admin_media_projects', 'caption', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('admin_media_projects', 'published_post_id', "TEXT NOT NULL DEFAULT ''");
 db.exec(`CREATE TABLE IF NOT EXISTS admin_business_reviews (
   id INTEGER PRIMARY KEY,
   created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -3471,6 +3484,10 @@ const AI_API_KEY = String(process.env.OPENROUTER_API_KEY || process.env.OPENAI_A
 const OPENAI_MODEL = String(process.env.OPENROUTER_MODEL || process.env.OPENAI_MODEL ||
   (AI_PROVIDER === 'openrouter' ? 'nvidia/nemotron-3.5-lightning:free' : 'gpt-4o-mini')).trim();
 const OPENROUTER_FALLBACK_MODEL = String(process.env.OPENROUTER_FALLBACK_MODEL || 'openrouter/free').trim();
+const OPENROUTER_IMAGE_MODEL = String(process.env.OPENROUTER_IMAGE_MODEL || 'qwen/qwen-image-3').trim();
+const OPENROUTER_VIDEO_MODEL = String(process.env.OPENROUTER_VIDEO_MODEL || 'google/veo-3.1-lite').trim();
+const MEDIA_IMAGE_MODELS = Object.freeze(['qwen/qwen-image-3','meta/muse-image','bytedance-seed/seedream-5-0-lite']);
+const MEDIA_VIDEO_MODELS = Object.freeze(['google/veo-3.1-lite','alibaba/wan-3.0','bytedance/seedance-2.0-mini']);
 const OPENAI_RESPONSES_URL = AI_PROVIDER === 'openrouter'
   ? 'https://openrouter.ai/api/v1/responses'
   : 'https://api.openai.com/v1/responses';
@@ -3672,6 +3689,34 @@ async function requestOpenAI(body) {
     if(AI_PROVIDER!=='openrouter'||![404,408,429,502,503].includes(response.status))break;
   }
   const error = new Error('OPENAI_REQUEST_FAILED');error.status=lastStatus;throw error;
+}
+
+function openRouterHeaders() {
+  return {
+    Authorization: `Bearer ${AI_API_KEY}`,
+    'Content-Type': 'application/json',
+    'HTTP-Referer': SITE_URL,
+    'X-OpenRouter-Title': 'VitrineCity Fabrica Neural'
+  };
+}
+
+async function openRouterRequest(url, options = {}, timeout = 60000) {
+  if (AI_PROVIDER !== 'openrouter' || !AI_API_KEY) {
+    const error = new Error('Configure OPENROUTER_API_KEY na VPS.'); error.status = 503; throw error;
+  }
+  let response;
+  try {
+    response = await fetch(url, { ...options, headers: { ...openRouterHeaders(), ...(options.headers || {}) }, signal: AbortSignal.timeout(timeout) });
+  } catch {
+    const error = new Error('O OpenRouter não respondeu dentro do prazo.'); error.status = 504; throw error;
+  }
+  const type = String(response.headers.get('content-type') || '');
+  const data = type.includes('application/json') ? await response.json().catch(() => ({})) : await response.arrayBuffer();
+  if (!response.ok) {
+    const error = new Error(String(data?.error?.message || data?.message || `OpenRouter retornou ${response.status}.`).slice(0, 400));
+    error.status = response.status; throw error;
+  }
+  return { data, headers: response.headers };
 }
 
 const WHATSAPP_MESSAGE_CREDIT_UNITS = 100;
@@ -4015,6 +4060,150 @@ app.get('/api/admin/agents', requireAdmin, (_req, res) => {
     LEFT JOIN admin_media_projects m ON m.task_id=t.id
     ORDER BY CASE t.status WHEN 'awaiting_approval' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END,t.id DESC LIMIT 80`).all();
   return res.json({ mode: 'supervised', agents, tasks });
+});
+
+function mediaFactoryProject(id) {
+  return db.prepare(`SELECT m.*,t.title,t.instructions,t.priority,t.status AS task_status,a.name AS agent_name
+    FROM admin_media_projects m JOIN admin_agent_tasks t ON t.id=m.task_id
+    JOIN admin_specialist_agents a ON a.id=t.agent_id WHERE m.id=?`).get(id);
+}
+
+app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
+  const projects = db.prepare(`SELECT m.*,t.title,t.instructions,t.priority,t.status AS task_status,a.name AS agent_name
+    FROM admin_media_projects m JOIN admin_agent_tasks t ON t.id=m.task_id
+    JOIN admin_specialist_agents a ON a.id=t.agent_id ORDER BY m.id DESC LIMIT 40`).all();
+  let budget = null;
+  if (AI_PROVIDER === 'openrouter' && AI_API_KEY) {
+    try {
+      const result = await openRouterRequest('https://openrouter.ai/api/v1/key', { method: 'GET' }, 12000);
+      const key = result.data?.data || result.data || {};
+      budget = { usage: Number(key.usage || 0), limit: key.limit == null ? null : Number(key.limit),
+        remaining: key.limit_remaining == null ? null : Number(key.limit_remaining), isFreeTier: Boolean(key.is_free_tier) };
+    } catch (error) { budget = { unavailable: true, message: error.message }; }
+  }
+  return res.json({ configured: AI_PROVIDER === 'openrouter' && Boolean(AI_API_KEY),
+    models: { image: OPENROUTER_IMAGE_MODEL, video: OPENROUTER_VIDEO_MODEL,
+      imageOptions: MEDIA_IMAGE_MODELS, videoOptions: MEDIA_VIDEO_MODELS }, budget, projects });
+});
+
+app.post('/api/admin/media-factory', requireAdmin, (req, res) => {
+  const format = String(req.body?.format || 'image');
+  const prompt = String(req.body?.prompt || '').trim().slice(0, 5000);
+  const title = String(req.body?.title || prompt.slice(0, 90) || 'Criação da Fábrica Neural').trim().slice(0, 180);
+  const aspectRatio = ['9:16','16:9','1:1'].includes(String(req.body?.aspectRatio)) ? String(req.body.aspectRatio) : '9:16';
+  const duration = Math.max(4, Math.min(8, Number(req.body?.durationSeconds) || 4));
+  const channels = String(req.body?.channels || 'VitrineCity').trim().slice(0, 300) || 'VitrineCity';
+  const caption = String(req.body?.caption || '').trim().slice(0, 500);
+  const requestedModel = String(req.body?.model || '').trim();
+  const modelOptions = format === 'image' ? MEDIA_IMAGE_MODELS : MEDIA_VIDEO_MODELS;
+  const model = modelOptions.includes(requestedModel) ? requestedModel : (format === 'image' ? OPENROUTER_IMAGE_MODEL : OPENROUTER_VIDEO_MODEL);
+  if (!['image','short_video'].includes(format) || prompt.length < 10) return res.status(400).json({ error: 'Escolha imagem ou vídeo e descreva a criação em pelo menos 10 caracteres.' });
+  const agent = db.prepare("SELECT id,status FROM admin_specialist_agents WHERE code='midia'").get();
+  if (!agent || agent.status !== 'active') return res.status(409).json({ error: 'Ative o Agente Audiovisual antes de criar.' });
+  const task = db.prepare(`INSERT INTO admin_agent_tasks (agent_id,created_by_user_id,title,instructions,priority,status)
+    VALUES (?,?,?,?,?,'in_progress')`).run(agent.id, req.user.id, title, prompt, 'normal');
+  const project = db.prepare(`INSERT INTO admin_media_projects
+    (task_id,format,channels,source_notes,prompt,aspect_ratio,duration_seconds,caption,model,production_status,progress)
+    VALUES (?,?,?,?,?,?,?,?,?,'briefing',5)`).run(Number(task.lastInsertRowid), format, channels, prompt, prompt,
+      aspectRatio, duration, caption, model);
+  return res.status(201).json({ project: mediaFactoryProject(Number(project.lastInsertRowid)) });
+});
+
+app.post('/api/admin/media-projects/:id/generate', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id), project = mediaFactoryProject(id);
+  if (!project) return res.status(404).json({ error: 'Projeto de mídia não encontrado.' });
+  if (!['briefing','script','assets'].includes(project.production_status)) return res.status(409).json({ error: 'Este projeto já foi enviado para geração.' });
+  try {
+    if (project.format === 'image') {
+      db.prepare("UPDATE admin_media_projects SET production_status='assets',progress=25,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
+      const result = await openRouterRequest('https://openrouter.ai/api/v1/images', { method: 'POST', body: JSON.stringify({
+        model: project.model || OPENROUTER_IMAGE_MODEL, prompt: project.prompt, n: 1, aspect_ratio: project.aspect_ratio
+      }) }, 120000);
+      const item = result.data?.data?.[0] || result.data?.images?.[0];
+      const encoded = String(item?.b64_json || item?.image_url?.url || '').replace(/^data:[^;]+;base64,/, '');
+      if (!encoded) throw new Error('O modelo não devolveu uma imagem utilizável.');
+      const buffer = Buffer.from(encoded, 'base64');
+      if (!buffer.length || buffer.length > 25 * 1024 * 1024) throw new Error('A imagem gerada é inválida ou excede 25 MB.');
+      const file = `factory-${id}-${Date.now()}.png`; fs.writeFileSync(path.join(generatedMediaDir, file), buffer, { flag: 'wx' });
+      const cost = Number(result.data?.usage?.cost || result.data?.usage?.total_cost || 0);
+      db.prepare(`UPDATE admin_media_projects SET production_status='review',progress=100,output_url=?,usage_cost_usd=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+        .run(`/uploads/generated-videos/${file}`, cost, id);
+      db.prepare("UPDATE admin_agent_tasks SET status='awaiting_approval',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(project.task_id);
+      return res.json({ project: mediaFactoryProject(id) });
+    }
+    const result = await openRouterRequest('https://openrouter.ai/api/v1/videos', { method: 'POST', body: JSON.stringify({
+      model: project.model || OPENROUTER_VIDEO_MODEL, prompt: project.prompt, duration: project.duration_seconds,
+      aspect_ratio: project.aspect_ratio, resolution: '720p', generate_audio: false
+    }) }, 60000);
+    const jobId = String(result.data?.id || ''), pollingUrl = String(result.data?.polling_url || '');
+    if (!jobId || !/^https:\/\/openrouter\.ai\//i.test(pollingUrl)) throw new Error('O provedor não devolveu uma tarefa de vídeo válida.');
+    db.prepare(`UPDATE admin_media_projects SET production_status='editing',progress=20,remote_job_id=?,polling_url=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(jobId, pollingUrl, id);
+    return res.status(202).json({ project: mediaFactoryProject(id) });
+  } catch (error) {
+    db.prepare("UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(String(error.message).slice(0,500), id);
+    return res.status(error.status || 502).json({ error: error.message });
+  }
+});
+
+app.post('/api/admin/media-projects/:id/sync', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id), project = mediaFactoryProject(id);
+  if (!project?.polling_url || !/^https:\/\/openrouter\.ai\//i.test(project.polling_url)) return res.status(409).json({ error: 'Este projeto não possui vídeo em processamento.' });
+  try {
+    const result = await openRouterRequest(project.polling_url, { method: 'GET' }, 30000);
+    const status = String(result.data?.status || '').toLowerCase();
+    if (['failed','cancelled'].includes(status)) throw new Error(String(result.data?.error?.message || 'A geração do vídeo falhou.'));
+    if (!['completed','succeeded'].includes(status)) {
+      const progress = Math.max(Number(project.progress || 20), status === 'processing' || status === 'in_progress' ? 65 : 35);
+      db.prepare('UPDATE admin_media_projects SET progress=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(progress,id);
+      return res.status(202).json({ status, project: mediaFactoryProject(id) });
+    }
+    const mediaUrl = String(result.data?.unsigned_urls?.[0] || result.data?.data?.[0]?.url || '');
+    if (!/^https:\/\//i.test(mediaUrl)) throw new Error('O vídeo terminou, mas o arquivo não foi disponibilizado.');
+    const download = await fetch(mediaUrl, { headers: { Authorization: `Bearer ${AI_API_KEY}` }, signal: AbortSignal.timeout(120000) });
+    if (!download.ok) throw new Error(`Não foi possível baixar o vídeo (${download.status}).`);
+    const buffer = Buffer.from(await download.arrayBuffer());
+    if (!buffer.length || buffer.length > 250 * 1024 * 1024) throw new Error('O vídeo é inválido ou excede 250 MB.');
+    const file = `factory-${id}-${Date.now()}.mp4`; fs.writeFileSync(path.join(generatedMediaDir,file),buffer,{flag:'wx'});
+    const cost = Number(result.data?.usage?.cost || result.data?.usage?.total_cost || 0);
+    db.prepare(`UPDATE admin_media_projects SET production_status='review',progress=100,output_url=?,usage_cost_usd=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(`/uploads/generated-videos/${file}`,cost,id);
+    db.prepare("UPDATE admin_agent_tasks SET status='awaiting_approval',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(project.task_id);
+    return res.json({ project: mediaFactoryProject(id) });
+  } catch (error) {
+    db.prepare('UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(String(error.message).slice(0,500),id);
+    return res.status(error.status || 502).json({ error: error.message });
+  }
+});
+
+app.post('/api/admin/media-projects/:id/approve', requireAdmin, (req,res) => {
+  const id=Number(req.params.id),project=mediaFactoryProject(id);
+  if(!project?.output_url||project.production_status!=='review')return res.status(409).json({error:'A criação precisa estar pronta para revisão.'});
+  db.prepare("UPDATE admin_media_projects SET production_status='approved',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
+  db.prepare("UPDATE admin_agent_tasks SET status='completed',completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(project.task_id);
+  return res.json({project:mediaFactoryProject(id)});
+});
+
+app.post('/api/admin/media-projects/:id/publish-vitriny', requireAdmin, async (req,res) => {
+  const id=Number(req.params.id),project=mediaFactoryProject(id);
+  if(!project?.output_url||project.production_status!=='approved')return res.status(409).json({error:'Aprove a criação antes de publicar.'});
+  try {
+    const postId=randomUUID(),caption=project.caption||project.title;
+    if(project.format==='image'){
+      db.prepare(`INSERT INTO social_posts (id,user_id,video_uid,media_type,image_url,caption,category,status,moderation_status,moderated_by,moderated_at)
+        VALUES (?,?,?,'image',?,?,'geral','ready','approved',?,CURRENT_TIMESTAMP)`)
+        .run(postId,req.user.id,`factory-image-${id}`,project.output_url,caption,req.user.id);
+    }else{
+      const accountId=String(process.env.CLOUDFLARE_ACCOUNT_ID||'').trim(),token=String(process.env.CLOUDFLARE_STREAM_API_TOKEN||'').trim();
+      if(!accountId||!token)return res.status(503).json({error:'Configure o Cloudflare Stream para publicar vídeos na Vitrine Social.'});
+      const copy=await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/copy`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({url:new URL(project.output_url,SITE_URL).toString(),meta:{name:project.title}}),signal:AbortSignal.timeout(30000)});
+      const payload=await copy.json().catch(()=>({})); if(!copy.ok||!payload?.result?.uid)throw new Error(payload?.errors?.[0]?.message||'Cloudflare Stream não aceitou o vídeo.');
+      db.prepare(`INSERT INTO social_posts (id,user_id,video_uid,caption,category,status,moderation_status,moderated_by,moderated_at)
+        VALUES (?,?,?,?,?,'uploading','approved',?,CURRENT_TIMESTAMP)`).run(postId,req.user.id,payload.result.uid,caption,'geral',req.user.id);
+    }
+    db.prepare("UPDATE admin_media_projects SET production_status='published',published_post_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(postId,id);
+    return res.json({ok:true,postId,project:mediaFactoryProject(id)});
+  }catch(error){return res.status(502).json({error:String(error.message).slice(0,400)});}
 });
 
 app.post('/api/integrations/binance-local/heartbeat', (req, res) => {
