@@ -3062,7 +3062,7 @@ app.get('/api/admin/whatsapp-qr/conversations',requireAdmin,async(_req,res)=>{
 
 app.get('/api/admin/whatsapp-qr/conversations/:jid/messages',requireAdmin,async(req,res)=>{
   const jid=String(req.params.jid||'');
-  if(!/^[0-9A-Za-z._:-]+@(s\.whatsapp\.net|g\.us|broadcast)$/.test(jid))return res.status(400).json({error:'Conversa inválida.'});
+  if(!/^[0-9A-Za-z._:-]+@(s\.whatsapp\.net|g\.us|broadcast|lid|newsletter)$/.test(jid))return res.status(400).json({error:'Conversa inválida.'});
   try{
     const payload=await whatsappQrRequest('/chat/history?chat_jid='+encodeURIComponent(jid)+'&limit=100');
     const raw=whatsappQrData(payload),items=Array.isArray(raw)?raw:(Array.isArray(raw?.messages)?raw.messages:[]);
