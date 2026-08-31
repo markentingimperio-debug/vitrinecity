@@ -1323,6 +1323,12 @@ const COURSES = Object.freeze({
     license: 'Conteúdo original VitrineCity. Acesso individual; proibida a redistribuição.'
   })
 });
+// Bancos anteriores já possuíam managed_courses com outro formato. As colunas
+// migradas recebem updated_at nulo; somente nesse caso ativamos o catálogo
+// legado, sem reativar rascunhos que o administrador pausar depois.
+db.prepare(`UPDATE managed_courses SET status='active',updated_at=CURRENT_TIMESTAMP
+  WHERE status='draft' AND updated_at IS NULL AND slug IN (${Object.keys(COURSES).map(() => '?').join(',')})`)
+  .run(...Object.keys(COURSES));
 for (const course of Object.values(COURSES)) {
   const original = originalCourse(course.slug);
   db.prepare(`INSERT OR IGNORE INTO managed_courses
