@@ -2992,6 +2992,37 @@ app.get('/api/admin/chatbotx/config',requireAdmin,(_req,res)=>{
   });
 });
 
+function whatsappQrConfig(){
+  const endpoint=String(process.env.WUZAPI_URL||'').trim().replace(/\/$/,'');
+  const userToken=String(process.env.WUZAPI_USER_TOKEN||'').trim();
+  return {endpoint,userToken,configured:Boolean(/^https?:\/\//.test(endpoint)&&userToken.length>=24)};
+}
+async function whatsappQrRequest(pathname,options={}){
+  const config=whatsappQrConfig();
+  if(!config.configured)throw new Error('whatsapp_qr_not_configured');
+  const response=await fetch(config.endpoint+pathname,{...options,headers:{Token:config.userToken,'Content-Type':'application/json',...(options.headers||{})},signal:AbortSignal.timeout(15000)});
+  const payload=await response.json().catch(()=>({}));
+  if(!response.ok||payload?.success===false)throw new Error(String(payload?.error||payload?.data?.Details||`wuzapi_${response.status}`).slice(0,200));
+  return payload;
+}
+app.get('/api/admin/whatsapp-qr/status',requireAdmin,async(_req,res)=>{
+  const config=whatsappQrConfig();
+  if(!config.configured)return res.json({configured:false,connected:false});
+  try{const payload=await whatsappQrRequest('/session/status');const data=payload?.data||payload||{};
+    return res.json({configured:true,connected:Boolean(data.connected||data.Connected),loggedIn:Boolean(data.loggedIn||data.LoggedIn),jid:String(data.jid||data.Jid||'').slice(0,80)});
+  }catch{return res.json({configured:true,connected:false,unavailable:true});}
+});
+app.post('/api/admin/whatsapp-qr/connect',requireAdmin,sameOriginOnly,async(_req,res)=>{
+  try{await whatsappQrRequest('/session/connect',{method:'POST',body:JSON.stringify({Subscribe:['Message','ReadReceipt'],Immediate:true})});return res.json({ok:true});}
+  catch(error){return res.status(502).json({error:'Não foi possível iniciar a sessão QR: '+String(error?.message||'').slice(0,160)});}
+});
+app.get('/api/admin/whatsapp-qr/code',requireAdmin,async(_req,res)=>{
+  try{const payload=await whatsappQrRequest('/session/qr');const qr=String(payload?.data?.QRCode||payload?.QRCode||'');
+    if(!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(qr)||qr.length>1000000)return res.status(409).json({error:'O QR Code ainda não está disponível. Tente novamente em alguns segundos.'});
+    return res.set('Cache-Control','no-store').json({qr});
+  }catch{return res.status(502).json({error:'Não foi possível obter o QR Code agora.'});}
+});
+
 app.get('/api/admin/marketplace/payments/setup',requireAdmin,(_req,res)=>{
   const config=marketplaceAppConfig(),saved=db.prepare('SELECT client_id,updated_at FROM marketplace_app_settings WHERE id=1').get();
   return res.json({configured:config.configured,callback:config.redirectUri,client:saved?{
