@@ -3850,9 +3850,15 @@ function aiOperationalSnapshot() {
 }
 
 function responseOutputText(payload) {
-  return (payload?.output || []).flatMap(item => item?.content || [])
+  const responseText=(payload?.output || []).flatMap(item => item?.content || [])
     .filter(item => item?.type === 'output_text' && typeof item.text === 'string')
     .map(item => item.text).join('\n').trim();
+  if(responseText)return responseText;
+  if(typeof payload?.output_text==='string')return payload.output_text.trim();
+  const choice=payload?.choices?.[0]?.message?.content;
+  if(typeof choice==='string')return choice.trim();
+  if(Array.isArray(choice))return choice.map(item=>item?.text||item?.content||'').join('\n').trim();
+  return '';
 }
 
 function decodeHtmlText(value = '') {
