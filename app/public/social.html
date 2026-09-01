@@ -2010,7 +2010,7 @@
           p.ctaUrl && p.ctaLabel
             ? `<a class="cta" href="${escapeHtml(p.ctaUrl)}" target="_blank" rel="noopener sponsored">${escapeHtml(p.ctaLabel)}</a>`
             : '';
-        return `<article class="post" data-id="${p.id}" data-author-id="${p.author.id}"><div class="video">${p.mediaType === 'image' ? `<img class="photo-media" loading="lazy" src="${escapeHtml(p.imageUrl || SOCIAL_FALLBACK)}" data-fallback="${SOCIAL_FALLBACK}" alt="Publicação de ${escapeHtml(p.author.name)}">` : `<iframe loading="lazy" src="${p.playerUrl}" allow="accelerometer; autoplay; encrypted-media; picture-in-picture" allowfullscreen title="Vídeo de ${escapeHtml(p.author.name)}"></iframe>`}</div>${p.mediaType === 'video' ? `<button class="video-gesture" type="button" aria-label="Toque duas vezes para expandir o vídeo"></button>` : ''}<button class="expand-control" type="button" aria-label="Expandir vídeo" title="Expandir vídeo">⛶</button>${!p.mine ? `<details class="post-menu"><summary aria-label="Abrir menu da publicação" title="Mais opções">⋯</summary><div class="post-menu-list"><button class="copy-link" type="button">Copiar link</button><button class="not-interested" type="button">Não tenho interesse</button><button class="mute-user" type="button">Silenciar este perfil</button><button class="block-user danger" type="button">Bloquear este perfil</button><button class="report danger" type="button">Denunciar publicação</button></div></details>` : ''}<div class="shade"></div><div class="post-copy"><div class="author"><a class="profile-author" href="/perfil/${encodeURIComponent(p.author.handle)}"><span class="avatar">${escapeHtml(p.author.name.slice(0, 1).toUpperCase())}</span><span><strong>${escapeHtml(p.author.name)}</strong><small>@${escapeHtml(p.author.handle)}</small></span></a>${!p.mine ? `<button class="follow" data-user="${p.author.id}">${p.following ? 'Seguindo' : 'Seguir'}</button>` : ''}</div><p class="caption">${escapeHtml(p.caption)}</p><button class="caption-toggle" type="button" aria-expanded="false">mais</button><div class="meta">${escapeHtml(p.city || 'Vitriny City')} · #${escapeHtml(p.category)}</div>${cta}</div><div class="rail"><button class="action like ${p.liked ? 'liked' : ''}"><i>♥</i><span>${p.likes}</span></button><button class="action comment"><i>●</i><span>${p.comments}</span></button><button class="action repost ${p.reposted ? 'liked' : ''}" title="Republicar"><i>↻</i><span>${p.reposts}</span></button><button class="action save ${p.saved ? 'liked' : ''}" title="Salvar nos favoritos"><i>★</i><span>${p.saves}</span></button><button class="action share"><i>↗</i><span>${p.shares}</span></button>${!p.mine ? `<button class="action not-interested" title="Não tenho interesse"><i>⊘</i><span>Não quero</span></button><button class="action report"><i>⚑</i><span>Denunciar</span></button>` : ``}</div></article>`;
+        return `<article class="post" data-id="${p.id}" data-author-id="${p.author.id}"><div class="video">${p.mediaType === 'image' ? `<img class="photo-media" loading="lazy" src="${escapeHtml(p.imageUrl || SOCIAL_FALLBACK)}" data-fallback="${SOCIAL_FALLBACK}" alt="Publicação de ${escapeHtml(p.author.name)}">` : `<iframe loading="lazy" data-player-src="${escapeHtml(p.playerUrl)}" allow="accelerometer; autoplay; encrypted-media; picture-in-picture" allowfullscreen title="Vídeo de ${escapeHtml(p.author.name)}"></iframe>`}</div>${p.mediaType === 'video' ? `<button class="video-gesture" type="button" aria-label="Toque duas vezes para expandir o vídeo"></button>` : ''}<button class="expand-control" type="button" aria-label="Expandir vídeo" title="Expandir vídeo">⛶</button>${!p.mine ? `<details class="post-menu"><summary aria-label="Abrir menu da publicação" title="Mais opções">⋯</summary><div class="post-menu-list"><button class="copy-link" type="button">Copiar link</button><button class="not-interested" type="button">Não tenho interesse</button><button class="mute-user" type="button">Silenciar este perfil</button><button class="block-user danger" type="button">Bloquear este perfil</button><button class="report danger" type="button">Denunciar publicação</button></div></details>` : ''}<div class="shade"></div><div class="post-copy"><div class="author"><a class="profile-author" href="/perfil/${encodeURIComponent(p.author.handle)}"><span class="avatar">${escapeHtml(p.author.name.slice(0, 1).toUpperCase())}</span><span><strong>${escapeHtml(p.author.name)}</strong><small>@${escapeHtml(p.author.handle)}</small></span></a>${!p.mine ? `<button class="follow" data-user="${p.author.id}">${p.following ? 'Seguindo' : 'Seguir'}</button>` : ''}</div><p class="caption">${escapeHtml(p.caption)}</p><button class="caption-toggle" type="button" aria-expanded="false">mais</button><div class="meta">${escapeHtml(p.city || 'Vitriny City')} · #${escapeHtml(p.category)}</div>${cta}</div><div class="rail"><button class="action like ${p.liked ? 'liked' : ''}"><i>♥</i><span>${p.likes}</span></button><button class="action comment"><i>●</i><span>${p.comments}</span></button><button class="action repost ${p.reposted ? 'liked' : ''}" title="Republicar"><i>↻</i><span>${p.reposts}</span></button><button class="action save ${p.saved ? 'liked' : ''}" title="Salvar nos favoritos"><i>★</i><span>${p.saves}</span></button><button class="action share"><i>↗</i><span>${p.shares}</span></button>${!p.mine ? `<button class="action not-interested" title="Não tenho interesse"><i>⊘</i><span>Não quero</span></button><button class="action report"><i>⚑</i><span>Denunciar</span></button>` : ``}</div></article>`;
       }
       function productCard(p) {
         const link =
@@ -2089,6 +2089,23 @@
             }
           });
       }
+      const playerObserver = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const player = entry.target;
+            if (!player.src && player.dataset.playerSrc)
+              player.src = player.dataset.playerSrc;
+            playerObserver.unobserve(player);
+          }
+        },
+        { root: feed, rootMargin: '85% 0px', threshold: 0.01 },
+      );
+      function observePlayers() {
+        feed
+          .querySelectorAll('iframe[data-player-src]:not([src])')
+          .forEach((player) => playerObserver.observe(player));
+      }
       addEventListener('pagehide', () =>
         feed.querySelectorAll('.post').forEach(closeIntelligenceSession),
       );
@@ -2129,6 +2146,7 @@
         cursor = data.nextCursor;
         more.hidden = !cursor;
         observeIntelligence();
+        observePlayers();
         requestAnimationFrame(refreshCaptionToggles);
       }
       const statusName = {
