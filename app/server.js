@@ -18,6 +18,7 @@ import { originalCourse } from './course-content.js';
 import { setupAdminAnalytics } from './admin-analytics.js';
 import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marketplace-public.js';
 import { setupTrendRadar } from './trend-radar.js';
+import { setupDigitalPublisher } from './digital-publisher.js';
 import { marketplaceShippingQuote, melhorEnvioConfig } from './marketplace-shipping.js';
 import { checkoutMelhorEnvioShipment,createMelhorEnvioShipment,generateMelhorEnvioShipment,
   melhorEnvioShipmentPayload,printMelhorEnvioShipment } from './melhor-envio-fulfillment.js';
@@ -2019,6 +2020,7 @@ app.use('/uploads/generated-videos', express.static(path.join(dataDir, 'generate
 }));
 const publicPage = file => (_req, res) => res.sendFile(path.join(dir, 'public', file));
 setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft });
+setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover});
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
   const tags = [...scripts, '/social-accessibility.js'].map(src => `<script src="${src}" defer></script>`).join('');
@@ -2066,7 +2068,7 @@ app.get('/sitemap.xml', (_req, res) => {
   const fixedPaths = [
     '/', '/cidade', '/cidade/bairro-premium', '/cidade/praca-central', '/cidade/avenida-premium',
     '/social', '/descobrir', '/loja', '/centro-educacional.html', '/afiliados.html', '/grupos-whatsapp.html',
-    '/conteudo', '/noticias', '/esportes', '/receitas', '/tecnologia', '/inteligencia-artificial', '/entretenimento',
+    '/conteudo', '/noticias', '/esportes', '/receitas', '/tecnologia', '/inteligencia-artificial', '/entretenimento', '/livros',
     '/para-empresas.html', '/solucoes.html', '/como-funciona.html', '/comprar-lote.html', '/sobre.html',
     '/contato.html', '/privacy.html', '/termos-predio-digital.html', '/termos-marketplace.html',
     '/politica-vendedor-marketplace.html', '/politica-comprador-marketplace.html',
@@ -2086,12 +2088,14 @@ app.get('/sitemap.xml', (_req, res) => {
   const cities = db.prepare(`SELECT DISTINCT city FROM social_posts
     WHERE status='ready' AND TRIM(city)<>'' ORDER BY city`).all();
   const articles = db.prepare("SELECT slug FROM editorial_articles WHERE status='published' ORDER BY published_at DESC LIMIT 5000").all();
+  const books = db.prepare("SELECT slug FROM digital_books WHERE status='published' ORDER BY published_at DESC LIMIT 2000").all();
   const dynamicPaths = [
     ...stores.map(store => publicStorePath(store)),
     ...products.map(product => `/produto/${product.id}/${marketplaceSlug(product.name, 'produto')}`),
     ...categories.map(row => `/categoria/${marketplaceSlug(row.category, 'categoria')}`),
     ...cities.map(row => `/cidade/${marketplaceSlug(row.city, 'cidade')}`),
-    ...articles.map(row => `/artigo/${row.slug}`)
+    ...articles.map(row => `/artigo/${row.slug}`),
+    ...books.map(row => `/livro/${row.slug}`)
   ];
   const urls = [...new Set([...fixedPaths, ...dynamicPaths])];
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
@@ -4071,6 +4075,25 @@ async function generateEditorialDraft({ title, portal, traffic, sourceUrl }) {
     } catch (error) { console.error('Editorial cover generation failed', String(error.message || error)); }
   }
   return { title: article.title, summary: article.summary, body, imageUrl };
+}
+
+async function generateBookPlan(trend) {
+  const response=await requestOpenAI({model:OPENAI_MODEL,max_output_tokens:2200,input:[{role:'system',content:[{type:'input_text',text:'Você coordena a Editora Digital VitrineCity. Transforme a tendência em um livro útil e duradouro, sem copiar terceiros, prometer riqueza, cura ou resultado garantido. Retorne somente JSON válido: title, category, summary, audience, keywords (array) e chapters (exatamente 10 itens com title e brief). Categorias permitidas: desenvolvimento pessoal, finanças pessoais educativas, tecnologia, inteligência artificial, romance ficcional e prosperidade responsável.'}]},{role:'user',content:[{type:'input_text',text:`Tendência: ${trend.title}\nVolume: ${trend.traffic||'não informado'}\nFonte: ${trend.source_url||'Google Trends Brasil'}`}]}]});
+  const plan=parseEditorialJson(responseOutputText(response));
+  if(!plan.title||!Array.isArray(plan.chapters)||plan.chapters.length<10)throw new Error('O coordenador não produziu um plano completo.');
+  return plan;
+}
+
+async function generateBookChapter(chapter) {
+  const response=await requestOpenAI({model:OPENAI_MODEL,max_output_tokens:2600,input:[{role:'system',content:[{type:'input_text',text:'Você é redator de livros da Editora Digital VitrineCity. Escreva um capítulo original em português do Brasil com 900 a 1.300 palavras, bem estruturado, prático e coerente. Não copie obras, não invente fontes, não faça promessa financeira, médica ou jurídica. Entregue somente o texto do capítulo, com subtítulos e parágrafos.'}]},{role:'user',content:[{type:'input_text',text:`Livro: ${chapter.book_title}\nCategoria: ${chapter.category}\nResumo: ${chapter.summary}\nCapítulo ${chapter.position}: ${chapter.title}\nOrientação: ${chapter.brief}`}]}]});
+  const text=responseOutputText(response).trim();if(text.split(/\s+/).length<700)throw new Error('Capítulo abaixo do tamanho editorial mínimo.');return text;
+}
+
+async function generateBookCover(book) {
+  if(AI_PROVIDER!=='openrouter')return '/assets/vitriny-city-master.jpg';
+  const result=await openRouterRequest('https://openrouter.ai/api/v1/images',{method:'POST',body:JSON.stringify({model:OPENROUTER_IMAGE_MODEL,prompt:`Capa de livro digital profissional, proporção vertical 2:3, categoria ${book.category}, tema ${book.title}, composição editorial elegante, sem texto, sem logotipos, sem marcas, sem rosto de pessoa real`,n:1,aspect_ratio:'2:3'})},120000);
+  const item=result.data?.data?.[0]||result.data?.images?.[0],encoded=String(item?.b64_json||item?.image_url?.url||'').replace(/^data:[^;]+;base64,/,'');const buffer=Buffer.from(encoded,'base64');
+  if(!buffer.length||buffer.length>25*1024*1024)throw new Error('A capa gerada é inválida.');const file=`book-${Date.now()}-${randomBytes(4).toString('hex')}.png`;fs.writeFileSync(path.join(generatedMediaDir,file),buffer,{flag:'wx'});return `/uploads/generated-videos/${file}`;
 }
 
 const WHATSAPP_MESSAGE_CREDIT_UNITS = 100;
