@@ -47,6 +47,7 @@ export function renderPublicStorePage({ store, products = [], siteUrl, productFa
   const safeProducts = products.map(product => ({
     ...product,
     path: `/produto/${product.id}/${marketplaceSlug(product.name, 'produto')}`,
+    buyUrl: absoluteUrl(product.product_url, origin),
     image: absoluteUrl(product.image_url, origin) || new URL(productFallback, origin).toString()
   }));
   const channels = [
@@ -83,7 +84,7 @@ export function renderPublicStorePage({ store, products = [], siteUrl, productFa
       <h2><a href="${escapeHtml(product.path)}">${escapeHtml(product.name)}</a></h2>
       <div class="price">${(product.price_cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</div>
       <div class="stock">${product.stock_quantity} em estoque</div>
-      <a class="button" href="${escapeHtml(product.path)}">Ver produto</a></div></article>`).join('');
+      <a class="button" href="${escapeHtml(product.buyUrl || product.path)}"${product.buyUrl?' target="_blank" rel="noopener sponsored"':''}>${product.buyUrl?'Comprar no site oficial':'Ver produto'}</a></div></article>`).join('');
   const emptyState = '<div class="empty"><h2>Esta loja está preparando o catálogo.</h2><p>Volte em breve para conhecer os produtos.</p></div>';
   return `<!doctype html><html lang="pt-BR"><head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
