@@ -1308,6 +1308,10 @@ const ADS_INTERNAL_CLICK_COST_UNITS = 480;
 const COURSE_PRICE_CENTS = 2399;
 const VIDEO_PACKAGE = Object.freeze({ slug: '10-videos-loja', amountCents: 20000, quantity: 10 });
 const DIGITAL_SERVICE_PACKAGES = Object.freeze({
+  'ads-banner-outdoor-7-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 7 dias', amountCents:5000, description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 7 dias, após aprovação do material.' }),
+  'ads-banner-outdoor-15-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 15 dias', amountCents:7500, description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 15 dias, após aprovação do material.' }),
+  'ads-banner-outdoor-30-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 30 dias', amountCents:10000, description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 30 dias, após aprovação do material.' }),
+  'ads-banner-outdoor-60-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 60 dias', amountCents:17500, description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 60 dias, após aprovação do material.' }),
   'google-maps-essencial': Object.freeze({ title:'Otimização Google e Maps', amountCents:15000, description:'Diagnóstico, palavras-chave, informações, fotos e plano de otimização do Perfil da Empresa no Google' }),
   'pagina-empresa': Object.freeze({ title:'Página profissional da empresa', amountCents:50000, description:'Criação de página empresarial responsiva com apresentação, contatos, localização e chamada para ação' }),
   '10-videos-loja': Object.freeze({ title:'Pacote de 10 vídeos curtos', amountCents:20000, description:'Roteiro, criação e entrega de dez vídeos verticais para divulgar produtos, serviços e ofertas' }),
