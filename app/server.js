@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { originalCourse } from './course-content.js';
 import { setupAdminAnalytics } from './admin-analytics.js';
 import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marketplace-public.js';
+import { setupTrendRadar } from './trend-radar.js';
 import { marketplaceShippingQuote, melhorEnvioConfig } from './marketplace-shipping.js';
 import { checkoutMelhorEnvioShipment,createMelhorEnvioShipment,generateMelhorEnvioShipment,
   melhorEnvioShipmentPayload,printMelhorEnvioShipment } from './melhor-envio-fulfillment.js';
@@ -2014,6 +2015,7 @@ app.use('/uploads/generated-videos', express.static(path.join(dataDir, 'generate
   immutable: true, maxAge: '30d', fallthrough: false
 }));
 const publicPage = file => (_req, res) => res.sendFile(path.join(dir, 'public', file));
+setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage });
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
   const tags = [...scripts, '/social-accessibility.js'].map(src => `<script src="${src}" defer></script>`).join('');
