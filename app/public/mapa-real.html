@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="description" content="Encontre lojas reais da VitrineCity por cidade, estado e proximidade." />
+    <title>Mapa Real — VitrineCity</title>
+    <link rel="stylesheet" href="/mapa-real.css?v=1" />
+    <script src="/analytics.js" defer></script>
+    <script src="/mapa-real.js?v=1" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="VitrineCity — página inicial"><i></i>VitrineCity</a>
+      <nav class="modes" aria-label="Modo de exploração">
+        <a href="/cidade">Cidade 2.5D</a>
+        <a class="active" href="/mapa-real" aria-current="page">Mapa Real</a>
+      </nav>
+    </header>
+    <main>
+      <aside class="panel" aria-label="Busca de lojas">
+        <div class="intro">
+          <span class="eyebrow">NEGÓCIOS REAIS DO BRASIL</span>
+          <h1>Encontre uma vitrine perto de você</h1>
+          <p>Pesquise por cidade e estado ou use sua localização para descobrir lojas próximas.</p>
+        </div>
+        <form id="filters" class="filters">
+          <label>Buscar loja ou categoria<input id="search" type="search" placeholder="Ex.: plantas, moda, serviços" /></label>
+          <div class="filter-row">
+            <label>Estado<select id="state"><option value="">Todos</option></select></label>
+            <label>Cidade<select id="city"><option value="">Todas</option></select></label>
+          </div>
+          <button class="location" id="near-me" type="button">⌖ Usar minha localização</button>
+        </form>
+        <p id="status" class="status" role="status">Carregando lojas…</p>
+        <section id="results" class="results" aria-label="Lojas encontradas"></section>
+      </aside>
+      <section class="map-wrap" aria-label="Mapa das lojas">
+        <div class="layer-switch" role="group" aria-label="Camada visual do mapa">
+          <button id="real-layer" class="active" type="button">Mapa Real</button>
+          <button id="premium-layer" type="button">✦ Cidade Premium</button>
+        </div>
+        <div id="map"></div>
+        <div id="map-message" class="map-message" hidden></div>
+      </section>
+    </main>
+  </body>
+</html>

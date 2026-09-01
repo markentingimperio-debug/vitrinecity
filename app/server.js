@@ -771,6 +771,11 @@ ensureColumn('store_profiles', 'gallery_1_url', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('store_profiles', 'gallery_2_url', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('store_profiles', 'gallery_3_url', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('store_profiles', 'wants_google_profile', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_profiles', 'latitude', 'REAL');
+ensureColumn('store_profiles', 'longitude', 'REAL');
+ensureColumn('store_profiles', 'google_place_id', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'show_on_real_map', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_profiles', 'location_precision', "TEXT NOT NULL DEFAULT 'exact'");
 db.exec(`CREATE TABLE IF NOT EXISTS ad_delivery_events (
   id INTEGER PRIMARY KEY,
   campaign_id INTEGER NOT NULL REFERENCES ad_campaigns(id) ON DELETE CASCADE,
@@ -1782,6 +1787,10 @@ function publicStoreProfile(reference) {
       googleMapsUrl: profile.google_maps_url || '', promotionText: profile.promotion_text || '',
       address: profile.address || '', city: profile.city || '', state: profile.state || '',
       postalCode: profile.postal_code || '', locationNotes: profile.location_notes || '',
+      latitude: Number.isFinite(profile.latitude) ? profile.latitude : null,
+      longitude: Number.isFinite(profile.longitude) ? profile.longitude : null,
+      googlePlaceId: profile.google_place_id || '', showOnRealMap: Boolean(profile.show_on_real_map),
+      locationPrecision: profile.location_precision === 'area' ? 'area' : 'exact',
       videoUrl: profile.video_url || '', gallery1Url: profile.gallery_1_url || '',
       gallery2Url: profile.gallery_2_url || '', gallery3Url: profile.gallery_3_url || '',
       wantsWebsite: Boolean(profile.wants_website), wantsBrandArt: Boolean(profile.wants_brand_art),
@@ -1807,6 +1816,20 @@ function saveStoreImage(reference, kind, value, currentUrl = '') {
   const filename = `${safeReference}-${kind}-${Date.now()}.${extension}`;
   fs.writeFileSync(path.join(folder, filename), buffer, { mode: 0o640 });
   return `/uploads/store-assets/${filename}`;
+}
+
+function storeMapLocation(body, current = {}) {
+  const latitude = body.latitude === '' || body.latitude == null ? current.latitude ?? null : Number(body.latitude);
+  const longitude = body.longitude === '' || body.longitude == null ? current.longitude ?? null : Number(body.longitude);
+  const valid = Number.isFinite(latitude) && latitude >= -90 && latitude <= 90 &&
+    Number.isFinite(longitude) && longitude >= -180 && longitude <= 180;
+  return {
+    latitude: valid ? latitude : null,
+    longitude: valid ? longitude : null,
+    googlePlaceId: String(body.googlePlaceId ?? current.google_place_id ?? '').trim().slice(0, 240),
+    showOnRealMap: body.showOnRealMap === undefined ? Boolean(current.show_on_real_map) : body.showOnRealMap === true,
+    locationPrecision: body.locationPrecision === 'area' ? 'area' : 'exact'
+  };
 }
 
 function storePortalPrimaryAccess(req, res) {
@@ -2050,9 +2073,11 @@ app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
 app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
 app.get('/admin-tiktok.html',requireAdmin,publicPage('admin-tiktok.html'));
 app.get('/admin-lojas.html',requireAdmin,publicPage('admin-lojas.html'));
+app.get('/admin-mapa-real.html',requireAdmin,publicPage('admin-mapa-real.html'));
 app.get('/admin-servicos.html',requireAdmin,(_req,res)=>{const page=fs.readFileSync(path.join(dir,'public','admin-servicos.html'),'utf8');res.type('html').send(page.replace('</body>','<script src="/admin-services-catalog.js" defer></script></body>'))});
 app.get('/recursos-social.html', enhancedPublicPage('recursos-social.html'));
 app.get('/cidade', publicPage('cidade-exploravel.html'));
+app.get('/mapa-real', publicPage('mapa-real.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
 app.get('/cidade/praca-central', publicPage('praca-central.html'));
 app.get('/cidade/avenida-premium', publicPage('passeio-virtual.html'));
@@ -6151,6 +6176,7 @@ app.put('/api/store-portal/:reference', async (req, res) => {
     wantsWebsite: body.wantsWebsite ? 1 : 0, wantsBrandArt: body.wantsBrandArt ? 1 : 0,
     wantsGoogleProfile: body.wantsGoogleProfile ? 1 : 0
   };
+  const mapLocation = storeMapLocation(body, current || {});
   db.prepare(`INSERT INTO store_profiles
     (order_reference,business_name,description,logo_url,facade_url,whatsapp,website_url,instagram_url,
      tiktok_url,google_maps_url,promotion_text,wants_website,wants_brand_art,address,city,state,postal_code,
@@ -6170,6 +6196,10 @@ app.put('/api/store-portal/:reference', async (req, res) => {
       values.websiteUrl, values.instagramUrl, values.tiktokUrl, values.googleMapsUrl, values.promotionText,
       values.wantsWebsite, values.wantsBrandArt, values.address, values.city, values.state, values.postalCode,
       values.locationNotes, values.videoUrl, gallery1Url, gallery2Url, gallery3Url, values.wantsGoogleProfile);
+  db.prepare(`UPDATE store_profiles SET latitude=?,longitude=?,google_place_id=?,show_on_real_map=?,
+    location_precision=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
+    .run(mapLocation.latitude,mapLocation.longitude,mapLocation.googlePlaceId,mapLocation.showOnRealMap?1:0,
+      mapLocation.locationPrecision,access.order.reference);
   db.prepare(`UPDATE lot_orders SET business_name=?,whatsapp=?,fulfillment_status='pending_review',
     updated_at=CURRENT_TIMESTAMP WHERE reference=?`).run(businessName, values.whatsapp, access.order.reference);
   if (mailTransport) {
@@ -6226,8 +6256,11 @@ app.put('/api/admin/store-submissions/:reference/content', requireAdmin, sameOri
     gallery3Url=body.removeGallery3?'':saveStoreImage(reference,'gallery-3-admin',body.gallery3,gallery3Url);
   }catch(error){return res.status(400).json({error:error.message});}
   const values={whatsapp:String(body.whatsapp||'').trim().slice(0,30),websiteUrl:safeExternalUrl(body.websiteUrl),instagramUrl:safeExternalUrl(body.instagramUrl),tiktokUrl:safeExternalUrl(body.tiktokUrl),googleMapsUrl:safeExternalUrl(body.googleMapsUrl),videoUrl:safeExternalUrl(body.videoUrl),promotionText:String(body.promotionText||'').trim().slice(0,120),address:String(body.address||'').trim().slice(0,240),city:String(body.city||'').trim().slice(0,100),state:String(body.state||'').trim().slice(0,2).toUpperCase(),postalCode:String(body.postalCode||'').replace(/\D/g,'').slice(0,8),locationNotes:String(body.locationNotes||'').trim().slice(0,500)};
+  const mapLocation=storeMapLocation(body,current);
   db.prepare(`UPDATE store_profiles SET business_name=?,description=?,logo_url=?,facade_url=?,gallery_1_url=?,gallery_2_url=?,gallery_3_url=?,video_url=?,whatsapp=?,website_url=?,instagram_url=?,tiktok_url=?,google_maps_url=?,promotion_text=?,address=?,city=?,state=?,postal_code=?,location_notes=?,wants_website=?,wants_brand_art=?,wants_google_profile=?,admin_notes=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
     .run(businessName,description,logoUrl,facadeUrl,gallery1Url,gallery2Url,gallery3Url,values.videoUrl,values.whatsapp,values.websiteUrl,values.instagramUrl,values.tiktokUrl,values.googleMapsUrl,values.promotionText,values.address,values.city,values.state,values.postalCode,values.locationNotes,body.wantsWebsite?1:0,body.wantsBrandArt?1:0,body.wantsGoogleProfile?1:0,String(body.adminNotes||'').trim().slice(0,1200),reference);
+  db.prepare(`UPDATE store_profiles SET latitude=?,longitude=?,google_place_id=?,show_on_real_map=?,location_precision=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
+    .run(mapLocation.latitude,mapLocation.longitude,mapLocation.googlePlaceId,mapLocation.showOnRealMap?1:0,mapLocation.locationPrecision,reference);
   db.prepare('UPDATE lot_orders SET business_name=?,whatsapp=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?').run(businessName,values.whatsapp,reference);
   return res.json({ok:true,submission:db.prepare(`SELECT p.*,o.email,o.name customer_name,o.lot_code,o.segment,o.plan_code,o.billing_type FROM store_profiles p JOIN lot_orders o ON o.reference=p.order_reference WHERE p.order_reference=?`).get(reference)});
 });
@@ -6291,7 +6324,48 @@ app.patch('/api/admin/store-submissions/:reference', requireAdmin, async (req, r
 app.get('/api/public/stores/:reference', (req, res) => {
   const data = publicStoreProfile(req.params.reference);
   if (!data?.profile || data.profile.reviewStatus !== 'published') return res.status(404).json({ error: 'Loja não publicada.' });
+  if (!data.profile.showOnRealMap) {
+    data.profile.latitude = null;
+    data.profile.longitude = null;
+    data.profile.googlePlaceId = '';
+  } else if (data.profile.locationPrecision === 'area' &&
+      Number.isFinite(data.profile.latitude) && Number.isFinite(data.profile.longitude)) {
+    data.profile.latitude = Math.round(data.profile.latitude * 100) / 100;
+    data.profile.longitude = Math.round(data.profile.longitude * 100) / 100;
+  }
   return res.json(data);
+});
+
+app.get('/api/maps/config', (_req, res) => {
+  const apiKey = String(process.env.GOOGLE_MAPS_BROWSER_API_KEY || '').trim();
+  return res.json({ enabled: Boolean(apiKey), apiKey });
+});
+
+app.get('/api/maps/stores', (req, res) => {
+  const city = String(req.query.city || '').trim().slice(0, 100);
+  const state = String(req.query.state || '').trim().slice(0, 2).toUpperCase();
+  const category = String(req.query.category || '').trim().slice(0, 100);
+  const stores = db.prepare(`SELECT p.order_reference reference,p.business_name name,p.description,
+      p.logo_url logoUrl,p.facade_url facadeUrl,p.whatsapp,p.website_url websiteUrl,
+      p.google_maps_url googleMapsUrl,p.city,p.state,p.latitude,p.longitude,
+      p.location_precision locationPrecision,o.segment category
+    FROM store_profiles p JOIN lot_orders o ON o.reference=p.order_reference
+    WHERE p.review_status='published' AND p.show_on_real_map=1
+      AND p.latitude BETWEEN -90 AND 90 AND p.longitude BETWEEN -180 AND 180
+      AND (?='' OR p.city=?) AND (?='' OR p.state=?) AND (?='' OR o.segment=?)
+    ORDER BY p.published_at DESC,p.business_name LIMIT 1000`)
+    .all(city, city, state, state, category, category)
+    .map(store => ({
+      ...store,
+      latitude: store.locationPrecision === 'area' ? Math.round(Number(store.latitude) * 100) / 100 : Number(store.latitude),
+      longitude: store.locationPrecision === 'area' ? Math.round(Number(store.longitude) * 100) / 100 : Number(store.longitude),
+      addressVisible: store.locationPrecision === 'exact',
+      storeUrl: publicStorePath({ order_reference: store.reference, business_name: store.name })
+    }));
+  const filters = db.prepare(`SELECT DISTINCT city,state FROM store_profiles
+    WHERE review_status='published' AND show_on_real_map=1 AND latitude IS NOT NULL AND longitude IS NOT NULL
+    ORDER BY state,city`).all();
+  return res.json({ stores, filters });
 });
 
 app.post('/api/admin/lot-orders/:reference/resend-confirmation', requireAdmin, (req, res) => {

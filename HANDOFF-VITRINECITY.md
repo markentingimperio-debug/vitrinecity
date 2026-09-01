@@ -125,6 +125,19 @@ Atualizado em 01/09/2026.
 5. Revisar desempenho da Vitriny Social e memória consumida pelo ChatbotX.
 6. Conferir acesso automático aos cursos após confirmação do pagamento e testar o fluxo como cliente.
 
+## Mapa Real e Cidade Premium — implementação local
+
+- Branch de trabalho: `codex/cidade-mapa-real`.
+- Nova página pública: `/mapa-real`.
+- O mapa usa a geografia real do Google como base e oferece uma camada visual `Cidade Premium` sobre as mesmas coordenadas.
+- A Cidade 2.5D existente foi preservada e recebeu somente um link para o novo modo.
+- Busca disponível por loja/categoria, estado, cidade e distância a partir da localização do visitante.
+- Nova administração: `/admin-mapa-real.html`, para registrar latitude, longitude, Place ID, precisão e autorização.
+- Lojas entram no mapa somente quando publicadas, autorizadas e com coordenadas válidas.
+- A opção `região aproximada` arredonda as coordenadas públicas para proteger endereços sensíveis.
+- Configuração necessária na VPS: `GOOGLE_MAPS_BROWSER_API_KEY`, restrita no Google Cloud aos domínios da VitrineCity e à Maps JavaScript API.
+- Esta implementação ainda não foi publicada na VPS.
+
 ## Observação para a próxima conversa
 
 Antes de implementar algo novo, ler este arquivo, conferir `git status`, o último commit e o estado real da VPS. Não assumir como concluídas funcionalidades antigas apenas com base na conversa; confirmar por código, API e página publicada.
