@@ -208,18 +208,19 @@
         : Promise.reject(new Error("Catálogo indisponível")),
     )
     .then((payload) => {
-      const services = payload.services || [];
+      const services = payload.items || payload.services || [];
       if (!services.length) return;
       let offset = 0;
       const renderAds = () =>
         serviceAds.forEach((ad, index) => {
           const service = services[(offset + index) % services.length];
           ad.dataset.name = service.title;
-          ad.dataset.desc = `${service.description} A partir de ${money(service.price)}.`;
+          const price = (service.amountCents || 0) / 100 || service.price;
+          ad.dataset.desc = `${service.description} A partir de ${money(price)}.`;
           ad.dataset.page = service.checkoutUrl || "/servicos-digitais.html";
           ad.querySelector("[data-ad-title]").textContent = service.title;
           ad.querySelector("[data-ad-price]").textContent =
-            `A partir de ${money(service.price)}`;
+            `A partir de ${money(price)}`;
         });
       renderAds();
       window.setInterval(() => {
