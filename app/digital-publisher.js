@@ -411,7 +411,7 @@ export function setupDigitalPublisher({
       }
       const illustration = db
         .prepare(
-          "SELECT c.*,b.title book_title,b.category FROM digital_book_chapters c JOIN digital_books b ON b.id=c.book_id WHERE c.status='approved' AND (c.image_url='' OR c.image_url IS NULL) AND b.status IN ('writing','review') ORDER BY b.created_at,c.position LIMIT 1",
+          "SELECT c.*,b.title book_title,b.category FROM digital_book_chapters c JOIN digital_books b ON b.id=c.book_id WHERE c.status='approved' AND (c.image_url='' OR c.image_url IS NULL) AND b.status IN ('writing','review','published') ORDER BY b.created_at,c.position LIMIT 1",
         )
         .get();
       if (illustration) {
@@ -432,6 +432,7 @@ export function setupDigitalPublisher({
   db.prepare(
     "UPDATE digital_books SET category='finanças pessoais educativas' WHERE lower(category) LIKE '%econom%' OR lower(category) LIKE '%salário%'",
   ).run();
+  for(const item of db.prepare("SELECT slug FROM digital_books WHERE status='published'").all())db.prepare("UPDATE managed_courses SET material_url=? WHERE slug=?").run(`/ler-livro/${item.slug}`,`livro-${item.slug}`);
   setTimeout(worker, 15000).unref();
   setInterval(worker, 2 * 60 * 1000).unref();
 }
