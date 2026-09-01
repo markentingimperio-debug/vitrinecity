@@ -6635,10 +6635,28 @@ app.get('/api/social/profile/me', requireUser, (req, res) => {
   const counts = db.prepare(`SELECT
     (SELECT COUNT(*) FROM social_follows WHERE followed_id=?) followers,
     (SELECT COUNT(*) FROM social_follows WHERE follower_id=?) following,
-    (SELECT COUNT(*) FROM social_posts WHERE user_id=? AND status!='deleted') posts`)
+    (SELECT COUNT(*) FROM social_posts WHERE user_id=? AND status='ready') posts`)
     .get(req.user.id, req.user.id, req.user.id);
+  const rows = db.prepare(`SELECT p.*,? author_name,? handle,? avatar_url,
+      (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) likes_count,
+      (SELECT COUNT(*) FROM social_comments c WHERE c.post_id=p.id AND c.status='published') comments_count,
+      (SELECT COUNT(*) FROM social_post_views v WHERE v.post_id=p.id) views_count,
+      MAX((SELECT COUNT(DISTINCT e.actor_key) FROM social_engagement_events e WHERE e.post_id=p.id),
+        (SELECT COUNT(DISTINCT v.visitor_key) FROM social_post_views v WHERE v.post_id=p.id)) reach_count,
+      COALESCE((SELECT SUM(e.impressions) FROM social_engagement_events e WHERE e.post_id=p.id),0) intelligence_impressions,
+      (SELECT COUNT(*) FROM social_saves s WHERE s.post_id=p.id) saves_count,
+      (SELECT COUNT(*) FROM social_reposts r WHERE r.post_id=p.id) reposts_count,
+      (SELECT COUNT(*) FROM social_shares h WHERE h.post_id=p.id) shares_count,
+      EXISTS(SELECT 1 FROM social_saves s WHERE s.post_id=p.id AND s.user_id=?) viewer_saved,
+      EXISTS(SELECT 1 FROM social_reposts r WHERE r.post_id=p.id AND r.user_id=?) viewer_reposted,
+      EXISTS(SELECT 1 FROM social_likes l WHERE l.post_id=p.id AND l.user_id=?) viewer_liked,
+      0 viewer_following
+    FROM social_posts p WHERE p.user_id=? AND p.status='ready'
+    ORDER BY p.created_at DESC LIMIT 100`).all(
+      req.user.name, profile.handle, profile.avatar_url || '', req.user.id, req.user.id, req.user.id, req.user.id);
   return res.json({ profile: { id: req.user.id, name: req.user.name, handle: profile.handle, bio: profile.bio,
-    city: profile.city, avatarUrl: profile.avatar_url, mine: true, ...counts } });
+    city: profile.city, avatarUrl: profile.avatar_url, mine: true, ...counts },
+    items: rows.map(row => socialPost(row, req.user.id)) });
 });
 
 app.get('/api/social/profile/:handle', (req, res) => {
