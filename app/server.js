@@ -679,6 +679,19 @@ CREATE INDEX IF NOT EXISTS idx_social_reposts_user ON social_reposts(user_id,cre
 CREATE INDEX IF NOT EXISTS idx_social_posts_feed ON social_posts(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_posts_user ON social_posts(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_comments_post ON social_comments(post_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS social_comment_automations (
+  id INTEGER PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  comment_id INTEGER NOT NULL REFERENCES social_comments(id) ON DELETE CASCADE,
+  sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  trigger_text TEXT NOT NULL DEFAULT '',
+  destination_url TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'sent',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(post_id,recipient_id)
+);
+CREATE INDEX IF NOT EXISTS idx_social_comment_automations_recipient ON social_comment_automations(recipient_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_follows_followed ON social_follows(followed_id);
 CREATE INDEX IF NOT EXISTS idx_social_blocks_blocked ON social_blocks(blocked_id,blocker_id);
 CREATE INDEX IF NOT EXISTS idx_social_mutes_user ON social_mutes(user_id,muted_id);
@@ -7206,13 +7219,40 @@ app.post('/api/social/posts/:id/comments', requireActiveSocialUser, sameOriginOn
   }
   const body = String(req.body?.body || '').trim().slice(0, 500);
   if (!body) return res.status(400).json({ error: 'Escreva um comentário.' });
-  const post=db.prepare("SELECT user_id FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
+  const post=db.prepare("SELECT user_id,caption,cta_label,cta_url FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
   if (!post) {
     return res.status(404).json({ error: 'Publicação não encontrada.' });
   }
   const result = db.prepare('INSERT INTO social_comments (post_id,user_id,body) VALUES (?,?,?)')
     .run(req.params.id, req.user.id, body);
   createSocialNotification(post.user_id,req.user.id,'comment','comentou na sua publicação',`comment:${result.lastInsertRowid}`,req.params.id);
+  const normalizedTrigger=body.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+  const requestedGuide=/(^|\b)(eu quero|quero o guia|quero aprender|como cuidar|manda para mim|me envia)(\b|$)/.test(normalizedTrigger);
+  if(requestedGuide&&post.user_id!==req.user.id&&post.cta_url){
+    try{
+      const destination=new URL(post.cta_url,SITE_URL);
+      const allowedDestination=destination.origin===new URL(SITE_URL).origin&&/^\/(livro|artigo)\//.test(destination.pathname);
+      const blocked=db.prepare('SELECT 1 FROM social_blocks WHERE (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?)').get(post.user_id,req.user.id,req.user.id,post.user_id);
+      if(allowedDestination&&!blocked){
+        const automation=db.transaction(()=>{
+          const registered=db.prepare(`INSERT OR IGNORE INTO social_comment_automations
+            (post_id,comment_id,sender_id,recipient_id,trigger_text,destination_url) VALUES (?,?,?,?,?,?)`)
+            .run(req.params.id,Number(result.lastInsertRowid),post.user_id,req.user.id,body,destination.href);
+          if(!registered.changes)return false;
+          const low=Math.min(post.user_id,req.user.id),high=Math.max(post.user_id,req.user.id);
+          let conversation=db.prepare('SELECT id FROM social_conversations WHERE user_low=? AND user_high=?').get(low,high);
+          if(!conversation){const id=randomUUID();db.prepare('INSERT INTO social_conversations (id,user_low,user_high) VALUES (?,?,?)').run(id,low,high);conversation={id};}
+          const messageId=randomUUID();
+          const guideName=post.cta_label||'Conhecer o guia';
+          const message=`Mensagem automática: você pediu o conteúdo no vídeo. ${guideName}: ${destination.href}\n\nOferta de lançamento: de R$ 19,99 por R$ 9,99. Se não quiser receber novas mensagens automáticas, responda PARAR.`;
+          db.prepare(`INSERT INTO social_messages (id,conversation_id,sender_id,kind,body) VALUES (?,?,?,'text',?)`).run(messageId,conversation.id,post.user_id,message);
+          db.prepare('UPDATE social_conversations SET last_message_at=CURRENT_TIMESTAMP WHERE id=?').run(conversation.id);
+          return {conversationId:conversation.id,messageId};
+        })();
+        if(automation)sendSocialLive(req.user.id,'chat-message',automation);
+      }
+    }catch(error){console.error('Social comment automation error',String(error?.message||error).slice(0,180));}
+  }
   return res.status(201).json({ id: Number(result.lastInsertRowid), body, name: req.user.name });
 });
 

@@ -47,7 +47,7 @@ function landing(book, chapters) {
       url: `https://vitrinecity.com/livro/${book.slug}`,
     },
   }).replace(/</g, "\\u003c");
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(book.title)} — Editora VitrineCity</title><meta name="description" content="${esc(book.summary)}"><link rel="canonical" href="https://vitrinecity.com/livro/${esc(book.slug)}"><meta property="og:title" content="${esc(book.title)}"><meta property="og:description" content="${esc(book.summary)}"><meta property="og:image" content="${esc(book.cover_url)}"><script type="application/ld+json">${schema}</script><style>${CSS}</style></head><body><header><a href="/">VitrineCity</a><a href="/livros">Editora Digital</a></header><main><img class="cover" src="${esc(book.cover_url)}" alt="Capa de ${esc(book.title)}"><section><small>${esc(book.category)} · LIVRO DIGITAL</small><h1>${esc(book.title)}</h1><p class="lead">${esc(book.summary)}</p><div class="price">R$ 9,99</div><a class="buy" href="/centro-educacional.html#livro-${esc(book.slug)}">Comprar e acessar</a><p>${esc(book.audience)}</p><h2>Você encontrará</h2><ol>${chapters.map((c) => `<li>${esc(c.title)}</li>`).join("")}</ol><h2>Amostra</h2><p class="sample">${esc(sample)}</p></section></main></body></html>`;
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(book.title)} — Editora VitrineCity</title><meta name="description" content="${esc(book.summary)}"><link rel="canonical" href="https://vitrinecity.com/livro/${esc(book.slug)}"><meta property="og:title" content="${esc(book.title)}"><meta property="og:description" content="${esc(book.summary)}"><meta property="og:image" content="${esc(book.cover_url)}"><script type="application/ld+json">${schema}</script><style>${CSS}.offer{display:flex;align-items:center;gap:12px;margin:18px 0}.was{color:#71809a;text-decoration:line-through;font-size:21px}.offer-badge{padding:6px 9px;border-radius:999px;background:#e8f7ed;color:#137333;font:800 12px Arial}.benefit{padding:16px 18px;border-radius:14px;background:#eef6ff;border:1px solid #cfe2fa}.trust{font:13px Arial;color:#60728d}</style></head><body><header><a href="/">VitrineCity</a><a href="/livros">Editora Digital</a></header><main><img class="cover" src="${esc(book.cover_url)}" alt="Capa de ${esc(book.title)}"><section><small>${esc(book.category)} · GUIA DIGITAL</small><h1>${esc(book.title)}</h1><p class="lead">${esc(book.summary)}</p><div class="benefit"><strong>Um caminho organizado para aprender sem depender de informações soltas.</strong><p>Consulte quando precisar, avance no seu ritmo e tenha todos os capítulos reunidos em um único guia.</p></div><div class="offer"><span class="was">R$ 19,99</span><div class="price">R$ 9,99</div><span class="offer-badge">OFERTA DE LANÇAMENTO</span></div><a class="buy" href="/centro-educacional.html#livro-${esc(book.slug)}">Quero meu guia digital</a><p class="trust">Pagamento seguro e acesso digital após a confirmação.</p><p>${esc(book.audience)}</p><h2>O que você aprenderá</h2><ol>${chapters.map((c) => `<li>${esc(c.title)}</li>`).join("")}</ol><h2>Leia uma amostra</h2><p class="sample">${esc(sample)}</p></section></main></body></html>`;
 }
 function reader(book, chapters, back = "/meus-cursos.html") {
   const body = chapters
@@ -81,6 +81,31 @@ export function setupDigitalPublisher({
   db.exec(`CREATE TABLE IF NOT EXISTS digital_books(id TEXT PRIMARY KEY,slug TEXT NOT NULL UNIQUE,title TEXT NOT NULL,category TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',audience TEXT NOT NULL DEFAULT '',keywords_json TEXT NOT NULL DEFAULT '[]',cover_url TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'planning',word_count INTEGER NOT NULL DEFAULT 0,page_count INTEGER NOT NULL DEFAULT 0,price_cents INTEGER NOT NULL DEFAULT 999,source_trend_id TEXT,review_notes TEXT NOT NULL DEFAULT '',published_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS digital_book_chapters(id INTEGER PRIMARY KEY,book_id TEXT NOT NULL,position INTEGER NOT NULL,title TEXT NOT NULL,brief TEXT NOT NULL DEFAULT '',content TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'pending',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(book_id,position));
   CREATE TABLE IF NOT EXISTS digital_book_reviews(id INTEGER PRIMARY KEY,book_id TEXT NOT NULL,agent_code TEXT NOT NULL,approved INTEGER NOT NULL DEFAULT 0,notes TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(book_id,agent_code));`);
+  const gardeningBookId="guide-zamioculca-2026";
+  const gardeningChapters=[
+    ["Conhecendo a zamioculca","Características da espécie, crescimento, reservas de água e por que ela se adapta a ambientes internos."],
+    ["Luz: onde colocar o vaso","Diferenças entre sombra, claridade indireta e sol direto; adaptação gradual e sinais de luz inadequada."],
+    ["Como regar sem apodrecer as raízes","Método de verificação do substrato, rega completa, drenagem e ajustes conforme clima e ambiente."],
+    ["Vaso, drenagem e substrato","Escolha de tamanho, furos, cachepô e mistura arejada adequada, evitando receitas universais sem contexto."],
+    ["Adubação responsável","Quando adubar, leitura do rótulo, frequência conservadora e situações em que a adubação deve ser suspensa."],
+    ["Folhas amarelas, marrons ou caídas","Diagnóstico por observação, causas comuns e sequência segura de verificação antes de agir."],
+    ["Pragas e prevenção","Inspeção de folhas, higiene, isolamento e medidas iniciais seguras sem indicar produtos perigosos."],
+    ["Replantio e multiplicação","Quando replantar, como preservar raízes e visão realista sobre divisão e propagação."],
+    ["Rotina mensal de cuidados","Checklist simples de observação, limpeza, rotação do vaso, rega e registro de mudanças."],
+    ["Plano de recuperação","Passos graduais para uma planta enfraquecida, limites do cuidado doméstico e quando buscar orientação especializada."],
+  ];
+  db.transaction(()=>{
+    db.prepare(`INSERT OR IGNORE INTO digital_books
+      (id,slug,title,category,summary,audience,keywords_json,cover_url,status,price_cents,source_trend_id)
+      VALUES (?,?,?,?,?,?,?,'','writing',999,?)`).run(gardeningBookId,"guia-pratico-da-zamioculca",
+        "Guia prático da zamioculca: cultivo e cuidados em casa","plantas e jardinagem",
+        "Aprenda a cuidar da zamioculca com orientações práticas sobre luz, rega, vaso, substrato, adubação e recuperação.",
+        "Pessoas que cultivam zamioculca em casa e querem compreender os sinais da planta sem complicação.",
+        JSON.stringify(["zamioculca","como cuidar de zamioculca","plantas em casa","rega","folhas amarelas"]),
+        "owned-social-plant-care-guide");
+    const insert=db.prepare(`INSERT OR IGNORE INTO digital_book_chapters(book_id,position,title,brief,status) VALUES (?,?,?,?,'pending')`);
+    gardeningChapters.forEach(([title,brief],index)=>insert.run(gardeningBookId,index+1,title,brief));
+  })();
   if (
     !db
       .prepare("PRAGMA table_info(digital_book_chapters)")
