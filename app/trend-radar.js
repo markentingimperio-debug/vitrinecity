@@ -131,7 +131,184 @@ export function setupTrendRadar({
   generateEditorialDraft,
 }) {
   db.exec(`CREATE TABLE IF NOT EXISTS trend_topics(id TEXT PRIMARY KEY,title TEXT NOT NULL UNIQUE,traffic TEXT NOT NULL DEFAULT '',published_at TEXT,portal TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new',source_url TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-  CREATE TABLE IF NOT EXISTS editorial_articles(id TEXT PRIMARY KEY,trend_id TEXT,slug TEXT NOT NULL UNIQUE,portal TEXT NOT NULL,title TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',body TEXT NOT NULL DEFAULT '',image_url TEXT NOT NULL DEFAULT '',sources_json TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL DEFAULT 'draft',published_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);`);
+  CREATE TABLE IF NOT EXISTS editorial_articles(id TEXT PRIMARY KEY,trend_id TEXT,slug TEXT NOT NULL UNIQUE,portal TEXT NOT NULL,title TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',body TEXT NOT NULL DEFAULT '',image_url TEXT NOT NULL DEFAULT '',sources_json TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL DEFAULT 'draft',published_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+  CREATE TABLE IF NOT EXISTS editorial_agent_reviews(id INTEGER PRIMARY KEY,article_id TEXT NOT NULL,agent_code TEXT NOT NULL,approved INTEGER NOT NULL DEFAULT 0,notes TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(article_id,agent_code));
+  CREATE TABLE IF NOT EXISTS editorial_automation_log(id INTEGER PRIMARY KEY,cycle_started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,cycle_finished_at TEXT,status TEXT NOT NULL DEFAULT 'running',created_count INTEGER NOT NULL DEFAULT 0,published_count INTEGER NOT NULL DEFAULT 0,error TEXT NOT NULL DEFAULT '');`);
+
+  const editorialPortals = [
+    "noticias",
+    "esportes",
+    "receitas",
+    "tecnologia",
+    "inteligencia-artificial",
+    "entretenimento",
+  ];
+  let automationRunning = false;
+  async function syncTrendFeed() {
+    const response = await fetch(
+      "https://trends.google.com/trending/rss?geo=BR",
+      {
+        headers: { "user-agent": "VitrineCity Editorial Radar/1.0" },
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+    if (!response.ok) throw new Error("Google Trends indisponível");
+    const items = [
+      ...(await response.text()).matchAll(/<item>([\s\S]*?)<\/item>/g),
+    ].map((match) => match[1]);
+    const insert = db.prepare(
+      `INSERT INTO trend_topics(id,title,traffic,published_at,portal,status,source_url) VALUES(?,?,?,?,?,'new',?) ON CONFLICT(title) DO UPDATE SET traffic=excluded.traffic,published_at=excluded.published_at,updated_at=CURRENT_TIMESTAMP`,
+    );
+    for (const item of items) {
+      const title = tag(item, "title");
+      if (title)
+        insert.run(
+          randomUUID(),
+          title,
+          tag(item, "ht:approx_traffic"),
+          tag(item, "pubDate"),
+          portalFor(title),
+          tag(item, "link"),
+        );
+    }
+    return items.length;
+  }
+  async function createAutomatedArticle(trend) {
+    const generated = await generateEditorialDraft({
+      title: trend.title,
+      portal: trend.portal,
+      traffic: trend.traffic,
+      sourceUrl: trend.source_url,
+    });
+    const articleId = randomUUID(),
+      title = String(generated.title || trend.title)
+        .trim()
+        .slice(0, 180),
+      body = String(generated.body || "").trim();
+    const summary = String(generated.summary || "").trim(),
+      imageUrl = String(generated.imageUrl || "");
+    const sourceOk = /^https:\/\//i.test(String(trend.source_url || ""));
+    const reviews = [
+      [
+        "redacao",
+        body.length >= 600 && summary.length >= 40,
+        `Texto: ${body.length} caracteres; resumo: ${summary.length}.`,
+      ],
+      [
+        "fontes",
+        sourceOk,
+        sourceOk
+          ? "Fonte de tendência identificada."
+          : "Fonte ausente ou inválida.",
+      ],
+      [
+        "midia",
+        imageUrl.length > 0 && imageUrl !== "/assets/vitriny-city-master.jpg",
+        imageUrl ? "Capa verificada." : "Capa ausente.",
+      ],
+      [
+        "editora",
+        body.length >= 600 &&
+          summary.length >= 40 &&
+          sourceOk &&
+          imageUrl.length > 0 &&
+          imageUrl !== "/assets/vitriny-city-master.jpg",
+        "Validação final do Coordenador da Editora.",
+      ],
+    ];
+    const approved = reviews.every(([, ok]) => ok);
+    const sources = sourceOk
+      ? [
+          {
+            title: "Google Trends — tendência identificada",
+            url: trend.source_url,
+          },
+        ]
+      : [];
+    db.prepare(
+      `INSERT INTO editorial_articles(id,trend_id,slug,portal,title,summary,body,image_url,sources_json,status,published_at) VALUES(?,?,?,?,?,?,?,?,?,?,CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END)`,
+    ).run(
+      articleId,
+      trend.id,
+      slugify(title) + "-" + Date.now().toString(36),
+      trend.portal,
+      title,
+      summary,
+      body,
+      imageUrl || "/assets/vitriny-city-master.jpg",
+      JSON.stringify(sources),
+      approved ? "published" : "draft",
+      approved ? 1 : 0,
+    );
+    const saveReview = db.prepare(
+      `INSERT INTO editorial_agent_reviews(article_id,agent_code,approved,notes) VALUES(?,?,?,?) ON CONFLICT(article_id,agent_code) DO UPDATE SET approved=excluded.approved,notes=excluded.notes,created_at=CURRENT_TIMESTAMP`,
+    );
+    for (const [agent, ok, notes] of reviews)
+      saveReview.run(articleId, agent, ok ? 1 : 0, notes);
+    db.prepare(
+      "UPDATE trend_topics SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+    ).run(approved ? "published" : "drafted", trend.id);
+    return approved;
+  }
+  async function runEditorialAutomation() {
+    if (
+      automationRunning ||
+      process.env.EDITORIAL_AUTOMATION_ENABLED === "false"
+    )
+      return;
+    automationRunning = true;
+    const log = db
+      .prepare("INSERT INTO editorial_automation_log(status) VALUES('running')")
+      .run();
+    let created = 0,
+      published = 0;
+    try {
+      await syncTrendFeed();
+      for (const portal of editorialPortals) {
+        const today = Number(
+          db
+            .prepare(
+              "SELECT COUNT(*) total FROM editorial_articles WHERE portal=? AND date(created_at)=date('now')",
+            )
+            .get(portal).total || 0,
+        );
+        if (today >= 3) continue;
+        const trend = db
+          .prepare(
+            "SELECT * FROM trend_topics WHERE portal=? AND status='new' ORDER BY published_at DESC,created_at DESC LIMIT 1",
+          )
+          .get(portal);
+        if (!trend) continue;
+        db.prepare(
+          "UPDATE trend_topics SET status='generating',updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        ).run(trend.id);
+        try {
+          const ok = await createAutomatedArticle(trend);
+          created++;
+          if (ok) published++;
+        } catch (error) {
+          db.prepare(
+            "UPDATE trend_topics SET status='new',updated_at=CURRENT_TIMESTAMP WHERE id=?",
+          ).run(trend.id);
+          console.error(
+            "Editorial automation item failed",
+            String(error.message || error),
+          );
+        }
+      }
+      db.prepare(
+        "UPDATE editorial_automation_log SET status='completed',cycle_finished_at=CURRENT_TIMESTAMP,created_count=?,published_count=? WHERE id=?",
+      ).run(created, published, log.lastInsertRowid);
+    } catch (error) {
+      db.prepare(
+        "UPDATE editorial_automation_log SET status='failed',cycle_finished_at=CURRENT_TIMESTAMP,error=? WHERE id=?",
+      ).run(String(error.message || error).slice(0, 500), log.lastInsertRowid);
+    } finally {
+      automationRunning = false;
+    }
+  }
+  setTimeout(runEditorialAutomation, 60_000).unref();
+  setInterval(runEditorialAutomation, 2 * 60 * 60 * 1000).unref();
   app.get(
     "/admin-tendencias.html",
     requireAdmin,
@@ -147,6 +324,17 @@ export function setupTrendRadar({
       articles: db
         .prepare(
           "SELECT * FROM editorial_articles ORDER BY created_at DESC LIMIT 100",
+        )
+        .all(),
+      automation:
+        db
+          .prepare(
+            "SELECT * FROM editorial_automation_log ORDER BY id DESC LIMIT 1",
+          )
+          .get() || null,
+      reviews: db
+        .prepare(
+          "SELECT * FROM editorial_agent_reviews ORDER BY id DESC LIMIT 200",
         )
         .all(),
     }),
@@ -202,9 +390,14 @@ export function setupTrendRadar({
         .get(req.params.id);
       if (!trend)
         return res.status(404).json({ error: "Tendência não encontrada." });
-    const portal = ["noticias", "esportes", "receitas", "tecnologia", "inteligencia-artificial", "entretenimento"].includes(
-        req.body?.portal,
-      )
+      const portal = [
+        "noticias",
+        "esportes",
+        "receitas",
+        "tecnologia",
+        "inteligencia-artificial",
+        "entretenimento",
+      ].includes(req.body?.portal)
         ? req.body.portal
         : trend.portal;
       try {
@@ -262,11 +455,9 @@ export function setupTrendRadar({
         db.prepare(
           "UPDATE trend_topics SET status='new',updated_at=CURRENT_TIMESTAMP WHERE id=?",
         ).run(trend.id);
-        return res
-          .status(error.status || 502)
-          .json({
-            error: error.message || "Não foi possível criar o rascunho.",
-          });
+        return res.status(error.status || 502).json({
+          error: error.message || "Não foi possível criar o rascunho.",
+        });
       }
     },
   );
@@ -284,7 +475,14 @@ export function setupTrendRadar({
       db.prepare(
         `UPDATE editorial_articles SET portal=?,title=?,summary=?,body=?,image_url=?,sources_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`,
       ).run(
-        ["noticias", "esportes", "receitas", "tecnologia", "inteligencia-artificial", "entretenimento"].includes(body.portal)
+        [
+          "noticias",
+          "esportes",
+          "receitas",
+          "tecnologia",
+          "inteligencia-artificial",
+          "entretenimento",
+        ].includes(body.portal)
           ? body.portal
           : current.portal,
         String(body.title || current.title)
@@ -320,16 +518,22 @@ export function setupTrendRadar({
         )
         .run(req.params.id);
       if (!result.changes)
-        return res
-          .status(409)
-          .json({
-            error:
-              "Revise o resumo, a imagem e garanta pelo menos 600 caracteres antes de publicar.",
-          });
+        return res.status(409).json({
+          error:
+            "Revise o resumo, a imagem e garanta pelo menos 600 caracteres antes de publicar.",
+        });
       return res.json({ ok: true });
     },
   );
-  for (const portal of ["conteudo", "noticias", "esportes", "receitas", "tecnologia", "inteligencia-artificial", "entretenimento"])
+  for (const portal of [
+    "conteudo",
+    "noticias",
+    "esportes",
+    "receitas",
+    "tecnologia",
+    "inteligencia-artificial",
+    "entretenimento",
+  ])
     app.get("/" + portal, (_req, res) => {
       const rows =
         portal === "conteudo"

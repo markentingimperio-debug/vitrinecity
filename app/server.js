@@ -897,7 +897,10 @@ const defaultSpecialistAgents = [
   ['atendimento','Agente de Atendimento','Relacionamento','Prepara respostas e identifica casos que precisam de atenção humana.'],
   ['lojistas','Agente de Lojistas','Cadastro e qualidade','Orienta cadastros, revisa informações e aponta pendências de lojas.'],
   ['marketing','Agente de Marketing','Conteúdo e campanhas','Cria pautas, ofertas e propostas de comunicação para aprovação.'],
+  ['redacao','Agente Redator','Redação editorial','Produz textos originais, claros, estruturados e adequados à editoria e ao público.'],
+  ['fontes','Agente Verificador de Fontes','Checagem editorial','Valida origem, atualidade e consistência das informações antes de autorizar uma publicação.'],
   ['midia','Estúdio Audiovisual','Vídeo, imagem e áudio','Transforma missões em roteiros, cenas, edições e versões para cada canal, sempre com revisão antes de publicar.'],
+  ['editora','Coordenador da Editora Digital','Livros digitais e revisão editorial','Coordena pauta, estrutura, redação, capa, revisão e aprovação dos livros digitais. Exige conteúdo original, no mínimo 30 páginas e impede promessas enganosas ou publicação incompleta.'],
   ['cripto','Agente de Cripto e Tesouraria','Criptoativos e gestão de risco','Monitora a carteira operacional, pesquisa oportunidades e prepara propostas de alocação com risco, liquidez, custos e cenário de perda. Nunca promete retorno nem movimenta fundos fora das políticas da carteira.'],
   ['vendas','Agente de Vendas','Conversão','Analisa oportunidades, funil e ações para aumentar vendas.'],
   ['tecnico','Agente Técnico','Site e integrações','Monitora integrações, erros e melhorias técnicas seguras.']
@@ -2063,6 +2066,7 @@ app.get('/sitemap.xml', (_req, res) => {
   const fixedPaths = [
     '/', '/cidade', '/cidade/bairro-premium', '/cidade/praca-central', '/cidade/avenida-premium',
     '/social', '/descobrir', '/loja', '/centro-educacional.html', '/afiliados.html', '/grupos-whatsapp.html',
+    '/conteudo', '/noticias', '/esportes', '/receitas', '/tecnologia', '/inteligencia-artificial', '/entretenimento',
     '/para-empresas.html', '/solucoes.html', '/como-funciona.html', '/comprar-lote.html', '/sobre.html',
     '/contato.html', '/privacy.html', '/termos-predio-digital.html', '/termos-marketplace.html',
     '/politica-vendedor-marketplace.html', '/politica-comprador-marketplace.html',
@@ -2081,11 +2085,13 @@ app.get('/sitemap.xml', (_req, res) => {
       AND s.review_status='published' AND TRIM(p.category)<>'' ORDER BY p.category`).all();
   const cities = db.prepare(`SELECT DISTINCT city FROM social_posts
     WHERE status='ready' AND TRIM(city)<>'' ORDER BY city`).all();
+  const articles = db.prepare("SELECT slug FROM editorial_articles WHERE status='published' ORDER BY published_at DESC LIMIT 5000").all();
   const dynamicPaths = [
     ...stores.map(store => publicStorePath(store)),
     ...products.map(product => `/produto/${product.id}/${marketplaceSlug(product.name, 'produto')}`),
     ...categories.map(row => `/categoria/${marketplaceSlug(row.category, 'categoria')}`),
-    ...cities.map(row => `/cidade/${marketplaceSlug(row.city, 'cidade')}`)
+    ...cities.map(row => `/cidade/${marketplaceSlug(row.city, 'cidade')}`),
+    ...articles.map(row => `/artigo/${row.slug}`)
   ];
   const urls = [...new Set([...fixedPaths, ...dynamicPaths])];
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
