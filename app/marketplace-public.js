@@ -50,9 +50,12 @@ export function renderPublicStorePage({ store, products = [], siteUrl, productFa
     buyUrl: absoluteUrl(product.product_url, origin),
     image: absoluteUrl(product.image_url, origin) || new URL(productFallback, origin).toString()
   }));
+  const websiteLabel = /(?:^|\.)shopee\.com\.br$|(?:^|\.)shope\.ee$/i.test((() => {
+    try { return new URL(store.website_url).hostname; } catch { return ''; }
+  })()) ? 'Loja oficial Shopee' : 'Site';
   const channels = [
     ['WhatsApp', store.whatsapp ? `https://wa.me/${String(store.whatsapp).replace(/\D/g,'')}` : ''],
-    ['Site', store.website_url],
+    [websiteLabel, store.website_url],
     ['Instagram', store.instagram_url],
     ['TikTok', store.tiktok_url],
     ['Google Maps', store.google_maps_url]
