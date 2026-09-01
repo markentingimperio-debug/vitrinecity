@@ -20,10 +20,19 @@
           "'": "&#39;",
         })[character],
     );
-  fetch("/api/promotions")
-    .then((response) => (response.ok ? response.json() : Promise.reject()))
+  Promise.all([fetch("/api/promotions"), fetch("/api/ads/serve?placement=banner")])
+    .then(async ([promotions, ads]) => ({
+      promotions: promotions.ok ? await promotions.json() : { items: [] },
+      ads: ads.ok ? await ads.json() : { ads: [] },
+    }))
     .then((data) => {
-      const items = (data.items || []).slice(0, 32);
+      const sponsored = (data.ads.ads || []).map((item) => ({
+        label: "PATROCINADO",
+        title: item.title,
+        url: item.clickUrl,
+        sponsored: true,
+      }));
+      const items = sponsored.concat(data.promotions.items || []).slice(0, 32);
       if (!items.length) return;
       const aside = document.createElement("aside");
       aside.id = "vc-global-market-banner";
@@ -40,7 +49,7 @@
                 currency: "BRL",
               })
             : item.label;
-          return `<a href="${escapeHtml(item.url || "/")}"><small>${escapeHtml(item.label)}</small><b>${escapeHtml(item.title)}</b><span>${escapeHtml(price)}</span></a>`;
+          return `<a href="${escapeHtml(item.url || "/")}"${item.sponsored ? ' rel="nofollow sponsored"' : ""}><small>${escapeHtml(item.label)}</small><b>${escapeHtml(item.title)}</b><span>${escapeHtml(price)}</span></a>`;
         })
         .join("");
       aside.innerHTML = `<strong>VitrineCity em destaque</strong><div><nav>${content}</nav></div><a class="announce" href="/servicos-digitais.html">Divulgue aqui</a><button type="button" aria-label="Fechar divulgação">×</button>`;

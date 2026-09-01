@@ -2727,7 +2727,8 @@ function adCampaignScore(campaign, query) {
 app.get('/api/ads/serve', (req, res) => {
   const query = String(req.query.q || '').trim().slice(0, 80);
   const city = String(req.query.city || '').trim().slice(0, 80).toLowerCase();
-  if (query.length < 2||likelyAutomatedAdTraffic(req)) return res.json({ ads: [] });
+  const placement = ['search','map','banner'].includes(String(req.query.placement || '')) ? String(req.query.placement) : 'search';
+  if ((placement === 'search' && query.length < 2)||likelyAutomatedAdTraffic(req)) return res.json({ ads: [] });
   const today = new Date().toISOString().slice(0, 10);
   const visitorKey = adVisitorKey(req);
   const viewer=currentUser(req);
@@ -2739,19 +2740,22 @@ app.get('/api/ads/serve', (req, res) => {
       w.balance_units
     FROM ad_campaigns c LEFT JOIN ad_delivery_events e ON e.campaign_id=c.id
     LEFT JOIN wallets w ON w.user_id=c.user_id
-    WHERE c.status='active' AND c.placement IN ('search','all')
+    WHERE c.status='active' AND c.campaign_channel='internal' AND c.placement IN (?,'all')
+      AND (c.starts_on IS NULL OR c.starts_on='' OR c.starts_on<=?)
+      AND (c.starts_on IS NULL OR c.starts_on='' OR date(c.starts_on,'+' || c.duration_days || ' days')>?)
       AND (c.target_city='' OR ?='' OR LOWER(c.target_city)=?)
     GROUP BY c.id HAVING COALESCE(spent_units,0)<c.net_credits
       AND COALESCE(spent_today,0)<ROUND(c.daily_budget_cents*?)
       AND COALESCE(w.balance_units,0)>=?
-    LIMIT 80`).all(today, city, city, ADS_CREDITS_PER_REAL, ADS_INTERNAL_CLICK_COST_UNITS)
+    LIMIT 80`).all(today, placement, today, today, city, city, ADS_CREDITS_PER_REAL, ADS_INTERNAL_CLICK_COST_UNITS)
     .filter(campaign => {
       if(viewer&&Number(campaign.user_id)===Number(viewer.id))return false;
+      if(placement !== 'search')return true;
       const targets = normalizedAdTerms(`${campaign.keywords} ${campaign.category} ${campaign.creative_title} ${campaign.creative_text}`);
       const queryTerms = normalizedAdTerms(query);
       return queryTerms.some(term => targets.some(target => target.includes(term) || term.includes(target)));
     })
-    .sort((a, b) => adCampaignScore(b, query) - adCampaignScore(a, query)).slice(0, 3);
+    .sort((a, b) => adCampaignScore(b, query) - adCampaignScore(a, query)).slice(0, placement==='search'?3:8);
   const record = db.prepare(`INSERT OR IGNORE INTO ad_delivery_events
     (campaign_id,event_type,event_token,visitor_key,query_text,cost_units,event_day)
     VALUES (?,'impression',?,?,?,0,?)`);
@@ -2762,7 +2766,8 @@ app.get('/api/ads/serve', (req, res) => {
     if (!inserted.changes) continue;
     ads.push({ id: campaign.id, title: campaign.creative_title || 'Oferta em destaque',
       text: campaign.creative_text || 'Conheça esta empresa na VitrineCity.', imageUrl: campaign.image_url || '',
-      destinationType: campaign.destination_type, clickUrl: `/api/ads/${campaign.id}/click?token=${encodeURIComponent(token)}` });
+      destinationType: campaign.destination_type, targetCity:campaign.target_city,
+      clickUrl: `/api/ads/${campaign.id}/click?token=${encodeURIComponent(token)}` });
   }
   return res.json({ ads, sponsored: true });
 });
@@ -5384,6 +5389,7 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   const reachKm = Math.round(Number(req.body?.reachKm));
   const startsOn = String(req.body?.startsOn || '').trim();
   const campaignChannel=String(req.body?.campaignChannel||'internal').trim();
+  const requestedPlacement=String(req.body?.placement||'search').trim();
   if (!Number.isInteger(amountCents) || amountCents < ADS_MIN_TOPUP_CENTS || amountCents > ADS_MAX_TOPUP_CENTS) {
     return res.status(400).json({ error: 'A recarga deve ficar entre R$ 30,00 e R$ 5.000,00.' });
   }
@@ -5401,10 +5407,11 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   if (!['messages','visits','sales','followers'].includes(objective)) {
     return res.status(400).json({ error: 'Escolha um objetivo válido.' });
   }
-  if (!['site','whatsapp','instagram'].includes(destinationType)) {
-    return res.status(400).json({ error: 'Escolha site, WhatsApp ou Instagram como destino.' });
+  if (!['vitrinecity','site','whatsapp','instagram'].includes(destinationType)) {
+    return res.status(400).json({ error: 'Escolha página VitrineCity, site, WhatsApp ou Instagram como destino.' });
   }
   if(!['internal','meta','tiktok','google'].includes(campaignChannel))return res.status(400).json({error:'Escolha VitrineCity, Meta Ads, TikTok Ads ou Google Ads como canal.'});
+  if(campaignChannel==='internal'&&!['search','map','banner','all'].includes(requestedPlacement))return res.status(400).json({error:'Escolha um local válido para exibir o anúncio.'});
   if (creativeTitle.length < 4 || creativeText.length < 10 || normalizedAdTerms(keywords).length < 1) {
     return res.status(400).json({ error: 'Informe título, texto e palavras-chave do anúncio.' });
   }
@@ -5448,7 +5455,7 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
       .run(req.user.id, reference, objective, destinationType, destinationUrl, dailyBudgetCents, durationDays,
         grossCredits, managementCredits, netCredits, creativeTitle, creativeText, imageUrl, keywords, category, targetCity,
         targetAudience,reachKm,startsOn,campaignChannel,campaignChannel==='internal'?'not_applicable':'pending_setup',
-        campaignChannel==='internal'?'search':'external');
+        campaignChannel==='internal'?requestedPlacement:'external');
   });
   createOrder();
   adminAnalytics.recordOrderAttribution(req, reference, 'credits');
