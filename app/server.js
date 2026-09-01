@@ -2063,7 +2063,7 @@ const publicPage = file => (req, res) => {
     '<script src="/global-market-banner.js?v=5" defer></script></body>'
   ));
 };
-setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft });
+setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft, reviewEditorialDraft });
 setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover,generateBookIllustration});
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
@@ -4138,6 +4138,21 @@ async function generateEditorialDraft({ title, portal, traffic, sourceUrl }) {
     } catch (error) { console.error('Editorial cover generation failed', String(error.message || error)); }
   }
   return { title: article.title, summary: article.summary, body, imageUrl };
+}
+
+async function reviewEditorialDraft({ title, summary, body, portal, imageUrl, sources }) {
+  const raw = await requestEditorialText(
+    'Você é a Diretoria Editorial da VitrineCity e decide se um conteúdo pode ser publicado automaticamente. Analise utilidade, clareza, coerência, segurança, risco jurídico, alegações factuais, qualidade da imagem e necessidade de fontes. Notícias, acontecimentos atuais, números, saúde, finanças e alegações sobre pessoas exigem fontes confiáveis; Google Trends sozinho não comprova fatos. Receitas devem conter ingredientes, preparo e cuidados de segurança. Conteúdo evergreen pode ser aprovado sem fontes externas quando não fizer alegações controversas. Retorne somente JSON válido com approved (boolean), requiresSources (boolean), risk (low, medium ou high) e notes. Reprove conteúdo genérico, enganoso, inseguro, duplicado ou incompleto.',
+    `Editoria: ${portal}\nTítulo: ${title}\nResumo: ${summary}\nImagem: ${imageUrl}\nFontes declaradas: ${JSON.stringify(sources || [])}\n\nTexto:\n${String(body).slice(0, 16000)}`,
+    900,
+  );
+  const review = parseEditorialJson(raw);
+  return {
+    approved: review.approved === true && String(review.risk || '').toLowerCase() === 'low',
+    requiresSources: review.requiresSources !== false,
+    risk: ['low','medium','high'].includes(String(review.risk).toLowerCase()) ? String(review.risk).toLowerCase() : 'high',
+    notes: String(review.notes || 'A Diretoria não apresentou justificativa.').slice(0, 1000),
+  };
 }
 
 async function generateBookPlan(trend) {

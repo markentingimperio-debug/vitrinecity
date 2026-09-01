@@ -141,6 +141,7 @@ export function setupTrendRadar({
   sameOriginOnly,
   publicPage,
   generateEditorialDraft,
+  reviewEditorialDraft,
 }) {
   db.exec(`CREATE TABLE IF NOT EXISTS trend_topics(id TEXT PRIMARY KEY,title TEXT NOT NULL UNIQUE,traffic TEXT NOT NULL DEFAULT '',published_at TEXT,portal TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new',source_url TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS editorial_articles(id TEXT PRIMARY KEY,trend_id TEXT,slug TEXT NOT NULL UNIQUE,portal TEXT NOT NULL,title TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',body TEXT NOT NULL DEFAULT '',image_url TEXT NOT NULL DEFAULT '',sources_json TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL DEFAULT 'draft',published_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -199,7 +200,16 @@ export function setupTrendRadar({
       body = String(generated.body || "").trim();
     const summary = String(generated.summary || "").trim(),
       imageUrl = String(generated.imageUrl || "");
-    const sourceOk = false;
+    const sources = trend.source_url
+      ? [{ title: "Google Trends — tendência identificada", url: trend.source_url }]
+      : [];
+    let director = { approved: false, requiresSources: true, risk: "high", notes: "Diretoria indisponível." };
+    try {
+      director = await reviewEditorialDraft({ title, summary, body, portal: trend.portal, imageUrl, sources });
+    } catch (error) {
+      director.notes = `Falha na revisão da Diretoria: ${String(error.message || error).slice(0, 500)}`;
+    }
+    const sourceOk = director.approved && (!director.requiresSources || sources.length >= 2);
     const reviews = [
       [
         "redacao",
@@ -222,21 +232,18 @@ export function setupTrendRadar({
         "editora",
         body.length >= 600 &&
           summary.length >= 40 &&
-          sourceOk &&
+          sourceOk && director.approved &&
           imageUrl.length > 0 &&
           imageUrl !== "/assets/vitriny-city-master.jpg",
         "Validação final do Coordenador da Editora.",
       ],
+      [
+        "diretoria",
+        director.approved && sourceOk,
+        `Risco: ${director.risk}. ${director.notes}`,
+      ],
     ];
     const approved = reviews.every(([, ok]) => ok);
-    const sources = sourceOk
-      ? [
-          {
-            title: "Google Trends — tendência identificada",
-            url: trend.source_url,
-          },
-        ]
-      : [];
     db.prepare(
       `INSERT INTO editorial_articles(id,trend_id,slug,portal,title,summary,body,image_url,sources_json,status,published_at) VALUES(?,?,?,?,?,?,?,?,?,?,CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END)`,
     ).run(
