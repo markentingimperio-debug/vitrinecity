@@ -2015,7 +2015,7 @@ app.use('/uploads/generated-videos', express.static(path.join(dataDir, 'generate
   immutable: true, maxAge: '30d', fallthrough: false
 }));
 const publicPage = file => (_req, res) => res.sendFile(path.join(dir, 'public', file));
-setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage });
+setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft });
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
   const tags = [...scripts, '/social-accessibility.js'].map(src => `<script src="${src}" defer></script>`).join('');
@@ -4032,6 +4032,39 @@ async function openRouterRequest(url, options = {}, timeout = 60000) {
     error.status = response.status; throw error;
   }
   return { data, headers: response.headers };
+}
+
+function parseEditorialJson(value) {
+  const clean = String(value || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  const start = clean.indexOf('{'), end = clean.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('O agente devolveu um texto editorial inválido.');
+  return JSON.parse(clean.slice(start, end + 1));
+}
+
+async function generateEditorialDraft({ title, portal, traffic, sourceUrl }) {
+  if (!aiConfigured()) { const error = new Error('Configure a chave da IA no painel antes de gerar o artigo.'); error.status = 503; throw error; }
+  const response = await requestOpenAI({ model: OPENAI_MODEL, max_output_tokens: 2200, input: [
+    { role: 'system', content: [{ type: 'input_text', text: 'Você é o agente editorial da VitrineCity. Crie um rascunho em português do Brasil, claro e útil, com 900 a 1.500 caracteres no corpo. Não invente acontecimentos, números, declarações ou fontes. Quando houver apenas uma tendência de busca, explique o assunto e sinalize o que precisa de confirmação editorial. Não copie textos de terceiros. Retorne somente JSON válido com as chaves title, summary, body e imagePrompt. O resumo deve ter 100 a 220 caracteres; o corpo deve ter no mínimo 600 caracteres, com parágrafos; imagePrompt deve descrever uma capa editorial sem logotipos, marcas ou texto escrito.' }] },
+    { role: 'user', content: [{ type: 'input_text', text: `Tema: ${title}\nEditoria: ${portal}\nVolume informado: ${traffic || 'não informado'}\nFonte disponível: ${sourceUrl || 'Google Trends Brasil'}` }] }
+  ] });
+  const article = parseEditorialJson(responseOutputText(response));
+  const body = String(article.body || '').trim();
+  if (body.length < 600) throw new Error('O agente não produziu o mínimo de 600 caracteres. Tente novamente.');
+  let imageUrl = '/assets/vitriny-city-master.jpg';
+  if (AI_PROVIDER === 'openrouter' && article.imagePrompt) {
+    try {
+      const imageResult = await openRouterRequest('https://openrouter.ai/api/v1/images', { method: 'POST', body: JSON.stringify({ model: OPENROUTER_IMAGE_MODEL, prompt: String(article.imagePrompt).slice(0, 1200), n: 1, aspect_ratio: '16:9' }) }, 120000);
+      const item = imageResult.data?.data?.[0] || imageResult.data?.images?.[0];
+      const encoded = String(item?.b64_json || item?.image_url?.url || '').replace(/^data:[^;]+;base64,/, '');
+      const buffer = Buffer.from(encoded, 'base64');
+      if (buffer.length && buffer.length <= 25 * 1024 * 1024) {
+        const file = `editorial-${Date.now()}-${randomBytes(4).toString('hex')}.png`;
+        fs.writeFileSync(path.join(generatedMediaDir, file), buffer, { flag: 'wx' });
+        imageUrl = `/uploads/generated-videos/${file}`;
+      }
+    } catch (error) { console.error('Editorial cover generation failed', String(error.message || error)); }
+  }
+  return { title: article.title, summary: article.summary, body, imageUrl };
 }
 
 const WHATSAPP_MESSAGE_CREDIT_UNITS = 100;
