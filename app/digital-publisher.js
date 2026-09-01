@@ -243,6 +243,13 @@ export function setupDigitalPublisher({
           ).run(cover, b.id);
         }
       }
+      const readyForCover = db.prepare("SELECT * FROM digital_books WHERE status='writing' AND word_count>=9000 AND page_count>=30 AND (cover_url='' OR cover_url IS NULL)").all();
+      for (const item of readyForCover) {
+        const approved = Number(db.prepare("SELECT COUNT(*) n FROM digital_book_chapters WHERE book_id=? AND status='approved'").get(item.id).n || 0);
+        if (approved < 10) continue;
+        const cover = await generateBookCover(item);
+        db.prepare("UPDATE digital_books SET cover_url=?,status='review',page_count=MAX(30,page_count),updated_at=CURRENT_TIMESTAMP WHERE id=?").run(cover,item.id);
+      }
     } catch (error) {
       console.error(
         "Digital publisher worker failed",
