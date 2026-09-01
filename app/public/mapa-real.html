@@ -8,13 +8,13 @@
     <link rel="stylesheet" href="/mapa-real.css?v=2" />
     <style>
       .premium-badge{padding:10px 14px;border-radius:12px;background:linear-gradient(135deg,#071f4b,#1768e6);color:#fff;font-size:12px;font-weight:950;letter-spacing:.06em;box-shadow:0 6px 18px #1768e638}
-      .premium-outdoor{position:absolute;min-width:118px;transform:translate(-50%,-100%) rotate(-2deg);padding:8px 11px;border:3px solid #eef7ff;border-radius:5px;background:linear-gradient(135deg,#ffca28,#ff7800);box-shadow:0 7px 0 #1b3455,0 13px 20px #061a3470;color:#071f4b;text-align:center;text-decoration:none;font-family:Inter,Arial,sans-serif;animation:premiumFloat 3.4s ease-in-out infinite}
-      .premium-outdoor small,.premium-outdoor strong{display:block}.premium-outdoor small{font-size:7px;font-weight:950}.premium-outdoor strong{font-size:11px;letter-spacing:.04em}.premium-outdoor:hover{z-index:21;filter:brightness(1.1)}
+      .premium-outdoor{position:absolute;width:150px;min-height:64px;transform:translate(-50%,-100%) rotate(-2deg);padding:5px;border:3px solid #eef7ff;border-radius:5px;background:linear-gradient(135deg,#ffca28,#ff7800);box-shadow:0 7px 0 #1b3455,0 13px 20px #061a3470;color:#071f4b;text-align:left;text-decoration:none;font-family:Inter,Arial,sans-serif;animation:premiumFloat 3.4s ease-in-out infinite;display:grid;grid-template-columns:48px 1fr;gap:6px;align-items:center;overflow:hidden}
+      .premium-outdoor:not(:has(img)){grid-template-columns:1fr;text-align:center}.premium-outdoor img{width:48px;height:48px;border-radius:3px;object-fit:cover;background:#fff}.outdoor-copy{min-width:0}.premium-outdoor small,.premium-outdoor strong,.premium-outdoor em{display:block}.premium-outdoor small{font-size:6px;font-weight:950;text-transform:uppercase}.premium-outdoor strong{font-size:9px;line-height:1.08;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.premium-outdoor em{margin-top:2px;font-size:8px;font-style:normal;font-weight:950}.premium-outdoor.changing .outdoor-copy{animation:outdoorChange .45s ease}.premium-outdoor:hover{z-index:21;filter:brightness(1.1)}@keyframes outdoorChange{from{opacity:.15;transform:translateY(5px)}to{opacity:1;transform:none}}
       .premium-building img{position:absolute;inset:5px 5px 25px;width:calc(100% - 10px);height:42px;border-radius:6px;object-fit:cover;filter:saturate(1.08) contrast(1.03)}.premium-building:has(img):before{display:none}.premium-building:has(img) span{padding:2px 3px;border-radius:4px;background:#071f4bd9}
-      @media(max-width:760px){.premium-badge{padding:8px 10px;font-size:9px}.premium-outdoor{min-width:102px;padding:6px 8px;transform:translate(-50%,-100%) scale(.86)}.premium-outdoor strong{font-size:10px}.premium-building img{height:38px}.store-card{min-height:78px}.map-wrap{height:58vh;min-height:390px}}
+      @media(max-width:760px){.premium-badge{padding:8px 10px;font-size:9px}.premium-outdoor{width:132px;min-height:58px;grid-template-columns:42px 1fr;transform:translate(-50%,-100%) scale(.84)}.premium-outdoor img{width:42px;height:42px}.premium-outdoor strong{font-size:8px}.premium-building img{height:38px}.store-card{min-height:78px}.map-wrap{height:58vh;min-height:390px}}
     </style>
     <script src="/analytics.js" defer></script>
-    <script src="/mapa-real.js?v=4" defer></script>
+    <script src="/mapa-real.js?v=5" defer></script>
   </head>
   <body>
     <header class="topbar">
