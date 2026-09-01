@@ -268,7 +268,7 @@ export function setupTrendRadar({
         const today = Number(
           db
             .prepare(
-              "SELECT COUNT(*) total FROM editorial_articles WHERE portal=? AND date(created_at)=date('now')",
+              "SELECT COUNT(*) total FROM editorial_articles WHERE portal=? AND status='published' AND date(published_at)=date('now')",
             )
             .get(portal).total || 0,
         );
