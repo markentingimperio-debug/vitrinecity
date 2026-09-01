@@ -1,8 +1,8 @@
 (() => {
-  const viewport = document.getElementById('cityViewport');
-  const world = document.getElementById('cityWorld');
-  const panel = document.getElementById('detailPanel');
-  const interactive = [...world.querySelectorAll('[data-category]')];
+  const viewport = document.getElementById("cityViewport");
+  const world = document.getElementById("cityWorld");
+  const panel = document.getElementById("detailPanel");
+  const interactive = [...world.querySelectorAll("[data-category]")];
   let scale = 1;
   let offsetX = 0;
   let offsetY = 0;
@@ -12,14 +12,16 @@
   let initial = { x: 0, y: 0 };
   let pinchDistance = 0;
 
-  function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
   function bounds() {
     const rect = viewport.getBoundingClientRect();
     return {
       minX: Math.min(28, rect.width - world.offsetWidth * scale - 28),
       maxX: Math.max(28, rect.width - world.offsetWidth * scale - 28),
       minY: Math.min(28, rect.height - world.offsetHeight * scale - 28),
-      maxY: Math.max(28, rect.height - world.offsetHeight * scale - 28)
+      maxY: Math.max(28, rect.height - world.offsetHeight * scale - 28),
     };
   }
   function draw() {
@@ -30,15 +32,22 @@
   }
   function reset() {
     const rect = viewport.getBoundingClientRect();
-    const fit = Math.min(rect.width / world.offsetWidth, rect.height / world.offsetHeight);
-    scale = clamp(fit * (rect.width < 760 ? 1.85 : 1.08), .48, 1.35);
+    const fit = Math.min(
+      rect.width / world.offsetWidth,
+      rect.height / world.offsetHeight,
+    );
+    scale = clamp(fit * (rect.width < 760 ? 1.85 : 1.08), 0.48, 1.35);
     offsetX = (rect.width - world.offsetWidth * scale) / 2;
     offsetY = (rect.height - world.offsetHeight * scale) / 2;
     draw();
   }
-  function zoom(delta, anchorX = viewport.clientWidth / 2, anchorY = viewport.clientHeight / 2) {
+  function zoom(
+    delta,
+    anchorX = viewport.clientWidth / 2,
+    anchorY = viewport.clientHeight / 2,
+  ) {
     const oldScale = scale;
-    scale = clamp(scale + delta, .48, 1.7);
+    scale = clamp(scale + delta, 0.48, 1.7);
     const ratio = scale / oldScale;
     offsetX = anchorX - (anchorX - offsetX) * ratio;
     offsetY = anchorY - (anchorY - offsetY) * ratio;
@@ -46,35 +55,53 @@
   }
   function setLink(id, href, visible, label) {
     const element = document.getElementById(id);
-    element.style.display = visible ? 'block' : 'none';
+    element.style.display = visible ? "block" : "none";
     if (visible) element.href = href;
     if (label) element.textContent = label;
   }
   function showDetails(target) {
-    const isProperty = target.dataset.category === 'property';
-    const image = document.getElementById('detailImage');
+    const isProperty = target.dataset.category === "property";
+    const image = document.getElementById("detailImage");
     image.hidden = !target.dataset.image;
     if (target.dataset.image) image.src = target.dataset.image;
-    else image.removeAttribute('src');
-    document.getElementById('detailType').textContent = isProperty ? 'PRÉDIO PRONTO DISPONÍVEL' : target.dataset.category === 'store' ? 'VITRINE DO BAIRRO' : 'ATRAÇÃO';
-    document.getElementById('detailName').textContent = target.dataset.name || 'Centro Vitrine';
-    document.getElementById('detailDesc').textContent = target.dataset.desc || '';
-    setLink('detailPrimary', isProperty ? `/comprar-lote.html?lote=${encodeURIComponent(target.dataset.lot || '')}` : target.dataset.page || '#', isProperty || Boolean(target.dataset.page), isProperty ? 'Comprar este prédio' : 'Entrar neste espaço');
-    setLink('detailSite', target.dataset.site, Boolean(target.dataset.site));
-    setLink('detailInstagram', target.dataset.instagram, Boolean(target.dataset.instagram));
-    setLink('detailMaps', target.dataset.maps, Boolean(target.dataset.maps));
-    panel.classList.add('show');
+    else image.removeAttribute("src");
+    document.getElementById("detailType").textContent = isProperty
+      ? "PRÉDIO PRONTO DISPONÍVEL"
+      : target.dataset.category === "store"
+        ? "VITRINE DO BAIRRO"
+        : "ATRAÇÃO";
+    document.getElementById("detailName").textContent =
+      target.dataset.name || "Centro Vitrine";
+    document.getElementById("detailDesc").textContent =
+      target.dataset.desc || "";
+    setLink(
+      "detailPrimary",
+      isProperty
+        ? `/comprar-lote.html?lote=${encodeURIComponent(target.dataset.lot || "")}`
+        : target.dataset.page || "#",
+      isProperty || Boolean(target.dataset.page),
+      isProperty ? "Comprar este prédio" : "Entrar neste espaço",
+    );
+    setLink("detailSite", target.dataset.site, Boolean(target.dataset.site));
+    setLink(
+      "detailInstagram",
+      target.dataset.instagram,
+      Boolean(target.dataset.instagram),
+    );
+    setLink("detailMaps", target.dataset.maps, Boolean(target.dataset.maps));
+    panel.classList.add("show");
   }
 
-  viewport.addEventListener('pointerdown', event => {
-    if (event.target.closest('[data-category]')) return;
-    dragging = true; moved = false;
+  viewport.addEventListener("pointerdown", (event) => {
+    if (event.target.closest("[data-category]")) return;
+    dragging = true;
+    moved = false;
     start = { x: event.clientX, y: event.clientY };
     initial = { x: offsetX, y: offsetY };
-    viewport.classList.add('dragging');
+    viewport.classList.add("dragging");
     viewport.setPointerCapture(event.pointerId);
   });
-  viewport.addEventListener('pointermove', event => {
+  viewport.addEventListener("pointermove", (event) => {
     if (!dragging) return;
     const dx = event.clientX - start.x;
     const dy = event.clientY - start.y;
@@ -83,48 +110,125 @@
     offsetY = initial.y + dy;
     draw();
   });
-  viewport.addEventListener('pointerup', () => { dragging = false; viewport.classList.remove('dragging'); });
-  viewport.addEventListener('wheel', event => {
-    event.preventDefault();
-    const rect = viewport.getBoundingClientRect();
-    zoom(event.deltaY > 0 ? -.08 : .08, event.clientX - rect.left, event.clientY - rect.top);
-  }, { passive: false });
-  viewport.addEventListener('touchstart', event => {
-    if (event.touches.length === 2) pinchDistance = Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY);
-  }, { passive: true });
-  viewport.addEventListener('touchmove', event => {
-    if (event.touches.length !== 2) return;
-    event.preventDefault();
-    const distance = Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY);
-    zoom((distance - pinchDistance) / 280);
-    pinchDistance = distance;
-  }, { passive: false });
+  viewport.addEventListener("pointerup", () => {
+    dragging = false;
+    viewport.classList.remove("dragging");
+  });
+  viewport.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      const rect = viewport.getBoundingClientRect();
+      zoom(
+        event.deltaY > 0 ? -0.08 : 0.08,
+        event.clientX - rect.left,
+        event.clientY - rect.top,
+      );
+    },
+    { passive: false },
+  );
+  viewport.addEventListener(
+    "touchstart",
+    (event) => {
+      if (event.touches.length === 2)
+        pinchDistance = Math.hypot(
+          event.touches[0].clientX - event.touches[1].clientX,
+          event.touches[0].clientY - event.touches[1].clientY,
+        );
+    },
+    { passive: true },
+  );
+  viewport.addEventListener(
+    "touchmove",
+    (event) => {
+      if (event.touches.length !== 2) return;
+      event.preventDefault();
+      const distance = Math.hypot(
+        event.touches[0].clientX - event.touches[1].clientX,
+        event.touches[0].clientY - event.touches[1].clientY,
+      );
+      zoom((distance - pinchDistance) / 280);
+      pinchDistance = distance;
+    },
+    { passive: false },
+  );
 
-  interactive.forEach(item => item.addEventListener('click', event => { event.stopPropagation(); showDetails(item); }));
-  document.getElementById('closePanel').onclick = () => panel.classList.remove('show');
-  document.getElementById('closeWelcome').onclick = () => document.getElementById('welcome').remove();
-  document.getElementById('zoomIn').onclick = () => zoom(.13);
-  document.getElementById('zoomOut').onclick = () => zoom(-.13);
-  document.getElementById('resetView').onclick = reset;
+  interactive.forEach((item) =>
+    item.addEventListener("click", (event) => {
+      event.stopPropagation();
+      showDetails(item);
+    }),
+  );
+  document.getElementById("closePanel").onclick = () =>
+    panel.classList.remove("show");
+  document.getElementById("closeWelcome").onclick = () =>
+    document.getElementById("welcome").remove();
+  document.getElementById("zoomIn").onclick = () => zoom(0.13);
+  document.getElementById("zoomOut").onclick = () => zoom(-0.13);
+  document.getElementById("resetView").onclick = reset;
 
-  const search = document.getElementById('citySearch');
-  const filters = [...document.querySelectorAll('#cityFilters button')];
-  let activeFilter = 'all';
+  const search = document.getElementById("citySearch");
+  const filters = [...document.querySelectorAll("#cityFilters button")];
+  let activeFilter = "all";
   function filterCity() {
-    const query = search.value.trim().toLocaleLowerCase('pt-BR');
-    interactive.forEach(item => {
-      const text = `${item.dataset.name || ''} ${item.dataset.desc || ''}`.toLocaleLowerCase('pt-BR');
-      const show = (activeFilter === 'all' || item.dataset.category === activeFilter) && (!query || text.includes(query));
-      item.classList.toggle('is-hidden', !show);
+    const query = search.value.trim().toLocaleLowerCase("pt-BR");
+    interactive.forEach((item) => {
+      const text =
+        `${item.dataset.name || ""} ${item.dataset.desc || ""}`.toLocaleLowerCase(
+          "pt-BR",
+        );
+      const show =
+        (activeFilter === "all" || item.dataset.category === activeFilter) &&
+        (!query || text.includes(query));
+      item.classList.toggle("is-hidden", !show);
     });
   }
-  search.addEventListener('input', filterCity);
-  filters.forEach(button => button.onclick = () => {
-    filters.forEach(item => item.classList.toggle('active', item === button));
-    activeFilter = button.dataset.filter;
-    filterCity();
-  });
+  search.addEventListener("input", filterCity);
+  filters.forEach(
+    (button) =>
+      (button.onclick = () => {
+        filters.forEach((item) =>
+          item.classList.toggle("active", item === button),
+        );
+        activeFilter = button.dataset.filter;
+        filterCity();
+      }),
+  );
 
-  window.addEventListener('resize', reset);
+  const serviceAds = [...world.querySelectorAll(".city-service-ad")];
+  const money = (value) =>
+    Number(value || 0).toLocaleString("pt-BR", {
+      style: "currency",
+      currency: "BRL",
+    });
+  fetch("/api/services/digital")
+    .then((response) =>
+      response.ok
+        ? response.json()
+        : Promise.reject(new Error("Catálogo indisponível")),
+    )
+    .then((payload) => {
+      const services = payload.services || [];
+      if (!services.length) return;
+      let offset = 0;
+      const renderAds = () =>
+        serviceAds.forEach((ad, index) => {
+          const service = services[(offset + index) % services.length];
+          ad.dataset.name = service.title;
+          ad.dataset.desc = `${service.description} A partir de ${money(service.price)}.`;
+          ad.dataset.page = service.checkoutUrl || "/servicos-digitais.html";
+          ad.querySelector("[data-ad-title]").textContent = service.title;
+          ad.querySelector("[data-ad-price]").textContent =
+            `A partir de ${money(service.price)}`;
+        });
+      renderAds();
+      window.setInterval(() => {
+        offset = (offset + 1) % services.length;
+        renderAds();
+      }, 7000);
+    })
+    .catch(() => {});
+
+  window.addEventListener("resize", reset);
   reset();
 })();

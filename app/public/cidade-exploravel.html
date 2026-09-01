@@ -1,62 +1,364 @@
 <!doctype html>
 <html lang="pt-BR">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Explore o mapa interativo da VitrineCity e descubra lojas, atrações e prédios digitais.">
-  <title>Mapa interativo — VitrineCity</title>
-  <link rel="stylesheet" href="/cidade-exploravel.css">
-  <script src="/analytics.js" defer></script>
-  <script src="/cidade-exploravel.js" defer></script>
-</head>
-<body>
-  <header>
-    <a class="brand" href="/"><i></i>VitrineCity <small>MAPA INTERATIVO</small></a>
-    <nav><a href="/">Início</a><a href="/comprar-lote.html" class="header-cta">Escolher prédio</a></nav>
-  </header>
-  <section class="discovery" aria-label="Pesquisa e filtros">
-    <label class="search"><span>⌕</span><input id="search" type="search" placeholder="Buscar loja, curso ou serviço" aria-label="Buscar na cidade"></label>
-    <div class="filters" id="filters"><button class="active" data-filter="all">Todos</button><button data-filter="store">Lojas</button><button data-filter="district">Bairros</button><button data-filter="attraction">Atrações</button><button data-filter="lot">Prédios</button><button data-filter="favorites">♥ Favoritos <span id="favoriteFilterCount">0</span></button></div>
-  </section>
-  <aside class="hint" id="hint"><button id="closeHint" aria-label="Fechar instruções">×</button><b>Explore a cidade inteira</b><p>Arraste o mapa, use a roda ou os botões de zoom. Selecione um ponto para conhecer a vitrine antes de entrar.</p></aside>
-  <button class="avatar-button" id="avatarBtn" aria-label="Configurar avatar"><span>👤</span><b>Avatar grátis</b></button>
-  <main class="viewport" id="viewport" aria-label="Mapa navegável da VitrineCity">
-    <div class="world" id="world">
-      <button class="pin featured country" data-key="sertaneja" data-category="store" data-tag="LOJA-MODELO • MODA" data-name="Sertaneja Moda Country" data-desc="Moda country, roupas e acessórios em uma avenida premium da VitrineCity." data-image="/assets/sertaneja-moda-country-premium.jpg" data-walk="/cidade/avenida-premium" data-maps="https://maps.app.goo.gl/Dytp5Axq93xRtnXLA" data-instagram="https://www.instagram.com/sertaneja_modacountry?igsh=MXJ6Nm1jZjEzcmdzeg=="><span class="ticker-window"><span class="ticker">★ SERTANEJA MODA COUNTRY • OFERTAS ESPECIAIS</span></span></button>
-      <button class="pin featured agro" data-key="agrotecnica" data-category="store" data-tag="LOJA REAL • DISTRITO AGRO" data-name="Agrotécnica" data-desc="Produtos para jardinagem e cultivo em casa, com site e Instagram oficiais." data-image="/assets/agrotecnica-premium-v2.webp" data-page="/loja-agrotecnica.html" data-site="https://adubonpkparaplantas.com.br" data-instagram="https://www.instagram.com/agrotecniica?igsh=MWo2OWViMzZzZjFhdw=="><span class="ticker-window"><span class="ticker">🌿 AGROTÉCNICA • PRODUTOS PARA SUAS PLANTAS</span></span></button>
-      <button class="pin praca" data-key="praca-central" data-category="attraction" data-tag="PRAÇA CENTRAL" data-name="Praça VitrineCity" data-desc="O coração da cidade para eventos, campanhas, encontros e novidades." data-page="/cidade/praca-central">Praça Central</button>
-      <button class="pin moda" data-category="district" data-tag="BAIRRO DA MODA" data-name="Avenida da Moda" data-desc="Vitrines de roupas, acessórios, beleza e calçados.">Avenida da Moda</button>
-      <button class="pin food" data-category="district" data-tag="GASTRONOMIA" data-name="Praça de Alimentação" data-desc="Restaurantes, cafés, confeitaria e experiências gastronômicas.">Alimentação</button>
-      <button class="pin services" data-category="district" data-tag="SERVIÇOS" data-name="Centro de Serviços" data-desc="Profissionais, empresas e serviços locais em destaque.">Serviços</button>
-      <button class="pin featured edu" data-key="centro-educacional" data-category="attraction" data-tag="CENTRO EDUCACIONAL" data-name="Centro Educacional" data-desc="Cursos rápidos, e-books e conteúdos originais com certificado." data-page="/centro-educacional.html"><span class="ticker-window"><span class="ticker">🎓 CENTRO EDUCACIONAL • CURSOS E E-BOOKS</span></span></button>
-      <button class="pin north-hub" data-category="district" data-tag="DISTRITO EMPRESARIAL" data-name="Distrito Empresarial" data-desc="Empresas, tecnologia, inovação e serviços premium em expansão.">Distrito Empresarial</button>
-      <button class="pin boulevard" data-category="district" data-tag="GASTRONOMIA & LAZER" data-name="Boulevard VitrineCity" data-desc="Restaurantes, cafés, experiências e lazer para visitantes da cidade.">Boulevard Gastronômico</button>
-      <button class="pin lot lot4" data-category="lot" data-tag="PRÉDIO DIGITAL DISPONÍVEL" data-name="Prédio Vitrine 404" data-desc="Espaço no Boulevard Gastronômico, ideal para restaurantes, cafés e experiências locais." data-lot="LESTE-404">Prédio 404</button>
-      <button class="pin outdoor" data-category="attraction" data-tag="MÍDIA DIGITAL" data-name="Outdoor Avenida Norte" data-desc="Espaço publicitário para campanhas e promoções patrocinadas.">Outdoor digital</button>
-      <button class="pin lot lot1" data-category="lot" data-tag="PRÉDIO DIGITAL DISPONÍVEL" data-name="Prédio Vitrine 041" data-desc="Esquina da Avenida Country, próximo à Sertaneja. Ideal para moda, acessórios e serviços." data-lot="COUNTRY-041">Prédio 041</button>
-      <button class="pin lot lot2" data-category="lot" data-tag="PRÉDIO DIGITAL CENTRAL" data-name="Prédio Vitrine 118" data-desc="Próximo à praça, com posição de destaque e identidade personalizável." data-lot="PARQUE-118">Prédio 118</button>
-      <button class="pin lot lot3" data-category="lot" data-tag="PRÉDIO DIGITAL DISPONÍVEL" data-name="Prédio Vitrine 203" data-desc="Corredor de serviços, próximo ao centro comercial." data-lot="SUL-203">Prédio 203</button>
-      <div class="avatar" id="avatar" style="left:1480px;top:1120px" aria-hidden="true"><span>Visitante</span></div>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      name="description"
+      content="Explore o mapa interativo da VitrineCity e descubra lojas, atrações e prédios digitais."
+    />
+    <title>Mapa interativo — VitrineCity</title>
+    <link rel="stylesheet" href="/cidade-exploravel.css" />
+    <script src="/analytics.js" defer></script>
+    <script src="/cidade-exploravel.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/"
+        ><i></i>VitrineCity <small>MAPA INTERATIVO</small></a
+      >
+      <nav>
+        <a href="/">Início</a
+        ><a href="/comprar-lote.html" class="header-cta">Escolher prédio</a>
+      </nav>
+    </header>
+    <section class="discovery" aria-label="Pesquisa e filtros">
+      <label class="search"
+        ><span>⌕</span
+        ><input
+          id="search"
+          type="search"
+          placeholder="Buscar loja, curso ou serviço"
+          aria-label="Buscar na cidade"
+      /></label>
+      <div class="filters" id="filters">
+        <button class="active" data-filter="all">Todos</button
+        ><button data-filter="store">Lojas</button
+        ><button data-filter="district">Bairros</button
+        ><button data-filter="attraction">Atrações</button
+        ><button data-filter="lot">Prédios</button
+        ><button data-filter="favorites">
+          ♥ Favoritos <span id="favoriteFilterCount">0</span>
+        </button>
+      </div>
+    </section>
+    <aside class="hint" id="hint">
+      <button id="closeHint" aria-label="Fechar instruções">×</button
+      ><b>Explore a cidade inteira</b>
+      <p>
+        Arraste o mapa, use a roda ou os botões de zoom. Selecione um ponto para
+        conhecer a vitrine antes de entrar.
+      </p>
+    </aside>
+    <button class="avatar-button" id="avatarBtn" aria-label="Configurar avatar">
+      <span>👤</span><b>Avatar grátis</b>
+    </button>
+    <main
+      class="viewport"
+      id="viewport"
+      aria-label="Mapa navegável da VitrineCity"
+    >
+      <div class="world" id="world">
+        <button
+          class="pin featured country"
+          data-key="sertaneja"
+          data-category="store"
+          data-tag="LOJA-MODELO • MODA"
+          data-name="Sertaneja Moda Country"
+          data-desc="Moda country, roupas e acessórios em uma avenida premium da VitrineCity."
+          data-image="/assets/sertaneja-moda-country-premium.jpg"
+          data-walk="/cidade/avenida-premium"
+          data-maps="https://maps.app.goo.gl/Dytp5Axq93xRtnXLA"
+          data-instagram="https://www.instagram.com/sertaneja_modacountry?igsh=MXJ6Nm1jZjEzcmdzeg=="
+        >
+          <span class="ticker-window"
+            ><span class="ticker"
+              >★ SERTANEJA MODA COUNTRY • OFERTAS ESPECIAIS</span
+            ></span
+          >
+        </button>
+        <button
+          class="pin featured agro"
+          data-key="agrotecnica"
+          data-category="store"
+          data-tag="LOJA REAL • DISTRITO AGRO"
+          data-name="Agrotécnica"
+          data-desc="Produtos para jardinagem e cultivo em casa, com site e Instagram oficiais."
+          data-image="/assets/agrotecnica-premium-v2.webp"
+          data-page="/loja-agrotecnica.html"
+          data-site="https://adubonpkparaplantas.com.br"
+          data-instagram="https://www.instagram.com/agrotecniica?igsh=MWo2OWViMzZzZjFhdw=="
+        >
+          <span class="ticker-window"
+            ><span class="ticker"
+              >🌿 AGROTÉCNICA • PRODUTOS PARA SUAS PLANTAS</span
+            ></span
+          >
+        </button>
+        <button
+          class="pin praca"
+          data-key="praca-central"
+          data-category="attraction"
+          data-tag="PRAÇA CENTRAL"
+          data-name="Praça VitrineCity"
+          data-desc="O coração da cidade para eventos, campanhas, encontros e novidades."
+          data-page="/cidade/praca-central"
+        >
+          Praça Central
+        </button>
+        <button
+          class="pin moda"
+          data-category="district"
+          data-tag="BAIRRO DA MODA"
+          data-name="Avenida da Moda"
+          data-desc="Vitrines de roupas, acessórios, beleza e calçados."
+        >
+          Avenida da Moda
+        </button>
+        <button
+          class="pin food"
+          data-category="district"
+          data-tag="GASTRONOMIA"
+          data-name="Praça de Alimentação"
+          data-desc="Restaurantes, cafés, confeitaria e experiências gastronômicas."
+        >
+          Alimentação
+        </button>
+        <button
+          class="pin services"
+          data-category="district"
+          data-tag="SERVIÇOS"
+          data-name="Centro de Serviços"
+          data-desc="Profissionais, empresas e serviços locais em destaque."
+        >
+          Serviços
+        </button>
+        <button
+          class="pin featured edu"
+          data-key="centro-educacional"
+          data-category="attraction"
+          data-tag="CENTRO EDUCACIONAL"
+          data-name="Centro Educacional"
+          data-desc="Cursos rápidos, e-books e conteúdos originais com certificado."
+          data-page="/centro-educacional.html"
+        >
+          <span class="ticker-window"
+            ><span class="ticker"
+              >🎓 CENTRO EDUCACIONAL • CURSOS E E-BOOKS</span
+            ></span
+          >
+        </button>
+        <button
+          class="pin north-hub"
+          data-category="district"
+          data-tag="DISTRITO EMPRESARIAL"
+          data-name="Distrito Empresarial"
+          data-desc="Empresas, tecnologia, inovação e serviços premium em expansão."
+        >
+          Distrito Empresarial
+        </button>
+        <button
+          class="pin boulevard"
+          data-category="district"
+          data-tag="GASTRONOMIA & LAZER"
+          data-name="Boulevard VitrineCity"
+          data-desc="Restaurantes, cafés, experiências e lazer para visitantes da cidade."
+        >
+          Boulevard Gastronômico
+        </button>
+        <button
+          class="pin lot lot4"
+          data-category="lot"
+          data-tag="PRÉDIO DIGITAL DISPONÍVEL"
+          data-name="Prédio Vitrine 404"
+          data-desc="Espaço no Boulevard Gastronômico, ideal para restaurantes, cafés e experiências locais."
+          data-lot="LESTE-404"
+        >
+          Prédio 404
+        </button>
+        <button
+          class="pin outdoor outdoor-a city-service-ad"
+          data-category="attraction"
+          data-tag="MÍDIA DIGITAL"
+          data-name="Outdoor Avenida Norte"
+          data-desc="Publicidade dos serviços da VitrineCity."
+          data-page="/servicos-digitais.html"
+        >
+          <span data-ad-title>Serviços VitrineCity</span
+          ><small data-ad-price>Conheça as soluções</small>
+        </button>
+        <button
+          class="pin outdoor outdoor-b city-service-ad"
+          data-category="attraction"
+          data-tag="MÍDIA DIGITAL"
+          data-name="Outdoor Praça Central"
+          data-desc="Publicidade dos serviços da VitrineCity."
+          data-page="/servicos-digitais.html"
+        >
+          <span data-ad-title>Divulgue sua marca</span
+          ><small data-ad-price>Planos acessíveis</small>
+        </button>
+        <button
+          class="pin outdoor outdoor-c city-service-ad"
+          data-category="attraction"
+          data-tag="MÍDIA DIGITAL"
+          data-name="Outdoor Avenida Country"
+          data-desc="Publicidade dos serviços da VitrineCity."
+          data-page="/servicos-digitais.html"
+        >
+          <span data-ad-title>Loja digital</span
+          ><small data-ad-price>Venda na cidade</small>
+        </button>
+        <button
+          class="pin outdoor outdoor-d city-service-ad"
+          data-category="attraction"
+          data-tag="MÍDIA DIGITAL"
+          data-name="Outdoor Centro Educacional"
+          data-desc="Publicidade dos serviços da VitrineCity."
+          data-page="/servicos-digitais.html"
+        >
+          <span data-ad-title>Conteúdo e vídeos</span
+          ><small data-ad-price>Fortaleça sua marca</small>
+        </button>
+        <button
+          class="pin lot lot1"
+          data-category="lot"
+          data-tag="PRÉDIO DIGITAL DISPONÍVEL"
+          data-name="Prédio Vitrine 041"
+          data-desc="Esquina da Avenida Country, próximo à Sertaneja. Ideal para moda, acessórios e serviços."
+          data-lot="COUNTRY-041"
+        >
+          Prédio 041
+        </button>
+        <button
+          class="pin lot lot2"
+          data-category="lot"
+          data-tag="PRÉDIO DIGITAL CENTRAL"
+          data-name="Prédio Vitrine 118"
+          data-desc="Próximo à praça, com posição de destaque e identidade personalizável."
+          data-lot="PARQUE-118"
+        >
+          Prédio 118
+        </button>
+        <button
+          class="pin lot lot3"
+          data-category="lot"
+          data-tag="PRÉDIO DIGITAL DISPONÍVEL"
+          data-name="Prédio Vitrine 203"
+          data-desc="Corredor de serviços, próximo ao centro comercial."
+          data-lot="SUL-203"
+        >
+          Prédio 203
+        </button>
+        <div
+          class="avatar"
+          id="avatar"
+          style="left: 1480px; top: 1120px"
+          aria-hidden="true"
+        >
+          <span>Visitante</span>
+        </div>
+      </div>
+    </main>
+    <div class="tools">
+      <button id="zoomIn" aria-label="Aumentar zoom">+</button
+      ><button id="home" aria-label="Centralizar mapa">⌂</button
+      ><button id="zoomOut" aria-label="Diminuir zoom">−</button>
     </div>
-  </main>
-  <div class="tools"><button id="zoomIn" aria-label="Aumentar zoom">+</button><button id="home" aria-label="Centralizar mapa">⌂</button><button id="zoomOut" aria-label="Diminuir zoom">−</button></div>
-  <aside class="city-pulse" id="cityPulse" aria-label="Acontecendo agora">
-    <button class="pulse-heading" id="pulseToggle" aria-expanded="true"><span class="live-dot"></span><b>Acontecendo agora</b><span class="pulse-chevron">⌄</span></button>
-    <div class="pulse-list">
-      <button data-focus="sertaneja"><span>★</span><span><b>Oferta na Sertaneja</b><small>Conheça a loja-modelo</small></span></button>
-      <button data-focus="agrotecnica"><span>🌿</span><span><b>Agrotécnica em destaque</b><small>Produtos para suas plantas</small></span></button>
-      <button data-focus="centro-educacional"><span>🎓</span><span><b>Cursos com certificado</b><small>Explore o centro educacional</small></span></button>
+    <aside class="city-pulse" id="cityPulse" aria-label="Acontecendo agora">
+      <button class="pulse-heading" id="pulseToggle" aria-expanded="true">
+        <span class="live-dot"></span><b>Acontecendo agora</b
+        ><span class="pulse-chevron">⌄</span>
+      </button>
+      <div class="pulse-list">
+        <button data-focus="sertaneja">
+          <span>★</span
+          ><span
+            ><b>Oferta na Sertaneja</b
+            ><small>Conheça a loja-modelo</small></span
+          >
+        </button>
+        <button data-focus="agrotecnica">
+          <span>🌿</span
+          ><span
+            ><b>Agrotécnica em destaque</b
+            ><small>Produtos para suas plantas</small></span
+          >
+        </button>
+        <button data-focus="centro-educacional">
+          <span>🎓</span
+          ><span
+            ><b>Cursos com certificado</b
+            ><small>Explore o centro educacional</small></span
+          >
+        </button>
+      </div>
+    </aside>
+    <div class="legend">
+      <span><i class="store-dot"></i> Loja</span
+      ><span><i class="place-dot"></i> Bairro/atração</span
+      ><span><i class="lot-dot"></i> Prédio disponível</span>
     </div>
-  </aside>
-  <div class="legend"><span><i class="store-dot"></i> Loja</span><span><i class="place-dot"></i> Bairro/atração</span><span><i class="lot-dot"></i> Prédio disponível</span></div>
-  <div class="empty" id="empty">Nenhum ponto encontrado. Tente outro termo.</div>
-  <div class="avatar-shop" id="avatarShop" role="dialog" aria-modal="true" aria-labelledby="avatarTitle"><div class="avatar-card"><button class="close-modal" id="closeAvatar" aria-label="Fechar">×</button><h2 id="avatarTitle">Seu avatar</h2><p>O avatar básico é gratuito e pode caminhar pelo mapa. Roupas e estilos especiais serão adicionados depois.</p><div class="choices"><button class="choice active"><span class="mini basic"></span>Básico<small>Grátis</small></button><button class="choice disabled" disabled><span class="mini country-skin"></span>Country<small>Em breve</small></button></div></div></div>
-  <aside class="panel" id="panel" aria-live="polite"><button id="closePanel" aria-label="Fechar">×</button><img id="shopImage" class="shop-image" alt="" hidden><small id="tag"></small><h2 id="name"></h2><p id="desc"></p><button class="favorite-action" id="favoriteAction" type="button">♡ Salvar nos favoritos</button><div class="panel-actions"><a id="primaryAction" class="primary" href="/comprar-lote.html">Escolher este prédio</a><a id="pageAction" href="/">Visitar espaço</a><a id="walkAction" href="/cidade/avenida-premium">🚶 Passear pela avenida</a><a id="siteAction" target="_blank" rel="noopener">🛍️ Loja online</a><a id="mapsAction" target="_blank" rel="noopener">📍 Como chegar</a><a id="instagramAction" target="_blank" rel="noopener">◎ Instagram</a></div></aside>
-  <nav class="mobile-dock" aria-label="Atalhos da cidade">
-    <button data-city-action="city" class="active"><span>⌂</span>Cidade</button>
-    <button data-city-action="stores"><span>▦</span>Lojas</button>
-    <button data-city-action="courses"><span>🎓</span>Cursos</button>
-    <button data-city-action="favorites"><span>♥</span>Favoritos <em id="dockFavoriteCount">0</em></button>
-  </nav>
-</body>
+    <div class="empty" id="empty">
+      Nenhum ponto encontrado. Tente outro termo.
+    </div>
+    <div
+      class="avatar-shop"
+      id="avatarShop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="avatarTitle"
+    >
+      <div class="avatar-card">
+        <button class="close-modal" id="closeAvatar" aria-label="Fechar">
+          ×
+        </button>
+        <h2 id="avatarTitle">Seu avatar</h2>
+        <p>
+          O avatar básico é gratuito e pode caminhar pelo mapa. Roupas e estilos
+          especiais serão adicionados depois.
+        </p>
+        <div class="choices">
+          <button class="choice active">
+            <span class="mini basic"></span>Básico<small>Grátis</small></button
+          ><button class="choice disabled" disabled>
+            <span class="mini country-skin"></span>Country<small
+              >Em breve</small
+            >
+          </button>
+        </div>
+      </div>
+    </div>
+    <aside class="panel" id="panel" aria-live="polite">
+      <button id="closePanel" aria-label="Fechar">×</button
+      ><img id="shopImage" class="shop-image" alt="" hidden /><small
+        id="tag"
+      ></small>
+      <h2 id="name"></h2>
+      <p id="desc"></p>
+      <button class="favorite-action" id="favoriteAction" type="button">
+        ♡ Salvar nos favoritos
+      </button>
+      <div class="panel-actions">
+        <a id="primaryAction" class="primary" href="/comprar-lote.html"
+          >Escolher este prédio</a
+        ><a id="pageAction" href="/">Visitar espaço</a
+        ><a id="walkAction" href="/cidade/avenida-premium"
+          >🚶 Passear pela avenida</a
+        ><a id="siteAction" target="_blank" rel="noopener">🛍️ Loja online</a
+        ><a id="mapsAction" target="_blank" rel="noopener">📍 Como chegar</a
+        ><a id="instagramAction" target="_blank" rel="noopener">◎ Instagram</a>
+      </div>
+    </aside>
+    <nav class="mobile-dock" aria-label="Atalhos da cidade">
+      <button data-city-action="city" class="active">
+        <span>⌂</span>Cidade
+      </button>
+      <button data-city-action="stores"><span>▦</span>Lojas</button>
+      <button data-city-action="courses"><span>🎓</span>Cursos</button>
+      <button data-city-action="favorites">
+        <span>♥</span>Favoritos <em id="dockFavoriteCount">0</em>
+      </button>
+    </nav>
+  </body>
 </html>
