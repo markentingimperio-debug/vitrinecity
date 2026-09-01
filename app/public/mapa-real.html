@@ -3,26 +3,29 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="description" content="Encontre lojas reais da VitrineCity por cidade, estado e proximidade." />
-    <title>Mapa Real — VitrineCity</title>
-    <link rel="stylesheet" href="/mapa-real.css?v=1" />
+    <meta name="description" content="Explore lojas, serviços e outdoors na Cidade Premium da VitrineCity." />
+    <title>Cidade Premium — VitrineCity</title>
+    <link rel="stylesheet" href="/mapa-real.css?v=2" />
+    <style>
+      .premium-badge{padding:10px 14px;border-radius:12px;background:linear-gradient(135deg,#071f4b,#1768e6);color:#fff;font-size:12px;font-weight:950;letter-spacing:.06em;box-shadow:0 6px 18px #1768e638}
+      .premium-outdoor{position:absolute;min-width:118px;transform:translate(-50%,-100%) rotate(-2deg);padding:8px 11px;border:3px solid #eef7ff;border-radius:5px;background:linear-gradient(135deg,#ffca28,#ff7800);box-shadow:0 7px 0 #1b3455,0 13px 20px #061a3470;color:#071f4b;text-align:center;text-decoration:none;font-family:Inter,Arial,sans-serif;animation:premiumFloat 3.4s ease-in-out infinite}
+      .premium-outdoor small,.premium-outdoor strong{display:block}.premium-outdoor small{font-size:7px;font-weight:950}.premium-outdoor strong{font-size:11px;letter-spacing:.04em}.premium-outdoor:hover{z-index:21;filter:brightness(1.1)}
+      .premium-building img{position:absolute;inset:5px 5px 25px;width:calc(100% - 10px);height:42px;border-radius:6px;object-fit:cover;filter:saturate(1.08) contrast(1.03)}.premium-building:has(img):before{display:none}.premium-building:has(img) span{padding:2px 3px;border-radius:4px;background:#071f4bd9}
+    </style>
     <script src="/analytics.js" defer></script>
-    <script src="/mapa-real.js?v=1" defer></script>
+    <script src="/mapa-real.js?v=2" defer></script>
   </head>
   <body>
     <header class="topbar">
       <a class="brand" href="/" aria-label="VitrineCity — página inicial"><i></i>VitrineCity</a>
-      <nav class="modes" aria-label="Modo de exploração">
-        <a href="/cidade">Cidade 2.5D</a>
-        <a class="active" href="/mapa-real" aria-current="page">Mapa Real</a>
-      </nav>
+      <span class="premium-badge">✦ CIDADE PREMIUM</span>
     </header>
     <main>
       <aside class="panel" aria-label="Busca de lojas">
         <div class="intro">
-          <span class="eyebrow">NEGÓCIOS REAIS DO BRASIL</span>
-          <h1>Encontre uma vitrine perto de você</h1>
-          <p>Pesquise por cidade e estado ou use sua localização para descobrir lojas próximas.</p>
+          <span class="eyebrow">A CIDADE DIGITAL SOBRE O BRASIL REAL</span>
+          <h1>Explore a Cidade Premium</h1>
+          <p>Encontre lojas, serviços e outdoors digitais conectados às cidades reais.</p>
         </div>
         <form id="filters" class="filters">
           <label>Buscar loja ou categoria<input id="search" type="search" placeholder="Ex.: plantas, moda, serviços" /></label>
@@ -35,11 +38,7 @@
         <p id="status" class="status" role="status">Carregando lojas…</p>
         <section id="results" class="results" aria-label="Lojas encontradas"></section>
       </aside>
-      <section class="map-wrap" aria-label="Mapa das lojas">
-        <div class="layer-switch" role="group" aria-label="Camada visual do mapa">
-          <button id="real-layer" class="active" type="button">Mapa Real</button>
-          <button id="premium-layer" type="button">✦ Cidade Premium</button>
-        </div>
+      <section class="map-wrap" aria-label="Cidade Premium e suas lojas">
         <div id="map"></div>
         <div id="map-message" class="map-message" hidden></div>
       </section>

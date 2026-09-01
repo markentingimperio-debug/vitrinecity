@@ -2077,7 +2077,8 @@ app.get('/admin-mapa-real.html',requireAdmin,publicPage('admin-mapa-real.html'))
 app.get('/admin-servicos.html',requireAdmin,(_req,res)=>{const page=fs.readFileSync(path.join(dir,'public','admin-servicos.html'),'utf8');res.type('html').send(page.replace('</body>','<script src="/admin-services-catalog.js" defer></script></body>'))});
 app.get('/recursos-social.html', enhancedPublicPage('recursos-social.html'));
 app.get('/cidade', publicPage('cidade-exploravel.html'));
-app.get('/mapa-real', publicPage('mapa-real.html'));
+app.get('/mapa-real', (_req,res)=>res.redirect(301,'/cidade-premium'));
+app.get('/cidade-premium', publicPage('mapa-real.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
 app.get('/cidade/praca-central', publicPage('praca-central.html'));
 app.get('/cidade/avenida-premium', publicPage('passeio-virtual.html'));
