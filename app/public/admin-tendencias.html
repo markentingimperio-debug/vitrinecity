@@ -1,1 +1,209 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Radar de Tendências — VitrineCity</title><style>:root{--navy:#071f4b;--blue:#1768e6;--bg:#edf6ff;--line:#cfe0f3}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--navy);font-family:Inter,Arial,sans-serif}header{padding:20px max(18px,5vw);background:#071f4b;color:#fff;display:flex;justify-content:space-between;align-items:center}header a{color:#fff}.wrap{max-width:1250px;margin:auto;padding:30px 20px}.head{display:flex;justify-content:space-between;gap:15px;align-items:center}.btn{border:0;border-radius:11px;padding:12px 15px;background:var(--blue);color:#fff;font-weight:900;cursor:pointer}.status{min-height:25px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}.panel{background:#fff;border:1px solid var(--line);border-radius:20px;padding:20px}.item{padding:14px 0;border-bottom:1px solid var(--line)}.item h3{margin:5px 0}.meta{color:#647a98;font-size:12px}.pill{display:inline-block;padding:5px 8px;border-radius:99px;background:#e6f0ff;color:#1768e6;font-size:11px;font-weight:900}.article textarea,.article input,.article select{width:100%;margin:5px 0;padding:10px;border:1px solid var(--line);border-radius:8px}.article textarea{min-height:120px}@media(max-width:800px){.grid{grid-template-columns:1fr}}</style></head><body><header><b>VitrineCity · Radar de Tendências</b><a href="/admin.html">Voltar ao painel</a></header><main class="wrap"><div class="head"><div><h1>Radar editorial</h1><p>Google Trends Brasil → rascunho → revisão → publicação.</p></div><button class="btn" id="sync">Atualizar tendências</button></div><div class="status" id="status"></div><div class="grid"><section class="panel"><h2>Tendências detectadas</h2><div id="topics"></div></section><section class="panel"><h2>Fila editorial</h2><div id="articles"></div></section></div></main><script>const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let data;async function load(){const r=await fetch('/api/admin/trends');if(r.status===401)return location.href='/admin-login.html';data=await r.json();topics.innerHTML=data.topics.map(t=>`<div class="item"><span class="pill">${esc(t.portal)}</span><h3>${esc(t.title)}</h3><div class="meta">${esc(t.traffic||'volume não informado')} · ${esc(t.status)}</div><button class="btn draft" data-id="${t.id}">Criar rascunho</button></div>`).join('');articles.innerHTML=data.articles.map(a=>`<form class="item article" data-id="${a.id}"><span class="pill">${esc(a.status)}</span><input name="title" value="${esc(a.title)}"><select name="portal"><option ${a.portal==='noticias'?'selected':''}>noticias</option><option ${a.portal==='esportes'?'selected':''}>esportes</option><option ${a.portal==='receitas'?'selected':''}>receitas</option></select><textarea name="summary">${esc(a.summary)}</textarea><textarea name="body">${esc(a.body)}</textarea><input name="imageUrl" value="${esc(a.image_url)}" placeholder="URL da imagem"><button class="btn save">Salvar revisão</button> <button class="btn publish" type="button">Publicar</button></form>`).join('')}sync.onclick=async()=>{status.textContent='Consultando Google Trends…';const r=await fetch('/api/admin/trends/sync',{method:'POST'}),d=await r.json();status.textContent=r.ok?`${d.count} tendências atualizadas.`:d.error;load()};topics.onclick=async e=>{const b=e.target.closest('.draft');if(!b)return;await fetch('/api/admin/trends/'+b.dataset.id+'/draft',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});load()};articles.onsubmit=async e=>{e.preventDefault();const f=e.target,d=Object.fromEntries(new FormData(f));await fetch('/api/admin/articles/'+f.dataset.id,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify(d)});status.textContent='Revisão salva.';load()};articles.onclick=async e=>{const b=e.target.closest('.publish');if(!b)return;const f=b.closest('form');const r=await fetch('/api/admin/articles/'+f.dataset.id+'/publish',{method:'POST'}),d=await r.json();status.textContent=r.ok?'Artigo publicado.':d.error;load()};load();</script></body></html>
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Radar de Tendências — VitrineCity</title>
+    <style>
+      :root {
+        --navy: #071f4b;
+        --blue: #1768e6;
+        --bg: #edf6ff;
+        --line: #cfe0f3;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--navy);
+        font-family: Inter, Arial, sans-serif;
+      }
+      header {
+        padding: 20px max(18px, 5vw);
+        background: #071f4b;
+        color: #fff;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      header a {
+        color: #fff;
+      }
+      .wrap {
+        max-width: 1250px;
+        margin: auto;
+        padding: 30px 20px;
+      }
+      .head {
+        display: flex;
+        justify-content: space-between;
+        gap: 15px;
+        align-items: center;
+      }
+      .btn {
+        border: 0;
+        border-radius: 11px;
+        padding: 12px 15px;
+        background: var(--blue);
+        color: #fff;
+        font-weight: 900;
+        cursor: pointer;
+      }
+      .status {
+        min-height: 25px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+      .panel {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 20px;
+      }
+      .item {
+        padding: 14px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .item h3 {
+        margin: 5px 0;
+      }
+      .meta {
+        color: #647a98;
+        font-size: 12px;
+      }
+      .pill {
+        display: inline-block;
+        padding: 5px 8px;
+        border-radius: 99px;
+        background: #e6f0ff;
+        color: #1768e6;
+        font-size: 11px;
+        font-weight: 900;
+      }
+      .article textarea,
+      .article input,
+      .article select {
+        width: 100%;
+        margin: 5px 0;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      .article textarea {
+        min-height: 120px;
+      }
+      @media (max-width: 800px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <b>VitrineCity · Radar de Tendências</b
+      ><a href="/admin.html">Voltar ao painel</a>
+    </header>
+    <main class="wrap">
+      <div class="head">
+        <div>
+          <h1>Radar editorial</h1>
+          <p>Google Trends Brasil → rascunho → revisão → publicação.</p>
+        </div>
+        <button class="btn" id="sync">Atualizar tendências</button>
+      </div>
+      <div class="status" id="status"></div>
+      <div class="grid">
+        <section class="panel">
+          <h2>Tendências detectadas</h2>
+          <div id="topics"></div>
+        </section>
+        <section class="panel">
+          <h2>Fila editorial</h2>
+          <div id="articles"></div>
+        </section>
+      </div>
+    </main>
+    <script>
+      const esc = (v) =>
+        String(v ?? "").replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+      let data;
+      async function load() {
+        const r = await fetch("/api/admin/trends");
+        if (r.status === 401) return (location.href = "/admin-login.html");
+        data = await r.json();
+        topics.innerHTML = data.topics
+          .map(
+            (t) =>
+              `<div class="item"><span class="pill">${esc(t.portal)}</span><h3>${esc(t.title)}</h3><div class="meta">${esc(t.traffic || "volume não informado")} · ${esc(t.status)}</div><button class="btn draft" data-id="${t.id}">Criar rascunho</button></div>`,
+          )
+          .join("");
+        articles.innerHTML = data.articles
+          .map(
+            (a) =>
+              `<form class="item article" data-id="${a.id}"><span class="pill">${esc(a.status)}</span><input name="title" value="${esc(a.title)}"><select name="portal"><option ${a.portal === "noticias" ? "selected" : ""}>noticias</option><option ${a.portal === "esportes" ? "selected" : ""}>esportes</option><option ${a.portal === "receitas" ? "selected" : ""}>receitas</option><option ${a.portal === "tecnologia" ? "selected" : ""}>tecnologia</option><option ${a.portal === "inteligencia-artificial" ? "selected" : ""}>inteligencia-artificial</option><option ${a.portal === "entretenimento" ? "selected" : ""}>entretenimento</option></select><textarea name="summary">${esc(a.summary)}</textarea><textarea name="body">${esc(a.body)}</textarea><input name="imageUrl" value="${esc(a.image_url)}" placeholder="URL da imagem"><button class="btn save">Salvar revisão</button> <button class="btn publish" type="button">Publicar</button></form>`,
+          )
+          .join("");
+      }
+      sync.onclick = async () => {
+        status.textContent = "Consultando Google Trends…";
+        const r = await fetch("/api/admin/trends/sync", { method: "POST" }),
+          d = await r.json();
+        status.textContent = r.ok
+          ? `${d.count} tendências atualizadas.`
+          : d.error;
+        load();
+      };
+      topics.onclick = async (e) => {
+        const b = e.target.closest(".draft");
+        if (!b) return;
+        await fetch("/api/admin/trends/" + b.dataset.id + "/draft", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        load();
+      };
+      articles.onsubmit = async (e) => {
+        e.preventDefault();
+        const f = e.target,
+          d = Object.fromEntries(new FormData(f));
+        await fetch("/api/admin/articles/" + f.dataset.id, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(d),
+        });
+        status.textContent = "Revisão salva.";
+        load();
+      };
+      articles.onclick = async (e) => {
+        const b = e.target.closest(".publish");
+        if (!b) return;
+        const f = b.closest("form");
+        const r = await fetch(
+            "/api/admin/articles/" + f.dataset.id + "/publish",
+            { method: "POST" },
+          ),
+          d = await r.json();
+        status.textContent = r.ok ? "Artigo publicado." : d.error;
+        load();
+      };
+      load();
+    </script>
+  </body>
+</html>

@@ -1,43 +1,357 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from "node:crypto";
 
-const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const slugify = value => String(value || 'artigo').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'').slice(0,90);
-const decodeXml = value => String(value || '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
-const tag = (xml, name) => decodeXml(xml.match(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${name}>`,'i'))?.[1] || '').trim();
+const esc = (value) =>
+  String(value ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
+const slugify = (value) =>
+  String(value || "artigo")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 90);
+const decodeXml = (value) =>
+  String(value || "")
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+const tag = (xml, name) =>
+  decodeXml(
+    xml.match(
+      new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${name}>`, "i"),
+    )?.[1] || "",
+  ).trim();
 
 function portalFor(title) {
-  const text=title.toLowerCase();
-  if(/futebol|jogo|campeonato|brasileir|copa|gol|time|atlet|corrida|ufc|nba|volei/.test(text))return 'esportes';
-  if(/receita|bolo|frango|carne|arroz|sobremesa|cozinha|ingrediente|doce|pao/.test(text))return 'receitas';
-  return 'noticias';
+  const text = title.toLowerCase();
+  if (
+    /futebol|jogo|campeonato|brasileir|copa|gol|time|atlet|corrida|ufc|nba|volei/.test(
+      text,
+    )
+  )
+    return "esportes";
+  if (
+    /receita|bolo|frango|carne|arroz|sobremesa|cozinha|ingrediente|doce|pao/.test(
+      text,
+    )
+  )
+    return "receitas";
+  if (
+    /inteligencia artificial|inteligência artificial|\bia\b|chatgpt|gemini|openai|claude|modelo de linguagem|agente de ia/.test(
+      text,
+    )
+  )
+    return "inteligencia-artificial";
+  if (
+    /tecnologia|aplicativo|software|celular|smartphone|internet|computador|inovacao|inovação|startup|seguranca digital|segurança digital/.test(
+      text,
+    )
+  )
+    return "tecnologia";
+  if (
+    /famos|atriz|ator|cantor|cantora|celebridade|reality|novela|influenciador|influencer|entretenimento|cinema|televisao|televisão/.test(
+      text,
+    )
+  )
+    return "entretenimento";
+  return "noticias";
 }
 
 function renderIndex(portal, rows) {
-  const names={conteudo:'Conteúdos em destaque',noticias:'Vitrine Notícias',esportes:'Vitrine Esportes',receitas:'Vitrine Receitas'};
-  const cards=rows.map(row=>`<article><a href="/artigo/${esc(row.slug)}"><img src="${esc(row.image_url||'/assets/vitriny-city-master.jpg')}" alt=""><div><small>${esc(row.portal)}</small><h2>${esc(row.title)}</h2><p>${esc(row.summary)}</p><span>Ler artigo →</span></div></a></article>`).join('')||'<div class="empty">Os primeiros artigos estão em preparação editorial.</div>';
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(names[portal])} — VitrineCity</title><meta name="description" content="Notícias, esportes, receitas e conteúdos úteis selecionados pela VitrineCity."><style>${INDEX_CSS}</style></head><body><header><a href="/">VitrineCity</a><nav><a href="/noticias">Notícias</a><a href="/esportes">Esportes</a><a href="/receitas">Receitas</a><a href="/social">Vitriny Social</a></nav></header><main><div class="hero"><small>CONTEÚDO COM REVISÃO EDITORIAL</small><h1>${esc(names[portal])}</h1><p>Tendências transformadas em conteúdo útil, com fontes identificadas e revisão antes da publicação.</p></div><section>${cards}</section></main><footer>VitrineCity · conteúdo informativo · <a href="/contato.html">Contato</a></footer></body></html>`;
+  const names = {
+    conteudo: "Conteúdos em destaque",
+    noticias: "Vitrine Notícias",
+    esportes: "Vitrine Esportes",
+    receitas: "Vitrine Receitas",
+    tecnologia: "Vitrine Tecnologia",
+    "inteligencia-artificial": "Vitrine Inteligência Artificial",
+    entretenimento: "Vitrine Famosos e Entretenimento",
+  };
+  const cards =
+    rows
+      .map(
+        (row) =>
+          `<article><a href="/artigo/${esc(row.slug)}"><img src="${esc(row.image_url || "/assets/vitriny-city-master.jpg")}" alt=""><div><small>${esc(row.portal)}</small><h2>${esc(row.title)}</h2><p>${esc(row.summary)}</p><span>Ler artigo →</span></div></a></article>`,
+      )
+      .join("") ||
+    '<div class="empty">Os primeiros artigos estão em preparação editorial.</div>';
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(names[portal])} — VitrineCity</title><meta name="description" content="Notícias, tecnologia, inteligência artificial, entretenimento e conteúdos úteis selecionados pela VitrineCity."><style>${INDEX_CSS}</style></head><body><header><a href="/">VitrineCity</a><nav><a href="/noticias">Notícias</a><a href="/tecnologia">Tecnologia</a><a href="/inteligencia-artificial">IA</a><a href="/entretenimento">Famosos</a><a href="/social">Vitriny Social</a></nav></header><main><div class="hero"><small>CONTEÚDO COM REVISÃO EDITORIAL</small><h1>${esc(names[portal])}</h1><p>Tendências transformadas em conteúdo útil, com fontes identificadas e revisão antes da publicação.</p></div><section>${cards}</section></main><footer>VitrineCity · conteúdo informativo · <a href="/contato.html">Contato</a></footer></body></html>`;
 }
 
 function renderArticle(row) {
-  const sources=JSON.parse(row.sources_json||'[]');
-  const paragraphs=String(row.body||'').split(/\n{2,}/).filter(Boolean).map(p=>`<p>${esc(p)}</p>`).join('');
-  const sourceList=sources.map(s=>`<li><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title||s.url)}</a></li>`).join('');
-  const schema=JSON.stringify({'@context':'https://schema.org','@type':row.portal==='noticias'?'NewsArticle':'Article',headline:row.title,description:row.summary,image:[new URL(row.image_url||'/assets/vitriny-city-master.jpg','https://vitrinecity.com').href],datePublished:row.published_at,dateModified:row.updated_at,author:{'@type':'Organization',name:'VitrineCity'},publisher:{'@type':'Organization',name:'VitrineCity'}}).replace(/</g,'\\u003c');
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(row.title)} — VitrineCity</title><meta name="description" content="${esc(row.summary)}"><link rel="canonical" href="https://vitrinecity.com/artigo/${esc(row.slug)}"><script type="application/ld+json">${schema}</script><style>${ARTICLE_CSS}</style></head><body><header><a href="/">VitrineCity</a><a href="/${esc(row.portal)}">← Voltar</a></header><main><small>${esc(row.portal.toUpperCase())}</small><h1>${esc(row.title)}</h1><p class="summary">${esc(row.summary)}</p><img class="cover" src="${esc(row.image_url||'/assets/vitriny-city-master.jpg')}" alt="${esc(row.title)}"><article>${paragraphs}</article>${sourceList?`<aside><h2>Fontes consultadas</h2><ul>${sourceList}</ul></aside>`:''}<p class="review">Conteúdo revisado antes da publicação. Informações podem ser atualizadas conforme novas fontes.</p></main></body></html>`;
+  const sources = JSON.parse(row.sources_json || "[]");
+  const paragraphs = String(row.body || "")
+    .split(/\n{2,}/)
+    .filter(Boolean)
+    .map((p) => `<p>${esc(p)}</p>`)
+    .join("");
+  const sourceList = sources
+    .map(
+      (s) =>
+        `<li><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title || s.url)}</a></li>`,
+    )
+    .join("");
+  const schema = JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": row.portal === "noticias" ? "NewsArticle" : "Article",
+    headline: row.title,
+    description: row.summary,
+    image: [
+      new URL(
+        row.image_url || "/assets/vitriny-city-master.jpg",
+        "https://vitrinecity.com",
+      ).href,
+    ],
+    datePublished: row.published_at,
+    dateModified: row.updated_at,
+    author: { "@type": "Organization", name: "VitrineCity" },
+    publisher: { "@type": "Organization", name: "VitrineCity" },
+  }).replace(/</g, "\\u003c");
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(row.title)} — VitrineCity</title><meta name="description" content="${esc(row.summary)}"><link rel="canonical" href="https://vitrinecity.com/artigo/${esc(row.slug)}"><script type="application/ld+json">${schema}</script><style>${ARTICLE_CSS}</style></head><body><header><a href="/">VitrineCity</a><a href="/${esc(row.portal)}">← Voltar</a></header><main><small>${esc(row.portal.toUpperCase())}</small><h1>${esc(row.title)}</h1><p class="summary">${esc(row.summary)}</p><img class="cover" src="${esc(row.image_url || "/assets/vitriny-city-master.jpg")}" alt="${esc(row.title)}"><article>${paragraphs}</article>${sourceList ? `<aside><h2>Fontes consultadas</h2><ul>${sourceList}</ul></aside>` : ""}<p class="review">Conteúdo revisado antes da publicação. Informações podem ser atualizadas conforme novas fontes.</p></main></body></html>`;
 }
 
-const INDEX_CSS=`:root{--blue:#1768e6;--navy:#071f4b;--yellow:#ffc628;--bg:#f4f9ff}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--navy);font-family:Inter,Arial,sans-serif}header{height:72px;padding:0 max(18px,6vw);display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #d8e7f7}header>a{font-size:25px;font-weight:950;text-decoration:none}nav{display:flex;gap:18px}nav a{font-weight:850;text-decoration:none}.hero{padding:70px 20px;text-align:center;background:linear-gradient(135deg,#061c44,#1768e6);color:#fff}.hero small{color:var(--yellow);font-weight:950}.hero h1{font-size:clamp(40px,7vw,72px);margin:10px}.hero p{max-width:700px;margin:auto;color:#d5e5ff}main section{max-width:1120px;margin:auto;padding:45px 20px;display:grid;grid-template-columns:repeat(3,1fr);gap:18px}article{background:#fff;border:1px solid #d8e7f7;border-radius:20px;overflow:hidden}article a{text-decoration:none}article img{width:100%;aspect-ratio:16/9;object-fit:cover}article div{padding:19px}article small{color:#1768e6;font-weight:950;text-transform:uppercase}article h2{font-size:21px;margin:8px 0}article p{color:#5b7192;line-height:1.5}article span{font-weight:900;color:#1768e6}.empty{grid-column:1/-1;padding:70px;text-align:center}footer{text-align:center;padding:30px;background:#061c44;color:#c7daf7}@media(max-width:760px){nav a:not(:last-child){display:none}main section{grid-template-columns:1fr}}`;
-const ARTICLE_CSS=`*{box-sizing:border-box}body{margin:0;background:#f5f9ff;color:#071f4b;font-family:Georgia,serif}header{height:68px;padding:0 max(18px,6vw);display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #d8e7f7}header a{font-family:Arial,sans-serif;font-weight:900;text-decoration:none}main{max-width:840px;margin:auto;padding:55px 20px 90px}main>small{font-family:Arial,sans-serif;color:#1768e6;font-weight:900}h1{font-size:clamp(38px,6vw,64px);line-height:1.04;margin:12px 0 18px}.summary{font-size:21px;color:#526987;line-height:1.55}.cover{width:100%;max-height:520px;object-fit:cover;border-radius:22px;margin:25px 0}article{font-size:19px;line-height:1.8}aside{margin-top:40px;padding:22px;background:#fff;border:1px solid #d8e7f7;border-radius:16px}aside a{color:#1768e6}.review{font-family:Arial,sans-serif;color:#6b7e98;font-size:12px;margin-top:25px}`;
+const INDEX_CSS = `:root{--blue:#1768e6;--navy:#071f4b;--yellow:#ffc628;--bg:#f4f9ff}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--navy);font-family:Inter,Arial,sans-serif}header{height:72px;padding:0 max(18px,6vw);display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #d8e7f7}header>a{font-size:25px;font-weight:950;text-decoration:none}nav{display:flex;gap:18px}nav a{font-weight:850;text-decoration:none}.hero{padding:70px 20px;text-align:center;background:linear-gradient(135deg,#061c44,#1768e6);color:#fff}.hero small{color:var(--yellow);font-weight:950}.hero h1{font-size:clamp(40px,7vw,72px);margin:10px}.hero p{max-width:700px;margin:auto;color:#d5e5ff}main section{max-width:1120px;margin:auto;padding:45px 20px;display:grid;grid-template-columns:repeat(3,1fr);gap:18px}article{background:#fff;border:1px solid #d8e7f7;border-radius:20px;overflow:hidden}article a{text-decoration:none}article img{width:100%;aspect-ratio:16/9;object-fit:cover}article div{padding:19px}article small{color:#1768e6;font-weight:950;text-transform:uppercase}article h2{font-size:21px;margin:8px 0}article p{color:#5b7192;line-height:1.5}article span{font-weight:900;color:#1768e6}.empty{grid-column:1/-1;padding:70px;text-align:center}footer{text-align:center;padding:30px;background:#061c44;color:#c7daf7}@media(max-width:760px){nav a:not(:last-child){display:none}main section{grid-template-columns:1fr}}`;
+const ARTICLE_CSS = `*{box-sizing:border-box}body{margin:0;background:#f5f9ff;color:#071f4b;font-family:Georgia,serif}header{height:68px;padding:0 max(18px,6vw);display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #d8e7f7}header a{font-family:Arial,sans-serif;font-weight:900;text-decoration:none}main{max-width:840px;margin:auto;padding:55px 20px 90px}main>small{font-family:Arial,sans-serif;color:#1768e6;font-weight:900}h1{font-size:clamp(38px,6vw,64px);line-height:1.04;margin:12px 0 18px}.summary{font-size:21px;color:#526987;line-height:1.55}.cover{width:100%;max-height:520px;object-fit:cover;border-radius:22px;margin:25px 0}article{font-size:19px;line-height:1.8}aside{margin-top:40px;padding:22px;background:#fff;border:1px solid #d8e7f7;border-radius:16px}aside a{color:#1768e6}.review{font-family:Arial,sans-serif;color:#6b7e98;font-size:12px;margin-top:25px}`;
 
-export function setupTrendRadar({app,db,requireAdmin,sameOriginOnly,publicPage,generateEditorialDraft}) {
+export function setupTrendRadar({
+  app,
+  db,
+  requireAdmin,
+  sameOriginOnly,
+  publicPage,
+  generateEditorialDraft,
+}) {
   db.exec(`CREATE TABLE IF NOT EXISTS trend_topics(id TEXT PRIMARY KEY,title TEXT NOT NULL UNIQUE,traffic TEXT NOT NULL DEFAULT '',published_at TEXT,portal TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new',source_url TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS editorial_articles(id TEXT PRIMARY KEY,trend_id TEXT,slug TEXT NOT NULL UNIQUE,portal TEXT NOT NULL,title TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',body TEXT NOT NULL DEFAULT '',image_url TEXT NOT NULL DEFAULT '',sources_json TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL DEFAULT 'draft',published_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);`);
-  app.get('/admin-tendencias.html',requireAdmin,publicPage('admin-tendencias.html'));
-  app.get('/api/admin/trends',requireAdmin,(_req,res)=>res.json({topics:db.prepare('SELECT * FROM trend_topics ORDER BY created_at DESC LIMIT 100').all(),articles:db.prepare('SELECT * FROM editorial_articles ORDER BY created_at DESC LIMIT 100').all()}));
-  app.post('/api/admin/trends/sync',requireAdmin,sameOriginOnly,async(_req,res)=>{try{const response=await fetch('https://trends.google.com/trending/rss?geo=BR',{headers:{'user-agent':'VitrineCity Editorial Radar/1.0'},signal:AbortSignal.timeout(15000)});if(!response.ok)throw new Error('Google Trends indisponível');const xml=await response.text(),items=[...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(m=>m[1]);const insert=db.prepare(`INSERT INTO trend_topics(id,title,traffic,published_at,portal,status,source_url) VALUES(?,?,?,?,?,'new',?) ON CONFLICT(title) DO UPDATE SET traffic=excluded.traffic,published_at=excluded.published_at,updated_at=CURRENT_TIMESTAMP`);let count=0;for(const item of items){const title=tag(item,'title');if(!title)continue;insert.run(randomUUID(),title,tag(item,'ht:approx_traffic'),tag(item,'pubDate'),portalFor(title),tag(item,'link'));count++;}return res.json({ok:true,count})}catch(error){return res.status(502).json({error:error.message})}});
-  app.post('/api/admin/trends/:id/draft',requireAdmin,sameOriginOnly,async(req,res)=>{const trend=db.prepare('SELECT * FROM trend_topics WHERE id=?').get(req.params.id);if(!trend)return res.status(404).json({error:'Tendência não encontrada.'});const portal=['noticias','esportes','receitas'].includes(req.body?.portal)?req.body.portal:trend.portal;try{db.prepare("UPDATE trend_topics SET status='generating',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(trend.id);const generated=await generateEditorialDraft({title:String(req.body?.title||trend.title).trim().slice(0,180),portal,traffic:trend.traffic,sourceUrl:trend.source_url});const title=String(generated.title||trend.title).trim().slice(0,180),slug=slugify(title)+'-'+Date.now().toString(36);const body=String(generated.body||'').trim();if(body.length<600)throw new Error('O agente não produziu o mínimo de 600 caracteres. Tente novamente.');const sources=trend.source_url?[{title:'Google Trends — tendência identificada',url:trend.source_url}]:[];db.prepare(`INSERT INTO editorial_articles(id,trend_id,slug,portal,title,summary,body,image_url,sources_json,status) VALUES(?,?,?,?,?,?,?,?,?,'draft')`).run(randomUUID(),trend.id,slug,portal,title,String(generated.summary||'').trim(),body,String(generated.imageUrl||'/assets/vitriny-city-master.jpg'),JSON.stringify(sources));db.prepare("UPDATE trend_topics SET status='drafted',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(trend.id);return res.json({ok:true,slug,characters:body.length,imageUrl:generated.imageUrl})}catch(error){db.prepare("UPDATE trend_topics SET status='new',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(trend.id);return res.status(error.status||502).json({error:error.message||'Não foi possível criar o rascunho.'})}});
-  app.patch('/api/admin/articles/:id',requireAdmin,sameOriginOnly,(req,res)=>{const current=db.prepare('SELECT * FROM editorial_articles WHERE id=?').get(req.params.id);if(!current)return res.status(404).json({error:'Artigo não encontrado.'});const body=req.body||{};db.prepare(`UPDATE editorial_articles SET portal=?,title=?,summary=?,body=?,image_url=?,sources_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(['noticias','esportes','receitas'].includes(body.portal)?body.portal:current.portal,String(body.title||current.title).trim().slice(0,180),String(body.summary??current.summary).trim().slice(0,500),String(body.body??current.body).trim().slice(0,20000),String(body.imageUrl??current.image_url).trim().slice(0,1000),JSON.stringify(Array.isArray(body.sources)?body.sources.slice(0,12):JSON.parse(current.sources_json||'[]')),current.id);return res.json({ok:true})});
-  app.post('/api/admin/articles/:id/publish',requireAdmin,sameOriginOnly,(req,res)=>{const result=db.prepare("UPDATE editorial_articles SET status='published',published_at=COALESCE(published_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP WHERE id=? AND LENGTH(body)>=600 AND LENGTH(summary)>=40 AND LENGTH(image_url)>0").run(req.params.id);if(!result.changes)return res.status(409).json({error:'Revise o resumo, a imagem e garanta pelo menos 600 caracteres antes de publicar.'});return res.json({ok:true})});
-  for(const portal of ['conteudo','noticias','esportes','receitas'])app.get('/'+portal,(_req,res)=>{const rows=portal==='conteudo'?db.prepare("SELECT * FROM editorial_articles WHERE status='published' ORDER BY published_at DESC LIMIT 60").all():db.prepare("SELECT * FROM editorial_articles WHERE status='published' AND portal=? ORDER BY published_at DESC LIMIT 60").all(portal);res.type('html').send(renderIndex(portal,rows))});
-  app.get('/artigo/:slug',(req,res)=>{const row=db.prepare("SELECT * FROM editorial_articles WHERE slug=? AND status='published'").get(req.params.slug);if(!row)return res.status(404).send('Artigo não encontrado.');return res.type('html').send(renderArticle(row))});
+  app.get(
+    "/admin-tendencias.html",
+    requireAdmin,
+    publicPage("admin-tendencias.html"),
+  );
+  app.get("/api/admin/trends", requireAdmin, (_req, res) =>
+    res.json({
+      topics: db
+        .prepare(
+          "SELECT * FROM trend_topics ORDER BY created_at DESC LIMIT 100",
+        )
+        .all(),
+      articles: db
+        .prepare(
+          "SELECT * FROM editorial_articles ORDER BY created_at DESC LIMIT 100",
+        )
+        .all(),
+    }),
+  );
+  app.post(
+    "/api/admin/trends/sync",
+    requireAdmin,
+    sameOriginOnly,
+    async (_req, res) => {
+      try {
+        const response = await fetch(
+          "https://trends.google.com/trending/rss?geo=BR",
+          {
+            headers: { "user-agent": "VitrineCity Editorial Radar/1.0" },
+            signal: AbortSignal.timeout(15000),
+          },
+        );
+        if (!response.ok) throw new Error("Google Trends indisponível");
+        const xml = await response.text(),
+          items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(
+            (m) => m[1],
+          );
+        const insert = db.prepare(
+          `INSERT INTO trend_topics(id,title,traffic,published_at,portal,status,source_url) VALUES(?,?,?,?,?,'new',?) ON CONFLICT(title) DO UPDATE SET traffic=excluded.traffic,published_at=excluded.published_at,updated_at=CURRENT_TIMESTAMP`,
+        );
+        let count = 0;
+        for (const item of items) {
+          const title = tag(item, "title");
+          if (!title) continue;
+          insert.run(
+            randomUUID(),
+            title,
+            tag(item, "ht:approx_traffic"),
+            tag(item, "pubDate"),
+            portalFor(title),
+            tag(item, "link"),
+          );
+          count++;
+        }
+        return res.json({ ok: true, count });
+      } catch (error) {
+        return res.status(502).json({ error: error.message });
+      }
+    },
+  );
+  app.post(
+    "/api/admin/trends/:id/draft",
+    requireAdmin,
+    sameOriginOnly,
+    async (req, res) => {
+      const trend = db
+        .prepare("SELECT * FROM trend_topics WHERE id=?")
+        .get(req.params.id);
+      if (!trend)
+        return res.status(404).json({ error: "Tendência não encontrada." });
+    const portal = ["noticias", "esportes", "receitas", "tecnologia", "inteligencia-artificial", "entretenimento"].includes(
+        req.body?.portal,
+      )
+        ? req.body.portal
+        : trend.portal;
+      try {
+        db.prepare(
+          "UPDATE trend_topics SET status='generating',updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        ).run(trend.id);
+        const generated = await generateEditorialDraft({
+          title: String(req.body?.title || trend.title)
+            .trim()
+            .slice(0, 180),
+          portal,
+          traffic: trend.traffic,
+          sourceUrl: trend.source_url,
+        });
+        const title = String(generated.title || trend.title)
+            .trim()
+            .slice(0, 180),
+          slug = slugify(title) + "-" + Date.now().toString(36);
+        const body = String(generated.body || "").trim();
+        if (body.length < 600)
+          throw new Error(
+            "O agente não produziu o mínimo de 600 caracteres. Tente novamente.",
+          );
+        const sources = trend.source_url
+          ? [
+              {
+                title: "Google Trends — tendência identificada",
+                url: trend.source_url,
+              },
+            ]
+          : [];
+        db.prepare(
+          `INSERT INTO editorial_articles(id,trend_id,slug,portal,title,summary,body,image_url,sources_json,status) VALUES(?,?,?,?,?,?,?,?,?,'draft')`,
+        ).run(
+          randomUUID(),
+          trend.id,
+          slug,
+          portal,
+          title,
+          String(generated.summary || "").trim(),
+          body,
+          String(generated.imageUrl || "/assets/vitriny-city-master.jpg"),
+          JSON.stringify(sources),
+        );
+        db.prepare(
+          "UPDATE trend_topics SET status='drafted',updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        ).run(trend.id);
+        return res.json({
+          ok: true,
+          slug,
+          characters: body.length,
+          imageUrl: generated.imageUrl,
+        });
+      } catch (error) {
+        db.prepare(
+          "UPDATE trend_topics SET status='new',updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        ).run(trend.id);
+        return res
+          .status(error.status || 502)
+          .json({
+            error: error.message || "Não foi possível criar o rascunho.",
+          });
+      }
+    },
+  );
+  app.patch(
+    "/api/admin/articles/:id",
+    requireAdmin,
+    sameOriginOnly,
+    (req, res) => {
+      const current = db
+        .prepare("SELECT * FROM editorial_articles WHERE id=?")
+        .get(req.params.id);
+      if (!current)
+        return res.status(404).json({ error: "Artigo não encontrado." });
+      const body = req.body || {};
+      db.prepare(
+        `UPDATE editorial_articles SET portal=?,title=?,summary=?,body=?,image_url=?,sources_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+      ).run(
+        ["noticias", "esportes", "receitas", "tecnologia", "inteligencia-artificial", "entretenimento"].includes(body.portal)
+          ? body.portal
+          : current.portal,
+        String(body.title || current.title)
+          .trim()
+          .slice(0, 180),
+        String(body.summary ?? current.summary)
+          .trim()
+          .slice(0, 500),
+        String(body.body ?? current.body)
+          .trim()
+          .slice(0, 20000),
+        String(body.imageUrl ?? current.image_url)
+          .trim()
+          .slice(0, 1000),
+        JSON.stringify(
+          Array.isArray(body.sources)
+            ? body.sources.slice(0, 12)
+            : JSON.parse(current.sources_json || "[]"),
+        ),
+        current.id,
+      );
+      return res.json({ ok: true });
+    },
+  );
+  app.post(
+    "/api/admin/articles/:id/publish",
+    requireAdmin,
+    sameOriginOnly,
+    (req, res) => {
+      const result = db
+        .prepare(
+          "UPDATE editorial_articles SET status='published',published_at=COALESCE(published_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP WHERE id=? AND LENGTH(body)>=600 AND LENGTH(summary)>=40 AND LENGTH(image_url)>0",
+        )
+        .run(req.params.id);
+      if (!result.changes)
+        return res
+          .status(409)
+          .json({
+            error:
+              "Revise o resumo, a imagem e garanta pelo menos 600 caracteres antes de publicar.",
+          });
+      return res.json({ ok: true });
+    },
+  );
+  for (const portal of ["conteudo", "noticias", "esportes", "receitas", "tecnologia", "inteligencia-artificial", "entretenimento"])
+    app.get("/" + portal, (_req, res) => {
+      const rows =
+        portal === "conteudo"
+          ? db
+              .prepare(
+                "SELECT * FROM editorial_articles WHERE status='published' ORDER BY published_at DESC LIMIT 60",
+              )
+              .all()
+          : db
+              .prepare(
+                "SELECT * FROM editorial_articles WHERE status='published' AND portal=? ORDER BY published_at DESC LIMIT 60",
+              )
+              .all(portal);
+      res.type("html").send(renderIndex(portal, rows));
+    });
+  app.get("/artigo/:slug", (req, res) => {
+    const row = db
+      .prepare(
+        "SELECT * FROM editorial_articles WHERE slug=? AND status='published'",
+      )
+      .get(req.params.slug);
+    if (!row) return res.status(404).send("Artigo não encontrado.");
+    return res.type("html").send(renderArticle(row));
+  });
 }
