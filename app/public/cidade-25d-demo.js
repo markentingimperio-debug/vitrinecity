@@ -201,7 +201,7 @@
       style: "currency",
       currency: "BRL",
     });
-  fetch("/api/services/digital")
+  fetch("/api/promotions")
     .then((response) =>
       response.ok
         ? response.json()
@@ -216,11 +216,13 @@
           const service = services[(offset + index) % services.length];
           ad.dataset.name = service.title;
           const price = (service.amountCents || 0) / 100 || service.price;
-          ad.dataset.desc = `${service.description} A partir de ${money(price)}.`;
-          ad.dataset.page = service.checkoutUrl || "/servicos-digitais.html";
+          const priceText = service.amountCents
+            ? `A partir de ${money(price)}`
+            : service.label;
+          ad.dataset.desc = `${service.description}${service.amountCents ? ` ${priceText}.` : ""}`;
+          ad.dataset.page = service.url || service.checkoutUrl || "/";
           ad.querySelector("[data-ad-title]").textContent = service.title;
-          ad.querySelector("[data-ad-price]").textContent =
-            `A partir de ${money(price)}`;
+          ad.querySelector("[data-ad-price]").textContent = priceText;
         });
       renderAds();
       window.setInterval(() => {

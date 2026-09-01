@@ -933,16 +933,24 @@ input {
   top: 90px;
 }
 .billboard-b {
-  left: 1040px;
-  top: 760px;
+  left: 1185px;
+  top: 535px;
 }
 .billboard-c {
-  left: 280px;
-  top: 780px;
+  left: 178px;
+  top: 575px;
 }
 .billboard-d {
-  left: 70px;
-  top: 350px;
+  left: 1290px;
+  top: 140px;
+}
+.billboard-b:before,
+.billboard-b:after,
+.billboard-c:before,
+.billboard-c:after,
+.billboard-d:before,
+.billboard-d:after {
+  height: 20px;
 }
 .billboard em {
   display: block;
