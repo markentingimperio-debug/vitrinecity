@@ -1,6 +1,8 @@
 (() => {
   if (
     document.querySelector("#vc-global-market-banner") ||
+    location.pathname === "/" ||
+    location.pathname === "/index.html" ||
     location.pathname.startsWith("/admin")
   )
     return;
