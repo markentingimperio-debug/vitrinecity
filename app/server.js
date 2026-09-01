@@ -2020,7 +2020,7 @@ app.use('/uploads/generated-videos', express.static(path.join(dataDir, 'generate
 }));
 const publicPage = file => (_req, res) => res.sendFile(path.join(dir, 'public', file));
 setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft });
-setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover});
+setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover,generateBookIllustration});
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
   const tags = [...scripts, '/social-accessibility.js'].map(src => `<script src="${src}" defer></script>`).join('');
@@ -4108,6 +4108,7 @@ async function generateBookCover(book) {
   const item=result.data?.data?.[0]||result.data?.images?.[0],encoded=String(item?.b64_json||item?.image_url?.url||'').replace(/^data:[^;]+;base64,/,'');const buffer=Buffer.from(encoded,'base64');
   if(!buffer.length||buffer.length>25*1024*1024)throw new Error('A capa gerada é inválida.');const file=`book-${Date.now()}-${randomBytes(4).toString('hex')}.png`;fs.writeFileSync(path.join(generatedMediaDir,file),buffer,{flag:'wx'});return `/uploads/generated-videos/${file}`;
 }
+async function generateBookIllustration(chapter){if(AI_PROVIDER!=='openrouter')return '/assets/vitriny-city-master.jpg';const result=await openRouterRequest('https://openrouter.ai/api/v1/images',{method:'POST',body:JSON.stringify({model:OPENROUTER_IMAGE_MODEL,prompt:`Ilustração editorial profissional para livro, formato horizontal 16:9, livro ${chapter.book_title}, categoria ${chapter.category}, capítulo ${chapter.position}: ${chapter.title}. Sem texto escrito, logotipos, marcas ou rosto de pessoa real. Visual educativo e elegante.`,n:1,aspect_ratio:'16:9'})},120000);const item=result.data?.data?.[0]||result.data?.images?.[0],encoded=String(item?.b64_json||item?.image_url?.url||'').replace(/^data:[^;]+;base64,/,'');const buffer=Buffer.from(encoded,'base64');if(!buffer.length||buffer.length>25*1024*1024)throw new Error('Ilustração inválida.');const file=`book-chapter-${chapter.id}-${Date.now()}.png`;fs.writeFileSync(path.join(generatedMediaDir,file),buffer,{flag:'wx'});return `/uploads/generated-videos/${file}`}
 
 const WHATSAPP_MESSAGE_CREDIT_UNITS = 100;
 const whatsappVersion = () => String(process.env.META_API_VERSION || 'v24.0').trim();
