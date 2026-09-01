@@ -1304,7 +1304,12 @@ const COURSE_PRICE_CENTS = 2399;
 const VIDEO_PACKAGE = Object.freeze({ slug: '10-videos-loja', amountCents: 20000, quantity: 10 });
 const DIGITAL_SERVICE_PACKAGES = Object.freeze({
   'google-maps-essencial': Object.freeze({ title:'Otimização Google e Maps', amountCents:15000, description:'Diagnóstico, palavras-chave, informações, fotos e plano de otimização do Perfil da Empresa no Google' }),
-  'pagina-empresa': Object.freeze({ title:'Página profissional da empresa', amountCents:50000, description:'Criação de página empresarial responsiva com apresentação, contatos, localização e chamada para ação' })
+  'pagina-empresa': Object.freeze({ title:'Página profissional da empresa', amountCents:50000, description:'Criação de página empresarial responsiva com apresentação, contatos, localização e chamada para ação' }),
+  '10-videos-loja': Object.freeze({ title:'Pacote de 10 vídeos curtos', amountCents:20000, description:'Roteiro, criação e entrega de dez vídeos verticais para divulgar produtos, serviços e ofertas' }),
+  'identidade-social': Object.freeze({ title:'Kit de identidade para redes sociais', amountCents:29900, description:'Foto de perfil, capa, paleta visual e dez artes editáveis para redes sociais' }),
+  'seo-local': Object.freeze({ title:'SEO local e presença digital', amountCents:35000, description:'Auditoria de buscas locais, palavras-chave, páginas e plano de conteúdo para atrair clientes da região' }),
+  'chatbot-atendimento': Object.freeze({ title:'Configuração de chatbot de atendimento', amountCents:45000, description:'Configuração inicial de respostas, horários, captação de leads e encaminhamento para atendimento humano' }),
+  'loja-digital': Object.freeze({ title:'Implantação de loja digital', amountCents:75000, description:'Cadastro visual da loja, organização inicial de até vinte produtos, contatos, pagamentos e orientação de operação' })
 });
 const REFERRAL_RATE_BPS = 600;
 const COURSE_REFERRAL_RATE_BPS = 4500;
@@ -1996,6 +2001,7 @@ function publicWallet(userId) {
 }
 
 app.use(express.json({ limit: '5mb', verify: (req, _res, buffer) => { req.rawBody = Buffer.from(buffer); } }));
+app.use((req,res,next)=>{const send=res.send.bind(res);res.send=body=>{const type=String(res.getHeader('content-type')||'');if(req.method==='GET'&&!req.path.startsWith('/admin')&&typeof body==='string'&&type.includes('text/html')&&body.includes('</body>')&&!body.includes('/global-market-banner.js'))body=body.replace('</body>','<script src="/global-market-banner.js" defer></script></body>');return send(body)};next()});
 app.set('trust proxy', 1);
 app.use((req, res, next) => {
   res.set({
@@ -2023,7 +2029,7 @@ setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEdi
 setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover,generateBookIllustration});
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
-  const tags = [...scripts, '/social-accessibility.js'].map(src => `<script src="${src}" defer></script>`).join('');
+  const tags = [...scripts, '/social-accessibility.js','/global-market-banner.js'].map(src => `<script src="${src}" defer></script>`).join('');
   return res.type('html').send(page.replace('</body>', `${tags}</body>`));
 };
 const publicErrorPage = (res, status) => res.status(status).sendFile(path.join(dir, 'public', `${status}.html`));
@@ -2044,7 +2050,7 @@ app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
 app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
 app.get('/admin-tiktok.html',requireAdmin,publicPage('admin-tiktok.html'));
 app.get('/admin-lojas.html',requireAdmin,publicPage('admin-lojas.html'));
-app.get('/admin-servicos.html',requireAdmin,publicPage('admin-servicos.html'));
+app.get('/admin-servicos.html',requireAdmin,(_req,res)=>{const page=fs.readFileSync(path.join(dir,'public','admin-servicos.html'),'utf8');res.type('html').send(page.replace('</body>','<script src="/admin-services-catalog.js" defer></script></body>'))});
 app.get('/recursos-social.html', enhancedPublicPage('recursos-social.html'));
 app.get('/cidade', publicPage('cidade-exploravel.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
@@ -2149,6 +2155,7 @@ app.get('/feeds/meta-catalog.csv', (_req, res) => {
   return res.type('text/csv').set('Content-Disposition', 'inline; filename="vitrinecity-meta-catalog.csv"')
     .set('Cache-Control', 'public,max-age=300').send(`\uFEFF${csv}\n`);
 });
+app.use((req,res,next)=>{if(req.method!=='GET'||req.path.startsWith('/admin'))return next();const relative=req.path==='/'?'index.html':decodeURIComponent(req.path).replace(/^\//,'');const candidates=relative.endsWith('.html')?[relative]:[`${relative}.html`];for(const candidate of candidates){if(candidate.includes('/')||candidate.includes('..'))continue;const file=path.join(dir,'public',candidate);if(!fs.existsSync(file))continue;const page=fs.readFileSync(file,'utf8');return res.type('html').send(page.replace('</body>','<script src="/global-market-banner.js" defer></script></body>'))}return next()});
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
 
 app.get('/r/:code', (req, res) => {
@@ -5578,7 +5585,10 @@ app.post('/api/services/digital/:slug/checkout', sameOriginOnly, async (req,res)
   }catch(error){db.prepare("UPDATE service_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);console.error('Mercado Pago digital service error',error?.message||'unknown');return res.status(502).json({error:'Não foi possível iniciar o pagamento agora.'});}
 });
 
-app.get('/api/admin/service-orders',requireAdmin,(_req,res)=>res.json({orders:db.prepare('SELECT * FROM service_orders ORDER BY id DESC LIMIT 300').all()}));
+const publicServiceCatalog=()=>Object.entries(DIGITAL_SERVICE_PACKAGES).map(([slug,item])=>({slug,...item,checkoutUrl:`/servicos-digitais.html?servico=${encodeURIComponent(slug)}`}));
+app.get('/api/services/digital',(_req,res)=>res.json({items:publicServiceCatalog()}));
+app.get('/servicos-digitais.html',(_req,res)=>res.type('html').send(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Serviços digitais — VitrineCity</title><meta name="description" content="Serviços digitais da VitrineCity para lojas, profissionais e empresas."><style>:root{--navy:#071f4b;--blue:#1768e6;--bg:#f1f7ff;--line:#d6e5f7}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--navy);font-family:Inter,Arial,sans-serif}header{height:70px;padding:0 5vw;display:flex;align-items:center;justify-content:space-between;background:#fff}header a{text-decoration:none;font-weight:950}.hero{text-align:center;padding:65px 20px;background:linear-gradient(135deg,#071f4b,#1768e6);color:#fff}.hero h1{font-size:clamp(40px,7vw,68px);margin:8px}.hero p{max-width:720px;margin:auto;color:#d7e6ff}.grid{max-width:1180px;margin:35px auto;padding:0 20px;display:grid;grid-template-columns:repeat(3,1fr);gap:15px}.card{background:#fff;border:1px solid var(--line);border-radius:20px;padding:21px}.card h2{font-size:21px}.price{font-size:30px;font-weight:950;margin:15px 0}.card p{color:#607493;line-height:1.5;min-height:70px}.card button,.form button{width:100%;padding:13px;border:0;border-radius:11px;background:var(--blue);color:#fff;font-weight:950;cursor:pointer}.form{display:none;max-width:650px;margin:25px auto 60px;padding:25px;background:#fff;border:1px solid var(--line);border-radius:20px}.form.open{display:block}.form label{display:block;margin:11px 0 5px;font-weight:850}.form input{width:100%;padding:12px;border:1px solid #bdd2eb;border-radius:9px}.check{display:flex;gap:8px;margin:12px 0;color:#526a8b}.check input{width:auto}.message{min-height:22px;color:#9a4300}@media(max-width:850px){.grid{grid-template-columns:1fr}.card p{min-height:0}}</style></head><body><header><a href="/">VitrineCity</a><a href="/centro-educacional.html">Centro Educacional</a></header><section class="hero"><small>SERVIÇOS DIGITAIS PARA CRESCER</small><h1>Escolha, contrate e acompanhe</h1><p>Pacotes com preço claro, pagamento protegido pelo Mercado Pago e produção acompanhada pela equipe VitrineCity.</p></section><main><section class="grid" id="catalog"></section><form class="form" id="checkout"><h2 id="selectedTitle">Contratar serviço</h2><input type="hidden" name="slug"><label>Seu nome<input name="name" required minlength="2"></label><label>E-mail<input name="email" type="email" required></label><label>WhatsApp<input name="whatsapp"></label><label class="check"><input name="consent" type="checkbox" required> Autorizo o uso dos dados para atendimento deste pedido.</label><label class="check"><input name="termsAccepted" type="checkbox" required> Aceito os termos do serviço e entendo que não há garantia de resultados em buscas ou vendas.</label><button>Continuar para pagamento</button><p class="message" id="message"></p></form></main><script>const money=c=>(c/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let items=[];function choose(slug){const item=items.find(x=>x.slug===slug);if(!item)return;checkout.classList.add('open');checkout.elements.slug.value=slug;selectedTitle.textContent=item.title+' · '+money(item.amountCents);checkout.scrollIntoView({behavior:'smooth',block:'center'})}fetch('/api/services/digital').then(r=>r.json()).then(d=>{items=d.items||[];catalog.innerHTML=items.map(i=>'<article class="card"><small>DISPONÍVEL</small><h2>'+esc(i.title)+'</h2><div class="price">'+money(i.amountCents)+'</div><p>'+esc(i.description)+'</p><button data-slug="'+esc(i.slug)+'">Contratar</button></article>').join('');catalog.onclick=e=>{const b=e.target.closest('button');if(b)choose(b.dataset.slug)};const requested=new URLSearchParams(location.search).get('servico');if(requested)choose(requested)});checkout.onsubmit=async e=>{e.preventDefault();message.textContent='Preparando pagamento…';const data=Object.fromEntries(new FormData(checkout));data.consent=checkout.elements.consent.checked;data.termsAccepted=checkout.elements.termsAccepted.checked;const r=await fetch('/api/services/digital/'+encodeURIComponent(data.slug)+'/checkout',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(data)}),d=await r.json();if(r.ok&&d.checkoutUrl)return location.href=d.checkoutUrl;message.textContent=d.error||'Não foi possível iniciar o pagamento.'}</script><script src="/global-market-banner.js" defer></script></body></html>`));
+app.get('/api/admin/service-orders',requireAdmin,(_req,res)=>res.json({catalog:publicServiceCatalog(),orders:db.prepare('SELECT * FROM service_orders ORDER BY id DESC LIMIT 300').all()}));
 app.patch('/api/admin/service-orders/:reference',requireAdmin,sameOriginOnly,(req,res)=>{const status=String(req.body?.deliveryStatus||''),allowed=new Set(['awaiting_payment','awaiting_brief','brief_received','in_production','awaiting_approval','delivered','cancelled']);if(!allowed.has(status))return res.status(400).json({error:'Etapa inválida.'});const result=db.prepare('UPDATE service_orders SET delivery_status=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?').run(status,req.params.reference);if(!result.changes)return res.status(404).json({error:'Pedido não encontrado.'});return res.json({ok:true});});
 
 function validMercadoPagoSignature(req, dataId, secret = process.env.MERCADOPAGO_WEBHOOK_SECRET) {
