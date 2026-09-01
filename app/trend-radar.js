@@ -33,6 +33,8 @@ const tag = (xml, name) =>
 
 function portalFor(title) {
   const text = title.toLowerCase();
+  if (/planta|jardin|horta|flor|orquidea|suculenta|adubo|vaso|folhagem/.test(text))
+    return "plantas-e-jardinagem";
   if (
     /futebol|jogo|campeonato|brasileir|copa|gol|time|atlet|corrida|ufc|nba|volei/.test(
       text,
@@ -72,6 +74,7 @@ function renderIndex(portal, rows) {
     noticias: "Vitrine Notícias",
     esportes: "Vitrine Esportes",
     receitas: "Vitrine Receitas",
+    "plantas-e-jardinagem": "Plantas e Jardinagem",
     tecnologia: "Vitrine Tecnologia",
     "inteligencia-artificial": "Vitrine Inteligência Artificial",
     entretenimento: "Vitrine Famosos e Entretenimento",
@@ -110,8 +113,9 @@ function renderArticle(row, products = []) {
         `<li><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title || s.url)}</a></li>`,
     )
     .join("");
+  const adContext = JSON.stringify(`${row.portal} ${row.title}`).replace(/</g, "\\u003c");
   const productCarousel = products.length
-    ? `<section class="products"><div class="products-head"><div><small>VITRINECITY LOJA</small><h2>Produtos que você pode gostar</h2></div><a href="/loja">Ver catálogo completo →</a></div><div class="product-track">${products.map(product => `<a class="product-card" href="/produto/${encodeURIComponent(product.id)}/${esc(slugify(product.name))}"><img src="${esc(product.image_url || "/assets/vitriny-city-master.jpg")}" alt="${esc(product.name)}"><span>${esc(product.store_name)}</span><strong>${esc(product.name)}</strong><b>${(Number(product.price_cents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</b></a>`).join("")}</div></section>`
+    ? `<section class="context-ad" id="contextAd" hidden><small>CONTEÚDO PATROCINADO</small><a rel="nofollow sponsored"><img alt=""><span><b></b><em></em></span></a></section><script>fetch('/api/ads/serve?placement=banner&context='+encodeURIComponent(${adContext})).then(r=>r.json()).then(d=>{const ad=d.ads?.[0];if(!ad)return;const box=document.getElementById('contextAd'),link=box.querySelector('a'),img=box.querySelector('img');link.href=ad.clickUrl;box.querySelector('b').textContent=ad.title;box.querySelector('em').textContent=ad.text;if(ad.imageUrl){img.src=ad.imageUrl;img.alt=ad.title}else img.remove();box.hidden=false}).catch(()=>{})<\/script><section class="products"><div class="products-head"><div><small>VITRINECITY LOJA</small><h2>Produtos relacionados ao assunto</h2></div><a href="/loja">Ver catálogo completo →</a></div><div class="product-track">${products.map(product => `<a class="product-card" href="/produto/${encodeURIComponent(product.id)}/${esc(slugify(product.name))}"><img src="${esc(product.image_url || "/assets/vitriny-city-master.jpg")}" alt="${esc(product.name)}"><span>${esc(product.store_name)}</span><strong>${esc(product.name)}</strong><b>${(Number(product.price_cents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</b></a>`).join("")}</div></section>`
     : "";
   const schema = JSON.stringify({
     "@context": "https://schema.org",
@@ -148,10 +152,47 @@ export function setupTrendRadar({
   CREATE TABLE IF NOT EXISTS editorial_agent_reviews(id INTEGER PRIMARY KEY,article_id TEXT NOT NULL,agent_code TEXT NOT NULL,approved INTEGER NOT NULL DEFAULT 0,notes TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(article_id,agent_code));
   CREATE TABLE IF NOT EXISTS editorial_automation_log(id INTEGER PRIMARY KEY,cycle_started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,cycle_finished_at TEXT,status TEXT NOT NULL DEFAULT 'running',created_count INTEGER NOT NULL DEFAULT 0,published_count INTEGER NOT NULL DEFAULT 0,error TEXT NOT NULL DEFAULT '');`);
 
+  db.prepare(`INSERT OR IGNORE INTO editorial_articles
+    (id,slug,portal,title,summary,body,image_url,sources_json,status,published_at)
+    VALUES (?,?,?,?,?,?,?,'[]','published',CURRENT_TIMESTAMP)`).run(
+      "seed-guia-plantas-2026",
+      "como-cuidar-de-plantas-em-casa-guia-pratico",
+      "plantas-e-jardinagem",
+      "Como cuidar de plantas em casa: guia prático para começar",
+      "Aprenda a observar luz, rega, substrato, vasos e sinais das folhas para manter suas plantas saudáveis sem complicação.",
+      `Uma planta saudável começa no lugar certo. Antes de pensar em adubo ou em uma rotina rígida de rega, observe quanta luz chega ao ambiente. Luz forte indireta, sol direto e sombra luminosa são condições diferentes. Aproximar uma planta de uma janela pode ajudar, mas algumas folhas queimam quando recebem sol intenso de repente. Faça mudanças graduais e acompanhe a resposta durante alguns dias.
+
+A rega deve seguir a necessidade da planta e a umidade do substrato, não apenas o calendário. Coloque o dedo alguns centímetros na terra: se a camada ainda estiver úmida, espere. Quando chegar a hora, regue até a água começar a sair pelos furos do vaso e descarte o excesso do prato. Manter raízes constantemente encharcadas reduz a entrada de oxigênio e favorece problemas. Folhas murchas podem indicar falta ou excesso de água, por isso a terra precisa ser examinada antes da próxima rega.
+
+O vaso precisa ter drenagem. Recipientes decorativos sem furos podem ser usados como cachepô, mantendo dentro deles um vaso próprio para cultivo. O tamanho também importa: um recipiente grande demais conserva umidade por muito tempo, enquanto um vaso pequeno pode limitar raízes e secar rapidamente. Ao trocar a planta, aumente apenas um pouco o diâmetro e preserve o torrão quando as raízes estiverem saudáveis.
+
+Substrato não é apenas terra comum. Uma boa mistura precisa sustentar a planta, guardar parte da umidade e permitir circulação de ar. A composição muda conforme a espécie: suculentas costumam exigir drenagem rápida, enquanto plantas tropicais podem preferir umidade mais constante. Produtos específicos ajudam, mas a escolha deve considerar o ambiente, o vaso e a frequência real de rega.
+
+Adubo complementa o cultivo; ele não corrige falta de luz, excesso de água ou raízes doentes. Leia o rótulo, respeite a dose e evite aplicar mais produto esperando crescimento mais rápido. Em muitos casos, uma dose menor e regular é mais segura. Plantas recém-transplantadas, enfraquecidas ou com sinais de apodrecimento devem ser estabilizadas antes de receber adubação.
+
+As folhas contam o que está acontecendo. Pontas secas podem estar ligadas a baixa umidade, acúmulo de sais ou rega irregular. Amarelamento pode surgir pelo envelhecimento natural de folhas inferiores, mas também por excesso de água. Manchas que aumentam, presença de teias ou pequenos insetos merecem isolamento e inspeção. Limpe as folhas com cuidado e examine o verso, onde muitas pragas se escondem.
+
+Crie uma rotina simples: observe as plantas uma ou duas vezes por semana, gire os vasos para equilibrar o crescimento e retire somente folhas totalmente secas ou doentes. Registre mudanças de lugar, regas e adubações quando estiver aprendendo. Esse histórico ajuda a descobrir o que funciona no seu ambiente, porque temperatura, vento e luminosidade variam de uma casa para outra.
+
+Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é seguir uma fórmula perfeita, mas perceber sinais cedo e ajustar o cuidado. Com luz adequada, drenagem, rega consciente e observação frequente, a maior parte dos problemas pode ser evitada antes de comprometer a planta.`,
+      "/assets/agrotecnica-premium-v2.webp",
+    );
+  db.prepare(`INSERT OR IGNORE INTO trend_topics
+    (id,title,traffic,published_at,portal,status,source_url)
+    VALUES (?,?,?,?,?,'new',?)`).run(
+      "owned-social-plant-care-guide",
+      "Guia prático de cuidados com plantas em casa",
+      "tema validado por vídeos próprios com alto engajamento",
+      new Date().toISOString(),
+      "plantas-e-jardinagem",
+      "https://vitrinecity.com/plantas-e-jardinagem",
+    );
+
   const editorialPortals = [
     "noticias",
     "esportes",
     "receitas",
+    "plantas-e-jardinagem",
     "tecnologia",
     "inteligencia-artificial",
     "entretenimento",
@@ -498,6 +539,7 @@ export function setupTrendRadar({
           "noticias",
           "esportes",
           "receitas",
+          "plantas-e-jardinagem",
           "tecnologia",
           "inteligencia-artificial",
           "entretenimento",
@@ -549,6 +591,7 @@ export function setupTrendRadar({
     "noticias",
     "esportes",
     "receitas",
+    "plantas-e-jardinagem",
     "tecnologia",
     "inteligencia-artificial",
     "entretenimento",
@@ -575,7 +618,8 @@ export function setupTrendRadar({
       )
       .get(req.params.slug);
     if (!row) return res.status(404).send("Artigo não encontrado.");
-    const products = db.prepare(`SELECT p.id,p.name,p.price_cents,p.image_url,s.business_name store_name FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0 AND s.review_status='published' ORDER BY p.updated_at DESC,p.id DESC LIMIT 10`).all();
+    const contextTerms = row.portal === 'receitas' ? /cozinha|panela|forma|alimento|tempero|receita/ : row.portal === 'plantas-e-jardinagem' ? /planta|adubo|terra|substrato|vaso|jardin|semente|npk/ : null;
+    const products = db.prepare(`SELECT p.id,p.name,p.category,p.price_cents,p.image_url,s.business_name store_name FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0 AND s.review_status='published' ORDER BY p.updated_at DESC,p.id DESC LIMIT 40`).all().sort((a,b)=>Number(contextTerms?.test(`${b.name} ${b.category}`.toLowerCase()))-Number(contextTerms?.test(`${a.name} ${a.category}`.toLowerCase()))).slice(0,10);
     return res.type("html").send(renderArticle(row, products));
   });
 }

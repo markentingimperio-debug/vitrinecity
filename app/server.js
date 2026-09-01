@@ -2116,7 +2116,7 @@ app.get('/sitemap.xml', (_req, res) => {
   const fixedPaths = [
     '/', '/cidade', '/cidade/bairro-premium', '/cidade/praca-central', '/cidade/avenida-premium',
     '/social', '/descobrir', '/loja', '/centro-educacional.html', '/afiliados.html', '/grupos-whatsapp.html',
-    '/conteudo', '/noticias', '/esportes', '/receitas', '/tecnologia', '/inteligencia-artificial', '/entretenimento', '/livros',
+    '/conteudo', '/noticias', '/esportes', '/receitas', '/plantas-e-jardinagem', '/tecnologia', '/inteligencia-artificial', '/entretenimento', '/livros',
     '/para-empresas.html', '/solucoes.html', '/como-funciona.html', '/comprar-lote.html', '/sobre.html',
     '/contato.html', '/privacy.html', '/termos-predio-digital.html', '/termos-marketplace.html',
     '/politica-vendedor-marketplace.html', '/politica-comprador-marketplace.html',
@@ -2726,6 +2726,7 @@ function adCampaignScore(campaign, query) {
 
 app.get('/api/ads/serve', (req, res) => {
   const query = String(req.query.q || '').trim().slice(0, 80);
+  const context = String(req.query.context || '').trim().slice(0, 300);
   const city = String(req.query.city || '').trim().slice(0, 80).toLowerCase();
   const placement = ['search','map','banner'].includes(String(req.query.placement || '')) ? String(req.query.placement) : 'search';
   if ((placement === 'search' && query.length < 2)||likelyAutomatedAdTraffic(req)) return res.json({ ads: [] });
@@ -2750,12 +2751,12 @@ app.get('/api/ads/serve', (req, res) => {
     LIMIT 80`).all(today, placement, today, today, city, city, ADS_CREDITS_PER_REAL, ADS_INTERNAL_CLICK_COST_UNITS)
     .filter(campaign => {
       if(viewer&&Number(campaign.user_id)===Number(viewer.id))return false;
-      if(placement !== 'search')return true;
+      if(placement !== 'search'&&!context)return true;
       const targets = normalizedAdTerms(`${campaign.keywords} ${campaign.category} ${campaign.creative_title} ${campaign.creative_text}`);
-      const queryTerms = normalizedAdTerms(query);
+      const queryTerms = normalizedAdTerms(query||context);
       return queryTerms.some(term => targets.some(target => target.includes(term) || term.includes(target)));
     })
-    .sort((a, b) => adCampaignScore(b, query) - adCampaignScore(a, query)).slice(0, placement==='search'?3:8);
+    .sort((a, b) => adCampaignScore(b, query||context) - adCampaignScore(a, query||context)).slice(0, placement==='search'?3:8);
   const record = db.prepare(`INSERT OR IGNORE INTO ad_delivery_events
     (campaign_id,event_type,event_token,visitor_key,query_text,cost_units,event_day)
     VALUES (?,'impression',?,?,?,0,?)`);
