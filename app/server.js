@@ -6361,7 +6361,9 @@ app.get('/api/maps/stores', (req, res) => {
       latitude: store.locationPrecision === 'area' ? Math.round(Number(store.latitude) * 100) / 100 : Number(store.latitude),
       longitude: store.locationPrecision === 'area' ? Math.round(Number(store.longitude) * 100) / 100 : Number(store.longitude),
       addressVisible: store.locationPrecision === 'exact',
-      storeUrl: publicStorePath({ order_reference: store.reference, business_name: store.name })
+      storeUrl: store.reference === 'official_centro_educacional'
+        ? '/centro-educacional.html'
+        : publicStorePath({ order_reference: store.reference, business_name: store.name })
     }));
   const filters = db.prepare(`SELECT DISTINCT city,state FROM store_profiles
     WHERE review_status='published' AND show_on_real_map=1 AND latitude IS NOT NULL AND longitude IS NOT NULL
