@@ -187,7 +187,7 @@ export function setupTrendRadar({
       body = String(generated.body || "").trim();
     const summary = String(generated.summary || "").trim(),
       imageUrl = String(generated.imageUrl || "");
-    const sourceOk = /^https:\/\//i.test(String(trend.source_url || ""));
+    const sourceOk = false;
     const reviews = [
       [
         "redacao",
@@ -198,8 +198,8 @@ export function setupTrendRadar({
         "fontes",
         sourceOk,
         sourceOk
-          ? "Fonte de tendência identificada."
-          : "Fonte ausente ou inválida.",
+          ? "Duas ou mais fontes independentes verificadas."
+          : "Google Trends identifica interesse, mas não comprova os fatos; exige fontes independentes.",
       ],
       [
         "midia",
