@@ -2051,7 +2051,18 @@ app.use('/uploads/store-assets', express.static(path.join(dataDir, 'store-assets
 app.use('/uploads/generated-videos', express.static(path.join(dataDir, 'generated-videos'), {
   immutable: true, maxAge: '30d', fallthrough: false
 }));
-const publicPage = file => (_req, res) => res.sendFile(path.join(dir, 'public', file));
+const publicPage = file => (req, res) => {
+  const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
+  if (
+    req.path.startsWith('/admin') ||
+    page.includes('/global-market-banner.js') ||
+    !page.includes('</body>')
+  ) return res.type('html').send(page);
+  return res.type('html').send(page.replace(
+    '</body>',
+    '<script src="/global-market-banner.js?v=4" defer></script></body>'
+  ));
+};
 setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft });
 setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover,generateBookIllustration});
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {

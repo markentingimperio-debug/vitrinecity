@@ -1,4 +1,6 @@
 (() => {
+  if (window.__vcGlobalMarketBannerLoaded) return;
+  window.__vcGlobalMarketBannerLoaded = true;
   if (
     document.querySelector("#vc-global-market-banner") ||
     location.pathname === "/" ||
