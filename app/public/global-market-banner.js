@@ -51,9 +51,7 @@
       document.body.prepend(aside);
       aside.querySelector("button").onclick = () => {
         aside.remove();
-        sessionStorage.setItem("vc_banner_closed", "1");
       };
-      if (sessionStorage.getItem("vc_banner_closed") === "1") aside.remove();
     })
     .catch(() => {});
 })();

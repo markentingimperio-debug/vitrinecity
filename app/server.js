@@ -1308,17 +1308,17 @@ const ADS_INTERNAL_CLICK_COST_UNITS = 480;
 const COURSE_PRICE_CENTS = 2399;
 const VIDEO_PACKAGE = Object.freeze({ slug: '10-videos-loja', amountCents: 20000, quantity: 10 });
 const DIGITAL_SERVICE_PACKAGES = Object.freeze({
-  'ads-banner-outdoor-7-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 7 dias', amountCents:5000, description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 7 dias, após aprovação do material.' }),
-  'ads-banner-outdoor-15-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 15 dias', amountCents:7500, description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 15 dias, após aprovação do material.' }),
-  'ads-banner-outdoor-30-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 30 dias', amountCents:10000, description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 30 dias, após aprovação do material.' }),
-  'ads-banner-outdoor-60-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 60 dias', amountCents:17500, description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 60 dias, após aprovação do material.' }),
-  'google-maps-essencial': Object.freeze({ title:'Otimização Google e Maps', amountCents:15000, description:'Diagnóstico, palavras-chave, informações, fotos e plano de otimização do Perfil da Empresa no Google' }),
-  'pagina-empresa': Object.freeze({ title:'Página profissional da empresa', amountCents:50000, description:'Criação de página empresarial responsiva com apresentação, contatos, localização e chamada para ação' }),
-  '10-videos-loja': Object.freeze({ title:'Pacote de 10 vídeos curtos', amountCents:20000, description:'Roteiro, criação e entrega de dez vídeos verticais para divulgar produtos, serviços e ofertas' }),
-  'identidade-social': Object.freeze({ title:'Kit de identidade para redes sociais', amountCents:29900, description:'Foto de perfil, capa, paleta visual e dez artes editáveis para redes sociais' }),
-  'seo-local': Object.freeze({ title:'SEO local e presença digital', amountCents:35000, description:'Auditoria de buscas locais, palavras-chave, páginas e plano de conteúdo para atrair clientes da região' }),
-  'chatbot-atendimento': Object.freeze({ title:'Configuração de chatbot de atendimento', amountCents:45000, description:'Configuração inicial de respostas, horários, captação de leads e encaminhamento para atendimento humano' }),
-  'loja-digital': Object.freeze({ title:'Implantação de loja digital', amountCents:75000, description:'Cadastro visual da loja, organização inicial de até vinte produtos, contatos, pagamentos e orientação de operação' })
+  'ads-banner-outdoor-7-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 7 dias', amountCents:5000, imageUrl:'/assets/services/ads-7-dias.jpg', description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 7 dias, após aprovação do material.' }),
+  'ads-banner-outdoor-15-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 15 dias', amountCents:7500, imageUrl:'/assets/services/ads-15-dias.jpg', description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 15 dias, após aprovação do material.' }),
+  'ads-banner-outdoor-30-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 30 dias', amountCents:10000, imageUrl:'/assets/services/ads-30-dias.jpg', description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 30 dias, após aprovação do material.' }),
+  'ads-banner-outdoor-60-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 60 dias', amountCents:17500, imageUrl:'/assets/services/ads-60-dias.jpg', description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 60 dias, após aprovação do material.' }),
+  'google-maps-essencial': Object.freeze({ title:'Otimização Google e Maps', amountCents:15000, imageUrl:'/assets/services/google-maps.jpg', description:'Diagnóstico, palavras-chave, informações, fotos e plano de otimização do Perfil da Empresa no Google' }),
+  'pagina-empresa': Object.freeze({ title:'Página profissional da empresa', amountCents:50000, imageUrl:'/assets/services/pagina-empresa.jpg', description:'Criação de página empresarial responsiva com apresentação, contatos, localização e chamada para ação' }),
+  '10-videos-loja': Object.freeze({ title:'Pacote de 10 vídeos curtos', amountCents:20000, imageUrl:'/assets/services/videos-curtos.jpg', description:'Roteiro, criação e entrega de dez vídeos verticais para divulgar produtos, serviços e ofertas' }),
+  'identidade-social': Object.freeze({ title:'Kit de identidade para redes sociais', amountCents:29900, imageUrl:'/assets/services/identidade-social.jpg', description:'Foto de perfil, capa, paleta visual e dez artes editáveis para redes sociais' }),
+  'seo-local': Object.freeze({ title:'SEO local e presença digital', amountCents:35000, imageUrl:'/assets/services/seo-local.jpg', description:'Auditoria de buscas locais, palavras-chave, páginas e plano de conteúdo para atrair clientes da região' }),
+  'chatbot-atendimento': Object.freeze({ title:'Configuração de chatbot de atendimento', amountCents:45000, imageUrl:'/assets/services/chatbot.jpg', description:'Configuração inicial de respostas, horários, captação de leads e encaminhamento para atendimento humano' }),
+  'loja-digital': Object.freeze({ title:'Implantação de loja digital', amountCents:75000, imageUrl:'/assets/services/loja-digital.jpg', description:'Cadastro visual da loja, organização inicial de até vinte produtos, contatos, pagamentos e orientação de operação' })
 });
 const REFERRAL_RATE_BPS = 600;
 const COURSE_REFERRAL_RATE_BPS = 4500;
@@ -1573,7 +1573,7 @@ function recordAdminLogin(req,email,success,reason){
   db.prepare("DELETE FROM admin_login_audit WHERE created_at<datetime('now','-180 days')").run();
 }
 
-const ADMIN_HTML_PATHS=new Set(['/admin','/admin.html','/admin-agentes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html']);
+const ADMIN_HTML_PATHS=new Set(['/admin','/admin.html','/admin-agentes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html','/admin-conteudos.html']);
 
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
@@ -2060,7 +2060,7 @@ const publicPage = file => (req, res) => {
   ) return res.type('html').send(page);
   return res.type('html').send(page.replace(
     '</body>',
-    '<script src="/global-market-banner.js?v=4" defer></script></body>'
+    '<script src="/global-market-banner.js?v=5" defer></script></body>'
   ));
 };
 setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft });
@@ -2089,7 +2089,8 @@ app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
 app.get('/admin-tiktok.html',requireAdmin,publicPage('admin-tiktok.html'));
 app.get('/admin-lojas.html',requireAdmin,publicPage('admin-lojas.html'));
 app.get('/admin-mapa-real.html',requireAdmin,publicPage('admin-mapa-real.html'));
-app.get('/admin-servicos.html',requireAdmin,(_req,res)=>{const page=fs.readFileSync(path.join(dir,'public','admin-servicos.html'),'utf8');res.type('html').send(page.replace('</body>','<script src="/admin-services-catalog.js" defer></script></body>'))});
+app.get('/admin-servicos.html',requireAdmin,(_req,res)=>{const page=fs.readFileSync(path.join(dir,'public','admin-servicos.html'),'utf8');res.type('html').send(page.replace('</body>','<script src="/admin-services-catalog.js?v=2" defer></script></body>'))});
+app.get('/admin-conteudos.html',requireAdmin,publicPage('admin-conteudos.html'));
 app.get('/recursos-social.html', enhancedPublicPage('recursos-social.html'));
 app.get('/cidade', publicPage('cidade-exploravel.html'));
 app.get('/mapa-real', (_req,res)=>res.redirect(301,'/cidade-premium'));
