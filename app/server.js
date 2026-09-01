@@ -2090,6 +2090,53 @@ app.get('/sitemap.xml', (_req, res) => {
     .map(item => `  <url><loc>${escapeXml(`${origin}${item}`)}</loc></url>`).join('\n')}\n</urlset>\n`;
   return res.type('application/xml').set('Cache-Control', 'public,max-age=300').send(xml);
 });
+
+function metaCatalogCsvCell(value) {
+  const text = String(value ?? '').replace(/\r?\n/g, ' ').trim();
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function metaCatalogUrl(value, fallback = '/') {
+  try { return new URL(String(value || fallback), SITE_URL).href; }
+  catch { return new URL(fallback, SITE_URL).href; }
+}
+
+app.get('/feeds/meta-catalog.csv', (_req, res) => {
+  const products = db.prepare(`SELECT p.id,p.name,p.description,p.category,p.price_cents,p.image_url,p.sku,
+      p.stock_quantity,s.business_name AS store_name
+    FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0
+      AND s.review_status='published'
+    ORDER BY p.updated_at DESC,p.id DESC LIMIT 500`).all();
+  const slugify = value => String(value || 'item').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'item';
+  const rows = products.map(item => ({
+    id: `product-${item.id}`, title: item.name, description: item.description || item.name,
+    availability: 'in stock', condition: 'new', price: `${(Number(item.price_cents) / 100).toFixed(2)} BRL`,
+    link: metaCatalogUrl(`/produto/${item.id}/${slugify(item.name)}`),
+    image_link: metaCatalogUrl(item.image_url, '/logo.png'), brand: item.store_name || 'VitrineCity',
+    google_product_category: item.category || 'Produtos', item_group_id: item.sku || `product-${item.id}`
+  }));
+  rows.unshift({
+    id: 'vitrinecity-demo', title: 'VitrineCity — Demonstração da Plataforma',
+    description: 'Conheça gratuitamente a VitrineCity, sua vitrine digital com lojas, cursos, comunidade e oportunidades.',
+    availability: 'in stock', condition: 'new', price: '0.00 BRL', link: metaCatalogUrl('/'),
+    image_link: metaCatalogUrl('/logo.png'), brand: 'VitrineCity',
+    google_product_category: 'Serviços empresariais', item_group_id: 'vitrinecity-plataforma'
+  });
+  for (const course of managedCourses(true)) rows.push({
+    id: `course-${course.slug}`, title: course.title,
+    description: course.description || `Curso online ${course.title} da VitrineCity`, availability: 'in stock',
+    condition: 'new', price: `${(Number(course.priceCents) / 100).toFixed(2)} BRL`,
+    link: metaCatalogUrl(`/centro-educacional.html#${encodeURIComponent(course.slug)}`),
+    image_link: metaCatalogUrl(course.coverUrl, '/logo.png'), brand: 'VitrineCity',
+    google_product_category: 'Educação e cursos', item_group_id: `course-${course.slug}`
+  });
+  const columns = ['id','title','description','availability','condition','price','link','image_link','brand','google_product_category','item_group_id'];
+  const csv = [columns.join(','), ...rows.map(row => columns.map(column => metaCatalogCsvCell(row[column])).join(','))].join('\n');
+  return res.type('text/csv').set('Content-Disposition', 'inline; filename="vitrinecity-meta-catalog.csv"')
+    .set('Cache-Control', 'public,max-age=300').send(`\uFEFF${csv}\n`);
+});
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
 
 app.get('/r/:code', (req, res) => {
