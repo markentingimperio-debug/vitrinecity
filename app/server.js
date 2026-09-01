@@ -4057,13 +4057,21 @@ function parseEditorialJson(value) {
   return JSON.parse(clean.slice(start, end + 1));
 }
 
+async function requestEditorialText(system,user,maxTokens=2200){
+  if(AI_PROVIDER==='openrouter'){
+    const result=await openRouterRequest('https://openrouter.ai/api/v1/chat/completions',{method:'POST',body:JSON.stringify({model:OPENAI_MODEL,messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:maxTokens,temperature:0.5})},60000);
+    const text=result.data?.choices?.[0]?.message?.content;
+    if(typeof text==='string'&&text.trim())return text.trim();
+    throw new Error('O modelo não devolveu conteúdo editorial.');
+  }
+  const result=await requestOpenAI({model:OPENAI_MODEL,max_output_tokens:maxTokens,input:[{role:'system',content:[{type:'input_text',text:system}]},{role:'user',content:[{type:'input_text',text:user}]}]});
+  const text=responseOutputText(result);if(!text)throw new Error('O modelo não devolveu conteúdo editorial.');return text;
+}
+
 async function generateEditorialDraft({ title, portal, traffic, sourceUrl }) {
   if (!aiConfigured()) { const error = new Error('Configure a chave da IA no painel antes de gerar o artigo.'); error.status = 503; throw error; }
-  const response = await requestOpenAI({ model: OPENAI_MODEL, max_output_tokens: 2200, input: [
-    { role: 'system', content: [{ type: 'input_text', text: 'Você é o agente editorial da VitrineCity. Crie um rascunho em português do Brasil, claro e útil, com 900 a 1.500 caracteres no corpo. Não invente acontecimentos, números, declarações ou fontes. Quando houver apenas uma tendência de busca, explique o assunto e sinalize o que precisa de confirmação editorial. Em entretenimento, não publique boatos, acusações, diagnóstico, localização ou informação privada de pessoas; diferencie fato confirmado de opinião. Em tecnologia e IA, priorize documentação e anúncios oficiais. Não copie textos de terceiros. Retorne somente JSON válido com as chaves title, summary, body e imagePrompt. O resumo deve ter 100 a 220 caracteres; o corpo deve ter no mínimo 600 caracteres, com parágrafos; imagePrompt deve descrever uma capa editorial sem logotipos, marcas, texto escrito ou imitação do rosto de pessoa real.' }] },
-    { role: 'user', content: [{ type: 'input_text', text: `Tema: ${title}\nEditoria: ${portal}\nVolume informado: ${traffic || 'não informado'}\nFonte disponível: ${sourceUrl || 'Google Trends Brasil'}` }] }
-  ] });
-  const article = parseEditorialJson(responseOutputText(response));
+  const raw = await requestEditorialText('Você é o agente editorial da VitrineCity. Crie um rascunho em português do Brasil, claro e útil, com 900 a 1.500 caracteres no corpo. Não invente acontecimentos, números, declarações ou fontes. Quando houver apenas uma tendência de busca, explique o assunto e sinalize o que precisa de confirmação editorial. Em entretenimento, não publique boatos, acusações, diagnóstico, localização ou informação privada. Em tecnologia e IA, priorize fontes oficiais. Retorne somente JSON válido com title, summary, body e imagePrompt. O corpo deve ter no mínimo 600 caracteres. A capa não pode imitar pessoa real.',`Tema: ${title}\nEditoria: ${portal}\nVolume: ${traffic||'não informado'}\nFonte: ${sourceUrl||'Google Trends Brasil'}`,2200);
+  const article = parseEditorialJson(raw);
   const body = String(article.body || '').trim();
   if (body.length < 600) throw new Error('O agente não produziu o mínimo de 600 caracteres. Tente novamente.');
   let imageUrl = '/assets/vitriny-city-master.jpg';
@@ -4084,15 +4092,14 @@ async function generateEditorialDraft({ title, portal, traffic, sourceUrl }) {
 }
 
 async function generateBookPlan(trend) {
-  const response=await requestOpenAI({model:OPENAI_MODEL,max_output_tokens:2200,input:[{role:'system',content:[{type:'input_text',text:'Você coordena a Editora Digital VitrineCity. Transforme a tendência em um livro útil e duradouro, sem copiar terceiros, prometer riqueza, cura ou resultado garantido. Retorne somente JSON válido: title, category, summary, audience, keywords (array) e chapters (exatamente 10 itens com title e brief). Categorias permitidas: desenvolvimento pessoal, finanças pessoais educativas, tecnologia, inteligência artificial, romance ficcional e prosperidade responsável.'}]},{role:'user',content:[{type:'input_text',text:`Tendência: ${trend.title}\nVolume: ${trend.traffic||'não informado'}\nFonte: ${trend.source_url||'Google Trends Brasil'}`}]}]});
-  const plan=parseEditorialJson(responseOutputText(response));
+  const raw=await requestEditorialText('Você coordena a Editora Digital VitrineCity. Transforme a tendência em livro útil e duradouro, sem copiar terceiros nem prometer riqueza, cura ou resultado garantido. Retorne somente JSON válido: title, category, summary, audience, keywords e chapters, exatamente 10 capítulos com title e brief.',`Tendência: ${trend.title}\nVolume: ${trend.traffic||'não informado'}\nFonte: ${trend.source_url||'Google Trends Brasil'}`,2200);
+  const plan=parseEditorialJson(raw);
   if(!plan.title||!Array.isArray(plan.chapters)||plan.chapters.length<10)throw new Error('O coordenador não produziu um plano completo.');
   return plan;
 }
 
 async function generateBookChapter(chapter) {
-  const response=await requestOpenAI({model:OPENAI_MODEL,max_output_tokens:2600,input:[{role:'system',content:[{type:'input_text',text:'Você é redator de livros da Editora Digital VitrineCity. Escreva um capítulo original em português do Brasil com 900 a 1.300 palavras, bem estruturado, prático e coerente. Não copie obras, não invente fontes, não faça promessa financeira, médica ou jurídica. Entregue somente o texto do capítulo, com subtítulos e parágrafos.'}]},{role:'user',content:[{type:'input_text',text:`Livro: ${chapter.book_title}\nCategoria: ${chapter.category}\nResumo: ${chapter.summary}\nCapítulo ${chapter.position}: ${chapter.title}\nOrientação: ${chapter.brief}`}]}]});
-  const text=responseOutputText(response).trim();if(text.split(/\s+/).length<700)throw new Error('Capítulo abaixo do tamanho editorial mínimo.');return text;
+  const text=await requestEditorialText('Você é redator da Editora Digital VitrineCity. Escreva capítulo original em português do Brasil com 900 a 1.300 palavras, bem estruturado. Não copie obras, invente fontes ou faça promessas financeiras, médicas ou jurídicas. Entregue somente o capítulo.',`Livro: ${chapter.book_title}\nCategoria: ${chapter.category}\nResumo: ${chapter.summary}\nCapítulo ${chapter.position}: ${chapter.title}\nOrientação: ${chapter.brief}`,3000);if(text.split(/\s+/).length<700)throw new Error('Capítulo abaixo do tamanho editorial mínimo.');return text;
 }
 
 async function generateBookCover(book) {
