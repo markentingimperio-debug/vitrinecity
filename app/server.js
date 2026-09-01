@@ -4059,10 +4059,10 @@ function parseEditorialJson(value) {
 
 async function requestEditorialText(system,user,maxTokens=2200){
   if(AI_PROVIDER==='openrouter'){
-    const result=await openRouterRequest('https://openrouter.ai/api/v1/chat/completions',{method:'POST',body:JSON.stringify({model:OPENAI_MODEL,messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:maxTokens,temperature:0.5})},60000);
-    const text=result.data?.choices?.[0]?.message?.content;
-    if(typeof text==='string'&&text.trim())return text.trim();
-    throw new Error('O modelo não devolveu conteúdo editorial.');
+    try{const result=await openRouterRequest('https://openrouter.ai/api/v1/chat/completions',{method:'POST',body:JSON.stringify({model:OPENAI_MODEL,messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:maxTokens,temperature:0.5})},45000);const text=result.data?.choices?.[0]?.message?.content;if(typeof text==='string'&&text.trim())return text.trim();}catch(error){console.error('OpenRouter editorial fallback',String(error.message||error));}
+    const directKey=String(process.env.OPENAI_API_KEY||'').trim();
+    if(directKey){const response=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{Authorization:`Bearer ${directKey}`,'Content-Type':'application/json'},body:JSON.stringify({model:String(process.env.OPENAI_DIRECT_MODEL||'gpt-4o-mini'),messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:maxTokens,temperature:0.5}),signal:AbortSignal.timeout(60000)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(String(data?.error?.message||`OpenAI ${response.status}`).slice(0,300));const text=data?.choices?.[0]?.message?.content;if(typeof text==='string'&&text.trim())return text.trim();}
+    throw new Error('Nenhum provedor devolveu conteúdo editorial.');
   }
   const result=await requestOpenAI({model:OPENAI_MODEL,max_output_tokens:maxTokens,input:[{role:'system',content:[{type:'input_text',text:system}]},{role:'user',content:[{type:'input_text',text:user}]}]});
   const text=responseOutputText(result);if(!text)throw new Error('O modelo não devolveu conteúdo editorial.');return text;
