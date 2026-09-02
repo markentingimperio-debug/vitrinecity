@@ -124,6 +124,17 @@
         margin-top: 10px;
         color: var(--muted);
       }
+      .account-status { color:#087a43; font-weight:800; }
+      .store-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:14px; }
+      .store-card { border:1px solid var(--line); border-radius:16px; overflow:hidden; background:#fff; }
+      .store-card img { width:100%; height:130px; object-fit:cover; background:#eaf2fb; }
+      .store-card .store-copy { padding:15px; }
+      .store-card h3 { margin:0 0 7px; }
+      .store-card p { color:var(--muted); min-height:38px; }
+      .store-actions { display:flex; flex-wrap:wrap; gap:8px; }
+      .store-actions a { text-decoration:none; }
+      .favorite { background:#fff; color:#b42464; border:1px solid #efb7d0; }
+      .favorite.active { background:#fff0f6; }
       @media (max-width: 650px) {
         .grid {
           grid-template-columns: 1fr;
@@ -138,12 +149,18 @@
     <header><a href="/">▣ VitrineCity</a></header>
     <main>
       <h1>Minha conta</h1>
+      <p class="account-status" id="accountStatus">● Você está conectado</p>
       <p>
         Seus dados serão preenchidos automaticamente no checkout. Você sempre
         confirmará antes de comprar.
       </p>
       <a class="button return-checkout" id="returnCheckout" href="/loja?carrinho=1">← Voltar para o pagamento</a>
       <div id="content"><p>Carregando…</p></div>
+      <section class="panel" aria-labelledby="stores-title">
+        <h2 id="stores-title">Lojas disponíveis para comprar</h2>
+        <p>Abra uma loja ou salve como favorita sem sair da sua conta.</p>
+        <div class="store-grid" id="accountStores"><p>Carregando lojas…</p></div>
+      </section>
       <section class="panel" aria-labelledby="customer-chat-title">
         <h2 id="customer-chat-title">Atendimento VitrineCity</h2>
         <p>Envie uma mensagem para nossa equipe.</p>
@@ -153,6 +170,7 @@
     <script src="/profile-chat.js"></script>
     <script>
       const content = document.getElementById("content"),
+        accountStores = document.getElementById("accountStores"),
         esc = (s) =>
           String(s || "").replace(
             /[&<>"']/g,
@@ -183,6 +201,16 @@
         document.getElementById("profile").onsubmit = saveProfile;
         document.getElementById("address").onsubmit = saveAddress;
       }
+      let favoriteStores=new Set();
+      async function loadStores(){
+        try{
+          const [storesResponse,favoritesResponse]=await Promise.all([fetch('/api/marketplace/stores'),fetch('/api/customer/favorite-stores')]),storesData=await storesResponse.json(),favoritesData=await favoritesResponse.json();
+          favoriteStores=new Set(favoritesData.references||[]);
+          const items=storesData.stores||[];
+          accountStores.innerHTML=items.map(store=>`<article class="store-card"><img src="${esc(store.image_url)}" alt="${esc(store.business_name)}" onerror="this.onerror=null;this.src='/assets/store-seed/utilidades.svg'"><div class="store-copy"><h3>${esc(store.business_name)}</h3><p>${esc(store.description||`${store.product_count} produtos disponíveis`)}</p><div class="store-actions"><a class="button" href="${esc(store.path)}">${store.open?'Comprar agora':'Ver loja'}</a><button class="button favorite ${favoriteStores.has(store.order_reference)?'active':''}" type="button" data-favorite="${esc(store.order_reference)}">${favoriteStores.has(store.order_reference)?'♥ Favorita':'♡ Salvar favorita'}</button></div></div></article>`).join('')||'<p>Nenhuma loja disponível agora.</p>';
+        }catch{accountStores.innerHTML='<p>Não foi possível carregar as lojas agora.</p>';}
+      }
+      accountStores.onclick=async event=>{const button=event.target.closest('[data-favorite]');if(!button)return;const reference=button.dataset.favorite,isFavorite=favoriteStores.has(reference);button.disabled=true;try{await request('/api/customer/favorite-stores/'+encodeURIComponent(reference),{method:isFavorite?'DELETE':'PUT'});if(isFavorite)favoriteStores.delete(reference);else favoriteStores.add(reference);button.classList.toggle('active',!isFavorite);button.textContent=isFavorite?'♡ Salvar favorita':'♥ Favorita';}catch(error){alert(error.message)}finally{button.disabled=false}};
       async function request(url, options) {
         const r = await fetch(url, options);
         const d = await r.json();
@@ -227,7 +255,7 @@
         await request("/api/customer/addresses/" + id, { method: "DELETE" });
         load();
       }
-      load();
+      load();loadStores();
     </script>
   </body>
 </html>

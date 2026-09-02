@@ -1145,6 +1145,13 @@ db.exec(`CREATE TABLE IF NOT EXISTS customer_addresses (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_customer_addresses_user ON customer_addresses(user_id,is_default,id);
+CREATE TABLE IF NOT EXISTS customer_favorite_stores (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  store_reference TEXT NOT NULL REFERENCES store_profiles(order_reference) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(user_id,store_reference)
+);
+CREATE INDEX IF NOT EXISTS idx_customer_favorite_stores_user ON customer_favorite_stores(user_id,created_at);
 CREATE TABLE IF NOT EXISTS store_products (
   id INTEGER PRIMARY KEY,
   store_reference TEXT NOT NULL REFERENCES store_profiles(order_reference) ON DELETE CASCADE,
@@ -3280,6 +3287,21 @@ app.get('/api/marketplace/products', (req, res) => {
       AND (?='' OR p.name LIKE '%'||?||'%' OR p.description LIKE '%'||?||'%' OR s.business_name LIKE '%'||?||'%')
     ORDER BY p.updated_at DESC,p.id DESC LIMIT 120`).all(category, category, search, search, search, search);
   return res.json({ products });
+});
+
+app.get('/api/customer/favorite-stores',requireUser,(req,res)=>{
+  const references=db.prepare('SELECT store_reference FROM customer_favorite_stores WHERE user_id=? ORDER BY created_at DESC').all(req.user.id).map(row=>row.store_reference);
+  return res.json({references});
+});
+app.put('/api/customer/favorite-stores/:reference',requireUser,sameOriginOnly,(req,res)=>{
+  const reference=String(req.params.reference||'').trim(),store=db.prepare("SELECT order_reference FROM store_profiles WHERE order_reference=? AND review_status='published'").get(reference);
+  if(!store)return res.status(404).json({error:'Loja não encontrada.'});
+  db.prepare('INSERT OR IGNORE INTO customer_favorite_stores(user_id,store_reference) VALUES (?,?)').run(req.user.id,reference);
+  return res.json({ok:true,favorite:true});
+});
+app.delete('/api/customer/favorite-stores/:reference',requireUser,sameOriginOnly,(req,res)=>{
+  db.prepare('DELETE FROM customer_favorite_stores WHERE user_id=? AND store_reference=?').run(req.user.id,String(req.params.reference||'').trim());
+  return res.json({ok:true,favorite:false});
 });
 
 app.get('/api/marketplace/stores', (req,res) => {
