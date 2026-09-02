@@ -141,3 +141,15 @@ Atualizado em 01/09/2026.
 ## Observação para a próxima conversa
 
 Antes de implementar algo novo, ler este arquivo, conferir `git status`, o último commit e o estado real da VPS. Não assumir como concluídas funcionalidades antigas apenas com base na conversa; confirmar por código, API e página publicada.
+
+## Entregas locais — implementação local
+
+- Nova administração: `/admin-entregas.html`.
+- Regra padrão: R$ 5,00 até 1 km e R$ 0,50 por quilômetro adicional iniciado.
+- Divisão padrão: 10% para a VitrineCity e 90% para o entregador.
+- O checkout mantém o frete por transportadora e oferece uma modalidade separada de entrega local.
+- A distância é calculada pela rota real de carro usando a Google Routes API.
+- Configuração necessária na VPS: `GOOGLE_MAPS_ROUTES_API_KEY`, restrita à Routes API.
+- O painel permite configurar tarifas, comissão, alcance máximo, cidades ativas, entregadores, saldos e andamento das corridas.
+- Pedidos locais entram na fila somente após o pagamento ser aprovado.
+- Esta implementação ainda não foi publicada na VPS.

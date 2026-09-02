@@ -20,6 +20,7 @@ import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marke
 import { setupTrendRadar } from './trend-radar.js';
 import { setupDigitalPublisher } from './digital-publisher.js';
 import { marketplaceShippingQuote, melhorEnvioConfig } from './marketplace-shipping.js';
+import { calculateLocalDelivery, formatDeliveryAddress, googleRouteDistance, LOCAL_DELIVERY_DEFAULTS } from './local-delivery.js';
 import { checkoutMelhorEnvioShipment,createMelhorEnvioShipment,generateMelhorEnvioShipment,
   melhorEnvioShipmentPayload,printMelhorEnvioShipment } from './melhor-envio-fulfillment.js';
 import {
@@ -1176,6 +1177,58 @@ ensureColumn('marketplace_orders','shipping_service_name',"TEXT NOT NULL DEFAULT
 ensureColumn('marketplace_orders','shipping_provider_order_id',"TEXT NOT NULL DEFAULT ''");
 ensureColumn('marketplace_orders','shipping_provider_status',"TEXT NOT NULL DEFAULT ''");
 ensureColumn('marketplace_orders','shipping_provider_error',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('marketplace_orders','delivery_mode',"TEXT NOT NULL DEFAULT 'carrier'");
+ensureColumn('marketplace_orders','delivery_distance_meters','INTEGER');
+ensureColumn('marketplace_orders','delivery_platform_cents','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('marketplace_orders','delivery_courier_cents','INTEGER NOT NULL DEFAULT 0');
+db.exec(`CREATE TABLE IF NOT EXISTS local_delivery_settings (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  enabled INTEGER NOT NULL DEFAULT 0,
+  base_fee_cents INTEGER NOT NULL DEFAULT 500,
+  base_distance_meters INTEGER NOT NULL DEFAULT 1000,
+  additional_km_cents INTEGER NOT NULL DEFAULT 50,
+  platform_commission_bps INTEGER NOT NULL DEFAULT 1000,
+  max_distance_meters INTEGER NOT NULL DEFAULT 30000,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT OR IGNORE INTO local_delivery_settings(id) VALUES (1);
+CREATE TABLE IF NOT EXISTS local_delivery_cities (
+  id INTEGER PRIMARY KEY,
+  city TEXT NOT NULL COLLATE NOCASE,
+  state TEXT NOT NULL COLLATE NOCASE,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(city,state)
+);
+CREATE TABLE IF NOT EXISTS local_delivery_couriers (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  whatsapp TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL,
+  state TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','blocked')),
+  balance_cents INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS local_delivery_jobs (
+  id INTEGER PRIMARY KEY,
+  order_reference TEXT NOT NULL UNIQUE REFERENCES marketplace_orders(reference) ON DELETE CASCADE,
+  courier_id INTEGER REFERENCES local_delivery_couriers(id) ON DELETE SET NULL,
+  distance_meters INTEGER NOT NULL,
+  duration_seconds INTEGER NOT NULL DEFAULT 0,
+  fee_cents INTEGER NOT NULL,
+  platform_cents INTEGER NOT NULL,
+  courier_cents INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'awaiting_payment' CHECK(status IN ('awaiting_payment','available','assigned','picked_up','delivered','cancelled')),
+  assigned_at TEXT,
+  picked_up_at TEXT,
+  delivered_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_local_delivery_jobs_status ON local_delivery_jobs(status,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_local_delivery_couriers_status ON local_delivery_couriers(status,city,state);`);
 db.exec(`CREATE TABLE IF NOT EXISTS ad_campaign_conversions (
   id INTEGER PRIMARY KEY,
   campaign_id INTEGER NOT NULL REFERENCES ad_campaigns(id) ON DELETE CASCADE,
@@ -1586,7 +1639,7 @@ function recordAdminLogin(req,email,success,reason){
   db.prepare("DELETE FROM admin_login_audit WHERE created_at<datetime('now','-180 days')").run();
 }
 
-const ADMIN_HTML_PATHS=new Set(['/admin','/admin.html','/admin-agentes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html','/admin-conteudos.html']);
+const ADMIN_HTML_PATHS=new Set(['/admin','/admin.html','/admin-agentes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html','/admin-conteudos.html','/admin-entregas.html']);
 
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
@@ -2101,6 +2154,7 @@ app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
 app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
 app.get('/admin-tiktok.html',requireAdmin,publicPage('admin-tiktok.html'));
 app.get('/admin-lojas.html',requireAdmin,publicPage('admin-lojas.html'));
+app.get('/admin-entregas.html',requireAdmin,publicPage('admin-entregas.html'));
 app.get('/admin-mapa-real.html',requireAdmin,publicPage('admin-mapa-real.html'));
 app.get('/admin-servicos.html',requireAdmin,(_req,res)=>{const page=fs.readFileSync(path.join(dir,'public','admin-servicos.html'),'utf8');res.type('html').send(page.replace('</body>','<script src="/admin-services-catalog.js?v=2" defer></script></body>'))});
 app.get('/admin-conteudos.html',requireAdmin,publicPage('admin-conteudos.html'));
@@ -3421,6 +3475,87 @@ app.post('/api/admin/marketplace/shipping/disconnect',requireAdmin,sameOriginOnl
   return res.json({ok:true});
 });
 
+function localDeliverySettings(){
+  const row=db.prepare('SELECT * FROM local_delivery_settings WHERE id=1').get()||{};
+  return {enabled:Boolean(row.enabled),baseFeeCents:Number(row.base_fee_cents??LOCAL_DELIVERY_DEFAULTS.baseFeeCents),
+    baseDistanceMeters:Number(row.base_distance_meters??LOCAL_DELIVERY_DEFAULTS.baseDistanceMeters),
+    additionalKmCents:Number(row.additional_km_cents??LOCAL_DELIVERY_DEFAULTS.additionalKmCents),
+    platformCommissionBps:Number(row.platform_commission_bps??LOCAL_DELIVERY_DEFAULTS.platformCommissionBps),
+    maxDistanceMeters:Number(row.max_distance_meters??LOCAL_DELIVERY_DEFAULTS.maxDistanceMeters)};
+}
+function localDeliveryCityActive(city,state){
+  return Boolean(db.prepare('SELECT 1 FROM local_delivery_cities WHERE city=? AND state=? AND active=1').get(String(city||'').trim(),String(state||'').trim().toUpperCase()));
+}
+async function localDeliveryQuote(storeReference,address){
+  const settings=localDeliverySettings();
+  if(!settings.enabled)throw new Error('local_delivery_disabled');
+  const store=db.prepare('SELECT address,city,state,postal_code FROM store_profiles WHERE order_reference=?').get(storeReference);
+  if(!store||!localDeliveryCityActive(store.city,store.state)||String(store.city).trim().toLowerCase()!==String(address.city).trim().toLowerCase()||
+      String(store.state).trim().toUpperCase()!==String(address.state).trim().toUpperCase())throw new Error('local_delivery_city_unavailable');
+  const route=await googleRouteDistance({origin:formatDeliveryAddress(store),destination:formatDeliveryAddress(address),
+    apiKey:String(process.env.GOOGLE_MAPS_ROUTES_API_KEY||'').trim()});
+  const price=calculateLocalDelivery(route.distanceMeters,settings);
+  return {...price,shippingCents:price.feeCents,duration:route.duration,provider:'vitrinecity_local',service:'Entrega local VitrineCity'};
+}
+
+app.post('/api/marketplace/local-delivery/quote',requireUser,sameOriginOnly,async(req,res)=>{
+  const address=db.prepare('SELECT * FROM customer_addresses WHERE id=? AND user_id=?').get(Number(req.body?.addressId),req.user.id);
+  const ids=[...new Set((Array.isArray(req.body?.items)?req.body.items:[]).map(item=>Number(item?.productId)).filter(Number.isInteger))];
+  if(!address||!ids.length)return res.status(400).json({error:'Selecione produtos e um endereço válido.'});
+  const products=db.prepare(`SELECT id,store_reference FROM store_products WHERE id IN (${ids.map(()=>'?').join(',')}) AND active=1 AND marketplace_enabled=1`).all(...ids);
+  if(products.length!==ids.length||products.some(product=>product.store_reference!==products[0].store_reference))return res.status(400).json({error:'A entrega local aceita produtos disponíveis de uma única loja.'});
+  try{return res.json({quote:await localDeliveryQuote(products[0].store_reference,address)});}
+  catch(error){const messages={local_delivery_disabled:'A entrega local ainda não está ativa.',local_delivery_city_unavailable:'A entrega local não está disponível entre esses endereços.',routes_not_configured:'Configure a API de rotas do Google no servidor.',distance_out_of_range:'O endereço está fora da distância máxima de entrega.'};return res.status(409).json({error:messages[error.message]||'Não foi possível calcular a rota de entrega local.'});}
+});
+
+app.get('/api/admin/local-delivery',requireAdmin,(_req,res)=>{
+  const settings=localDeliverySettings();
+  const cities=db.prepare('SELECT id,city,state,active,created_at createdAt FROM local_delivery_cities ORDER BY state,city').all().map(row=>({...row,active:Boolean(row.active)}));
+  const couriers=db.prepare('SELECT id,name,whatsapp,city,state,status,balance_cents balanceCents,created_at createdAt FROM local_delivery_couriers ORDER BY status,name').all();
+  const jobs=db.prepare(`SELECT j.*,o.total_cents order_total_cents,s.business_name store_name,c.name courier_name
+    FROM local_delivery_jobs j JOIN marketplace_orders o ON o.reference=j.order_reference
+    JOIN store_profiles s ON s.order_reference=o.store_reference LEFT JOIN local_delivery_couriers c ON c.id=j.courier_id
+    ORDER BY j.id DESC LIMIT 200`).all();
+  return res.json({settings,cities,couriers,jobs,routesConfigured:Boolean(String(process.env.GOOGLE_MAPS_ROUTES_API_KEY||'').trim())});
+});
+app.put('/api/admin/local-delivery/settings',requireAdmin,sameOriginOnly,(req,res)=>{
+  const value=(name,min,max)=>{const number=Math.round(Number(req.body?.[name]));if(!Number.isInteger(number)||number<min||number>max)throw new Error(name);return number;};
+  try{const baseFeeCents=value('baseFeeCents',0,100000),baseDistanceMeters=value('baseDistanceMeters',100,100000),
+    additionalKmCents=value('additionalKmCents',0,100000),platformCommissionBps=value('platformCommissionBps',0,10000),maxDistanceMeters=value('maxDistanceMeters',baseDistanceMeters,500000);
+    db.prepare(`UPDATE local_delivery_settings SET enabled=?,base_fee_cents=?,base_distance_meters=?,additional_km_cents=?,platform_commission_bps=?,max_distance_meters=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`)
+      .run(req.body?.enabled===true?1:0,baseFeeCents,baseDistanceMeters,additionalKmCents,platformCommissionBps,maxDistanceMeters);
+    return res.json({ok:true,settings:localDeliverySettings()});
+  }catch{return res.status(400).json({error:'Revise os valores da configuração de entrega.'});}
+});
+app.post('/api/admin/local-delivery/cities',requireAdmin,sameOriginOnly,(req,res)=>{
+  const city=String(req.body?.city||'').trim().slice(0,100),state=String(req.body?.state||'').trim().toUpperCase().slice(0,2);
+  if(city.length<2||state.length!==2)return res.status(400).json({error:'Informe cidade e UF.'});
+  db.prepare(`INSERT INTO local_delivery_cities(city,state,active) VALUES (?,?,1) ON CONFLICT(city,state) DO UPDATE SET active=1`).run(city,state);
+  return res.status(201).json({ok:true});
+});
+app.patch('/api/admin/local-delivery/cities/:id',requireAdmin,sameOriginOnly,(req,res)=>{
+  const result=db.prepare('UPDATE local_delivery_cities SET active=? WHERE id=?').run(req.body?.active===true?1:0,Number(req.params.id));
+  return result.changes?res.json({ok:true}):res.status(404).json({error:'Cidade não encontrada.'});
+});
+app.post('/api/admin/local-delivery/couriers',requireAdmin,sameOriginOnly,(req,res)=>{
+  const name=String(req.body?.name||'').trim().slice(0,120),whatsapp=String(req.body?.whatsapp||'').replace(/[^\d+]/g,'').slice(0,20),
+    city=String(req.body?.city||'').trim().slice(0,100),state=String(req.body?.state||'').trim().toUpperCase().slice(0,2);
+  if(name.length<2||whatsapp.replace(/\D/g,'').length<10||city.length<2||state.length!==2)return res.status(400).json({error:'Preencha corretamente os dados do entregador.'});
+  const result=db.prepare('INSERT INTO local_delivery_couriers(name,whatsapp,city,state) VALUES (?,?,?,?)').run(name,whatsapp,city,state);
+  return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});
+});
+app.patch('/api/admin/local-delivery/jobs/:id',requireAdmin,sameOriginOnly,(req,res)=>{
+  const status=String(req.body?.status||''),allowed=new Set(['available','assigned','picked_up','delivered','cancelled']),courierId=req.body?.courierId?Number(req.body.courierId):null;
+  if(!allowed.has(status))return res.status(400).json({error:'Status de entrega inválido.'});
+  if(['assigned','picked_up','delivered'].includes(status)&&!db.prepare("SELECT 1 FROM local_delivery_couriers WHERE id=? AND status='active'").get(courierId))return res.status(400).json({error:'Selecione um entregador ativo.'});
+  const job=db.prepare('SELECT * FROM local_delivery_jobs WHERE id=?').get(Number(req.params.id));if(!job)return res.status(404).json({error:'Entrega não encontrada.'});
+  const transitions={awaiting_payment:new Set(),available:new Set(['assigned','cancelled']),assigned:new Set(['available','picked_up','cancelled']),picked_up:new Set(['delivered','cancelled']),delivered:new Set(),cancelled:new Set()};
+  if(!transitions[job.status]?.has(status))return res.status(409).json({error:'Essa mudança de status não é permitida para a etapa atual.'});
+  db.transaction(()=>{db.prepare(`UPDATE local_delivery_jobs SET courier_id=COALESCE(?,courier_id),status=?,assigned_at=CASE WHEN ?='assigned' THEN COALESCE(assigned_at,CURRENT_TIMESTAMP) ELSE assigned_at END,picked_up_at=CASE WHEN ?='picked_up' THEN COALESCE(picked_up_at,CURRENT_TIMESTAMP) ELSE picked_up_at END,delivered_at=CASE WHEN ?='delivered' THEN COALESCE(delivered_at,CURRENT_TIMESTAMP) ELSE delivered_at END,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(courierId,status,status,status,status,job.id);
+    if(status==='delivered'&&job.status!=='delivered')db.prepare('UPDATE local_delivery_couriers SET balance_cents=balance_cents+?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(job.courier_cents,courierId);
+  })();return res.json({ok:true});
+});
+
 app.post('/api/marketplace/shipping/quote', sameOriginOnly, async (req,res) => {
   const requested=Array.isArray(req.body?.items)?req.body.items.slice(0,30):[];
   const quantities=new Map();
@@ -3488,14 +3623,19 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
   const productsCents = products.reduce((sum, product) => sum + product.price_cents * quantities.get(product.id), 0);
   const platformPercentCents = Math.round(productsCents * MARKETPLACE_COMMISSION_BPS / 10000);
   const returnOperationCents = MARKETPLACE_RETURN_PROVISION_CENTS;
+  const deliveryMode=req.body?.deliveryMode==='local'?'local':'carrier';
   let shippingQuote;
-  try { shippingQuote=await officialMarketplaceShippingQuote(products,quantities,address.postal_code); }
-  catch { return res.status(400).json({ error:'O CEP do endereço de entrega é inválido.' }); }
+  try { shippingQuote=deliveryMode==='local'?await localDeliveryQuote(storeReference,address):await officialMarketplaceShippingQuote(products,quantities,address.postal_code); }
+  catch(error) { return res.status(400).json({ error:deliveryMode==='local'?(error.message==='distance_out_of_range'?'O endereço está fora da distância máxima de entrega.':'A entrega local não está disponível para este endereço.'):'O CEP do endereço de entrega é inválido.' }); }
   const shippingCents = shippingQuote.shippingCents;
-  const totalCents = productsCents + shippingCents;
+  if(deliveryMode==='local')shippingQuote.shippingCents=shippingQuote.feeCents;
+  const effectiveShippingCents=deliveryMode==='local'?shippingQuote.feeCents:shippingCents;
+  const totalCents = productsCents + effectiveShippingCents;
   let token=process.env.MERCADOPAGO_ACCESS_TOKEN,splitMode='central';
-  const marketplaceFeeCents=platformPercentCents+MARKETPLACE_FIXED_FEE_CENTS+returnOperationCents;
-  if(marketplaceOAuthConfigured()){
+  const deliveryPlatformCents=deliveryMode==='local'?shippingQuote.platformCents:0;
+  const deliveryCourierCents=deliveryMode==='local'?shippingQuote.courierCents:0;
+  const marketplaceFeeCents=platformPercentCents+MARKETPLACE_FIXED_FEE_CENTS+returnOperationCents+deliveryPlatformCents;
+  if(deliveryMode!=='local'&&marketplaceOAuthConfigured()){
     const sellerAccount=db.prepare("SELECT * FROM marketplace_seller_accounts WHERE store_reference=? AND status='connected'").get(storeReference);
     if(!sellerAccount)return res.status(409).json({error:'A loja precisa conectar sua conta Mercado Pago antes de receber pedidos.'});
     try{token=await marketplaceSellerAccessToken(sellerAccount);splitMode='marketplace';}
@@ -3515,7 +3655,7 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
       body: JSON.stringify({
         items: [...products.map(product => ({ id: String(product.id), title: product.name.slice(0, 120),
           quantity: quantities.get(product.id), currency_id: 'BRL', unit_price: product.price_cents / 100 })),
-          ...(shippingCents?[{id:'shipping',title:shippingQuote.service,quantity:1,currency_id:'BRL',unit_price:shippingCents/100}]:[])],
+          ...(effectiveShippingCents?[{id:'shipping',title:shippingQuote.service,quantity:1,currency_id:'BRL',unit_price:effectiveShippingCents/100}]:[])],
         payer: { name: req.user.name, email: req.user.email, address: { zip_code: address.postal_code,
           street_name: address.street, street_number: address.number } },
         external_reference: reference, notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
@@ -3531,10 +3671,11 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
     const insertOrder = db.transaction(() => {
       db.prepare(`INSERT INTO marketplace_orders
         (reference,buyer_user_id,store_reference,address_id,products_cents,shipping_cents,shipping_provider,shipping_service_id,
-         shipping_service_name,platform_percent_cents,platform_fixed_cents,return_operation_cents,total_cents,mp_preference_id,ad_campaign_id,ad_event_token)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(reference, req.user.id, storeReference, address.id, productsCents,
-        shippingCents, shippingQuote.provider, shippingQuote.providerServiceId||'',shippingQuote.service||'',platformPercentCents, MARKETPLACE_FIXED_FEE_CENTS, returnOperationCents, totalCents, payment.id,
-        adAttribution?.campaignId||null,adAttribution?.eventToken||null);
+         shipping_service_name,platform_percent_cents,platform_fixed_cents,return_operation_cents,total_cents,mp_preference_id,ad_campaign_id,ad_event_token,
+         delivery_mode,delivery_distance_meters,delivery_platform_cents,delivery_courier_cents)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(reference, req.user.id, storeReference, address.id, productsCents,
+        effectiveShippingCents, shippingQuote.provider, shippingQuote.providerServiceId||'',shippingQuote.service||'',platformPercentCents, MARKETPLACE_FIXED_FEE_CENTS, returnOperationCents, totalCents, payment.id,
+        adAttribution?.campaignId||null,adAttribution?.eventToken||null,deliveryMode,shippingQuote.distanceMeters||null,deliveryPlatformCents,deliveryCourierCents);
       const insertItem = db.prepare(`INSERT INTO marketplace_order_items
         (order_reference,product_id,product_name,sku,quantity,unit_price_cents,subtotal_cents,platform_percent_cents,return_operation_cents)
         VALUES (?,?,?,?,?,?,?,?,?)`);
@@ -3548,6 +3689,9 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
       db.prepare(`INSERT INTO marketplace_payment_reconciliation
         (order_reference,expected_gross_cents,expected_marketplace_fee_cents,expected_seller_net_cents,split_mode)
         VALUES (?,?,?,?,?)`).run(reference,totalCents,marketplaceFeeCents,totalCents-marketplaceFeeCents,splitMode);
+      if(deliveryMode==='local')db.prepare(`INSERT INTO local_delivery_jobs
+        (order_reference,distance_meters,duration_seconds,fee_cents,platform_cents,courier_cents)
+        VALUES (?,?,?,?,?,?)`).run(reference,shippingQuote.distanceMeters,Math.max(0,Number.parseInt(shippingQuote.duration)||0),effectiveShippingCents,deliveryPlatformCents,deliveryCourierCents);
     });
     insertOrder();
     return res.status(201).json({ reference, checkoutUrl: payment.init_point, shipping:shippingQuote });
@@ -5834,6 +5978,8 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
         db.prepare(`UPDATE marketplace_payment_reconciliation SET payment_id=?,actual_gross_cents=?,payment_status=?,
           reconciliation_status=?,last_event_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
           .run(String(payment.id),amountCents,status,reversed?'reversed':status==='approved'?'matched':'pending',reference);
+        if(status==='approved')db.prepare("UPDATE local_delivery_jobs SET status='available',updated_at=CURRENT_TIMESTAMP WHERE order_reference=? AND status='awaiting_payment'").run(reference);
+        else if(reversed)db.prepare("UPDATE local_delivery_jobs SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE order_reference=? AND status!='delivered'").run(reference);
       })();
       if(order.ad_campaign_id){
         if(status==='approved')db.prepare(`INSERT INTO ad_campaign_conversions
