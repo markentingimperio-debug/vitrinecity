@@ -6366,6 +6366,11 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
           .run(order.ad_campaign_id,reference,order.ad_event_token||'',order.products_cents);
         else if(reversed)db.prepare("UPDATE ad_campaign_conversions SET status='reversed',updated_at=CURRENT_TIMESTAMP WHERE order_reference=?").run(reference);
       }
+      const storeAdOrder=db.prepare("SELECT campaign_id,event_token,visitor_key FROM store_ad_events WHERE order_reference=? AND event_type='order' LIMIT 1").get(reference);
+      if(storeAdOrder){
+        if(status==='approved')db.prepare("INSERT OR IGNORE INTO store_ad_events(campaign_id,event_type,event_token,visitor_key,event_day,order_reference,value_cents) VALUES (?,'conversion',?,?,?,?,?)").run(storeAdOrder.campaign_id,storeAdOrder.event_token,storeAdOrder.visitor_key,new Date().toISOString().slice(0,10),reference,order.total_cents);
+        else if(reversed)db.prepare("DELETE FROM store_ad_events WHERE order_reference=? AND event_type='conversion'").run(reference);
+      }
       if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'marketplace', order.total_cents);
       return res.sendStatus(200);
     }
@@ -7885,7 +7890,6 @@ app.post('/api/social/posts/:id/comments', requireActiveSocialUser, sameOriginOn
         })();
         if(automation)sendSocialLive(req.user.id,'chat-message',automation);
       }
-      const storeAdOrder=db.prepare("SELECT campaign_id,event_token,visitor_key FROM store_ad_events WHERE order_reference=? AND event_type='order' LIMIT 1").get(reference);if(storeAdOrder){if(status==='approved')db.prepare("INSERT OR IGNORE INTO store_ad_events(campaign_id,event_type,event_token,visitor_key,event_day,order_reference,value_cents) VALUES (?,'conversion',?,?,?,?,?)").run(storeAdOrder.campaign_id,storeAdOrder.event_token,storeAdOrder.visitor_key,new Date().toISOString().slice(0,10),reference,order.total_cents);else if(reversed)db.prepare("DELETE FROM store_ad_events WHERE order_reference=? AND event_type='conversion'").run(reference);}
     }catch(error){console.error('Social comment automation error',String(error?.message||error).slice(0,180));}
   }
   return res.status(201).json({ id: Number(result.lastInsertRowid), body, name: req.user.name });
