@@ -3296,7 +3296,7 @@ app.get('/api/marketplace/stores', (req,res) => {
   const references=stores.map(store=>store.order_reference),hours=new Map();
   if(references.length){for(const row of db.prepare(`SELECT store_reference,day_of_week,closed,opens_at,closes_at FROM store_business_hours WHERE store_reference IN (${references.map(()=>'?').join(',')})`).all(...references)){if(!hours.has(row.store_reference))hours.set(row.store_reference,[]);hours.get(row.store_reference).push(row)}}
   const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date()).map(part=>[part.type,part.value])),dayIndex={Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6}[parts.weekday],time=`${parts.hour}:${parts.minute}`;
-  return res.json({stores:stores.map(store=>{const schedule=hours.get(store.order_reference)||[],today=schedule.find(item=>item.day_of_week===dayIndex),scheduledOpen=!schedule.length||Boolean(today&&!today.closed&&today.opens_at<=time&&time<today.closes_at),open=Boolean(store.accepting_orders&&scheduledOpen);return {...store,open,path:publicStorePath(store),image_url:store.facade_url||store.logo_url||PRODUCT_FALLBACK_PATH};})});
+  return res.json({stores:stores.map(store=>{const schedule=hours.get(store.order_reference)||[],today=schedule.find(item=>item.day_of_week===dayIndex),scheduledOpen=!schedule.length||Boolean(today&&!today.closed&&today.opens_at<=time&&time<today.closes_at),open=Boolean(store.accepting_orders&&scheduledOpen);return {...store,open,path:`/loja?q=${encodeURIComponent(store.business_name)}&delivery=local`,image_url:store.facade_url||store.logo_url||PRODUCT_FALLBACK_PATH};})});
 });
 
 function melhorEnvioOAuthConfig(){

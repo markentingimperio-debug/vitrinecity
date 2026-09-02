@@ -18,4 +18,6 @@ const baseShopLoad=load;load=async()=>{await Promise.all([baseShopLoad(),loadSpo
 loadSponsored();
 </script><script>
 const baseDigitalRender=render;render=()=>{baseDigitalRender();for(const product of products.filter(item=>item.product_type==='digital'&&item.product_url)){const button=productsBox.querySelector(`[data-add="${product.id}"]`);if(!button)continue;const link=document.createElement('a');link.className='button';link.href=product.product_url;link.textContent='Comprar acesso';link.style.cssText='display:block;text-align:center;margin-top:10px';button.replaceWith(link);const stock=link.previousElementSibling;if(stock)stock.textContent='Acesso digital'}};
+</script><script>
+const deliveryParams=new URLSearchParams(location.search);if(deliveryParams.get('delivery')==='local'){deliveryMode.value='local';deliveryMode.hidden=true;postalCode.hidden=true;shippingResult.textContent='Entrega realizada exclusivamente pela VC Entregas no endereço cadastrado.';const carrierOption=deliveryMode.querySelector('option[value="carrier"]');if(carrierOption)carrierOption.remove();document.querySelector('.shipping-form').insertAdjacentHTML('afterbegin','<strong style="grid-column:1/-1">Entrega local VC Entregas</strong>')}
 </script></body></html>
