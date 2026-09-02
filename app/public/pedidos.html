@@ -29,7 +29,7 @@
     async function loadOrders(){
       if(ordersLoading)return;ordersLoading=true;
       const response=await fetch('/api/marketplace/orders',{cache:'no-store'}),data=await response.json();
-      if(response.status===401)return location.href='/carteira.html?redirect='+encodeURIComponent('/pedidos.html');
+      if(response.status===401)return location.href='/entrar.html?redirect='+encodeURIComponent('/pedidos.html');
       orders.innerHTML=data.orders?.map(order=>{
         const currentReturn=order.returns?.[0];
         const canReturn=order.payment_status==='approved'&&['shipped','delivered'].includes(order.fulfillment_status)&&!order.returns?.some(item=>['requested','approved','received'].includes(item.status));
