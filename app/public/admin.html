@@ -201,6 +201,41 @@
         grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 12px;
       }
+      .pillar-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 22px;
+      }
+      .pillar-card {
+        min-height: 164px;
+        padding: 18px;
+        border: 1px solid #dbe6f2;
+        border-radius: 17px;
+        background: linear-gradient(145deg, #fff, #f7fbff);
+        color: var(--ink);
+        text-decoration: none;
+        box-shadow: 0 8px 24px #173d6a0d;
+      }
+      .pillar-card strong { display: block; margin: 10px 0 7px; font-size: 17px; }
+      .pillar-card p { margin: 0 0 12px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+      .pillar-card span { color: var(--blue); font-size: 12px; font-weight: 850; }
+      .pillar-actions { margin: 0 0 12px; padding-left: 17px; color: #52647d; font-size: 11px; line-height: 1.6; }
+      .pillar-governance { margin: -10px 0 22px; padding: 11px 14px; border-left: 4px solid #ffb02e; background: #fff8e8; color: #664900; font-size: 12px; }
+      .management-console { margin-bottom: 22px; }
+      .management-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      .management-form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+      .management-form label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 750; }
+      .management-form input,.management-form select,.management-form textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 10px; font: inherit; background: #fff; }
+      .management-form textarea,.management-form .wide { grid-column: 1 / -1; }
+      .management-form button,.moderation-actions button { border: 0; border-radius: 10px; padding: 10px 13px; background: var(--blue); color: #fff; font-weight: 800; cursor: pointer; }
+      .management-form button.danger,.moderation-actions button.danger { background: var(--red); }
+      .management-status { min-height: 20px; margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+      .chat-history,.review-list { max-height: 330px; overflow: auto; display: grid; gap: 8px; }
+      .chat-message,.review-item { border: 1px solid var(--line); border-radius: 11px; padding: 10px; background: #f8fbff; font-size: 12px; }
+      .chat-message.admin { border-color: #9dc3ff; background: #edf5ff; }
+      .review-item p { margin: 5px 0; }
+      .moderation-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
       .module-card {
         position: relative;
         min-height: 142px;
@@ -695,7 +730,8 @@
         .wrap {
           grid-column: auto;
         }
-        .module-grid {
+        .module-grid,
+        .pillar-grid {
           grid-template-columns: repeat(3, minmax(0, 1fr));
         }
         .kpis {
@@ -713,7 +749,8 @@
         .module-search {
           margin-top: 12px;
         }
-        .module-grid {
+        .module-grid,
+        .pillar-grid {
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
         .module-card {
@@ -760,6 +797,13 @@
         ><a class="active" href="/admin"><i class="side-dot"></i>Dashboard</a
         ><a href="#ia-gestora"><i class="side-dot"></i>IA Gestora</a
         ><a href="/admin-agentes.html"><i class="side-dot"></i>Agentes</a>
+      </nav>
+      <nav class="side-group">
+        <small>4 pilares da gestão</small
+        ><a href="#visao-geral"><i class="side-dot"></i>Visão Geral</a
+        ><a href="/admin-entregas.html"><i class="side-dot"></i>Gestão de Entregadores</a
+        ><a href="/admin-lojas.html"><i class="side-dot"></i>Gestão de Lojistas</a
+        ><a href="#gestao-clientes"><i class="side-dot"></i>Gestão de Clientes</a>
       </nav>
       <nav class="side-group">
         <small>Crescimento</small
@@ -841,6 +885,58 @@
             Atualizar</button
           ><button class="secondary" id="sync">Sincronizar Ads</button>
         </div>
+      </section>
+      <section id="visao-geral" aria-labelledby="pillarsTitle">
+        <div class="module-head">
+          <div>
+            <h2 id="pillarsTitle">Operação em quatro pilares</h2>
+            <p>Atalhos para acompanhar entregas, vendas, avaliações e pendências sem substituir os painéis especializados.</p>
+          </div>
+        </div>
+        <div class="pillar-grid">
+          <a class="pillar-card" href="#kpis"><b aria-hidden="true">📊</b><strong>Visão Geral</strong><p>Vendas, receita, entregas, avaliações e pendências operacionais consolidadas.</p><ul class="pillar-actions"><li>Acompanhar operação e status</li><li>Revisar alertas e auditoria</li></ul><span>Ver indicadores ↓</span></a>
+          <a class="pillar-card" href="/admin-entregas.html"><b aria-hidden="true">🛵</b><strong>Gestão de Entregadores</strong><p>Disponibilidade, ofertas, localização, distância e situação das entregas.</p><ul class="pillar-actions"><li>Editar, autorizar ou restringir</li><li>Acompanhar, conversar e pagar repasses</li></ul><span>Abrir entregadores →</span></a>
+          <a class="pillar-card" href="/admin-lojas.html"><b aria-hidden="true">🏪</b><strong>Gestão de Lojistas</strong><p>Cadastros, aprovação, catálogo, pagamentos e pendências das lojas.</p><ul class="pillar-actions"><li>Editar, aprovar, pausar ou restringir</li><li>Acompanhar, conversar e conferir repasses</li></ul><span>Abrir lojistas →</span></a>
+          <article class="pillar-card" id="gestao-clientes"><b aria-hidden="true">👥</b><strong>Gestão de Clientes</strong><p>Identidade, avaliações, segurança e moderação do relacionamento.</p><ul class="pillar-actions"><li>Editar permissões e restringir acesso</li><li>Acompanhar avaliações e atendimento interno</li></ul><span><a href="/admin-identidade.html">Identidades</a> · <a href="/admin-social-moderacao.html">Moderação</a></span></article>
+        </div>
+        <p class="pillar-governance"><strong>Governança:</strong> aprovações, restrições e pagamentos exigem confirmação, motivo e identidade do administrador. Repasses devem registrar uma referência única. Desativar preserva o histórico financeiro; não há exclusão por estes atalhos.</p>
+      </section>
+      <section id="accessShareCenter" class="card" aria-labelledby="accessShareTitle">
+        <div class="module-head"><div><h2 id="accessShareTitle">Compartilhar acessos</h2><p>Envie o acesso correto e as instruções de instalação para cada pessoa.</p></div><a href="/acessos.html" target="_blank" rel="noopener">Visualizar central pública →</a></div>
+        <div class="pillar-grid">
+          <article class="pillar-card"><b aria-hidden="true">🛍️</b><strong>Cliente</strong><p>Cadastro, compras, pedidos, avaliações e atendimento.</p><button id="shareClientAccess" type="button" data-share-path="/entrar.html" data-share-role="Cliente">Compartilhar acesso</button></article>
+          <article class="pillar-card"><b aria-hidden="true">🏪</b><strong>Lojista</strong><p>Use somente o link individual recebido após a aprovação. Ele contém token privado e nunca deve ser enviado para outra loja.</p><label>Link privado da loja<input id="sellerPrivateAccess" type="url" placeholder="Cole aqui o link individual do lojista" /></label><button id="shareSellerAccess" type="button" data-share-input="sellerPrivateAccess" data-share-role="Lojista">Compartilhar acesso</button></article>
+          <article class="pillar-card"><b aria-hidden="true">🛵</b><strong>Entregador</strong><p>Corridas, localização, carteira, Pix e chat interno.</p><button id="shareCourierAccess" type="button" data-share-path="/entregador.html" data-share-role="Entregador">Compartilhar acesso</button></article>
+          <article class="pillar-card"><b aria-hidden="true">🔐</b><strong>Administrador</strong><p>Acesso restrito; compartilhe apenas com um administrador autorizado.</p><button id="shareAdminAccess" type="button" data-share-path="/admin-login.html" data-share-role="Administrador">Compartilhar acesso</button></article>
+        </div>
+        <p><strong>Instalação:</strong> no Android, abra no Chrome e escolha “Adicionar à tela inicial”. No iPhone, abra no Safari, toque em Compartilhar e depois em “Adicionar à Tela de Início”.</p>
+        <p id="accessShareStatus" class="management-status" role="status" aria-live="polite"></p>
+      </section>
+      <section class="management-console card" aria-labelledby="managementTitle">
+        <div class="module-head"><div><h2 id="managementTitle">Central de gestão e atendimento</h2><p>Edite, autorize, restrinja, confirme pagamentos e converse usando a referência do cadastro.</p></div></div>
+        <div class="management-layout">
+          <div>
+            <form id="profileManagementForm" class="management-form">
+              <label>Perfil<select id="managementType"><option value="courier">Entregador</option><option value="store">Lojista</option><option value="customer">Cliente</option></select></label>
+              <label>Referência<input id="managementReference" required placeholder="ID ou referência" /></label>
+              <label>Ação<select id="managementAction"><option value="edit">Editar cadastro</option><option value="authorize">Autorizar</option><option value="activate">Reativar</option><option value="restrict">Restringir</option><option value="deactivate">Desativar</option><option value="confirm_payment">Confirmar pagamento</option></select></label>
+              <label>Nome / razão social<input id="managementName" placeholder="Preencha somente ao editar" /></label>
+              <label>WhatsApp<input id="managementWhatsapp" placeholder="Telefone atualizado" /></label>
+              <label>Comprovante<input id="managementProof" placeholder="Referência única do pagamento" /></label>
+              <label class="wide">Motivo / observação<textarea id="managementNote" rows="2" placeholder="Registre o motivo da ação"></textarea></label>
+              <button id="managementExecute" type="submit">Executar ação</button>
+              <button id="managementOpenChat" type="button">Abrir conversa</button>
+            </form>
+            <p id="managementStatus" class="management-status" role="status" aria-live="polite"></p>
+          </div>
+          <div>
+            <h3>Chat interno</h3><div id="profileChatHistory" class="chat-history" aria-live="polite"><p>Informe o perfil e a referência para abrir o atendimento.</p></div>
+            <form id="profileChatForm" class="management-form"><label class="wide">Mensagem<textarea id="profileChatMessage" required rows="2" maxlength="2000"></textarea></label><button type="submit">Enviar mensagem</button></form>
+          </div>
+        </div>
+        <hr />
+        <div class="module-head"><div><h2>Avaliações e recursos pendentes</h2><p>Publique, oculte ou rejeite avaliações e decida recursos com trilha de auditoria.</p></div><button id="refreshReviews" type="button">Atualizar fila</button></div>
+        <div id="reviewsQueue" class="review-list" aria-live="polite"><p>Carregando pendências…</p></div>
       </section>
       <section class="module-hub">
         <div class="module-head">
@@ -2386,6 +2482,89 @@
         $("#error").textContent = e.message;
         $("#error").style.display = "block";
       });
+    </script>
+    <script>
+      (() => {
+        const byId = (id) => document.getElementById(id);
+        const escapeText = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char]);
+        const request = async (url, options = {}) => {
+          const response = await fetch(url, { credentials: "same-origin", ...options });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.error || "Não foi possível concluir a operação.");
+          return data;
+        };
+        const subject = () => ({ type: byId("managementType").value, reference: byId("managementReference").value.trim() });
+        const status = (message, error = false) => { byId("managementStatus").textContent = message; byId("managementStatus").style.color = error ? "var(--red)" : "var(--green)"; };
+
+        async function openChat() {
+          const { type, reference } = subject();
+          if (!reference) return status("Informe a referência do cadastro.", true);
+          try {
+            const data = await request(`/api/admin/profiles/${encodeURIComponent(type)}/${encodeURIComponent(reference)}/messages`);
+            byId("profileChatHistory").innerHTML = data.messages.length ? data.messages.map((item) => `<div class="chat-message ${item.senderType === "admin" ? "admin" : ""}"><strong>${item.senderType === "admin" ? "Administração" : "Perfil"}</strong><p>${escapeText(item.message)}</p><small>${escapeText(item.createdAt)}</small></div>`).join("") : "<p>Nenhuma mensagem neste atendimento.</p>";
+            await request(`/api/admin/profiles/${encodeURIComponent(type)}/${encodeURIComponent(reference)}/messages/read`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: "{}" });
+          } catch (error) { status(error.message, true); }
+        }
+
+        byId("profileManagementForm").addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const { type, reference } = subject(), action = byId("managementAction").value;
+          if (!reference) return status("Informe a referência do cadastro.", true);
+          if (["restrict", "deactivate", "confirm_payment"].includes(action) && !byId("managementNote").value.trim()) return status("Registre o motivo desta ação.", true);
+          if (!confirm(`Confirma ${action} no perfil ${reference}?`)) return;
+          const body = { action, name: byId("managementName").value, businessName: byId("managementName").value, whatsapp: byId("managementWhatsapp").value, proofReference: byId("managementProof").value, note: byId("managementNote").value };
+          const headers = { "Content-Type": "application/json" };
+          if (action === "confirm_payment") headers["Idempotency-Key"] = `admin-payment:${type}:${reference}:${Date.now()}`;
+          try { await request(`/api/admin/profiles/${encodeURIComponent(type)}/${encodeURIComponent(reference)}`, { method: "PATCH", headers, body: JSON.stringify(body) }); status("Ação concluída e registrada na auditoria."); }
+          catch (error) { status(error.message, true); }
+        });
+        byId("managementOpenChat").addEventListener("click", openChat);
+        byId("profileChatForm").addEventListener("submit", async (event) => {
+          event.preventDefault(); const { type, reference } = subject(), message = byId("profileChatMessage").value.trim();
+          if (!reference || !message) return status("Informe a referência e a mensagem.", true);
+          try { await request(`/api/admin/profiles/${encodeURIComponent(type)}/${encodeURIComponent(reference)}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message }) }); byId("profileChatMessage").value = ""; await openChat(); status("Mensagem enviada pelo canal interno."); }
+          catch (error) { status(error.message, true); }
+        });
+
+        async function loadReviews() {
+          try {
+            const data = await request("/api/admin/reviews");
+            const reviews = data.reviews.filter((item) => item.moderation_status === "pending" || Number(item.reports) > 0).map((item) => `<article class="review-item"><strong>Avaliação #${item.id} · ${escapeText(item.target_type)} ${escapeText(item.target_reference)}</strong><p>Nota ${item.rating}/5 — ${escapeText(item.comment || "Sem comentário")}</p><small>${Number(item.reports) || 0} denúncia(s)</small><div class="moderation-actions"><button data-review-action="publish" data-id="${item.id}">Publicar</button><button class="danger" data-review-action="hide" data-id="${item.id}">Ocultar</button><button class="danger" data-review-action="reject" data-id="${item.id}">Rejeitar</button></div></article>`);
+            const appeals = data.appeals.map((item) => `<article class="review-item"><strong>Recurso #${item.id} · avaliação #${item.review_id}</strong><p>${escapeText(item.reason)}</p><div class="moderation-actions"><button data-appeal-action="approve" data-id="${item.id}">Aprovar recurso</button><button class="danger" data-appeal-action="reject" data-id="${item.id}">Rejeitar recurso</button></div></article>`);
+            byId("reviewsQueue").innerHTML = [...reviews, ...appeals].join("") || "<p>Nenhuma avaliação ou recurso pendente.</p>";
+          } catch (error) { byId("reviewsQueue").innerHTML = `<p>${escapeText(error.message)}</p>`; }
+        }
+        byId("reviewsQueue").addEventListener("click", async (event) => {
+          const button = event.target.closest("button"); if (!button) return;
+          const reviewAction = button.dataset.reviewAction, appealAction = button.dataset.appealAction;
+          const note = prompt("Observação para a trilha de auditoria:", "Analisado pela administração"); if (note === null) return;
+          const url = reviewAction ? `/api/admin/reviews/${button.dataset.id}` : `/api/admin/review-appeals/${button.dataset.id}`;
+          try { await request(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: reviewAction || appealAction, note }) }); await loadReviews(); status("Moderação concluída e auditada."); }
+          catch (error) { status(error.message, true); }
+        });
+        byId("refreshReviews").addEventListener("click", loadReviews);
+        loadReviews();
+      })();
+    </script>
+    <script>
+      (() => {
+        const status = document.getElementById('accessShareStatus');
+        async function shareAccess(button) {
+          const inputId = button.dataset.shareInput;
+          const raw = inputId ? document.getElementById(inputId)?.value.trim() : new URL(button.dataset.sharePath, location.origin).href;
+          if (!raw) { status.textContent = 'Cole primeiro o link privado do lojista.'; return; }
+          let url; try { url = new URL(raw, location.origin).href; } catch { status.textContent = 'Informe um link válido.'; return; }
+          const role = button.dataset.shareRole;
+          const text = `${role} — acesso VitrineCity\n${url}\n\nAndroid: Chrome > Adicionar à tela inicial.\niPhone: Safari > Compartilhar > Adicionar à Tela de Início.`;
+          try {
+            if (navigator.share) await navigator.share({title:`VitrineCity — ${role}`,text,url});
+            else { await navigator.clipboard.writeText(text); status.textContent = `Acesso de ${role} copiado. Agora é só colar no WhatsApp.`; }
+          } catch (error) { if (error?.name !== 'AbortError') status.textContent = 'Não foi possível compartilhar. Tente copiar novamente.'; }
+        }
+        document.getElementById('accessShareCenter')?.addEventListener('click', event => {
+          const button = event.target.closest('[data-share-role]'); if (button) shareAccess(button);
+        });
+      })();
     </script>
   </body>
 </html>

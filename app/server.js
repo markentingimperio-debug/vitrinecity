@@ -21,6 +21,10 @@ import { setupTrendRadar } from './trend-radar.js';
 import { setupDigitalPublisher } from './digital-publisher.js';
 import { marketplaceShippingQuote, melhorEnvioConfig } from './marketplace-shipping.js';
 import { calculateLocalDelivery, formatDeliveryAddress, googleRouteDistance, LOCAL_DELIVERY_DEFAULTS } from './local-delivery.js';
+import { normalizeStoreOperations, deliveryEta, canTransitionFoodOrder } from './food-operations.js';
+import { eligibleCouriers } from './courier-dispatch.js';
+import { STORE_AD_PLANS, storeAdQuote, rankSponsored } from './store-ads.js';
+import { sanitizeReviewComment, bayesianRating, reputationScore, basicReviewFraud } from './reputation.js';
 import { checkoutMelhorEnvioShipment,createMelhorEnvioShipment,generateMelhorEnvioShipment,
   melhorEnvioShipmentPayload,printMelhorEnvioShipment } from './melhor-envio-fulfillment.js';
 import {
@@ -370,6 +374,9 @@ ensureColumn('lot_orders', 'mp_subscription_id', 'TEXT');
 ensureColumn('users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('users', 'totp_secret_encrypted', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('users', 'totp_enabled', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('users', 'cpf_fingerprint', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('users', 'cpf_last4', "TEXT NOT NULL DEFAULT ''");
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cpf_fingerprint ON users(cpf_fingerprint) WHERE cpf_fingerprint<>''");
 db.exec(`CREATE TABLE IF NOT EXISTS admin_login_audit (
   id INTEGER PRIMARY KEY,
   email_hash TEXT NOT NULL,
@@ -423,6 +430,36 @@ ensureColumn('ad_campaigns', 'starts_on', 'TEXT');
 ensureColumn('ad_campaigns', 'campaign_channel', "TEXT NOT NULL DEFAULT 'internal'");
 ensureColumn('ad_campaigns', 'external_campaign_id', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('ad_campaigns', 'external_platform_status', "TEXT NOT NULL DEFAULT 'not_applicable'");
+db.exec(`CREATE TABLE IF NOT EXISTS store_ad_settings (
+  id INTEGER PRIMARY KEY CHECK(id=1),enabled INTEGER NOT NULL DEFAULT 1,quality_threshold INTEGER NOT NULL DEFAULT 40,
+  city_weight REAL NOT NULL DEFAULT 30,category_weight REAL NOT NULL DEFAULT 25,quality_weight REAL NOT NULL DEFAULT 30,
+  fairness_weight REAL NOT NULL DEFAULT 15,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);INSERT OR IGNORE INTO store_ad_settings(id) VALUES(1);
+CREATE TABLE IF NOT EXISTS store_ad_campaigns (
+  id INTEGER PRIMARY KEY,store_reference TEXT NOT NULL REFERENCES store_profiles(order_reference) ON DELETE CASCADE,
+  plan_code TEXT NOT NULL,placement TEXT NOT NULL,target_city TEXT NOT NULL DEFAULT '',target_category TEXT NOT NULL DEFAULT '',
+  creative_title TEXT NOT NULL,creative_text TEXT NOT NULL DEFAULT '',image_url TEXT NOT NULL DEFAULT '',destination_url TEXT NOT NULL,
+  daily_budget_cents INTEGER NOT NULL,duration_days INTEGER NOT NULL,media_budget_cents INTEGER NOT NULL,management_fee_cents INTEGER NOT NULL,
+  management_fee_bps INTEGER NOT NULL,quality_score INTEGER NOT NULL DEFAULT 50,status TEXT NOT NULL DEFAULT 'pending_review',
+  starts_at TEXT,ends_at TEXT,admin_notes TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_store_ads_target ON store_ad_campaigns(status,placement,target_city,target_category);
+CREATE TABLE IF NOT EXISTS store_ad_events (
+  id INTEGER PRIMARY KEY,campaign_id INTEGER NOT NULL REFERENCES store_ad_campaigns(id) ON DELETE CASCADE,event_type TEXT NOT NULL CHECK(event_type IN ('impression','click','order','conversion')),
+  event_token TEXT NOT NULL,visitor_key TEXT NOT NULL,event_day TEXT NOT NULL,order_reference TEXT,value_cents INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(event_token,event_type)
+);CREATE INDEX IF NOT EXISTS idx_store_ad_events_campaign ON store_ad_events(campaign_id,event_type,event_day);
+CREATE TABLE IF NOT EXISTS store_ad_weight_audit (
+  id INTEGER PRIMARY KEY,admin_user_id INTEGER REFERENCES users(id),settings_json TEXT NOT NULL,reason TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS platform_promotion_slots (
+  id INTEGER PRIMARY KEY,slot TEXT NOT NULL CHECK(slot IN ('platform_header','platform_footer')),title TEXT NOT NULL,
+  text TEXT NOT NULL DEFAULT '',image_url TEXT NOT NULL DEFAULT '',cta_label TEXT NOT NULL,cta_url TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,sort_order INTEGER NOT NULL DEFAULT 0,starts_at TEXT,ends_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS platform_promotion_audit (
+  id INTEGER PRIMARY KEY,promotion_id INTEGER,admin_user_id INTEGER REFERENCES users(id),action TEXT NOT NULL,snapshot_json TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`);
 db.exec(`
 CREATE TABLE IF NOT EXISTS social_profiles (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -790,6 +827,22 @@ ensureColumn('store_profiles', 'longitude', 'REAL');
 ensureColumn('store_profiles', 'google_place_id', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('store_profiles', 'show_on_real_map', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('store_profiles', 'location_precision', "TEXT NOT NULL DEFAULT 'exact'");
+ensureColumn('store_profiles', 'business_type', "TEXT NOT NULL DEFAULT 'retail'");
+ensureColumn('store_profiles', 'street', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'address_number', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'address_complement', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'neighborhood', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'preparation_min_minutes', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_profiles', 'preparation_max_minutes', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_profiles', 'pickup_instructions', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'accepting_orders', 'INTEGER NOT NULL DEFAULT 1');
+ensureColumn('store_profiles', 'fulfillment_mode', "TEXT NOT NULL DEFAULT 'delivery'");
+db.exec(`CREATE TABLE IF NOT EXISTS store_business_hours (
+  store_reference TEXT NOT NULL REFERENCES store_profiles(order_reference) ON DELETE CASCADE,
+  day_of_week INTEGER NOT NULL CHECK(day_of_week BETWEEN 0 AND 6),
+  closed INTEGER NOT NULL DEFAULT 1, opens_at TEXT, closes_at TEXT,
+  PRIMARY KEY(store_reference,day_of_week)
+);`);
 db.exec(`CREATE TABLE IF NOT EXISTS ad_delivery_events (
   id INTEGER PRIMARY KEY,
   campaign_id INTEGER NOT NULL REFERENCES ad_campaigns(id) ON DELETE CASCADE,
@@ -1116,6 +1169,30 @@ ensureColumn('store_products', 'variation_label', "TEXT NOT NULL DEFAULT 'Única
 ensureColumn('store_products', 'delivery_min_days', 'INTEGER NOT NULL DEFAULT 3');
 ensureColumn('store_products', 'delivery_max_days', 'INTEGER NOT NULL DEFAULT 7');
 ensureColumn('store_products', 'return_days', 'INTEGER NOT NULL DEFAULT 7');
+ensureColumn('store_products', 'product_type', "TEXT NOT NULL DEFAULT 'retail'");
+ensureColumn('store_products', 'menu_category_id', 'INTEGER');
+ensureColumn('store_products', 'menu_sort_order', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_products', 'preparation_minutes', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_products', 'available', 'INTEGER NOT NULL DEFAULT 1');
+ensureColumn('store_products', 'dietary_tags', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_products', 'allergens', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_products', 'featured', 'INTEGER NOT NULL DEFAULT 0');
+db.exec(`CREATE TABLE IF NOT EXISTS menu_categories (
+  id INTEGER PRIMARY KEY, store_reference TEXT NOT NULL REFERENCES store_profiles(order_reference) ON DELETE CASCADE,
+  name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(store_reference,name)
+);
+CREATE TABLE IF NOT EXISTS product_option_groups (
+  id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, min_select INTEGER NOT NULL DEFAULT 0, max_select INTEGER NOT NULL DEFAULT 1,
+  required INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS product_options (
+  id INTEGER PRIMARY KEY, group_id INTEGER NOT NULL REFERENCES product_option_groups(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, price_delta_cents INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);`);
 db.exec(`CREATE TABLE IF NOT EXISTS marketplace_product_reviews (
   id INTEGER PRIMARY KEY,
   product_id INTEGER NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
@@ -1130,6 +1207,50 @@ db.exec(`CREATE TABLE IF NOT EXISTS marketplace_product_reviews (
   UNIQUE(product_id,user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_marketplace_reviews_product ON marketplace_product_reviews(product_id,status,created_at DESC);`);
+db.exec(`CREATE TABLE IF NOT EXISTS verified_delivery_reviews (
+  id INTEGER PRIMARY KEY,order_reference TEXT NOT NULL REFERENCES marketplace_orders(reference) ON DELETE CASCADE,
+  reviewer_user_id INTEGER NOT NULL REFERENCES users(id),target_type TEXT NOT NULL CHECK(target_type IN ('store','courier')),
+  target_reference TEXT NOT NULL,rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),comment TEXT NOT NULL DEFAULT '',
+  moderation_status TEXT NOT NULL DEFAULT 'published' CHECK(moderation_status IN ('pending','published','rejected','hidden')),
+  fraud_flags TEXT NOT NULL DEFAULT '[]',reviewer_fingerprint TEXT NOT NULL,response_text TEXT NOT NULL DEFAULT '',responded_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(order_reference,target_type),UNIQUE(reviewer_user_id,order_reference,target_type)
+);
+CREATE INDEX IF NOT EXISTS idx_verified_reviews_target ON verified_delivery_reviews(target_type,target_reference,moderation_status,created_at DESC);
+CREATE TABLE IF NOT EXISTS review_rewards (
+  id INTEGER PRIMARY KEY,review_id INTEGER NOT NULL UNIQUE REFERENCES verified_delivery_reviews(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id),reward_units INTEGER NOT NULL DEFAULT 500,idempotency_key TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS review_reports (
+  id INTEGER PRIMARY KEY,review_id INTEGER NOT NULL REFERENCES verified_delivery_reviews(id) ON DELETE CASCADE,
+  reporter_user_id INTEGER NOT NULL REFERENCES users(id),reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(review_id,reporter_user_id)
+);
+CREATE TABLE IF NOT EXISTS review_appeals (
+  id INTEGER PRIMARY KEY,review_id INTEGER NOT NULL REFERENCES verified_delivery_reviews(id) ON DELETE CASCADE,
+  appellant_type TEXT NOT NULL,appellant_reference TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',admin_note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,reviewed_at TEXT,UNIQUE(review_id,appellant_type,appellant_reference)
+);
+CREATE TABLE IF NOT EXISTS review_moderation_audit (
+  id INTEGER PRIMARY KEY,review_id INTEGER NOT NULL REFERENCES verified_delivery_reviews(id) ON DELETE CASCADE,
+  admin_user_id INTEGER REFERENCES users(id),action TEXT NOT NULL,note TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS admin_profile_audit (
+  id INTEGER PRIMARY KEY,admin_user_id INTEGER NOT NULL REFERENCES users(id),profile_type TEXT NOT NULL,
+  profile_reference TEXT NOT NULL,action TEXT NOT NULL,changes_json TEXT NOT NULL DEFAULT '{}',proof_reference TEXT,
+  idempotency_key TEXT UNIQUE,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS profile_messages (
+  id INTEGER PRIMARY KEY,profile_type TEXT NOT NULL,profile_reference TEXT NOT NULL,sender_type TEXT NOT NULL,
+  sender_id TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,read_at TEXT
+);CREATE INDEX IF NOT EXISTS idx_profile_messages_subject ON profile_messages(profile_type,profile_reference,id);
+`);
+ensureColumn('customer_addresses','latitude','REAL');
+ensureColumn('customer_addresses','longitude','REAL');
+ensureColumn('customer_addresses','location_consent','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('users','account_status',"TEXT NOT NULL DEFAULT 'active'");
+ensureColumn('store_profiles','operational_status',"TEXT NOT NULL DEFAULT 'active'");
 db.exec(`CREATE TABLE IF NOT EXISTS marketplace_orders (
   id INTEGER PRIMARY KEY,
   reference TEXT NOT NULL UNIQUE,
@@ -1182,6 +1303,12 @@ ensureColumn('marketplace_orders','delivery_distance_meters','INTEGER');
 ensureColumn('marketplace_orders','delivery_platform_cents','INTEGER NOT NULL DEFAULT 0');
 ensureColumn('marketplace_orders','delivery_courier_cents','INTEGER NOT NULL DEFAULT 0');
 ensureColumn('marketplace_orders','customer_confirmed_at','TEXT');
+ensureColumn('marketplace_orders','preparation_minutes_snapshot','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('marketplace_orders','route_duration_seconds_snapshot','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('marketplace_orders','estimated_min_minutes_snapshot','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('marketplace_orders','estimated_max_minutes_snapshot','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('marketplace_order_items','options_snapshot_json',"TEXT NOT NULL DEFAULT '[]'");
+ensureColumn('marketplace_order_items','options_total_cents','INTEGER NOT NULL DEFAULT 0');
 db.exec(`CREATE TABLE IF NOT EXISTS local_delivery_settings (
   id INTEGER PRIMARY KEY CHECK(id=1),
   enabled INTEGER NOT NULL DEFAULT 0,
@@ -1233,6 +1360,30 @@ CREATE INDEX IF NOT EXISTS idx_local_delivery_couriers_status ON local_delivery_
 ensureColumn('local_delivery_couriers','password_hash',"TEXT NOT NULL DEFAULT ''");
 ensureColumn('local_delivery_couriers','pix_key_encrypted',"TEXT NOT NULL DEFAULT ''");
 ensureColumn('local_delivery_couriers','pix_key_type',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('local_delivery_couriers','current_latitude','REAL');
+ensureColumn('local_delivery_couriers','current_longitude','REAL');
+ensureColumn('local_delivery_couriers','location_accuracy','REAL');
+ensureColumn('local_delivery_couriers','location_at','TEXT');
+ensureColumn('local_delivery_couriers','available','INTEGER NOT NULL DEFAULT 0');
+db.exec(`CREATE TABLE IF NOT EXISTS local_delivery_offers (
+  id INTEGER PRIMARY KEY,job_id INTEGER NOT NULL REFERENCES local_delivery_jobs(id) ON DELETE CASCADE,
+  courier_id INTEGER NOT NULL REFERENCES local_delivery_couriers(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'offered' CHECK(status IN ('offered','accepted','declined','expired','cancelled')),
+  distance_to_store_meters INTEGER NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  responded_at TEXT, UNIQUE(job_id,courier_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_delivery_offer_exclusive ON local_delivery_offers(job_id) WHERE status='offered';
+CREATE TABLE IF NOT EXISTS local_delivery_events (
+  id INTEGER PRIMARY KEY,job_id INTEGER NOT NULL REFERENCES local_delivery_jobs(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,actor_type TEXT NOT NULL,actor_id INTEGER,metadata_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_delivery_events_job ON local_delivery_events(job_id,id);
+CREATE TABLE IF NOT EXISTS courier_location_history (
+  id INTEGER PRIMARY KEY,courier_id INTEGER NOT NULL REFERENCES local_delivery_couriers(id) ON DELETE CASCADE,
+  job_id INTEGER REFERENCES local_delivery_jobs(id) ON DELETE SET NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,
+  accuracy REAL,heading REAL,speed REAL,captured_at TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_courier_location_history ON courier_location_history(courier_id,created_at DESC);`);
 ensureColumn('local_delivery_couriers','pix_key_last4',"TEXT NOT NULL DEFAULT ''");
 db.exec(`CREATE TABLE IF NOT EXISTS local_delivery_courier_sessions (
   token_hash TEXT PRIMARY KEY,
@@ -1661,7 +1812,7 @@ function setSession(res, userId,maxAgeSeconds=SESSION_MAX_AGE_SECONDS) {
 function currentUser(req) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (!token) return null;
-  return db.prepare(`SELECT u.id,u.name,u.email,u.whatsapp,u.adult_confirmed,u.is_admin,u.totp_enabled,u.totp_secret_encrypted
+  return db.prepare(`SELECT u.id,u.name,u.email,u.whatsapp,u.cpf_last4,u.adult_confirmed,u.is_admin,u.totp_enabled,u.totp_secret_encrypted,u.account_status
     FROM sessions s JOIN users u ON u.id=s.user_id
     WHERE s.token_hash=? AND s.expires_at>?`).get(sessionHash(token), Date.now()) || null;
 }
@@ -1715,6 +1866,7 @@ function requireAdmin(req, res, next) {
 function requireUser(req, res, next) {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'Entre na sua conta para continuar.' });
+  if(user.account_status!=='active'&&!isAdministrativeUser(user))return res.status(403).json({error:'Conta temporariamente restrita.'});
   req.user = user;
   return next();
 }
@@ -1997,7 +2149,7 @@ function storePortalPrimaryAccess(req, res) {
 function sellerMfaCookieName(reference){return `vc_store_mfa_${createHash('sha256').update(reference).digest('hex').slice(0,12)}`;}
 function sellerMfaAuthenticated(req,reference){const token=parseCookies(req)[sellerMfaCookieName(reference)];if(!token)return false;return Boolean(db.prepare('SELECT 1 FROM seller_mfa_sessions WHERE session_hash=? AND store_reference=? AND expires_at>?').get(sessionHash(token),reference,Date.now()));}
 function grantSellerMfaSession(res,reference){const token=randomBytes(32).toString('base64url'),maxAge=8*60*60;db.prepare('DELETE FROM seller_mfa_sessions WHERE expires_at<=?').run(Date.now());db.prepare('INSERT INTO seller_mfa_sessions(session_hash,store_reference,expires_at) VALUES (?,?,?)').run(sessionHash(token),reference,Date.now()+maxAge*1000);res.append('Set-Cookie',`${sellerMfaCookieName(reference)}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`);}
-function storePortalAccess(req,res){const access=storePortalPrimaryAccess(req,res);if(!access)return null;const seller=db.prepare('SELECT totp_enabled FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);if(seller?.totp_enabled&&!sellerMfaAuthenticated(req,access.order.reference)){res.status(428).json({error:'Confirme o segundo fator do lojista.',mfaRequired:true});return null;}return access;}
+function storePortalAccess(req,res){const access=storePortalPrimaryAccess(req,res);if(!access)return null;const operation=db.prepare('SELECT operational_status FROM store_profiles WHERE order_reference=?').get(access.order.reference);if(operation&&operation.operational_status!=='active'){res.status(403).json({error:'Operação da loja temporariamente restrita.'});return null;}const seller=db.prepare('SELECT totp_enabled FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);if(seller?.totp_enabled&&!sellerMfaAuthenticated(req,access.order.reference)){res.status(428).json({error:'Confirme o segundo fator do lojista.',mfaRequired:true});return null;}return access;}
 
 const SMTP_USER = String(process.env.SMTP_USER || '').trim();
 const SMTP_PASS = String(process.env.SMTP_PASS || '').trim();
@@ -2605,6 +2757,18 @@ app.post('/api/auth/register', sameOriginOnly, (req, res) => {
   }
 });
 
+app.post('/api/customer/register', sameOriginOnly, (req, res) => {
+  const body=req.body||{},normalizedEmail=String(body.email||'').trim().toLowerCase(),cpf=String(body.cpf||'').replace(/\D/g,''),whatsapp=String(body.whatsapp||'').replace(/\D/g,'').slice(0,15),a=body.address||{};
+  if(!allowAttempt(authAttempts,`customer-register-ip:${req.ip}`,8,15*60*1000)||!allowAttempt(authAttempts,`customer-register-email:${normalizedEmail}`,4,60*60*1000))return res.set('Retry-After','900').status(429).json({error:'Muitas tentativas. Aguarde alguns minutos.'});
+  const name=String(body.name||'').trim().slice(0,100),password=String(body.password||''),address={postal:String(a.postalCode||'').replace(/\D/g,'').slice(0,8),street:String(a.street||'').trim().slice(0,120),number:String(a.number||'').trim().slice(0,20),complement:String(a.complement||'').trim().slice(0,80),neighborhood:String(a.neighborhood||'').trim().slice(0,80),city:String(a.city||'').trim().slice(0,80),state:String(a.state||'').trim().toUpperCase().slice(0,2)};
+  if(!body.adultConfirmed||!body.termsAccepted||name.length<2||!validCpf(cpf)||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)||whatsapp.length<10||password.length<10||address.postal.length!==8||!address.street||!address.number||!address.neighborhood||!address.city||address.state.length!==2)return res.status(400).json({error:'Preencha corretamente CPF, contato, senha e endereço completo.'});
+  const locationConsent=a.locationConsent===true,latitude=Number(a.latitude),longitude=Number(a.longitude),validLocation=Number.isFinite(latitude)&&latitude>=-90&&latitude<=90&&Number.isFinite(longitude)&&longitude>=-180&&longitude<=180;
+  if(locationConsent&&!validLocation)return res.status(400).json({error:'A localização autorizada é inválida.'});
+  const secret=managementSecret();if(secret.length<24)return res.status(503).json({error:'Cadastro seguro temporariamente indisponível.'});
+  const fingerprint=createHmac('sha256',secret).update(`customer-cpf:${cpf}`).digest('hex');
+  try{const userId=db.transaction(()=>{const result=db.prepare(`INSERT INTO users(name,email,whatsapp,password_hash,adult_confirmed,cpf_fingerprint,cpf_last4) VALUES (?,?,?,?,1,?,?)`).run(name,normalizedEmail.slice(0,160),whatsapp,hashPassword(password),fingerprint,cpf.slice(-4));const id=Number(result.lastInsertRowid);db.prepare('INSERT INTO wallets(user_id,balance_units) VALUES (?,0)').run(id);db.prepare(`INSERT INTO customer_addresses(user_id,label,recipient_name,postal_code,street,number,complement,neighborhood,city,state,is_default,latitude,longitude,location_consent) VALUES (?,'Casa',?,?,?,?,?,?,?,?,1,?,?,?)`).run(id,name,address.postal,address.street,address.number,address.complement,address.neighborhood,address.city,address.state,locationConsent?latitude:null,locationConsent?longitude:null,locationConsent?1:0);return id;})();recordConsent(req,{userId,email:normalizedEmail,purpose:'account_terms',version:'terms-2026-08-22',source:'customer_registration'});recordConsent(req,{userId,email:normalizedEmail,purpose:'adult_declaration',version:'adult-2026-08-22',source:'customer_registration'});if(locationConsent)recordConsent(req,{userId,email:normalizedEmail,purpose:'customer_location',version:'privacy-2026-08-22',source:'customer_registration'});setSession(res,userId);return res.status(201).json({ok:true});}catch(error){if(String(error?.message||'').includes('cpf_fingerprint'))return res.status(409).json({error:'Este CPF já possui uma conta.'});if(String(error?.message||'').includes('UNIQUE'))return res.status(409).json({error:'Este e-mail já possui uma conta.'});return res.status(500).json({error:'Não foi possível criar sua conta agora.'});}
+});
+
 app.post('/api/auth/login', sameOriginOnly, (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   if (!allowAttempt(authAttempts, `login-ip:${req.ip}`, 12, 15 * 60 * 1000) ||
@@ -2781,7 +2945,8 @@ app.post('/api/identity/age-verification/webhook', (req, res) => {
 function publicAddress(row) {
   return { id: row.id, label: row.label, recipientName: row.recipient_name, postalCode: row.postal_code,
     street: row.street, number: row.number, complement: row.complement || '', neighborhood: row.neighborhood,
-    city: row.city, state: row.state, isDefault: Boolean(row.is_default) };
+    city: row.city, state: row.state, isDefault: Boolean(row.is_default),
+    hasLocation:Boolean(row.location_consent&&row.latitude!=null&&row.longitude!=null) };
 }
 
 app.get('/api/search/suggestions', (req, res) => {
@@ -2950,7 +3115,8 @@ app.get('/api/ads/:id/click', (req, res) => {
 app.get('/api/customer/profile', requireUser, (req, res) => {
   const addresses = db.prepare('SELECT * FROM customer_addresses WHERE user_id=? ORDER BY is_default DESC,id DESC')
     .all(req.user.id).map(publicAddress);
-  return res.json({ customer: { name: req.user.name, email: req.user.email, whatsapp: req.user.whatsapp || '' }, addresses });
+  return res.json({ customer: { name: req.user.name, email: req.user.email, whatsapp: req.user.whatsapp || '',
+    cpfMasked:req.user.cpf_last4?`***.***.***-${req.user.cpf_last4.slice(-2)}`:'' }, addresses });
 });
 
 app.put('/api/customer/profile', requireUser, (req, res) => {
@@ -3075,11 +3241,13 @@ app.get('/api/marketplace/products', (req, res) => {
   const search = String(req.query.q || '').trim().slice(0, 80);
   const products = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,
       p.image_url,p.product_url,p.sku,p.stock_quantity,p.variation_label,p.delivery_min_days,p.delivery_max_days,p.return_days,
-      s.business_name AS store_name,
+      p.product_type,p.menu_category_id,p.menu_sort_order,p.preparation_minutes,p.available,
+      s.business_name AS store_name,s.business_type AS store_business_type,s.preparation_min_minutes AS store_preparation_min_minutes,
+      s.preparation_max_minutes AS store_preparation_max_minutes,s.accepting_orders AS store_accepting_orders,s.fulfillment_mode AS store_fulfillment_mode,
       COALESCE((SELECT ROUND(AVG(r.rating),1) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published'),0) rating_average,
       (SELECT COUNT(*) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published') rating_count
     FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
-    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0
+    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.available=1 AND p.price_cents>0 AND p.stock_quantity>0
       AND s.review_status='published' AND (?='' OR p.category=?)
       AND (?='' OR p.name LIKE '%'||?||'%' OR p.description LIKE '%'||?||'%' OR s.business_name LIKE '%'||?||'%')
     ORDER BY p.updated_at DESC,p.id DESC LIMIT 120`).all(category, category, search, search, search, search);
@@ -3548,6 +3716,16 @@ app.post('/api/admin/marketplace/shipping/disconnect',requireAdmin,sameOriginOnl
   db.prepare("UPDATE melhor_envio_oauth SET status='revoked',updated_at=CURRENT_TIMESTAMP WHERE id=1").run();
   return res.json({ok:true});
 });
+app.get('/api/marketplace/sponsored',(req,res)=>{const adSettings=db.prepare('SELECT * FROM store_ad_settings WHERE id=1').get();if(!adSettings?.enabled||likelyAutomatedAdTraffic(req))return res.json({ads:[]});const city=String(req.query.city||'').trim().toLowerCase().slice(0,100),category=String(req.query.category||'').trim().toLowerCase().slice(0,80),slot=String(req.query.slot||'marketplace_top'),placement={marketplace_top:'city_top',category_top:'category_top',premium_banner:'premium_banner'}[slot]||'city_top',now=new Date().toISOString(),day=now.slice(0,10);
+  const candidates=db.prepare(`SELECT c.*,s.business_name store_name,s.logo_url,
+    SUM(CASE WHEN e.event_type='impression' THEN 1 ELSE 0 END) impressions,SUM(CASE WHEN e.event_type='click' THEN 1 ELSE 0 END) clicks
+    FROM store_ad_campaigns c JOIN store_profiles s ON s.order_reference=c.store_reference LEFT JOIN store_ad_events e ON e.campaign_id=c.id
+    WHERE c.status='active' AND c.placement IN (?,'all') AND (c.starts_at IS NULL OR c.starts_at<=?) AND (c.ends_at IS NULL OR c.ends_at>?)
+      AND (c.target_city='' OR LOWER(c.target_city)=?) AND (c.target_category='' OR LOWER(c.target_category)=?) AND s.review_status='published'
+    GROUP BY c.id LIMIT 100`).all(placement,now,now,city,category).map(item=>({...item,qualityScore:Math.round(item.quality_score*.6+reviewReputation('store',item.store_reference).qualityScore*.4)})).filter(item=>item.qualityScore>=adSettings.quality_threshold);const ranked=rankSponsored(candidates,{rotationSeed:Number(day.replaceAll('-',''))+Math.floor(Date.now()/60000)}).slice(0,5),record=db.prepare("INSERT OR IGNORE INTO store_ad_events(campaign_id,event_type,event_token,visitor_key,event_day) VALUES (?,'impression',?,?,?)"),visitor=adVisitorKey(req),ads=[];
+  for(const item of ranked){const token=randomBytes(18).toString('base64url');if(!record.run(item.id,token,visitor,day).changes)continue;ads.push({id:item.id,storeReference:item.store_reference,title:item.creative_title,text:item.creative_text,imageUrl:item.image_url||item.logo_url||'',storeName:item.store_name,sponsored:true,clickUrl:`/api/marketplace/sponsored/${item.id}/click?token=${encodeURIComponent(token)}`});}return res.json({ads,sponsored:true});});
+app.get('/api/marketplace/platform-promotions',(req,res)=>{const slot=['platform_header','platform_footer'].includes(String(req.query.slot))?String(req.query.slot):'platform_header',now=new Date().toISOString(),items=db.prepare(`SELECT id,slot,title,text,image_url imageUrl,cta_label ctaLabel,cta_url ctaUrl,sort_order sortOrder FROM platform_promotion_slots WHERE slot=? AND active=1 AND (starts_at IS NULL OR starts_at<=?) AND (ends_at IS NULL OR ends_at>?) ORDER BY sort_order,id LIMIT 20`).all(slot,now,now);return res.json({items,institutional:true,paid:false});});
+app.get('/api/marketplace/sponsored/:id/click',(req,res)=>{const id=Number(req.params.id),token=String(req.query.token||'').slice(0,80),visitor=adVisitorKey(req),event=db.prepare(`SELECT e.id,c.destination_url FROM store_ad_events e JOIN store_ad_campaigns c ON c.id=e.campaign_id WHERE e.campaign_id=? AND e.event_token=? AND e.event_type='impression' AND e.visitor_key=? AND c.status='active'`).get(id,token,visitor);if(!event)return res.redirect(302,'/loja');db.prepare("INSERT OR IGNORE INTO store_ad_events(campaign_id,event_type,event_token,visitor_key,event_day) VALUES (?,'click',?,?,?)").run(id,token,visitor,new Date().toISOString().slice(0,10));res.cookie('vc_store_ad_attr',`${id}.${token}`,{httpOnly:true,sameSite:'lax',secure:SITE_URL.startsWith('https://'),maxAge:30*24*60*60*1000,path:'/'});return res.redirect(302,event.destination_url);});
 
 function localDeliverySettings(){
   const row=db.prepare('SELECT * FROM local_delivery_settings WHERE id=1').get()||{};
@@ -3557,19 +3735,35 @@ function localDeliverySettings(){
     platformCommissionBps:Number(row.platform_commission_bps??LOCAL_DELIVERY_DEFAULTS.platformCommissionBps),
     maxDistanceMeters:Number(row.max_distance_meters??LOCAL_DELIVERY_DEFAULTS.maxDistanceMeters)};
 }
+function readStoreAdAttribution(req,storeReference){const [idText,token]=String(parseCookies(req).vc_store_ad_attr||'').split('.'),id=Number(idText);if(!Number.isInteger(id)||!token)return null;const row=db.prepare(`SELECT c.id FROM store_ad_campaigns c JOIN store_ad_events e ON e.campaign_id=c.id WHERE c.id=? AND c.store_reference=? AND e.event_token=? AND e.event_type='click' AND e.created_at>=datetime('now','-30 days')`).get(id,storeReference,token);return row?{campaignId:id,eventToken:token}:null;}
 function localDeliveryCityActive(city,state){
   return Boolean(db.prepare('SELECT 1 FROM local_delivery_cities WHERE city=? AND state=? AND active=1').get(String(city||'').trim(),String(state||'').trim().toUpperCase()));
+}
+function recordDeliveryEvent(jobId,eventType,actorType='system',actorId=null,metadata={}){db.prepare('INSERT INTO local_delivery_events(job_id,event_type,actor_type,actor_id,metadata_json) VALUES (?,?,?,?,?)').run(jobId,eventType,actorType,actorId,JSON.stringify(metadata).slice(0,2000));}
+function deliveryTracking(orderReference){const job=db.prepare('SELECT id,status,courier_id,picked_up_at,delivered_at FROM local_delivery_jobs WHERE order_reference=?').get(orderReference);if(!job)return {status:null,timeline:[],location:null};const timeline=db.prepare('SELECT event_type eventType,actor_type actorType,created_at createdAt FROM local_delivery_events WHERE job_id=? ORDER BY id').all(job.id);let location=null;if(job.picked_up_at&&job.courier_id&&!['cancelled'].includes(job.status)){location=db.prepare('SELECT latitude,longitude,accuracy,captured_at capturedAt FROM courier_location_history WHERE courier_id=? AND job_id=? ORDER BY id DESC LIMIT 1').get(job.courier_id,job.id)||null;}return {status:job.status,timeline,location};}
+function dispatchNextCourier(jobId){
+  const job=db.prepare(`SELECT j.*,s.latitude,s.longitude,s.city,s.state FROM local_delivery_jobs j JOIN marketplace_orders o ON o.reference=j.order_reference JOIN store_profiles s ON s.order_reference=o.store_reference WHERE j.id=?`).get(jobId);
+  if(!job||job.status!=='available'||!Number.isFinite(job.latitude)||!Number.isFinite(job.longitude))return null;
+  const active=db.prepare("SELECT * FROM local_delivery_offers WHERE job_id=? AND status='offered'").get(job.id);if(active&&Date.parse(active.expires_at)>Date.now())return active;
+  if(active){db.prepare("UPDATE local_delivery_offers SET status='expired',responded_at=CURRENT_TIMESTAMP WHERE id=? AND status='offered'").run(active.id);recordDeliveryEvent(job.id,'offer_expired','system',null,{courierId:active.courier_id});}
+  const excluded=db.prepare("SELECT courier_id FROM local_delivery_offers WHERE job_id=? AND status IN ('declined','expired')").all(job.id).map(row=>row.courier_id);
+  const couriers=db.prepare(`SELECT id,status,available,current_latitude latitude,current_longitude longitude,location_at locationAt,city,state FROM local_delivery_couriers WHERE status='active' AND available=1`).all();
+  const candidate=eligibleCouriers(couriers,job,{excludedIds:excluded})[0];if(!candidate)return null;
+  const expiresAt=new Date(Date.now()+45000).toISOString();let result;try{result=db.prepare(`INSERT INTO local_delivery_offers(job_id,courier_id,distance_to_store_meters,expires_at) VALUES (?,?,?,?)`).run(job.id,candidate.id,candidate.distanceMeters,expiresAt);}catch{return db.prepare("SELECT * FROM local_delivery_offers WHERE job_id=? AND status='offered'").get(job.id)||null;}
+  recordDeliveryEvent(job.id,'offer_created','system',null,{courierId:candidate.id,distanceMeters:candidate.distanceMeters,expiresAt});return db.prepare('SELECT * FROM local_delivery_offers WHERE id=?').get(Number(result.lastInsertRowid));
 }
 async function localDeliveryQuote(storeReference,address){
   const settings=localDeliverySettings();
   if(!settings.enabled)throw new Error('local_delivery_disabled');
-  const store=db.prepare('SELECT address,city,state,postal_code FROM store_profiles WHERE order_reference=?').get(storeReference);
+  const store=db.prepare('SELECT address,street,address_number number,neighborhood,city,state,postal_code,business_type,preparation_min_minutes,preparation_max_minutes,accepting_orders,fulfillment_mode FROM store_profiles WHERE order_reference=?').get(storeReference);
+  if(store&&(!store.accepting_orders||store.fulfillment_mode==='pickup'))throw new Error('store_not_accepting_delivery');
   if(!store||!localDeliveryCityActive(store.city,store.state)||String(store.city).trim().toLowerCase()!==String(address.city).trim().toLowerCase()||
       String(store.state).trim().toUpperCase()!==String(address.state).trim().toUpperCase())throw new Error('local_delivery_city_unavailable');
   const route=await googleRouteDistance({origin:formatDeliveryAddress(store),destination:formatDeliveryAddress(address),
     apiKey:String(process.env.GOOGLE_MAPS_ROUTES_API_KEY||'').trim()});
   const price=calculateLocalDelivery(route.distanceMeters,settings);
-  return {...price,shippingCents:price.feeCents,duration:route.duration,provider:'vitrinecity_local',service:'Entrega local VitrineCity'};
+  const routeDurationSeconds=Math.max(0,Number.parseInt(route.duration)||0),eta=deliveryEta({preparationMinMinutes:store.preparation_min_minutes,preparationMaxMinutes:store.preparation_max_minutes,routeDurationSeconds});
+  return {...price,shippingCents:price.feeCents,duration:route.duration,routeDurationSeconds,preparationMinutes:{min:store.preparation_min_minutes,max:store.preparation_max_minutes},estimatedMinMinutes:eta.etaMinMinutes,estimatedMaxMinutes:eta.etaMaxMinutes,provider:'vitrinecity_local',service:'Entrega local VitrineCity'};
 }
 
 app.post('/api/marketplace/local-delivery/quote',requireUser,sameOriginOnly,async(req,res)=>{
@@ -3579,20 +3773,22 @@ app.post('/api/marketplace/local-delivery/quote',requireUser,sameOriginOnly,asyn
   const products=db.prepare(`SELECT id,store_reference FROM store_products WHERE id IN (${ids.map(()=>'?').join(',')}) AND active=1 AND marketplace_enabled=1`).all(...ids);
   if(products.length!==ids.length||products.some(product=>product.store_reference!==products[0].store_reference))return res.status(400).json({error:'A entrega local aceita produtos disponíveis de uma única loja.'});
   try{return res.json({quote:await localDeliveryQuote(products[0].store_reference,address)});}
-  catch(error){const messages={local_delivery_disabled:'A entrega local ainda não está ativa.',local_delivery_city_unavailable:'A entrega local não está disponível entre esses endereços.',routes_not_configured:'Configure a API de rotas do Google no servidor.',distance_out_of_range:'O endereço está fora da distância máxima de entrega.'};return res.status(409).json({error:messages[error.message]||'Não foi possível calcular a rota de entrega local.'});}
+  catch(error){const messages={local_delivery_disabled:'A entrega local ainda não está ativa.',local_delivery_city_unavailable:'A entrega local não está disponível entre esses endereços.',store_not_accepting_delivery:'A loja não está aceitando entregas agora.',routes_not_configured:'Configure a API de rotas do Google no servidor.',distance_out_of_range:'O endereço está fora da distância máxima de entrega.'};return res.status(409).json({error:messages[error.message]||'Não foi possível calcular a rota de entrega local.'});}
 });
 
 app.get('/api/admin/local-delivery',requireAdmin,(_req,res)=>{
   const settings=localDeliverySettings();
   const cities=db.prepare('SELECT id,city,state,active,created_at createdAt FROM local_delivery_cities ORDER BY state,city').all().map(row=>({...row,active:Boolean(row.active)}));
-  const couriers=db.prepare('SELECT id,name,whatsapp,city,state,status,balance_cents balanceCents,created_at createdAt FROM local_delivery_couriers ORDER BY status,name').all();
+  const couriers=db.prepare('SELECT id,name,whatsapp,city,state,status,available,current_latitude latitude,current_longitude longitude,location_accuracy accuracy,location_at locationAt,balance_cents balanceCents,created_at createdAt FROM local_delivery_couriers ORDER BY status,name').all().map(row=>({...row,available:Boolean(row.available)}));
   const jobs=db.prepare(`SELECT j.*,o.total_cents order_total_cents,s.business_name store_name,c.name courier_name
     FROM local_delivery_jobs j JOIN marketplace_orders o ON o.reference=j.order_reference
     JOIN store_profiles s ON s.order_reference=o.store_reference LEFT JOIN local_delivery_couriers c ON c.id=j.courier_id
     ORDER BY j.id DESC LIMIT 200`).all();
   const withdrawals=db.prepare(`SELECT w.id,w.courier_id courierId,c.name courierName,w.amount_cents amountCents,w.status,w.pix_key_type pixKeyType,w.pix_key_last4 pixKeyLast4,w.proof_reference proofReference,w.admin_note adminNote,w.requested_at requestedAt,w.paid_at paidAt FROM local_delivery_withdrawals w JOIN local_delivery_couriers c ON c.id=w.courier_id ORDER BY w.id DESC LIMIT 200`).all();
-  return res.json({settings,cities,couriers,jobs,withdrawals,routesConfigured:Boolean(String(process.env.GOOGLE_MAPS_ROUTES_API_KEY||'').trim())});
+  const offers=db.prepare(`SELECT id,job_id jobId,courier_id courierId,status,distance_to_store_meters distanceToStoreMeters,expires_at expiresAt,created_at createdAt,responded_at respondedAt FROM local_delivery_offers ORDER BY id DESC LIMIT 300`).all();
+  return res.json({settings,cities,couriers,jobs:jobs.map(job=>({...job,timeline:deliveryTracking(job.order_reference).timeline})),offers,withdrawals,routesConfigured:Boolean(String(process.env.GOOGLE_MAPS_ROUTES_API_KEY||'').trim())});
 });
+app.get('/api/admin/local-delivery/orders/:reference/tracking',requireAdmin,(req,res)=>{const order=db.prepare('SELECT reference FROM marketplace_orders WHERE reference=?').get(req.params.reference);return order?res.json({tracking:deliveryTracking(order.reference)}):res.status(404).json({error:'Pedido não encontrado.'});});
 app.put('/api/admin/local-delivery/settings',requireAdmin,sameOriginOnly,(req,res)=>{
   const value=(name,min,max)=>{const number=Math.round(Number(req.body?.[name]));if(!Number.isInteger(number)||number<min||number>max)throw new Error(name);return number;};
   try{const baseFeeCents=value('baseFeeCents',0,100000),baseDistanceMeters=value('baseDistanceMeters',100,100000),
@@ -3638,7 +3834,25 @@ app.post('/api/courier/auth/login',sameOriginOnly,(req,res)=>{const whatsapp=Str
   const courier=db.prepare("SELECT * FROM local_delivery_couriers WHERE replace(replace(replace(replace(whatsapp,'+',''),' ',''),'-',''),'(', '') LIKE ? AND status='active' ORDER BY id DESC LIMIT 1").get(`%${whatsapp.slice(-11)}`);
   if(!courier||!courier.password_hash||!verifyPassword(password,courier.password_hash))return res.status(401).json({error:'WhatsApp ou senha incorretos.'});grantCourierSession(res,courier.id);return res.json({ok:true,courier:{id:courier.id,name:courier.name,city:courier.city,state:courier.state}});});
 app.post('/api/courier/auth/logout',sameOriginOnly,(req,res)=>{const token=parseCookies(req)[COURIER_SESSION_COOKIE];if(token)db.prepare('DELETE FROM local_delivery_courier_sessions WHERE token_hash=?').run(sessionHash(token));res.append('Set-Cookie',`${COURIER_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);return res.json({ok:true});});
-app.get('/api/courier/me',requireCourier,(req,res)=>res.json({courier:{id:req.courier.id,name:req.courier.name,whatsapp:req.courier.whatsapp,city:req.courier.city,state:req.courier.state,balanceCents:req.courier.balance_cents,pixConfigured:Boolean(req.courier.pix_key_encrypted),pixKeyType:req.courier.pix_key_type,pixKeyLast4:req.courier.pix_key_last4}}));
+app.get('/api/courier/me',requireCourier,(req,res)=>res.json({courier:{id:req.courier.id,name:req.courier.name,whatsapp:req.courier.whatsapp,city:req.courier.city,state:req.courier.state,available:Boolean(req.courier.available),balanceCents:req.courier.balance_cents,pixConfigured:Boolean(req.courier.pix_key_encrypted),pixKeyType:req.courier.pix_key_type,pixKeyLast4:req.courier.pix_key_last4}}));
+app.post('/api/courier/reviews/:id/response',requireCourier,sameOriginOnly,(req,res)=>{const text=sanitizeReviewComment(req.body?.text,800);if(text.length<2)return res.status(400).json({error:'Informe a resposta.'});const result=db.prepare("UPDATE verified_delivery_reviews SET response_text=?,responded_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND target_type='courier' AND target_reference=?").run(text,Number(req.params.id),String(req.courier.id));return result.changes?res.json({ok:true}):res.status(404).json({error:'Avaliação não encontrada.'});});
+app.post('/api/courier/reviews/:id/appeal',requireCourier,sameOriginOnly,(req,res)=>{const reason=sanitizeReviewComment(req.body?.reason,1000),review=db.prepare("SELECT id FROM verified_delivery_reviews WHERE id=? AND target_type='courier' AND target_reference=?").get(Number(req.params.id),String(req.courier.id));if(!review||reason.length<10)return res.status(400).json({error:'Informe uma avaliação e justificativa válidas.'});try{const result=db.prepare("INSERT INTO review_appeals(review_id,appellant_type,appellant_reference,reason) VALUES (?,'courier',?,?)").run(review.id,String(req.courier.id),reason);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});}catch{return res.status(409).json({error:'Recurso já registrado.'});}});
+app.patch('/api/courier/availability',requireCourier,sameOriginOnly,(req,res)=>{const available=req.body?.available===true?1:0;db.prepare('UPDATE local_delivery_couriers SET available=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(available,req.courier.id);if(!available)db.prepare("UPDATE local_delivery_offers SET status='cancelled',responded_at=CURRENT_TIMESTAMP WHERE courier_id=? AND status='offered'").run(req.courier.id);return res.json({ok:true,available:Boolean(available)});});
+app.post('/api/courier/location',requireCourier,sameOriginOnly,(req,res)=>{const latitude=Number(req.body?.latitude),longitude=Number(req.body?.longitude),accuracy=Number(req.body?.accuracy),heading=Number(req.body?.heading),speed=Number(req.body?.speed),capturedAt=new Date(req.body?.capturedAt||Date.now());
+  if(!Number.isFinite(latitude)||latitude < -90||latitude>90||!Number.isFinite(longitude)||longitude < -180||longitude>180||!Number.isFinite(accuracy)||accuracy<0||accuracy>5000||!Number.isFinite(capturedAt.getTime())||capturedAt.getTime()>Date.now()+60000||capturedAt.getTime()<Date.now()-10*60*1000)return res.status(400).json({error:'Localização inválida ou desatualizada.'});
+  const activeJob=db.prepare("SELECT id FROM local_delivery_jobs WHERE courier_id=? AND status IN ('assigned','picked_up') ORDER BY id DESC LIMIT 1").get(req.courier.id);
+  db.transaction(()=>{db.prepare('UPDATE local_delivery_couriers SET current_latitude=?,current_longitude=?,location_accuracy=?,location_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(latitude,longitude,accuracy,capturedAt.toISOString(),req.courier.id);
+    db.prepare('INSERT INTO courier_location_history(courier_id,job_id,latitude,longitude,accuracy,heading,speed,captured_at) VALUES (?,?,?,?,?,?,?,?)').run(req.courier.id,activeJob?.id||null,latitude,longitude,accuracy,Number.isFinite(heading)?heading:null,Number.isFinite(speed)?speed:null,capturedAt.toISOString());
+    db.prepare('DELETE FROM courier_location_history WHERE courier_id=? AND id NOT IN (SELECT id FROM courier_location_history WHERE courier_id=? ORDER BY id DESC LIMIT 300)').run(req.courier.id,req.courier.id);
+  })();return res.json({ok:true,trackingActive:Boolean(activeJob)});});
+app.get('/api/courier/dispatch',requireCourier,(req,res)=>{const expired=db.prepare("SELECT DISTINCT job_id FROM local_delivery_offers WHERE status='offered' AND expires_at<=?").all(new Date().toISOString());for(const row of expired)dispatchNextCourier(row.job_id);
+  const offer=db.prepare(`SELECT f.id,f.job_id jobId,f.distance_to_store_meters distanceToStoreMeters,f.expires_at expiresAt,
+    j.distance_meters deliveryDistanceMeters,j.fee_cents feeCents,j.courier_cents courierCents,s.business_name storeName,s.address storeAddress,s.city,s.state
+    FROM local_delivery_offers f JOIN local_delivery_jobs j ON j.id=f.job_id JOIN marketplace_orders o ON o.reference=j.order_reference JOIN store_profiles s ON s.order_reference=o.store_reference
+    WHERE f.courier_id=? AND f.status='offered' AND f.expires_at>? ORDER BY f.id DESC LIMIT 1`).get(req.courier.id,new Date().toISOString());return res.json({offer:offer?{...offer,distanceToPickupMeters:offer.distanceToStoreMeters}:null});});
+app.post('/api/courier/dispatch/:id/respond',requireCourier,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||'');if(!['accept','decline'].includes(action))return res.status(400).json({error:'Resposta inválida.'});const offer=db.prepare('SELECT * FROM local_delivery_offers WHERE id=? AND courier_id=?').get(Number(req.params.id),req.courier.id);if(!offer)return res.status(404).json({error:'Oferta não encontrada.'});
+  if(action==='decline'){const changed=db.prepare("UPDATE local_delivery_offers SET status='declined',responded_at=CURRENT_TIMESTAMP WHERE id=? AND courier_id=? AND status='offered'").run(offer.id,req.courier.id);if(!changed.changes)return res.status(409).json({error:'Oferta não está mais disponível.'});recordDeliveryEvent(offer.job_id,'offer_declined','courier',req.courier.id);dispatchNextCourier(offer.job_id);return res.json({ok:true,status:'declined'});}
+  try{db.transaction(()=>{const current=db.prepare("SELECT * FROM local_delivery_offers WHERE id=? AND courier_id=? AND status='offered' AND expires_at>?").get(offer.id,req.courier.id,new Date().toISOString());if(!current)throw new Error('unavailable');if(db.prepare("SELECT 1 FROM local_delivery_jobs WHERE courier_id=? AND status IN ('assigned','picked_up')").get(req.courier.id))throw new Error('busy');const job=db.prepare("UPDATE local_delivery_jobs SET courier_id=?,status='assigned',assigned_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='available' AND courier_id IS NULL").run(req.courier.id,current.job_id);if(!job.changes)throw new Error('unavailable');db.prepare("UPDATE local_delivery_offers SET status=CASE WHEN id=? THEN 'accepted' ELSE 'cancelled' END,responded_at=CURRENT_TIMESTAMP WHERE job_id=? AND status='offered'").run(current.id,current.job_id);recordDeliveryEvent(current.job_id,'offer_accepted','courier',req.courier.id);})();return res.json({ok:true,status:'accepted'});}catch{return res.status(409).json({error:'Oferta não está mais disponível ou o entregador já possui uma corrida.'});}});
 app.put('/api/courier/pix-key',requireCourier,sameOriginOnly,(req,res)=>{const type=String(req.body?.type||''),value=String(req.body?.value||'').trim();if(!['cpf','cnpj','email','phone','random'].includes(type)||value.length<4||value.length>160)return res.status(400).json({error:'Informe uma chave Pix válida.'});let encrypted;try{encrypted=encryptCourierValue(value);}catch{return res.status(503).json({error:'Proteção da chave Pix indisponível.'});}db.prepare('UPDATE local_delivery_couriers SET pix_key_type=?,pix_key_encrypted=?,pix_key_last4=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(type,encrypted,value.replace(/\s/g,'').slice(-4),req.courier.id);return res.json({ok:true,type,last4:value.replace(/\s/g,'').slice(-4)});});
 app.get('/api/courier/jobs',requireCourier,(req,res)=>{const rows=db.prepare(`SELECT j.id,j.order_reference,j.distance_meters,j.duration_seconds,j.fee_cents,j.courier_cents,j.status,j.assigned_at,j.picked_up_at,j.delivered_at,s.business_name store_name,s.address store_address,s.city,s.state,
   CASE WHEN j.courier_id=? THEN a.recipient_name ELSE '' END recipient_name,CASE WHEN j.courier_id=? THEN a.street||', '||a.number||CASE WHEN a.complement!='' THEN ', '||a.complement ELSE '' END ELSE '' END delivery_address,
@@ -3646,9 +3860,9 @@ app.get('/api/courier/jobs',requireCourier,(req,res)=>{const rows=db.prepare(`SE
   FROM local_delivery_jobs j JOIN marketplace_orders o ON o.reference=j.order_reference JOIN store_profiles s ON s.order_reference=o.store_reference JOIN customer_addresses a ON a.id=o.address_id JOIN users u ON u.id=o.buyer_user_id
   WHERE j.courier_id=? OR (j.status='available' AND lower(s.city)=lower(?) AND upper(s.state)=upper(?)) ORDER BY j.id DESC LIMIT 100`).all(req.courier.id,req.courier.id,req.courier.id,req.courier.id,req.courier.id,req.courier.city,req.courier.state);return res.json({jobs:rows});});
 app.patch('/api/courier/jobs/:id',requireCourier,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||''),job=db.prepare(`SELECT j.*,s.city store_city,s.state store_state FROM local_delivery_jobs j JOIN marketplace_orders o ON o.reference=j.order_reference JOIN store_profiles s ON s.order_reference=o.store_reference WHERE j.id=?`).get(Number(req.params.id));if(!job)return res.status(404).json({error:'Entrega não encontrada.'});
-  try{db.transaction(()=>{if(action==='accept'){if(String(job.store_city).toLowerCase()!==String(req.courier.city).toLowerCase()||String(job.store_state).toUpperCase()!==String(req.courier.state).toUpperCase())throw new Error('job_unavailable');const result=db.prepare("UPDATE local_delivery_jobs SET courier_id=?,status='assigned',assigned_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='available' AND courier_id IS NULL").run(req.courier.id,job.id);if(!result.changes)throw new Error('job_unavailable');}
-    else if(action==='pickup'){const result=db.prepare("UPDATE local_delivery_jobs SET status='picked_up',picked_up_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND courier_id=? AND status='assigned'").run(job.id,req.courier.id);if(!result.changes)throw new Error('transition_invalid');}
-    else if(action==='deliver'){const result=db.prepare("UPDATE local_delivery_jobs SET status='delivered',delivered_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND courier_id=? AND status='picked_up'").run(job.id,req.courier.id);if(!result.changes)throw new Error('transition_invalid');}
+  try{db.transaction(()=>{if(action==='accept'){if(job.courier_id===req.courier.id&&job.status==='assigned')return;throw new Error('job_unavailable');}
+    else if(action==='pickup'){const result=db.prepare("UPDATE local_delivery_jobs SET status='picked_up',picked_up_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND courier_id=? AND status='assigned'").run(job.id,req.courier.id);if(!result.changes)throw new Error('transition_invalid');db.prepare("UPDATE marketplace_orders SET fulfillment_status='food_handed_off',updated_at=CURRENT_TIMESTAMP WHERE reference=? AND fulfillment_status='food_ready'").run(job.order_reference);recordDeliveryEvent(job.id,'picked_up','courier',req.courier.id);}
+    else if(action==='deliver'){const result=db.prepare("UPDATE local_delivery_jobs SET status='delivered',delivered_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND courier_id=? AND status='picked_up'").run(job.id,req.courier.id);if(!result.changes)throw new Error('transition_invalid');recordDeliveryEvent(job.id,'delivered','courier',req.courier.id);}
     else throw new Error('action_invalid');})();return res.json({ok:true});}catch(error){return res.status(409).json({error:error.message==='job_unavailable'?'Esta corrida não está mais disponível.':'Mudança de etapa não permitida.'});}});
 app.get('/api/courier/wallet',requireCourier,(req,res)=>{const ledger=db.prepare('SELECT id,order_reference orderReference,withdrawal_id withdrawalId,entry_type entryType,amount_cents amountCents,created_at createdAt FROM local_delivery_ledger WHERE courier_id=? ORDER BY id DESC LIMIT 200').all(req.courier.id),withdrawals=db.prepare('SELECT id,amount_cents amountCents,status,pix_key_type pixKeyType,pix_key_last4 pixKeyLast4,admin_note adminNote,requested_at requestedAt,paid_at paidAt FROM local_delivery_withdrawals WHERE courier_id=? ORDER BY id DESC LIMIT 100').all(req.courier.id);return res.json({balanceCents:req.courier.balance_cents,ledger,withdrawals});});
 app.post('/api/courier/withdrawals',requireCourier,sameOriginOnly,(req,res)=>{const amount=Math.trunc(Number(req.body?.amountCents)),idempotencyKey=String(req.get('idempotency-key')||'').trim().slice(0,120);const current=db.prepare('SELECT * FROM local_delivery_couriers WHERE id=?').get(req.courier.id);if(!/^[A-Za-z0-9._:-]{12,120}$/.test(idempotencyKey))return res.status(400).json({error:'Envie uma chave de idempotência válida.'});if(!Number.isInteger(amount)||amount<100)return res.status(400).json({error:'O saque mínimo é R$ 1,00.'});if(!current.pix_key_encrypted)return res.status(409).json({error:'Cadastre uma chave Pix antes de solicitar saque.'});
@@ -3679,9 +3893,16 @@ app.get('/api/marketplace/orders', requireUser, (req, res) => {
   const items = db.prepare('SELECT * FROM marketplace_order_items WHERE order_reference=? ORDER BY id');
   const returns=db.prepare('SELECT id,reason,status,seller_note,requested_at,reviewed_at FROM marketplace_returns WHERE order_reference=? AND buyer_user_id=? ORDER BY id DESC');
   const delivery=db.prepare('SELECT status,courier_id courierId,delivered_at deliveredAt FROM local_delivery_jobs WHERE order_reference=?');
+  const deliveryReviews=db.prepare("SELECT id,target_type targetType,rating,comment,moderation_status moderationStatus FROM verified_delivery_reviews WHERE order_reference=? ORDER BY target_type");
   return res.json({ orders: orders.map(order => {const job=order.delivery_mode==='local'?delivery.get(order.reference):null;return {...order,customerConfirmedAt:order.customer_confirmed_at||null,
-    canConfirmDelivery:Boolean(job?.deliveredAt&&!order.customer_confirmed_at&&order.payment_status==='approved'),localDelivery:job,items:items.all(order.reference),returns:returns.all(order.reference,req.user.id)};}) });
+    canConfirmDelivery:Boolean(job?.deliveredAt&&!order.customer_confirmed_at&&order.payment_status==='approved'),localDelivery:job,deliveryTracking:deliveryTracking(order.reference),deliveryReview:deliveryReviews.all(order.reference),alreadyReviewed:Boolean(deliveryReviews.all(order.reference).length),items:items.all(order.reference),returns:returns.all(order.reference,req.user.id)};}) });
 });
+app.get('/api/marketplace/orders/:reference/tracking',requireUser,(req,res)=>{const order=db.prepare('SELECT reference FROM marketplace_orders WHERE reference=? AND buyer_user_id=?').get(req.params.reference,req.user.id);return order?res.json({tracking:deliveryTracking(order.reference)}):res.status(404).json({error:'Pedido não encontrado.'});});
+function reviewReputation(targetType,targetReference){const aggregate=db.prepare(`SELECT COUNT(*) rating_count,COALESCE(SUM(rating),0) rating_sum,COALESCE(AVG(CASE WHEN created_at>=datetime('now','-90 days') THEN rating END),0) recent_average FROM verified_delivery_reviews WHERE target_type=? AND target_reference=? AND moderation_status='published'`).get(targetType,String(targetReference));let onTimeRate=.9,cancellationRate=.05;if(targetType==='courier'){const ops=db.prepare(`SELECT COUNT(*) total,SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) delivered,SUM(CASE WHEN status='cancelled' THEN 1 ELSE 0 END) cancelled FROM local_delivery_jobs WHERE courier_id=?`).get(Number(targetReference));onTimeRate=ops.total?Number(ops.delivered||0)/ops.total:.9;cancellationRate=ops.total?Number(ops.cancelled||0)/ops.total:.05;}else{const ops=db.prepare(`SELECT COUNT(*) total,SUM(CASE WHEN fulfillment_status IN ('delivered','food_handed_off') THEN 1 ELSE 0 END) delivered,SUM(CASE WHEN fulfillment_status='cancelled' THEN 1 ELSE 0 END) cancelled FROM marketplace_orders WHERE store_reference=?`).get(String(targetReference));onTimeRate=ops.total?Number(ops.delivered||0)/ops.total:.9;cancellationRate=ops.total?Number(ops.cancelled||0)/ops.total:.05;}return {ratingCount:Number(aggregate.rating_count),bayesianRating:bayesianRating({ratingSum:aggregate.rating_sum,ratingCount:aggregate.rating_count}),recentAverage:Number(aggregate.recent_average||0),onTimeRate,cancellationRate,qualityScore:reputationScore({ratingSum:aggregate.rating_sum,ratingCount:aggregate.rating_count,recentAverage:aggregate.recent_average,onTimeRate,cancellationRate})};}
+function grantReviewReward(userId,reviewId,idempotencyKey){const rewardOrder=db.prepare('SELECT order_reference FROM verified_delivery_reviews WHERE id=?').get(reviewId);idempotencyKey=rewardOrder?`delivery-review:${rewardOrder.order_reference}`:idempotencyKey;const exists=db.prepare('SELECT 1 FROM review_rewards WHERE review_id=? OR idempotency_key=?').get(reviewId,idempotencyKey);if(exists)return false;db.prepare('INSERT OR IGNORE INTO wallets(user_id,balance_units) VALUES (?,0)').run(userId);const current=Number(db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId)?.balance_units||0),after=current+500;db.prepare('UPDATE wallets SET balance_units=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(after,userId);db.prepare("INSERT INTO wallet_ledger(user_id,delta_units,balance_after_units,kind,description,order_reference) VALUES (?,?,?,'verified_review_reward','Recompensa por avaliação verificada',?)").run(userId,500,after,rewardOrder?.order_reference||`review:${reviewId}`);db.prepare('INSERT INTO review_rewards(review_id,user_id,reward_units,idempotency_key) VALUES (?,?,500,?)').run(reviewId,userId,idempotencyKey);return true;}
+app.post('/api/marketplace/orders/:reference/reviews',requireUser,sameOriginOnly,(req,res)=>{const order=db.prepare(`SELECT o.*,j.courier_id FROM marketplace_orders o LEFT JOIN local_delivery_jobs j ON j.order_reference=o.reference WHERE o.reference=? AND o.buyer_user_id=? AND o.payment_status='approved' AND o.customer_confirmed_at IS NOT NULL`).get(req.params.reference,req.user.id);if(!order)return res.status(409).json({error:'A avaliação é liberada após confirmar a entrega.'});const targetType=String(req.body?.targetType||''),targetReference=targetType==='store'?order.store_reference:targetType==='courier'&&order.courier_id?String(order.courier_id):'';const rating=Math.trunc(Number(req.body?.rating)),comment=sanitizeReviewComment(req.body?.comment),key=String(req.get('idempotency-key')||req.body?.idempotencyKey||'').trim().slice(0,120);if(!targetReference||rating<1||rating>5||!/^[A-Za-z0-9._:-]{12,120}$/.test(key))return res.status(400).json({error:'Informe alvo, nota e chave de idempotência válidos.'});const fingerprint=createHmac('sha256',managementSecret()||'reviews').update(`${req.user.id}|${req.ip}|${String(req.get('user-agent')||'').slice(0,100)}`).digest('hex'),stats=db.prepare("SELECT COUNT(*) daily,SUM(CASE WHEN comment=? AND comment<>'' THEN 1 ELSE 0 END) duplicates FROM verified_delivery_reviews WHERE reviewer_user_id=? AND created_at>=datetime('now','-1 day')").get(comment,req.user.id),age=db.prepare("SELECT (julianday('now')-julianday(created_at))*24 hours FROM users WHERE id=?").get(req.user.id)?.hours,flags=basicReviewFraud({reviewsLastDay:stats.daily,sameCommentCount:stats.duplicates,accountAgeHours:age,comment});try{const result=db.transaction(()=>{const inserted=db.prepare(`INSERT INTO verified_delivery_reviews(order_reference,reviewer_user_id,target_type,target_reference,rating,comment,moderation_status,fraud_flags,reviewer_fingerprint) VALUES (?,?,?,?,?,?,?, ?,?)`).run(order.reference,req.user.id,targetType,targetReference,rating,comment,flags.length?'pending':'published',JSON.stringify(flags),fingerprint);const id=Number(inserted.lastInsertRowid),rewarded=grantReviewReward(req.user.id,id,key);return {id,rewarded};})();return res.status(201).json({ok:true,...result,rewardCoins:result.rewarded?5:0,moderationStatus:flags.length?'pending':'published'});}catch{const prior=db.prepare('SELECT id,moderation_status FROM verified_delivery_reviews WHERE order_reference=? AND target_type=?').get(order.reference,targetType);return prior?res.json({ok:true,id:prior.id,replayed:true,rewardCoins:0,moderationStatus:prior.moderation_status}):res.status(409).json({error:'Não foi possível registrar a avaliação.'});}});
+app.get('/api/reputation/:type/:reference',(req,res)=>{const type=String(req.params.type);if(!['store','courier'].includes(type))return res.status(400).json({error:'Tipo inválido.'});const reviews=db.prepare(`SELECT id,rating,comment,response_text responseText,created_at createdAt,responded_at respondedAt FROM verified_delivery_reviews WHERE target_type=? AND target_reference=? AND moderation_status='published' ORDER BY id DESC LIMIT 100`).all(type,String(req.params.reference));return res.json({reputation:reviewReputation(type,req.params.reference),reviews});});
+app.post('/api/reviews/:id/reports',requireUser,sameOriginOnly,(req,res)=>{const reason=sanitizeReviewComment(req.body?.reason,500);if(reason.length<10)return res.status(400).json({error:'Explique a denúncia.'});try{const result=db.prepare('INSERT INTO review_reports(review_id,reporter_user_id,reason) VALUES (?,?,?)').run(Number(req.params.id),req.user.id,reason);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});}catch{return res.status(409).json({error:'Denúncia já registrada ou avaliação inválida.'});}});
 
 app.post('/api/marketplace/orders/:reference/returns', requireUser, sameOriginOnly, (req,res) => {
   const order=db.prepare(`SELECT * FROM marketplace_orders WHERE reference=? AND buyer_user_id=?
@@ -3703,12 +3924,16 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
   const address = db.prepare('SELECT * FROM customer_addresses WHERE id=? AND user_id=?').get(addressId, req.user.id);
   if (!address || !requested.length) return res.status(400).json({ error: 'Selecione os produtos e um endereço de entrega.' });
   const quantities = new Map();
+  const requestedOptions = new Map();
   for (const item of requested) {
     const id = Number(item?.productId), quantity = Math.floor(Number(item?.quantity));
     if (!Number.isInteger(id) || !Number.isInteger(quantity) || quantity < 1 || quantity > 50) {
       return res.status(400).json({ error: 'Quantidade inválida no carrinho.' });
     }
     quantities.set(id, Math.min(50, (quantities.get(id) || 0) + quantity));
+    const optionIds=Array.isArray(item?.optionIds)?[...new Set(item.optionIds.map(Number).filter(Number.isInteger))].slice(0,100):[];
+    if(requestedOptions.has(id)&&JSON.stringify(requestedOptions.get(id))!==JSON.stringify(optionIds))return res.status(400).json({error:'Separe itens com adicionais diferentes.'});
+    requestedOptions.set(id,optionIds);
   }
   const ids = [...quantities.keys()];
   const placeholders = ids.map(() => '?').join(',');
@@ -3724,7 +3949,14 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
   if (products.some(product => product.stock_quantity < quantities.get(product.id))) {
     return res.status(409).json({ error: 'Estoque insuficiente para um dos produtos.' });
   }
-  const productsCents = products.reduce((sum, product) => sum + product.price_cents * quantities.get(product.id), 0);
+  const optionSnapshots=new Map();
+  for(const product of products){const selected=requestedOptions.get(product.id)||[],groups=db.prepare('SELECT * FROM product_option_groups WHERE product_id=? ORDER BY id').all(product.id),chosen=[];
+    for(const group of groups){const options=db.prepare(`SELECT id,name,price_delta_cents FROM product_options WHERE group_id=? AND active=1 AND id IN (${selected.length?selected.map(()=>'?').join(','):'NULL'})`).all(group.id,...selected),count=options.length;
+      if(count<group.min_select||count>group.max_select)return res.status(400).json({error:`Revise as opções de ${product.name}.`});chosen.push(...options.map(option=>({id:option.id,groupId:group.id,group:group.name,name:option.name,priceDeltaCents:option.price_delta_cents})));
+    }
+    if(chosen.length!==selected.length)return res.status(400).json({error:`Um adicional de ${product.name} é inválido.`});optionSnapshots.set(product.id,chosen);
+  }
+  const productsCents = products.reduce((sum, product) => sum + (product.price_cents+(optionSnapshots.get(product.id)||[]).reduce((total,option)=>total+option.priceDeltaCents,0)) * quantities.get(product.id), 0);
   const platformPercentCents = Math.round(productsCents * MARKETPLACE_COMMISSION_BPS / 10000);
   const returnOperationCents = MARKETPLACE_RETURN_PROVISION_CENTS;
   const deliveryMode=req.body?.deliveryMode==='local'?'local':'carrier';
@@ -3754,12 +3986,13 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
   });
   const reference = `shop_${randomUUID()}`;
   const adAttribution=readAdAttribution(req);
+  const storeAdAttribution=readStoreAdAttribution(req,storeReference);
   try {
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST', headers: { ...mpHeaders(token), 'X-Idempotency-Key': reference },
       body: JSON.stringify({
         items: [...products.map(product => ({ id: String(product.id), title: product.name.slice(0, 120),
-          quantity: quantities.get(product.id), currency_id: 'BRL', unit_price: product.price_cents / 100 })),
+          quantity: quantities.get(product.id), currency_id: 'BRL', unit_price: (product.price_cents+(optionSnapshots.get(product.id)||[]).reduce((total,option)=>total+option.priceDeltaCents,0)) / 100 })),
           ...(effectiveShippingCents?[{id:'shipping',title:shippingQuote.service,quantity:1,currency_id:'BRL',unit_price:effectiveShippingCents/100}]:[])],
         payer: { name: req.user.name, email: req.user.email, address: { zip_code: address.postal_code,
           street_name: address.street, street_number: address.number } },
@@ -3777,23 +4010,26 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
       db.prepare(`INSERT INTO marketplace_orders
         (reference,buyer_user_id,store_reference,address_id,products_cents,shipping_cents,shipping_provider,shipping_service_id,
          shipping_service_name,platform_percent_cents,platform_fixed_cents,return_operation_cents,total_cents,mp_preference_id,ad_campaign_id,ad_event_token,
-         delivery_mode,delivery_distance_meters,delivery_platform_cents,delivery_courier_cents)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(reference, req.user.id, storeReference, address.id, productsCents,
+         delivery_mode,delivery_distance_meters,delivery_platform_cents,delivery_courier_cents,preparation_minutes_snapshot,
+         route_duration_seconds_snapshot,estimated_min_minutes_snapshot,estimated_max_minutes_snapshot)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(reference, req.user.id, storeReference, address.id, productsCents,
         effectiveShippingCents, shippingQuote.provider, shippingQuote.providerServiceId||'',shippingQuote.service||'',platformPercentCents, MARKETPLACE_FIXED_FEE_CENTS, returnOperationCents, totalCents, payment.id,
-        adAttribution?.campaignId||null,adAttribution?.eventToken||null,deliveryMode,shippingQuote.distanceMeters||null,deliveryPlatformCents,deliveryCourierCents);
+        adAttribution?.campaignId||null,adAttribution?.eventToken||null,deliveryMode,shippingQuote.distanceMeters||null,deliveryPlatformCents,deliveryCourierCents,
+        Number(shippingQuote.preparationMinutes?.max)||0,Number(shippingQuote.routeDurationSeconds)||0,Number(shippingQuote.estimatedMinMinutes)||0,Number(shippingQuote.estimatedMaxMinutes)||0);
       const insertItem = db.prepare(`INSERT INTO marketplace_order_items
-        (order_reference,product_id,product_name,sku,quantity,unit_price_cents,subtotal_cents,platform_percent_cents,return_operation_cents)
-        VALUES (?,?,?,?,?,?,?,?,?)`);
+        (order_reference,product_id,product_name,sku,quantity,unit_price_cents,subtotal_cents,platform_percent_cents,return_operation_cents,options_snapshot_json,options_total_cents)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
       let returnProvisionPending = MARKETPLACE_RETURN_PROVISION_CENTS;
       for (const product of products) {
-        const quantity = quantities.get(product.id), subtotal = product.price_cents * quantity;
-        insertItem.run(reference, product.id, product.name, product.sku || '', quantity, product.price_cents, subtotal,
-          Math.round(subtotal * MARKETPLACE_COMMISSION_BPS / 10000), returnProvisionPending);
+        const quantity = quantities.get(product.id),options=optionSnapshots.get(product.id)||[],optionsTotal=options.reduce((total,option)=>total+option.priceDeltaCents,0),unitPrice=product.price_cents+optionsTotal,subtotal = unitPrice * quantity;
+        insertItem.run(reference, product.id, product.name, product.sku || '', quantity, unitPrice, subtotal,
+          Math.round(subtotal * MARKETPLACE_COMMISSION_BPS / 10000), returnProvisionPending,JSON.stringify(options),optionsTotal);
         returnProvisionPending = 0;
       }
       db.prepare(`INSERT INTO marketplace_payment_reconciliation
         (order_reference,expected_gross_cents,expected_marketplace_fee_cents,expected_seller_net_cents,split_mode)
         VALUES (?,?,?,?,?)`).run(reference,totalCents,marketplaceFeeCents,totalCents-marketplaceFeeCents,splitMode);
+      if(storeAdAttribution)db.prepare(`INSERT OR IGNORE INTO store_ad_events(campaign_id,event_type,event_token,visitor_key,event_day,order_reference,value_cents) VALUES (?,'order',?,?,?, ?,?)`).run(storeAdAttribution.campaignId,storeAdAttribution.eventToken,`buyer:${req.user.id}`,new Date().toISOString().slice(0,10),reference,totalCents);
       if(deliveryMode==='local')db.prepare(`INSERT INTO local_delivery_jobs
         (order_reference,distance_meters,duration_seconds,fee_cents,platform_cents,courier_cents)
         VALUES (?,?,?,?,?,?)`).run(reference,shippingQuote.distanceMeters,Math.max(0,Number.parseInt(shippingQuote.duration)||0),effectiveShippingCents,deliveryPlatformCents,deliveryCourierCents);
@@ -3805,6 +4041,19 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
     return res.status(502).json({ error: 'Não foi possível conectar ao Mercado Pago agora.' });
   }
 });
+
+app.post('/api/marketplace/orders/:reference/delivery-review',requireUser,sameOriginOnly,(req,res)=>{const order=db.prepare(`SELECT o.*,j.courier_id FROM marketplace_orders o LEFT JOIN local_delivery_jobs j ON j.order_reference=o.reference WHERE o.reference=? AND o.buyer_user_id=? AND o.payment_status='approved' AND o.customer_confirmed_at IS NOT NULL`).get(req.params.reference,req.user.id);if(!order)return res.status(409).json({error:'A avaliação é liberada após confirmar a entrega.'});const entries=[['store',order.store_reference,Math.trunc(Number(req.body?.storeRating))],['courier',order.courier_id?String(order.courier_id):'',Math.trunc(Number(req.body?.courierRating))]].filter(entry=>entry[1]&&entry[2]>=1&&entry[2]<=5),comment=sanitizeReviewComment(req.body?.comment);if(!entries.length)return res.status(400).json({error:'Informe ao menos uma nota válida.'});try{const result=db.transaction(()=>{let rewardGranted=false;const ids=[];for(const [type,target,rating] of entries){const prior=db.prepare('SELECT id FROM verified_delivery_reviews WHERE order_reference=? AND target_type=?').get(order.reference,type);if(prior){ids.push(prior.id);continue;}const inserted=db.prepare(`INSERT INTO verified_delivery_reviews(order_reference,reviewer_user_id,target_type,target_reference,rating,comment,reviewer_fingerprint) VALUES (?,?,?,?,?,?,?)`).run(order.reference,req.user.id,type,target,rating,comment,createHash('sha256').update(`${req.user.id}|${req.ip}`).digest('hex'));const id=Number(inserted.lastInsertRowid);ids.push(id);if(grantReviewReward(req.user.id,id,`delivery-review:${order.reference}`))rewardGranted=true;}return {ids,rewardGranted};})();return res.status(result.rewardGranted?201:200).json({ok:true,...result,rewardCoins:result.rewardGranted?5:0});}catch{return res.status(409).json({error:'Não foi possível registrar a avaliação.'});}});
+
+app.get('/api/store-portal/:reference/seller-reviews',(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const reviews=db.prepare("SELECT id,rating,comment,response_text response,created_at createdAt,moderation_status moderationStatus FROM verified_delivery_reviews WHERE target_type='store' AND target_reference=? AND moderation_status IN ('published','pending') ORDER BY id DESC LIMIT 200").all(access.order.reference),reputation=reviewReputation('store',access.order.reference),badge=reputation.ratingCount>=20&&reputation.bayesianRating>=4.5?'Excelente':reputation.ratingCount>=5&&reputation.bayesianRating>=4?'Muito bem avaliada':'Nova';return res.json({summary:{average:reputation.bayesianRating,badge,total:reputation.ratingCount,qualityScore:reputation.qualityScore},reviews});});
+app.post('/api/store-portal/:reference/seller-reviews/:id/review-response',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const response=sanitizeReviewComment(req.body?.response,800);if(response.length<2)return res.status(400).json({error:'Informe a resposta.'});const changed=db.prepare("UPDATE verified_delivery_reviews SET response_text=?,responded_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND target_type='store' AND target_reference=?").run(response,Number(req.params.id),access.order.reference);return changed.changes?res.json({ok:true}):res.status(404).json({error:'Avaliação não encontrada.'});});
+app.post('/api/store-portal/:reference/seller-reviews/:id/review-report',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const reason=sanitizeReviewComment(req.body?.reason,500),review=db.prepare("SELECT id FROM verified_delivery_reviews WHERE id=? AND target_type='store' AND target_reference=?").get(Number(req.params.id),access.order.reference);if(!review||reason.length<10)return res.status(400).json({error:'Informe uma denúncia válida.'});try{const adminUser=db.prepare('SELECT id FROM users WHERE is_admin=1 ORDER BY id LIMIT 1').get();if(!adminUser)return res.status(503).json({error:'Moderação indisponível.'});const result=db.prepare('INSERT INTO review_reports(review_id,reporter_user_id,reason) VALUES (?,?,?)').run(review.id,adminUser.id,`Denúncia da loja: ${reason}`);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});}catch{return res.status(409).json({error:'Denúncia já registrada.'});}});
+
+app.get('/api/profile/messages',requireUser,(req,res)=>res.json({messages:db.prepare("SELECT id,sender_type senderType,message,created_at createdAt,read_at readAt FROM profile_messages WHERE profile_type='customer' AND profile_reference=? ORDER BY id LIMIT 300").all(String(req.user.id))}));
+app.post('/api/profile/messages',requireUser,sameOriginOnly,(req,res)=>{const message=sanitizeReviewComment(req.body?.message,2000);if(!message)return res.status(400).json({error:'Mensagem inválida.'});const result=db.prepare("INSERT INTO profile_messages(profile_type,profile_reference,sender_type,sender_id,message) VALUES ('customer',?,'customer',?,?)").run(String(req.user.id),String(req.user.id),message);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});});
+app.get('/api/store-portal/:reference/messages',(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;return res.json({messages:db.prepare("SELECT id,sender_type senderType,message,created_at createdAt,read_at readAt FROM profile_messages WHERE profile_type='store' AND profile_reference=? ORDER BY id LIMIT 300").all(access.order.reference)});});
+app.post('/api/store-portal/:reference/messages',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const message=sanitizeReviewComment(req.body?.message,2000);if(!message)return res.status(400).json({error:'Mensagem inválida.'});const result=db.prepare("INSERT INTO profile_messages(profile_type,profile_reference,sender_type,sender_id,message) VALUES ('store',?,'store',?,?)").run(access.order.reference,access.order.reference,message);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});});
+app.get('/api/courier/messages',requireCourier,(req,res)=>res.json({messages:db.prepare("SELECT id,sender_type senderType,message,created_at createdAt,read_at readAt FROM profile_messages WHERE profile_type='courier' AND profile_reference=? ORDER BY id LIMIT 300").all(String(req.courier.id))}));
+app.post('/api/courier/messages',requireCourier,sameOriginOnly,(req,res)=>{const message=sanitizeReviewComment(req.body?.message,2000);if(!message)return res.status(400).json({error:'Mensagem inválida.'});const result=db.prepare("INSERT INTO profile_messages(profile_type,profile_reference,sender_type,sender_id,message) VALUES ('courier',?,'courier',?,?)").run(String(req.courier.id),String(req.courier.id),message);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});});
 
 function socialApiVersion() {
   return String(process.env.META_SOCIAL_API_VERSION || process.env.META_API_VERSION || 'v26.0').trim();
@@ -5217,6 +5466,11 @@ Seja objetiva e informe quais páginas consultou quando fizer uma auditoria. Qua
   }
 });
 
+app.patch('/api/admin/profiles/:type/:reference',requireAdmin,sameOriginOnly,(req,res)=>{const type=String(req.params.type),reference=String(req.params.reference),action=String(req.body?.action||''),allowedActions=new Set(['edit','authorize','restrict','deactivate','activate','confirm_payment']);if(!['customer','store','courier'].includes(type)||!allowedActions.has(action))return res.status(400).json({error:'Perfil ou ação inválida.'});const key=String(req.get('idempotency-key')||'').trim().slice(0,120);if(action==='confirm_payment'&&!/^[A-Za-z0-9._:-]{12,120}$/.test(key))return res.status(400).json({error:'Informe chave de idempotência.'});const proof=String(req.body?.proofReference||'').trim().slice(0,160);if(action==='confirm_payment'&&proof.length<8)return res.status(400).json({error:'Informe a referência do comprovante.'});let changes={};try{db.transaction(()=>{if(type==='customer'){const user=db.prepare('SELECT id FROM users WHERE id=?').get(Number(reference));if(!user)throw new Error('missing');if(action==='edit'){changes={name:String(req.body?.name||'').trim().slice(0,120),whatsapp:String(req.body?.whatsapp||'').trim().slice(0,30)};db.prepare('UPDATE users SET name=COALESCE(NULLIF(?,\'\'),name),whatsapp=? WHERE id=?').run(changes.name,changes.whatsapp,user.id);}else if(action!=='confirm_payment')db.prepare('UPDATE users SET account_status=? WHERE id=?').run(action==='activate'||action==='authorize'?'active':action,user.id);}else if(type==='store'){const store=db.prepare('SELECT order_reference FROM store_profiles WHERE order_reference=?').get(reference);if(!store)throw new Error('missing');if(action==='edit'){changes={businessName:String(req.body?.businessName||'').trim().slice(0,100),whatsapp:String(req.body?.whatsapp||'').trim().slice(0,30)};db.prepare('UPDATE store_profiles SET business_name=COALESCE(NULLIF(?,\'\'),business_name),whatsapp=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?').run(changes.businessName,changes.whatsapp,reference);}else if(action!=='confirm_payment')db.prepare('UPDATE store_profiles SET operational_status=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?').run(action==='activate'||action==='authorize'?'active':action,reference);}else{const courier=db.prepare('SELECT id FROM local_delivery_couriers WHERE id=?').get(Number(reference));if(!courier)throw new Error('missing');if(action==='edit'){changes={name:String(req.body?.name||'').trim().slice(0,120),whatsapp:String(req.body?.whatsapp||'').trim().slice(0,30)};db.prepare('UPDATE local_delivery_couriers SET name=COALESCE(NULLIF(?,\'\'),name),whatsapp=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(changes.name,changes.whatsapp,courier.id);}else if(action!=='confirm_payment')db.prepare('UPDATE local_delivery_couriers SET status=?,available=CASE WHEN ?=\'active\' THEN available ELSE 0 END,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(action==='activate'||action==='authorize'?'active':'blocked',action==='activate'||action==='authorize'?'active':'blocked',courier.id);}db.prepare('INSERT INTO admin_profile_audit(admin_user_id,profile_type,profile_reference,action,changes_json,proof_reference,idempotency_key) VALUES (?,?,?,?,?,?,?)').run(req.user.id,type,reference,action,JSON.stringify(changes),proof||null,key||null);})();return res.json({ok:true,action});}catch(error){if(String(error.message).includes('UNIQUE'))return res.json({ok:true,action,replayed:true});return res.status(error.message==='missing'?404:409).json({error:error.message==='missing'?'Perfil não encontrado.':'Não foi possível concluir a ação.'});}});
+app.get('/api/admin/profiles/:type/:reference/messages',requireAdmin,(req,res)=>res.json({messages:db.prepare('SELECT id,sender_type senderType,sender_id senderId,message,created_at createdAt,read_at readAt FROM profile_messages WHERE profile_type=? AND profile_reference=? ORDER BY id LIMIT 300').all(req.params.type,req.params.reference)}));
+app.post('/api/admin/profiles/:type/:reference/messages',requireAdmin,sameOriginOnly,(req,res)=>{const message=sanitizeReviewComment(req.body?.message,2000);if(!['customer','store','courier'].includes(req.params.type)||message.length<1)return res.status(400).json({error:'Mensagem inválida.'});const result=db.prepare("INSERT INTO profile_messages(profile_type,profile_reference,sender_type,sender_id,message) VALUES (?,?,'admin',?,?)").run(req.params.type,req.params.reference,String(req.user.id),message);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});});
+app.patch('/api/admin/profiles/:type/:reference/messages/read',requireAdmin,sameOriginOnly,(req,res)=>{db.prepare("UPDATE profile_messages SET read_at=COALESCE(read_at,CURRENT_TIMESTAMP) WHERE profile_type=? AND profile_reference=? AND sender_type!='admin'").run(req.params.type,req.params.reference);return res.json({ok:true});});
+
 app.get('/api/admin/ad-campaigns', requireAdmin, (req, res) => {
   const status = String(req.query.status || '').trim();
   const allowedStatuses = new Set(Object.keys(AD_CAMPAIGN_STATUS_LABELS));
@@ -6079,7 +6333,8 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       const paymentRank=value=>['refunded','charged_back','cancelled','rejected'].includes(value)?2:value==='approved'?1:0;
       const eventKey=`${payment.id}:${status}`;if(db.prepare('SELECT 1 FROM marketplace_payment_events WHERE event_key=?').get(eventKey))return res.sendStatus(200);
       if(paymentRank(status)<paymentRank(order.payment_status))return res.sendStatus(200);
-      const fulfillment = status === 'approved' ? 'fiscal_pending' : reversed ? 'cancelled' : order.fulfillment_status;
+      const foodStore=db.prepare("SELECT business_type FROM store_profiles WHERE order_reference=?").get(order.store_reference);
+      const fulfillment = status === 'approved' ? (['food','hybrid'].includes(foodStore?.business_type)?'food_awaiting_acceptance':'fiscal_pending') : reversed ? 'cancelled' : order.fulfillment_status;
       const fiscal = status === 'approved' ? 'pending' : reversed ? 'cancelled' : order.fiscal_status;
       const reserveStock = status === 'approved' && order.payment_status !== 'approved';
       const releaseStock = reversed && order.payment_status === 'approved';
@@ -6096,13 +6351,14 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
         db.prepare(`UPDATE marketplace_payment_reconciliation SET payment_id=?,actual_gross_cents=?,payment_status=?,
           reconciliation_status=?,last_event_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
           .run(String(payment.id),amountCents,status,reversed?'reversed':status==='approved'?'matched':'pending',reference);
-        if(status==='approved')db.prepare("UPDATE local_delivery_jobs SET status='available',updated_at=CURRENT_TIMESTAMP WHERE order_reference=? AND status='awaiting_payment'").run(reference);
+        if(status==='approved'&&!['food','hybrid'].includes(foodStore?.business_type))db.prepare("UPDATE local_delivery_jobs SET status='available',updated_at=CURRENT_TIMESTAMP WHERE order_reference=? AND status='awaiting_payment'").run(reference);
         else if(reversed){
           const delivery=db.prepare('SELECT * FROM local_delivery_jobs WHERE order_reference=?').get(reference);
           db.prepare("UPDATE local_delivery_jobs SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE order_reference=? AND status!='delivered'").run(reference);
           if(delivery?.courier_id&&db.prepare("SELECT 1 FROM local_delivery_ledger WHERE idempotency_key=?").get(`delivery:${reference}:credit`))applyCourierLedger({courierId:delivery.courier_id,orderReference:reference,entryType:'delivery_reversal',amountCents:-delivery.courier_cents,idempotencyKey:`delivery:${reference}:reversal`});
         }
       })();
+      if(status==='approved'&&!['food','hybrid'].includes(foodStore?.business_type)){const readyJob=db.prepare("SELECT id FROM local_delivery_jobs WHERE order_reference=? AND status='available'").get(reference);if(readyJob)dispatchNextCourier(readyJob.id);}
       if(order.ad_campaign_id){
         if(status==='approved')db.prepare(`INSERT INTO ad_campaign_conversions
           (campaign_id,order_reference,event_token,conversion_type,value_cents,status) VALUES (?,?,?,'purchase',?,'approved')
@@ -6288,11 +6544,17 @@ app.get('/api/store-portal/:reference/marketplace', (req, res) => {
   const returns=db.prepare(`SELECT r.*,o.total_cents FROM marketplace_returns r JOIN marketplace_orders o ON o.reference=r.order_reference
     WHERE o.store_reference=? ORDER BY r.id DESC LIMIT 100`).all(access.order.reference);
   const decorated=orders.map(order=>({...order,payoutCents:Math.max(0,order.products_cents-order.platform_percent_cents-order.platform_fixed_cents-order.return_operation_cents),
-    payoutStatus:['cancelled','cancel_requested'].includes(order.fulfillment_status)?'blocked':order.payment_status==='approved'?'scheduled':'not_eligible'}));
+    payoutStatus:['cancelled','cancel_requested'].includes(order.fulfillment_status)?'blocked':order.payment_status==='approved'?'scheduled':'not_eligible',deliveryTracking:deliveryTracking(order.reference)}));
   const sellerAccount=db.prepare(`SELECT provider_user_id,status,expires_at,connected_at,updated_at
     FROM marketplace_seller_accounts WHERE store_reference=?`).get(access.order.reference)||null;
   const sellerProfile=publicSellerProfile(db.prepare('SELECT * FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference));
-  return res.json({ products, orders:decorated, returns, sellerProfile,paymentSplit:{configured:marketplaceOAuthConfigured(),account:sellerAccount}, fees: {
+  const menuCategories=db.prepare('SELECT id,name,sort_order sortOrder,active FROM menu_categories WHERE store_reference=? ORDER BY sort_order,id').all(access.order.reference).map(row=>({...row,active:Boolean(row.active)}));
+  const optionRows=db.prepare(`SELECT g.id group_id,g.product_id,g.name group_name,g.min_select,g.max_select,g.required,g.sort_order group_sort,
+    o.id option_id,o.name option_name,o.price_delta_cents,o.active,o.sort_order option_sort FROM product_option_groups g
+    LEFT JOIN product_options o ON o.group_id=g.id JOIN store_products p ON p.id=g.product_id WHERE p.store_reference=? ORDER BY g.sort_order,g.id,o.sort_order,o.id`).all(access.order.reference);
+  const optionGroups=[];for(const row of optionRows){let group=optionGroups.find(item=>item.id===row.group_id);if(!group){group={id:row.group_id,productId:row.product_id,name:row.group_name,minSelect:row.min_select,maxSelect:row.max_select,required:Boolean(row.required),options:[]};optionGroups.push(group);}if(row.option_id)group.options.push({id:row.option_id,name:row.option_name,priceDeltaCents:row.price_delta_cents,active:Boolean(row.active)});}
+  const maskedAccount=sellerAccount?{status:sellerAccount.status,providerUserIdMasked:String(sellerAccount.provider_user_id||'').replace(/.(?=.{4})/g,'•'),expiresAt:sellerAccount.expires_at,connectedAt:sellerAccount.connected_at}:null;
+  return res.json({ products, orders:decorated, returns, sellerProfile,operations:publicStoreOperations(access.order.reference),menuCategories,optionGroups,paymentSplit:{configured:marketplaceOAuthConfigured(),account:maskedAccount}, fees: {
     percent: MARKETPLACE_COMMISSION_BPS / 100, fixedCents: MARKETPLACE_FIXED_FEE_CENTS,
     returnProvisionPerOrderCents: MARKETPLACE_RETURN_PROVISION_CENTS
   } });
@@ -6333,13 +6595,15 @@ app.post('/api/store-portal/:reference/products', sameOriginOnly, (req, res) => 
   const productUrl = safeExternalUrl(body.productUrl);
   try { if (body.imageData) imageUrl = saveStoreImage(access.order.reference, `product-${randomUUID()}`, body.imageData, imageUrl); }
   catch (error) { return res.status(400).json({ error: error.message }); }
+  const productType=(body.productType||body.itemType)==='food'?'food':'retail',menuCategoryId=body.menuCategoryId?Number(body.menuCategoryId):null;
+  if(menuCategoryId&&!db.prepare('SELECT 1 FROM menu_categories WHERE id=? AND store_reference=? AND active=1').get(menuCategoryId,access.order.reference))return res.status(400).json({error:'Categoria de cardápio inválida.'});
   const info = db.prepare(`INSERT INTO store_products
-    (store_reference,name,description,category,price_cents,image_url,product_url,sku,stock_quantity,weight_grams,fiscal_ncm,marketplace_enabled,active)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)`).run(access.order.reference, name,
+    (store_reference,name,description,category,price_cents,image_url,product_url,sku,stock_quantity,weight_grams,fiscal_ncm,marketplace_enabled,active,product_type,menu_category_id,menu_sort_order,preparation_minutes,available,dietary_tags,allergens,featured)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?)`).run(access.order.reference, name,
     String(body.description || '').trim().slice(0, 2000), String(body.category || '').trim().slice(0, 80), priceCents,
     imageUrl, productUrl, String(body.sku || '').trim().slice(0, 80), stock,
     Math.max(0, Math.floor(Number(body.weightGrams) || 0)), String(body.fiscalNcm || '').replace(/\D/g, '').slice(0, 8),
-    body.marketplaceEnabled ? 1 : 0);
+    body.marketplaceEnabled ? 1 : 0,productType,menuCategoryId,Math.trunc(Number(body.menuSortOrder)||0),Math.max(0,Math.min(1440,Math.trunc(Number(body.preparationMinutes)||0))),body.available===false?0:1,String(body.dietaryTags||'').trim().slice(0,500),String(body.allergens||'').trim().slice(0,500),body.featured===true?1:0);
   return res.status(201).json({ ok: true, id: Number(info.lastInsertRowid) });
 });
 
@@ -6359,8 +6623,10 @@ app.patch('/api/store-portal/:reference/products/:productId', sameOriginOnly, (r
   const productUrl = body.productUrl === undefined ? current.product_url : safeExternalUrl(body.productUrl);
   try { if (body.imageData) imageUrl = saveStoreImage(access.order.reference, `product-${current.id}`, body.imageData, imageUrl); }
   catch (error) { return res.status(400).json({ error: error.message }); }
+  const itemType=body.productType??body.itemType,productType=itemType===undefined?current.product_type:itemType==='food'?'food':'retail',menuCategoryId=body.menuCategoryId===undefined?current.menu_category_id:(body.menuCategoryId?Number(body.menuCategoryId):null);
+  if(menuCategoryId&&!db.prepare('SELECT 1 FROM menu_categories WHERE id=? AND store_reference=? AND active=1').get(menuCategoryId,access.order.reference))return res.status(400).json({error:'Categoria de cardápio inválida.'});
   db.prepare(`UPDATE store_products SET name=?,description=?,category=?,price_cents=?,image_url=?,product_url=?,sku=?,
-    stock_quantity=?,weight_grams=?,fiscal_ncm=?,marketplace_enabled=?,active=?,updated_at=CURRENT_TIMESTAMP
+    stock_quantity=?,weight_grams=?,fiscal_ncm=?,marketplace_enabled=?,active=?,product_type=?,menu_category_id=?,menu_sort_order=?,preparation_minutes=?,available=?,dietary_tags=?,allergens=?,featured=?,updated_at=CURRENT_TIMESTAMP
     WHERE id=? AND store_reference=?`).run(name, String(body.description ?? current.description ?? '').trim().slice(0, 2000),
     String(body.category ?? current.category ?? '').trim().slice(0, 80), priceCents,
     imageUrl, productUrl,
@@ -6368,7 +6634,7 @@ app.patch('/api/store-portal/:reference/products/:productId', sameOriginOnly, (r
     Math.max(0, Math.floor(Number(body.weightGrams ?? current.weight_grams) || 0)),
     String(body.fiscalNcm ?? current.fiscal_ncm ?? '').replace(/\D/g, '').slice(0, 8),
     body.marketplaceEnabled === undefined ? current.marketplace_enabled : body.marketplaceEnabled ? 1 : 0,
-    body.active === undefined ? current.active : body.active ? 1 : 0, current.id, access.order.reference);
+    body.active === undefined ? current.active : body.active ? 1 : 0,productType,menuCategoryId,Math.trunc(Number(body.menuSortOrder??current.menu_sort_order)||0),Math.max(0,Math.min(1440,Math.trunc(Number(body.preparationMinutes??current.preparation_minutes)||0))),body.available===undefined?current.available:body.available?1:0,String(body.dietaryTags??current.dietary_tags??'').trim().slice(0,500),String(body.allergens??current.allergens??'').trim().slice(0,500),body.featured===undefined?current.featured:body.featured?1:0,current.id, access.order.reference);
   return res.json({ ok: true, message: 'Produto atualizado.' });
 });
 
@@ -6656,6 +6922,98 @@ app.get('/api/public/stores/:reference', (req, res) => {
   }
   return res.json(data);
 });
+app.get('/api/admin/vitrine-ads',requireAdmin,(_req,res)=>{const settings=db.prepare('SELECT * FROM store_ad_settings WHERE id=1').get(),campaigns=db.prepare(`SELECT c.*,s.business_name store_name,(SELECT COUNT(*) FROM store_ad_events e WHERE e.campaign_id=c.id AND e.event_type='impression') impressions,(SELECT COUNT(*) FROM store_ad_events e WHERE e.campaign_id=c.id AND e.event_type='click') clicks,(SELECT COUNT(*) FROM store_ad_events e WHERE e.campaign_id=c.id AND e.event_type='conversion') conversions FROM store_ad_campaigns c JOIN store_profiles s ON s.order_reference=c.store_reference ORDER BY c.id DESC LIMIT 300`).all(),metrics=db.prepare(`SELECT COUNT(*) campaigns,SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) active,COALESCE(SUM(media_budget_cents),0) mediaBudgetCents,COALESCE(SUM(management_fee_cents),0) managementFeesCents FROM store_ad_campaigns`).get(),audit=db.prepare('SELECT id,admin_user_id adminUserId,settings_json settingsJson,reason,created_at createdAt FROM store_ad_weight_audit ORDER BY id DESC LIMIT 100').all();return res.json({settings,campaigns,metrics,audit});});
+app.get('/api/admin/reviews',requireAdmin,(req,res)=>{const status=String(req.query.status||''),reviews=db.prepare(`SELECT r.*, (SELECT COUNT(*) FROM review_reports p WHERE p.review_id=r.id AND p.status='pending') reports FROM verified_delivery_reviews r WHERE (?='' OR r.moderation_status=?) ORDER BY reports DESC,r.id DESC LIMIT 300`).all(status,status),appeals=db.prepare("SELECT * FROM review_appeals WHERE status='pending' ORDER BY id").all(),audit=db.prepare('SELECT * FROM review_moderation_audit ORDER BY id DESC LIMIT 200').all();return res.json({reviews,appeals,audit});});
+app.patch('/api/admin/reviews/:id',requireAdmin,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||''),next={publish:'published',hide:'hidden',reject:'rejected'}[action],note=sanitizeReviewComment(req.body?.note,1000);if(!next)return res.status(400).json({error:'Ação inválida.'});const result=db.transaction(()=>{const changed=db.prepare('UPDATE verified_delivery_reviews SET moderation_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(next,Number(req.params.id));if(!changed.changes)return false;db.prepare('INSERT INTO review_moderation_audit(review_id,admin_user_id,action,note) VALUES (?,?,?,?)').run(Number(req.params.id),req.user.id,action,note);db.prepare("UPDATE review_reports SET status='reviewed' WHERE review_id=? AND status='pending'").run(Number(req.params.id));return true;})();return result?res.json({ok:true,status:next}):res.status(404).json({error:'Avaliação não encontrada.'});});
+app.patch('/api/admin/review-appeals/:id',requireAdmin,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||''),status={approve:'approved',reject:'rejected'}[action],note=sanitizeReviewComment(req.body?.note,1000),appeal=db.prepare("SELECT * FROM review_appeals WHERE id=? AND status='pending'").get(Number(req.params.id));if(!appeal||!status)return res.status(404).json({error:'Recurso pendente não encontrado.'});db.transaction(()=>{db.prepare('UPDATE review_appeals SET status=?,admin_note=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?').run(status,note,appeal.id);if(status==='approved')db.prepare("UPDATE verified_delivery_reviews SET moderation_status='hidden',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(appeal.review_id);db.prepare('INSERT INTO review_moderation_audit(review_id,admin_user_id,action,note) VALUES (?,?,?,?)').run(appeal.review_id,req.user.id,`appeal_${action}`,note);})();return res.json({ok:true,status});});
+app.get('/api/admin/vitrine-ads/platform-promotions',requireAdmin,(_req,res)=>res.json({items:db.prepare('SELECT * FROM platform_promotion_slots ORDER BY slot,sort_order,id').all(),audit:db.prepare('SELECT * FROM platform_promotion_audit ORDER BY id DESC LIMIT 100').all()}));
+app.post('/api/admin/vitrine-ads/platform-promotions',requireAdmin,sameOriginOnly,(req,res)=>{const slot=String(req.body?.slot||''),title=String(req.body?.title||'').trim().slice(0,120),ctaLabel=String(req.body?.ctaLabel||'').trim().slice(0,60),ctaUrl=safeExternalUrl(req.body?.ctaUrl);if(!['platform_header','platform_footer'].includes(slot)||title.length<3||!ctaLabel||!ctaUrl)return res.status(400).json({error:'Revise o slot, título e CTA institucional.'});const values=[slot,title,String(req.body?.text||'').trim().slice(0,300),safeExternalUrl(req.body?.imageUrl),ctaLabel,ctaUrl,req.body?.active===false?0:1,Math.trunc(Number(req.body?.sortOrder)||0),req.body?.startsAt||null,req.body?.endsAt||null],result=db.prepare('INSERT INTO platform_promotion_slots(slot,title,text,image_url,cta_label,cta_url,active,sort_order,starts_at,ends_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run(...values);db.prepare("INSERT INTO platform_promotion_audit(promotion_id,admin_user_id,action,snapshot_json) VALUES (?,?,'create',?)").run(Number(result.lastInsertRowid),req.user.id,JSON.stringify({slot,title,ctaLabel,ctaUrl}));return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});});
+app.put('/api/admin/vitrine-ads/settings',requireAdmin,sameOriginOnly,(req,res)=>{const number=(name,min,max)=>{const value=Number(req.body?.[name]);if(!Number.isFinite(value)||value<min||value>max)throw new Error(name);return value;};try{const settings={enabled:req.body?.enabled===true?1:0,qualityThreshold:Math.round(number('qualityThreshold',0,100)),cityWeight:number('cityWeight',0,100),categoryWeight:number('categoryWeight',0,100),qualityWeight:number('qualityWeight',0,100),fairnessWeight:number('fairnessWeight',0,100)},reason=String(req.body?.reason||'').trim().slice(0,500);if(reason.length<5)return res.status(400).json({error:'Informe o motivo da alteração dos pesos.'});db.transaction(()=>{db.prepare(`UPDATE store_ad_settings SET enabled=?,quality_threshold=?,city_weight=?,category_weight=?,quality_weight=?,fairness_weight=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(settings.enabled,settings.qualityThreshold,settings.cityWeight,settings.categoryWeight,settings.qualityWeight,settings.fairnessWeight);db.prepare('INSERT INTO store_ad_weight_audit(admin_user_id,settings_json,reason) VALUES (?,?,?)').run(req.user.id,JSON.stringify(settings),reason);})();return res.json({ok:true,settings});}catch{return res.status(400).json({error:'Revise os pesos do ranking.'});}});
+app.patch('/api/admin/vitrine-ads/campaigns/:id',requireAdmin,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||''),campaign=db.prepare('SELECT * FROM store_ad_campaigns WHERE id=?').get(Number(req.params.id));if(!campaign)return res.status(404).json({error:'Campanha não encontrada.'});const next={approve:'approved',activate:'active',pause:'paused',reject:'rejected',complete:'completed'}[action],allowed={pending_review:['approved','rejected'],approved:['active','rejected'],active:['paused','completed'],paused:['active','completed']}[campaign.status]||[];if(!next||!allowed.includes(next))return res.status(409).json({error:'Mudança de status inválida.'});if(next==='active'&&campaign.quality_score<(db.prepare('SELECT quality_threshold FROM store_ad_settings WHERE id=1').get()?.quality_threshold||40))return res.status(409).json({error:'A qualidade do anúncio está abaixo do mínimo.'});const starts=next==='active'?(campaign.starts_at||new Date().toISOString()):campaign.starts_at,ends=next==='active'?new Date(Date.parse(starts)+campaign.duration_days*86400000).toISOString():campaign.ends_at;db.prepare('UPDATE store_ad_campaigns SET status=?,starts_at=?,ends_at=?,admin_notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(next,starts,ends,String(req.body?.notes||'').trim().slice(0,1000),campaign.id);return res.json({ok:true,status:next});});
+function storeAdMetrics(reference){return db.prepare(`SELECT c.id,c.plan_code planCode,c.placement,c.target_city targetCity,c.target_category targetCategory,c.creative_title creativeTitle,c.status,c.daily_budget_cents dailyBudgetCents,c.duration_days durationDays,c.media_budget_cents mediaBudgetCents,c.management_fee_cents managementFeeCents,c.quality_score qualityScore,c.starts_at startsAt,c.ends_at endsAt,c.admin_notes adminNotes,
+  SUM(CASE WHEN e.event_type='impression' THEN 1 ELSE 0 END) impressions,SUM(CASE WHEN e.event_type='click' THEN 1 ELSE 0 END) clicks,SUM(CASE WHEN e.event_type='order' THEN 1 ELSE 0 END) orders,SUM(CASE WHEN e.event_type='conversion' THEN 1 ELSE 0 END) conversions,COALESCE(SUM(CASE WHEN e.event_type='conversion' THEN e.value_cents ELSE 0 END),0) salesCents
+  FROM store_ad_campaigns c LEFT JOIN store_ad_events e ON e.campaign_id=c.id WHERE c.store_reference=? GROUP BY c.id ORDER BY c.id DESC`).all(reference).map(row=>({...row,ctrPercent:row.impressions?Math.round(row.clicks/row.impressions*10000)/100:0,conversionRatePercent:row.clicks?Math.round(row.conversions/row.clicks*10000)/100:0}));}
+app.get('/api/store-portal/:reference/vitrine-ads',(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;return res.json({plans:STORE_AD_PLANS,campaigns:storeAdMetrics(access.order.reference)});});
+app.post('/api/store-portal/:reference/reviews/:id/response',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const text=sanitizeReviewComment(req.body?.text,800);if(text.length<2)return res.status(400).json({error:'Informe a resposta.'});const result=db.prepare("UPDATE verified_delivery_reviews SET response_text=?,responded_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND target_type='store' AND target_reference=?").run(text,Number(req.params.id),access.order.reference);return result.changes?res.json({ok:true}):res.status(404).json({error:'Avaliação não encontrada.'});});
+app.post('/api/store-portal/:reference/reviews/:id/appeal',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const reason=sanitizeReviewComment(req.body?.reason,1000),review=db.prepare("SELECT id FROM verified_delivery_reviews WHERE id=? AND target_type='store' AND target_reference=?").get(Number(req.params.id),access.order.reference);if(!review||reason.length<10)return res.status(400).json({error:'Informe uma avaliação e justificativa válidas.'});try{const result=db.prepare("INSERT INTO review_appeals(review_id,appellant_type,appellant_reference,reason) VALUES (?,'store',?,?)").run(review.id,access.order.reference,reason);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});}catch{return res.status(409).json({error:'Recurso já registrado.'});}});
+app.post('/api/store-portal/:reference/vitrine-ads/campaigns',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;let quote;try{quote=storeAdQuote(String(req.body?.planCode||''),req.body?.dailyBudgetCents,req.body?.durationDays);}catch{return res.status(400).json({error:'Revise o plano, orçamento e duração.'});}
+  if(req.body?.termsAccepted!==true)return res.status(400).json({error:'Aceite os termos de publicidade para continuar.'});
+  const store=db.prepare('SELECT * FROM store_profiles WHERE order_reference=?').get(access.order.reference),title=String(req.body?.creativeTitle||'').trim().slice(0,120),text=String(req.body?.creativeText||'').trim().slice(0,300),city=String(req.body?.targetCity||store?.city||'').trim().slice(0,100),category=String(req.body?.targetCategory||'').trim().slice(0,80),destination=safeExternalUrl(req.body?.destinationUrl)||`${SITE_URL}${publicStorePath({order_reference:store.order_reference,business_name:store.business_name})}`;
+  if(title.length<4||!store)return res.status(400).json({error:'Informe um título válido.'});if(['city_top','premium_banner'].includes(quote.planCode)&&city.length<2)return res.status(400).json({error:'Informe a cidade da campanha.'});if(quote.planCode==='category_top'&&category.length<2)return res.status(400).json({error:'Informe a categoria.'});
+  const startsOn=String(req.body?.startsOn||'').trim(),startsAt=startsOn?new Date(`${startsOn}T00:00:00.000Z`):null;if(startsOn&&(!/^\d{4}-\d{2}-\d{2}$/.test(startsOn)||!Number.isFinite(startsAt.getTime())||startsAt.getTime()<Date.now()-86400000||startsAt.getTime()>Date.now()+365*86400000))return res.status(400).json({error:'Informe uma data de início válida.'});let imageUrl=safeExternalUrl(req.body?.imageUrl)||store.logo_url||'';try{if(req.body?.imageData)imageUrl=saveStoreImage(store.order_reference,`ad-${randomUUID()}`,req.body.imageData,imageUrl);}catch(error){return res.status(400).json({error:error.message});}
+  const quality=Math.min(100,30+(title.length>=10?20:0)+(text.length>=30?20:0)+(imageUrl?20:0)+(destination?10:0));const result=db.prepare(`INSERT INTO store_ad_campaigns(store_reference,plan_code,placement,target_city,target_category,creative_title,creative_text,image_url,destination_url,daily_budget_cents,duration_days,media_budget_cents,management_fee_cents,management_fee_bps,quality_score,starts_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(store.order_reference,quote.planCode,quote.placement,city,category,title,text,imageUrl,destination,quote.dailyBudgetCents,quote.durationDays,quote.mediaBudgetCents,quote.managementFeeCents,quote.managementFeeBps,quality,startsAt?.toISOString()||null);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid),status:'pending_review',quote,qualityScore:quality});});
+app.get('/api/store-portal/:reference/orders/:orderReference/tracking',(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const order=db.prepare('SELECT reference FROM marketplace_orders WHERE reference=? AND store_reference=?').get(req.params.orderReference,access.order.reference);return order?res.json({tracking:deliveryTracking(order.reference)}):res.status(404).json({error:'Pedido não encontrado.'});});
+
+app.patch('/api/store-portal/:reference/orders/:orderReference/food-status',sameOriginOnly,(req,res)=>{
+  const access=storePortalAccess(req,res);if(!access)return;
+  const order=db.prepare(`SELECT o.*,s.business_type FROM marketplace_orders o JOIN store_profiles s ON s.order_reference=o.store_reference
+    WHERE o.reference=? AND o.store_reference=?`).get(req.params.orderReference,access.order.reference);
+  if(!order)return res.status(404).json({error:'Pedido não encontrado.'});if(!['food','hybrid'].includes(order.business_type)||order.payment_status!=='approved')return res.status(409).json({error:'Este pedido não pertence ao fluxo alimentício pago.'});
+  const next={accept:'food_accepted',prepare:'food_preparing',ready:'food_ready',handoff:'food_handed_off'}[String(req.body?.action||'')];
+  if(!next||!canTransitionFoodOrder(order.fulfillment_status,next))return res.status(409).json({error:'Mudança de etapa não permitida.'});
+  db.transaction(()=>{db.prepare('UPDATE marketplace_orders SET fulfillment_status=?,updated_at=CURRENT_TIMESTAMP WHERE reference=? AND store_reference=?').run(next,order.reference,access.order.reference);
+    if(next==='food_ready'&&order.delivery_mode==='local')db.prepare("UPDATE local_delivery_jobs SET status='available',updated_at=CURRENT_TIMESTAMP WHERE order_reference=? AND status='awaiting_payment'").run(order.reference);
+  })();if(next==='food_ready'&&order.delivery_mode==='local'){const job=db.prepare('SELECT id FROM local_delivery_jobs WHERE order_reference=?').get(order.reference);if(job)dispatchNextCourier(job.id);}return res.json({ok:true,status:next});
+});
+
+app.put('/api/admin/store-submissions/:reference/food-profile',requireAdmin,sameOriginOnly,(req,res)=>{
+  const current=db.prepare('SELECT * FROM store_profiles WHERE order_reference=?').get(req.params.reference);if(!current)return res.status(404).json({error:'Loja não encontrada.'});
+  let value;try{value=normalizeStoreOperations({...req.body,acceptingOrders:req.body?.acceptingOrders??req.body?.acceptsOrders},current);}catch{return res.status(400).json({error:'Revise os horários e tempos de preparo.'});}
+  db.transaction(()=>{db.prepare(`UPDATE store_profiles SET business_type=?,preparation_min_minutes=?,preparation_max_minutes=?,pickup_instructions=?,accepting_orders=?,fulfillment_mode=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`).run(value.businessType,value.preparationMinMinutes,value.preparationMaxMinutes,value.pickupInstructions,value.acceptingOrders?1:0,value.fulfillmentMode,req.params.reference);
+    if(req.body?.weeklyHours){db.prepare('DELETE FROM store_business_hours WHERE store_reference=?').run(req.params.reference);const insert=db.prepare('INSERT INTO store_business_hours(store_reference,day_of_week,closed,opens_at,closes_at) VALUES (?,?,?,?,?)');value.weeklyHours.forEach((hour,index)=>insert.run(req.params.reference,index,hour.closed?1:0,hour.opens,hour.closes));}})();
+  return res.json({ok:true,operations:publicStoreOperations(req.params.reference)});
+});
+
+app.get('/api/admin/store-submissions/:reference/food-profile',requireAdmin,(req,res)=>{
+  const store=db.prepare('SELECT order_reference,business_name FROM store_profiles WHERE order_reference=?').get(req.params.reference);if(!store)return res.status(404).json({error:'Loja não encontrada.'});
+  const menuCategories=db.prepare('SELECT id,name,sort_order sortOrder,active FROM menu_categories WHERE store_reference=? ORDER BY sort_order,id').all(store.order_reference).map(row=>({...row,active:Boolean(row.active)}));
+  const menuItems=db.prepare(`SELECT id,name,description,category,price_cents priceCents,image_url imageUrl,stock_quantity stockQuantity,
+    product_type productType,menu_category_id menuCategoryId,menu_sort_order menuSortOrder,preparation_minutes preparationMinutes,
+    available,dietary_tags dietaryTags,allergens,featured,active FROM store_products WHERE store_reference=? ORDER BY menu_sort_order,id`).all(store.order_reference).map(row=>({...row,available:Boolean(row.available),featured:Boolean(row.featured),active:Boolean(row.active)}));
+  const account=db.prepare('SELECT status,expires_at expiresAt,connected_at connectedAt FROM marketplace_seller_accounts WHERE store_reference=?').get(store.order_reference)||null;
+  return res.json({store,operations:publicStoreOperations(store.order_reference),weeklyHours:publicStoreOperations(store.order_reference)?.weeklyHours||[],menuCategories,menuItems,paymentSplit:{configured:marketplaceOAuthConfigured(),account}});
+});
+
+function publicStoreOperations(reference){
+  const store=db.prepare(`SELECT business_type,street,address_number,address_complement,neighborhood,
+    preparation_min_minutes,preparation_max_minutes,pickup_instructions,accepting_orders,fulfillment_mode
+    FROM store_profiles WHERE order_reference=?`).get(reference);
+  if(!store)return null;
+  const hours=db.prepare('SELECT day_of_week,closed,opens_at,closes_at FROM store_business_hours WHERE store_reference=? ORDER BY day_of_week').all(reference);
+  return {businessType:store.business_type,street:store.street,addressNumber:store.address_number,addressComplement:store.address_complement,
+    neighborhood:store.neighborhood,preparationMinMinutes:store.preparation_min_minutes,preparationMaxMinutes:store.preparation_max_minutes,
+    pickupInstructions:store.pickup_instructions,acceptingOrders:Boolean(store.accepting_orders),acceptsOrders:Boolean(store.accepting_orders),
+    fulfillmentMode:store.fulfillment_mode,weeklyHours:hours.map(row=>({dayOfWeek:row.day_of_week,closed:Boolean(row.closed),opens:row.opens_at,closes:row.closes_at}))};
+}
+
+app.put('/api/store-portal/:reference/operations',sameOriginOnly,(req,res)=>{
+  const access=storePortalAccess(req,res);if(!access)return;
+  const current=db.prepare('SELECT * FROM store_profiles WHERE order_reference=?').get(access.order.reference);
+  if(!current)return res.status(409).json({error:'Conclua primeiro o cadastro da loja.'});
+  let value;try{value=normalizeStoreOperations({...req.body,acceptingOrders:req.body?.acceptingOrders??req.body?.acceptsOrders},current);}catch{return res.status(400).json({error:'Revise os horários e tempos de preparo.'});}
+  const address={street:String(req.body?.street??current.street??'').trim().slice(0,160),number:String(req.body?.addressNumber??current.address_number??'').trim().slice(0,30),
+    complement:String(req.body?.addressComplement??current.address_complement??'').trim().slice(0,100),neighborhood:String(req.body?.neighborhood??current.neighborhood??'').trim().slice(0,100)};
+  db.transaction(()=>{db.prepare(`UPDATE store_profiles SET business_type=?,street=?,address_number=?,address_complement=?,neighborhood=?,
+    preparation_min_minutes=?,preparation_max_minutes=?,pickup_instructions=?,accepting_orders=?,fulfillment_mode=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
+    .run(value.businessType,address.street,address.number,address.complement,address.neighborhood,value.preparationMinMinutes,value.preparationMaxMinutes,value.pickupInstructions,value.acceptingOrders?1:0,value.fulfillmentMode,access.order.reference);
+    db.prepare('DELETE FROM store_business_hours WHERE store_reference=?').run(access.order.reference);
+    const insert=db.prepare('INSERT INTO store_business_hours(store_reference,day_of_week,closed,opens_at,closes_at) VALUES (?,?,?,?,?)');
+    value.weeklyHours.forEach((hour,index)=>insert.run(access.order.reference,index,hour.closed?1:0,hour.opens,hour.closes));
+  })();return res.json({ok:true,operations:publicStoreOperations(access.order.reference)});
+});
+
+app.post('/api/store-portal/:reference/menu-categories',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;
+  const name=String(req.body?.name||'').trim().slice(0,80),sort=Math.trunc(Number(req.body?.sortOrder)||0);if(name.length<2)return res.status(400).json({error:'Informe o nome da categoria.'});
+  try{const result=db.prepare('INSERT INTO menu_categories(store_reference,name,sort_order) VALUES (?,?,?)').run(access.order.reference,name,sort);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});}catch{return res.status(409).json({error:'Essa categoria já existe.'});}});
+app.patch('/api/store-portal/:reference/menu-categories/:id',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const name=String(req.body?.name||'').trim().slice(0,80);
+  if(name.length<2)return res.status(400).json({error:'Informe o nome da categoria.'});const result=db.prepare('UPDATE menu_categories SET name=?,sort_order=?,active=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND store_reference=?').run(name,Math.trunc(Number(req.body?.sortOrder)||0),req.body?.active===false?0:1,Number(req.params.id),access.order.reference);return result.changes?res.json({ok:true}):res.status(404).json({error:'Categoria não encontrada.'});});
+app.delete('/api/store-portal/:reference/menu-categories/:id',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const result=db.prepare('UPDATE menu_categories SET active=0,updated_at=CURRENT_TIMESTAMP WHERE id=? AND store_reference=?').run(Number(req.params.id),access.order.reference);return result.changes?res.json({ok:true}):res.status(404).json({error:'Categoria não encontrada.'});});
+
+app.put('/api/store-portal/:reference/products/:productId/options',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;
+  const product=db.prepare('SELECT id FROM store_products WHERE id=? AND store_reference=?').get(Number(req.params.productId),access.order.reference);if(!product)return res.status(404).json({error:'Produto não encontrado.'});
+  const groups=Array.isArray(req.body?.groups)?req.body.groups.slice(0,20):[];try{db.transaction(()=>{db.prepare('DELETE FROM product_option_groups WHERE product_id=?').run(product.id);
+    const addGroup=db.prepare('INSERT INTO product_option_groups(product_id,name,min_select,max_select,required,sort_order) VALUES (?,?,?,?,?,?)'),addOption=db.prepare('INSERT INTO product_options(group_id,name,price_delta_cents,active,sort_order) VALUES (?,?,?,?,?)');
+    groups.forEach((group,index)=>{const name=String(group?.name||'').trim().slice(0,80),min=Math.trunc(Number(group?.minSelect)||0),max=Math.trunc(Number(group?.maxSelect)||1);if(name.length<2||min<0||max<1||max>20||min>max)throw new Error('invalid');const result=addGroup.run(product.id,name,min,max,group.required===true?1:0,index);const options=Array.isArray(group.options)?group.options.slice(0,50):[];if(!options.length)throw new Error('invalid');options.forEach((option,position)=>{const optionName=String(option?.name||'').trim().slice(0,100),price=Math.trunc(Number(option?.priceDeltaCents)||0);if(optionName.length<1||price<0||price>1000000)throw new Error('invalid');addOption.run(Number(result.lastInsertRowid),optionName,price,option.active===false?0:1,position);});});})();return res.json({ok:true});}catch{return res.status(400).json({error:'Revise os grupos e adicionais.'});}});
 
 app.post('/api/marketplace/orders/:reference/confirm-delivery',requireUser,sameOriginOnly,(req,res)=>{const order=db.prepare(`SELECT o.*,j.id job_id,j.courier_id,j.courier_cents,j.status job_status FROM marketplace_orders o JOIN local_delivery_jobs j ON j.order_reference=o.reference WHERE o.reference=? AND o.buyer_user_id=? AND o.delivery_mode='local' AND o.payment_status='approved'`).get(req.params.reference,req.user.id);if(!order)return res.status(404).json({error:'Pedido local pago não encontrado.'});if(order.job_status!=='delivered')return res.status(409).json({error:'O entregador ainda não marcou a entrega como concluída.'});if(!order.courier_id)return res.status(409).json({error:'Esta entrega não possui entregador atribuído.'});
   try{const confirmed=db.transaction(()=>{const result=db.prepare("UPDATE marketplace_orders SET customer_confirmed_at=CURRENT_TIMESTAMP,fulfillment_status='delivered',updated_at=CURRENT_TIMESTAMP WHERE reference=? AND customer_confirmed_at IS NULL AND payment_status='approved'").run(order.reference);if(result.changes)applyCourierLedger({courierId:order.courier_id,orderReference:order.reference,entryType:'delivery_credit',amountCents:order.courier_cents,idempotencyKey:`delivery:${order.reference}:credit`});return Boolean(result.changes);})();return res.json({ok:true,confirmed,replayed:!confirmed});}catch{return res.status(409).json({error:'Não foi possível confirmar esta entrega.'});}});
@@ -7527,6 +7885,7 @@ app.post('/api/social/posts/:id/comments', requireActiveSocialUser, sameOriginOn
         })();
         if(automation)sendSocialLive(req.user.id,'chat-message',automation);
       }
+      const storeAdOrder=db.prepare("SELECT campaign_id,event_token,visitor_key FROM store_ad_events WHERE order_reference=? AND event_type='order' LIMIT 1").get(reference);if(storeAdOrder){if(status==='approved')db.prepare("INSERT OR IGNORE INTO store_ad_events(campaign_id,event_type,event_token,visitor_key,event_day,order_reference,value_cents) VALUES (?,'conversion',?,?,?,?,?)").run(storeAdOrder.campaign_id,storeAdOrder.event_token,storeAdOrder.visitor_key,new Date().toISOString().slice(0,10),reference,order.total_cents);else if(reversed)db.prepare("DELETE FROM store_ad_events WHERE order_reference=? AND event_type='conversion'").run(reference);}
     }catch(error){console.error('Social comment automation error',String(error?.message||error).slice(0,180));}
   }
   return res.status(201).json({ id: Number(result.lastInsertRowid), body, name: req.user.name });
