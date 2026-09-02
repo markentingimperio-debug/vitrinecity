@@ -1,8 +1,11 @@
 (() => {
   if (window.__vcGlobalMarketBannerLoaded) return;
   window.__vcGlobalMarketBannerLoaded = true;
+  const isLocalDelivery = location.pathname === "/entregas" ||
+    (location.pathname === "/loja" && new URLSearchParams(location.search).get("delivery") === "local");
   if (
     document.querySelector("#vc-global-market-banner") ||
+    isLocalDelivery ||
     location.pathname === "/" ||
     location.pathname === "/index.html" ||
     location.pathname.startsWith("/admin")

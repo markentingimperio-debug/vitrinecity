@@ -3327,6 +3327,8 @@ app.get('/api/checkout/customer', requireUser, (req, res) => {
 app.get('/api/marketplace/products', (req, res) => {
   const category = String(req.query.category || '').trim().slice(0, 80);
   const search = String(req.query.q || '').trim().slice(0, 80);
+  let delivery=String(req.query.delivery||'').trim().toLowerCase();
+  if(!delivery){try{delivery=new URL(String(req.get('referer')||''),SITE_URL).searchParams.get('delivery')||'';}catch{delivery='';}}
   const products = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,
       p.image_url,p.product_url,p.sku,p.stock_quantity,p.variation_label,p.delivery_min_days,p.delivery_max_days,p.return_days,
       p.product_type,p.menu_category_id,p.menu_sort_order,p.preparation_minutes,p.available,
@@ -3336,9 +3338,9 @@ app.get('/api/marketplace/products', (req, res) => {
       (SELECT COUNT(*) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published') rating_count
     FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
     WHERE p.active=1 AND p.marketplace_enabled=1 AND p.available=1 AND p.price_cents>0 AND p.stock_quantity>0
-      AND s.review_status='published' AND (?='' OR p.category=?)
+      AND s.review_status='published' AND (?!='local' OR p.product_type='digital' OR s.fulfillment_mode IN ('local','both')) AND (?='' OR p.category=?)
       AND (?='' OR p.name LIKE '%'||?||'%' OR p.description LIKE '%'||?||'%' OR s.business_name LIKE '%'||?||'%')
-    ORDER BY p.updated_at DESC,p.id DESC LIMIT 120`).all(category, category, search, search, search, search);
+    ORDER BY p.updated_at DESC,p.id DESC LIMIT 120`).all(delivery,category, category, search, search, search, search);
   return res.json({ products });
 });
 
@@ -3358,7 +3360,7 @@ app.delete('/api/customer/favorite-stores/:reference',requireUser,sameOriginOnly
 });
 
 app.get('/api/marketplace/stores', (req,res) => {
-  const city=String(req.query.city||'').trim().slice(0,80),search=String(req.query.q||'').trim().slice(0,80);
+  const city=String(req.query.city||'').trim().slice(0,80),search=String(req.query.q||'').trim().slice(0,80),delivery=String(req.query.delivery||'').trim().toLowerCase();
   const stores=db.prepare(`SELECT s.order_reference,s.business_name,s.description,s.logo_url,s.facade_url,s.city,s.state,
       s.business_type,s.preparation_min_minutes,s.preparation_max_minutes,s.accepting_orders,s.fulfillment_mode,
       COUNT(p.id) product_count,MIN(p.price_cents) starting_price_cents,
@@ -3366,8 +3368,9 @@ app.get('/api/marketplace/stores', (req,res) => {
       (SELECT COUNT(*) FROM verified_delivery_reviews r WHERE r.target_type='store' AND r.target_reference=s.order_reference AND r.moderation_status='published') rating_count
     FROM store_profiles s JOIN store_products p ON p.store_reference=s.order_reference
     WHERE s.review_status='published' AND p.active=1 AND p.marketplace_enabled=1 AND p.available=1 AND p.price_cents>0 AND p.stock_quantity>0
+      AND (?!='local' OR p.product_type='digital' OR s.fulfillment_mode IN ('local','both'))
       AND (?='' OR s.city=?) AND (?='' OR s.business_name LIKE '%'||?||'%' OR s.description LIKE '%'||?||'%')
-    GROUP BY s.order_reference ORDER BY s.accepting_orders DESC,rating_average DESC,s.business_name`).all(city,city,search,search,search);
+    GROUP BY s.order_reference ORDER BY s.accepting_orders DESC,rating_average DESC,s.business_name`).all(delivery,city,city,search,search,search);
   const references=stores.map(store=>store.order_reference),hours=new Map();
   if(references.length){for(const row of db.prepare(`SELECT store_reference,day_of_week,closed,opens_at,closes_at FROM store_business_hours WHERE store_reference IN (${references.map(()=>'?').join(',')})`).all(...references)){if(!hours.has(row.store_reference))hours.set(row.store_reference,[]);hours.get(row.store_reference).push(row)}}
   const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date()).map(part=>[part.type,part.value])),dayIndex={Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6}[parts.weekday],time=`${parts.hour}:${parts.minute}`;
