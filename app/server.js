@@ -8943,7 +8943,7 @@ app.get(['/loja/:reference', '/loja/:reference/:slug'], (req, res) => {
 app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id < 1) return publicErrorPage(res, 404);
-  const product = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,p.image_url,p.product_url,
+  const product = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,p.image_url,p.product_url,p.product_type,
       p.sku,p.stock_quantity,p.weight_grams,p.variation_label,p.delivery_min_days,p.delivery_max_days,p.return_days,
       s.business_name AS store_name,
       COALESCE((SELECT ROUND(AVG(r.rating),1) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published'),0) rating_average,
@@ -8952,6 +8952,7 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     WHERE p.id=? AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0
       AND p.stock_quantity>0 AND s.review_status='published'`).get(id);
   if (!product) return publicErrorPage(res, 404);
+  const isDigital = product.product_type === 'digital';
   const slug = marketplaceProductSlug(product.name);
   if (req.params.slug !== slug) return res.redirect(301, `/produto/${product.id}/${slug}`);
   const origin = new URL(SITE_URL).origin;
@@ -9003,9 +9004,9 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     <section><div class="badge">${escapeHtml(product.category || 'Produto')}</div><a class="seller" href="${escapeHtml(storePath)}">Vendido por ${escapeHtml(product.store_name)}</a>
     <h1>${escapeHtml(product.name)}</h1><p class="description">${escapeHtml(description)}</p>
     <div class="price">${(product.price_cents / 100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</div>
-    <div class="stock">${product.stock_quantity} unidades disponíveis</div><div class="rating">${product.rating_count?`★ ${Number(product.rating_average).toFixed(1)} · ${product.rating_count} avaliação${product.rating_count===1?'':'ões'}`:'☆ Ainda sem avaliações'}</div>
-    <div class="purchase-details"><div class="detail"><small>Variação</small><b>${escapeHtml(product.variation_label||'Única')}</b></div><div class="detail"><small>Prazo estimado</small><b>${product.delivery_min_days} a ${product.delivery_max_days} dias úteis</b></div><div class="detail"><small>Frete</small><b>Calculado no checkout</b></div><div class="detail"><small>Devolução</small><b>Até ${product.return_days} dias após o recebimento</b></div></div>
-    <div class="actions">${product.product_url?`<a class="button" href="${escapeHtml(product.product_url)}" target="_blank" rel="noopener sponsored">Comprar</a>`:'<button id="add">Adicionar ao carrinho</button>'}<a class="button alt" href="${escapeHtml(storePath)}">Ver a vitrine da loja</a></div><div class="status" id="status"></div></section>
+    <div class="stock">${isDigital?'Acesso digital disponível':`${product.stock_quantity} unidades disponíveis`}</div><div class="rating">${product.rating_count?`★ ${Number(product.rating_average).toFixed(1)} · ${product.rating_count} avaliação${product.rating_count===1?'':'ões'}`:'☆ Ainda sem avaliações'}</div>
+    <div class="purchase-details">${isDigital?'<div class="detail"><small>Formato</small><b>Acesso digital individual</b></div><div class="detail"><small>Entrega</small><b>Liberada na área do aluno após o pagamento</b></div>':`<div class="detail"><small>Variação</small><b>${escapeHtml(product.variation_label||'Única')}</b></div><div class="detail"><small>Prazo estimado</small><b>${product.delivery_min_days} a ${product.delivery_max_days} dias úteis</b></div><div class="detail"><small>Frete</small><b>Calculado no checkout</b></div><div class="detail"><small>Devolução</small><b>Até ${product.return_days} dias após o recebimento</b></div>`}</div>
+    <div class="actions">${product.product_url?`<a class="button" href="${escapeHtml(product.product_url)}"${isDigital?'':` target="_blank" rel="noopener sponsored"`}>${isDigital?'Comprar acesso':'Comprar'}</a>`:'<button id="add">Adicionar ao carrinho</button>'}<a class="button alt" href="${escapeHtml(storePath)}">Ver a vitrine da loja</a></div><div class="status" id="status"></div></section>
     <section class="reviews"><h2>Avaliações de clientes</h2>${reviews.length?`<div class="review-grid">${reviews.map(review=>`<article class="review"><div class="rating">${'★'.repeat(review.rating)}${'☆'.repeat(5-review.rating)}</div><h3>${escapeHtml(review.title||'Avaliação do produto')}</h3><p>${escapeHtml(review.body)}</p><small>${escapeHtml(review.author_name)} · ${new Date(`${review.created_at}Z`).toLocaleDateString('pt-BR')}</small>${review.verified_purchase?'<div class="verified">✓ Compra verificada</div>':''}</article>`).join('')}</div>`:'<p class="description">Este produto ainda não recebeu avaliações. As avaliações publicadas aparecerão aqui.</p>'}</section>
     </main>
     <script>const product=${publicProduct},add=document.getElementById('add');if(add)add.onclick=()=>{let cart=[];try{cart=JSON.parse(localStorage.getItem('vc_shop_cart')||'[]')}catch{}if(cart.length&&cart[0].store_reference!==product.store_reference){document.getElementById('status').textContent='Finalize primeiro os produtos da outra loja.';return}const old=cart.find(item=>item.id===product.id);if(old)old.quantity=Math.min(product.stock_quantity,old.quantity+1);else cart.push({...product,quantity:1});localStorage.setItem('vc_shop_cart',JSON.stringify(cart));location.href='/loja?carrinho=1'};</script>
