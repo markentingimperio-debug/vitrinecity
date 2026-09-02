@@ -1365,6 +1365,28 @@ ensureColumn('local_delivery_couriers','current_longitude','REAL');
 ensureColumn('local_delivery_couriers','location_accuracy','REAL');
 ensureColumn('local_delivery_couriers','location_at','TEXT');
 ensureColumn('local_delivery_couriers','available','INTEGER NOT NULL DEFAULT 0');
+db.exec(`CREATE TABLE IF NOT EXISTS courier_applications (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  whatsapp TEXT NOT NULL,
+  cpf_hash TEXT NOT NULL UNIQUE,
+  cpf_last4 TEXT NOT NULL,
+  city TEXT NOT NULL,
+  state TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+  terms_version TEXT NOT NULL,
+  privacy_version TEXT NOT NULL,
+  terms_accepted_at TEXT NOT NULL,
+  privacy_accepted_at TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  request_fingerprint TEXT NOT NULL DEFAULT '',
+  courier_id INTEGER REFERENCES local_delivery_couriers(id) ON DELETE SET NULL,
+  review_note TEXT NOT NULL DEFAULT '',
+  reviewed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_courier_applications_status_created ON courier_applications(status,created_at DESC);`);
 db.exec(`CREATE TABLE IF NOT EXISTS local_delivery_offers (
   id INTEGER PRIMARY KEY,job_id INTEGER NOT NULL REFERENCES local_delivery_jobs(id) ON DELETE CASCADE,
   courier_id INTEGER NOT NULL REFERENCES local_delivery_couriers(id) ON DELETE CASCADE,
@@ -2091,6 +2113,11 @@ function saveStoreImage(reference, kind, value, currentUrl = '') {
   const filename = `${safeReference}-${kind}-${Date.now()}.${extension}`;
   fs.writeFileSync(path.join(folder, filename), buffer, { mode: 0o640 });
   return `/uploads/store-assets/${filename}`;
+}
+
+function courierApplicationFingerprint(value) {
+  if(!managementSecret())throw new Error('courier_data_secret_missing');
+  return createHmac('sha256',managementSecret()).update('courier-application:'+String(value).replace(/\D/g,'')).digest('hex');
 }
 
 function marketplaceWebhookRouteSecret(){return String(process.env.MERCADOPAGO_WEBHOOK_ROUTE_SECRET||process.env.MERCADOPAGO_WEBHOOK_SECRET||managementSecret()||'');}
@@ -3776,6 +3803,21 @@ app.post('/api/marketplace/local-delivery/quote',requireUser,sameOriginOnly,asyn
   catch(error){const messages={local_delivery_disabled:'A entrega local ainda não está ativa.',local_delivery_city_unavailable:'A entrega local não está disponível entre esses endereços.',store_not_accepting_delivery:'A loja não está aceitando entregas agora.',routes_not_configured:'Configure a API de rotas do Google no servidor.',distance_out_of_range:'O endereço está fora da distância máxima de entrega.'};return res.status(409).json({error:messages[error.message]||'Não foi possível calcular a rota de entrega local.'});}
 });
 
+app.post('/api/courier/applications',sameOriginOnly,(req,res)=>{
+  const name=String(req.body?.name||'').trim().replace(/\s+/g,' ').slice(0,120),whatsapp=String(req.body?.whatsapp||'').replace(/\D/g,'').slice(0,15),
+    cpf=String(req.body?.cpf||'').replace(/\D/g,''),city=String(req.body?.city||'').trim().replace(/\s+/g,' ').slice(0,100),state=String(req.body?.state||'').trim().toUpperCase().slice(0,2),
+    idempotencyKey=String(req.get('idempotency-key')||'').trim().slice(0,120);
+  if(name.length<3||whatsapp.length<10||!validCpf(cpf)||city.length<2||state.length!==2)return res.status(400).json({error:'Revise nome, WhatsApp, CPF, cidade e UF.'});
+  if(req.body?.termsAccepted!==true||req.body?.privacyAccepted!==true)return res.status(400).json({error:'Aceite os termos e a política de privacidade.'});
+  if(!/^[A-Za-z0-9._:-]{12,120}$/.test(idempotencyKey))return res.status(400).json({error:'Envie uma chave de idempotência válida.'});
+  let cpfHash;try{cpfHash=courierApplicationFingerprint(cpf);}catch{return res.status(503).json({error:'Proteção de dados temporariamente indisponível.'});}
+  const prior=db.prepare('SELECT id,status FROM courier_applications WHERE idempotency_key=? OR cpf_hash=?').get(idempotencyKey,cpfHash);
+  if(prior)return res.json({ok:true,id:prior.id,status:prior.status,replayed:true});
+  try{const now=new Date().toISOString(),result=db.prepare(`INSERT INTO courier_applications(name,whatsapp,cpf_hash,cpf_last4,city,state,terms_version,privacy_version,terms_accepted_at,privacy_accepted_at,idempotency_key,request_fingerprint) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(name,whatsapp,cpfHash,cpf.slice(-4),city,state,'2026-09-02','2026-09-02',now,now,idempotencyKey,createHmac('sha256',managementSecret()).update(`${req.ip}|${String(req.get('user-agent')||'').slice(0,160)}`).digest('hex'));
+    return res.status(201).json({ok:true,id:Number(result.lastInsertRowid),status:'pending'});
+  }catch{return res.status(409).json({error:'Já existe uma solicitação para este CPF.'});}
+});
+
 app.get('/api/admin/local-delivery',requireAdmin,(_req,res)=>{
   const settings=localDeliverySettings();
   const cities=db.prepare('SELECT id,city,state,active,created_at createdAt FROM local_delivery_cities ORDER BY state,city').all().map(row=>({...row,active:Boolean(row.active)}));
@@ -3786,7 +3828,8 @@ app.get('/api/admin/local-delivery',requireAdmin,(_req,res)=>{
     ORDER BY j.id DESC LIMIT 200`).all();
   const withdrawals=db.prepare(`SELECT w.id,w.courier_id courierId,c.name courierName,w.amount_cents amountCents,w.status,w.pix_key_type pixKeyType,w.pix_key_last4 pixKeyLast4,w.proof_reference proofReference,w.admin_note adminNote,w.requested_at requestedAt,w.paid_at paidAt FROM local_delivery_withdrawals w JOIN local_delivery_couriers c ON c.id=w.courier_id ORDER BY w.id DESC LIMIT 200`).all();
   const offers=db.prepare(`SELECT id,job_id jobId,courier_id courierId,status,distance_to_store_meters distanceToStoreMeters,expires_at expiresAt,created_at createdAt,responded_at respondedAt FROM local_delivery_offers ORDER BY id DESC LIMIT 300`).all();
-  return res.json({settings,cities,couriers,jobs:jobs.map(job=>({...job,timeline:deliveryTracking(job.order_reference).timeline})),offers,withdrawals,routesConfigured:Boolean(String(process.env.GOOGLE_MAPS_ROUTES_API_KEY||'').trim())});
+  const applications=db.prepare(`SELECT id,name,whatsapp,cpf_last4 cpfLast4,city,state,status,review_note reviewNote,created_at createdAt,reviewed_at reviewedAt FROM courier_applications ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,id DESC LIMIT 300`).all();
+  return res.json({settings,cities,couriers,applications,jobs:jobs.map(job=>({...job,timeline:deliveryTracking(job.order_reference).timeline})),offers,withdrawals,routesConfigured:Boolean(String(process.env.GOOGLE_MAPS_ROUTES_API_KEY||'').trim())});
 });
 app.get('/api/admin/local-delivery/orders/:reference/tracking',requireAdmin,(req,res)=>{const order=db.prepare('SELECT reference FROM marketplace_orders WHERE reference=?').get(req.params.reference);return order?res.json({tracking:deliveryTracking(order.reference)}):res.status(404).json({error:'Pedido não encontrado.'});});
 app.put('/api/admin/local-delivery/settings',requireAdmin,sameOriginOnly,(req,res)=>{
@@ -3816,6 +3859,16 @@ app.post('/api/admin/local-delivery/couriers',requireAdmin,sameOriginOnly,(req,r
   if(temporaryPassword.length<10)return res.status(400).json({error:'A senha do entregador deve ter ao menos 10 caracteres.'});
   const result=db.prepare('INSERT INTO local_delivery_couriers(name,whatsapp,city,state,password_hash) VALUES (?,?,?,?,?)').run(name,whatsapp,city,state,hashPassword(temporaryPassword));
   return res.status(201).json({ok:true,id:Number(result.lastInsertRowid),...(req.body?.password?{}:{temporaryPassword})});
+});
+app.patch('/api/admin/local-delivery/applications/:id',requireAdmin,sameOriginOnly,(req,res)=>{
+  const action=String(req.body?.action||''),note=String(req.body?.note||'').trim().slice(0,500),application=db.prepare('SELECT * FROM courier_applications WHERE id=?').get(Number(req.params.id));
+  if(!application)return res.status(404).json({error:'Solicitação não encontrada.'});
+  if(!['approve','reject'].includes(action))return res.status(400).json({error:'Ação inválida.'});
+  if(application.status!=='pending')return res.json({ok:true,status:application.status,replayed:true,courierId:application.courier_id||null});
+  if(action==='reject'){db.prepare("UPDATE courier_applications SET status='rejected',review_note=?,reviewed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").run(note,application.id);return res.json({ok:true,status:'rejected'});}
+  const temporaryPassword=randomBytes(9).toString('base64url');
+  try{const courierId=db.transaction(()=>{const result=db.prepare("INSERT INTO local_delivery_couriers(name,whatsapp,city,state,status,password_hash,available) VALUES (?,?,?,?,'active',?,0)").run(application.name,application.whatsapp,application.city,application.state,hashPassword(temporaryPassword));const id=Number(result.lastInsertRowid);const changed=db.prepare("UPDATE courier_applications SET status='approved',courier_id=?,review_note=?,reviewed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").run(id,note,application.id);if(!changed.changes)throw new Error('already_reviewed');return id;})();return res.json({ok:true,status:'approved',courierId,temporaryPassword});}
+  catch{return res.status(409).json({error:'Não foi possível aprovar esta solicitação.'});}
 });
 app.patch('/api/admin/local-delivery/couriers/:id/access',requireAdmin,sameOriginOnly,(req,res)=>{const password=String(req.body?.password||randomBytes(9).toString('base64url'));if(password.length<10)return res.status(400).json({error:'A senha deve ter ao menos 10 caracteres.'});const result=db.prepare("UPDATE local_delivery_couriers SET password_hash=?,status=CASE WHEN status='blocked' THEN status ELSE 'active' END,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(hashPassword(password),Number(req.params.id));if(!result.changes)return res.status(404).json({error:'Entregador não encontrado.'});db.prepare('DELETE FROM local_delivery_courier_sessions WHERE courier_id=?').run(Number(req.params.id));return res.json({ok:true,...(req.body?.password?{}:{temporaryPassword:password})});});
 app.patch('/api/admin/local-delivery/jobs/:id',requireAdmin,sameOriginOnly,(req,res)=>{
