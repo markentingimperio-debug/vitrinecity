@@ -3338,7 +3338,7 @@ app.get('/api/marketplace/products', (req, res) => {
       (SELECT COUNT(*) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published') rating_count
     FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
     WHERE p.active=1 AND p.marketplace_enabled=1 AND p.available=1 AND p.price_cents>0 AND p.stock_quantity>0
-      AND s.review_status='published' AND (?!='local' OR p.product_type='digital' OR s.fulfillment_mode IN ('local','both')) AND (?='' OR p.category=?)
+      AND s.review_status='published' AND (?!='local' OR p.product_type='digital' OR s.fulfillment_mode IN ('delivery','local','both')) AND (?='' OR p.category=?)
       AND (?='' OR p.name LIKE '%'||?||'%' OR p.description LIKE '%'||?||'%' OR s.business_name LIKE '%'||?||'%')
     ORDER BY p.updated_at DESC,p.id DESC LIMIT 120`).all(delivery,category, category, search, search, search, search);
   return res.json({ products });
@@ -3368,7 +3368,7 @@ app.get('/api/marketplace/stores', (req,res) => {
       (SELECT COUNT(*) FROM verified_delivery_reviews r WHERE r.target_type='store' AND r.target_reference=s.order_reference AND r.moderation_status='published') rating_count
     FROM store_profiles s JOIN store_products p ON p.store_reference=s.order_reference
     WHERE s.review_status='published' AND p.active=1 AND p.marketplace_enabled=1 AND p.available=1 AND p.price_cents>0 AND p.stock_quantity>0
-      AND (?!='local' OR p.product_type='digital' OR s.fulfillment_mode IN ('local','both'))
+      AND (?!='local' OR p.product_type='digital' OR s.fulfillment_mode IN ('delivery','local','both'))
       AND (?='' OR s.city=?) AND (?='' OR s.business_name LIKE '%'||?||'%' OR s.description LIKE '%'||?||'%')
     GROUP BY s.order_reference ORDER BY s.accepting_orders DESC,rating_average DESC,s.business_name`).all(delivery,city,city,search,search,search);
   const references=stores.map(store=>store.order_reference),hours=new Map();
