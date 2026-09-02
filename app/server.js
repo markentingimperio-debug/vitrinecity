@@ -3784,6 +3784,7 @@ function readStoreAdAttribution(req,storeReference){const [idText,token]=String(
 function localDeliveryCityActive(city,state){
   return Boolean(db.prepare('SELECT 1 FROM local_delivery_cities WHERE city=? AND state=? AND active=1').get(String(city||'').trim(),String(state||'').trim().toUpperCase()));
 }
+function localDeliveryPlaceKey(value){return String(value||'').trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();}
 function recordDeliveryEvent(jobId,eventType,actorType='system',actorId=null,metadata={}){db.prepare('INSERT INTO local_delivery_events(job_id,event_type,actor_type,actor_id,metadata_json) VALUES (?,?,?,?,?)').run(jobId,eventType,actorType,actorId,JSON.stringify(metadata).slice(0,2000));}
 function deliveryTracking(orderReference){const job=db.prepare('SELECT id,status,courier_id,picked_up_at,delivered_at FROM local_delivery_jobs WHERE order_reference=?').get(orderReference);if(!job)return {status:null,timeline:[],location:null};const timeline=db.prepare('SELECT event_type eventType,actor_type actorType,created_at createdAt FROM local_delivery_events WHERE job_id=? ORDER BY id').all(job.id);let location=null;if(job.picked_up_at&&job.courier_id&&!['cancelled'].includes(job.status)){location=db.prepare('SELECT latitude,longitude,accuracy,captured_at capturedAt FROM courier_location_history WHERE courier_id=? AND job_id=? ORDER BY id DESC LIMIT 1').get(job.courier_id,job.id)||null;}return {status:job.status,timeline,location};}
 function dispatchNextCourier(jobId){
@@ -3802,7 +3803,7 @@ async function localDeliveryQuote(storeReference,address){
   if(!settings.enabled)throw new Error('local_delivery_disabled');
   const store=db.prepare('SELECT address,street,address_number number,neighborhood,city,state,postal_code,business_type,preparation_min_minutes,preparation_max_minutes,accepting_orders,fulfillment_mode FROM store_profiles WHERE order_reference=?').get(storeReference);
   if(store&&(!store.accepting_orders||store.fulfillment_mode==='pickup'))throw new Error('store_not_accepting_delivery');
-  if(!store||!localDeliveryCityActive(store.city,store.state)||String(store.city).trim().toLowerCase()!==String(address.city).trim().toLowerCase()||
+  if(!store||!localDeliveryCityActive(store.city,store.state)||localDeliveryPlaceKey(store.city)!==localDeliveryPlaceKey(address.city)||
       String(store.state).trim().toUpperCase()!==String(address.state).trim().toUpperCase())throw new Error('local_delivery_city_unavailable');
   const route=await googleRouteDistance({origin:formatDeliveryAddress(store),destination:formatDeliveryAddress(address),
     apiKey:String(process.env.GOOGLE_MAPS_ROUTES_API_KEY||'').trim()});
