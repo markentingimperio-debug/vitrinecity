@@ -1503,6 +1503,34 @@ CREATE TABLE IF NOT EXISTS marketplace_payment_reconciliation (
   last_event_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_marketplace_reconciliation_status ON marketplace_payment_reconciliation(reconciliation_status,updated_at DESC);`);
+db.exec(`CREATE TABLE IF NOT EXISTS marketplace_manual_payouts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_reference TEXT NOT NULL REFERENCES marketplace_orders(reference) ON DELETE CASCADE,
+  recipient_type TEXT NOT NULL CHECK(recipient_type IN ('store','courier')),
+  recipient_reference TEXT NOT NULL,
+  recipient_name TEXT NOT NULL,
+  gross_cents INTEGER NOT NULL CHECK(gross_cents>=0),
+  deductions_cents INTEGER NOT NULL DEFAULT 0 CHECK(deductions_cents>=0),
+  amount_cents INTEGER NOT NULL CHECK(amount_cents>=0),
+  advance_fee_cents INTEGER NOT NULL DEFAULT 0 CHECK(advance_fee_cents>=0),
+  payout_speed TEXT NOT NULL DEFAULT 'weekly' CHECK(payout_speed IN ('weekly','advance')),
+  scheduled_for TEXT NOT NULL,
+  advance_requested_at TEXT,
+  approval_status TEXT NOT NULL DEFAULT 'approved' CHECK(approval_status IN ('pending','approved','rejected')),
+  approved_at TEXT,
+  approved_by_user_id INTEGER REFERENCES users(id),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','paid','blocked')),
+  eligible_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  paid_at TEXT,
+  proof_reference TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  paid_by_user_id INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(order_reference,recipient_type)
+);
+CREATE INDEX IF NOT EXISTS idx_marketplace_manual_payouts_status ON marketplace_manual_payouts(status,recipient_type,eligible_at);`);
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_marketplace_manual_payouts_proof ON marketplace_manual_payouts(proof_reference) WHERE proof_reference<>'';`);
 db.exec(`CREATE TABLE IF NOT EXISTS marketplace_app_settings (
   id INTEGER PRIMARY KEY CHECK(id=1), client_id TEXT NOT NULL, client_secret_encrypted TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -2146,6 +2174,31 @@ function applyCourierLedger({courierId,orderReference=null,withdrawalId=null,ent
     if(entryType==='withdrawal_debit'){const balance=db.prepare('SELECT balance_cents FROM local_delivery_couriers WHERE id=?').get(courierId);if(!balance||balance.balance_cents+amount<0)throw new Error('courier_balance_insufficient');}
     db.prepare(`INSERT INTO local_delivery_ledger(courier_id,order_reference,withdrawal_id,entry_type,amount_cents,idempotency_key) VALUES (?,?,?,?,?,?)`).run(courierId,orderReference,withdrawalId,entryType,amount,idempotencyKey);
     db.prepare('UPDATE local_delivery_couriers SET balance_cents=balance_cents+?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(amount,courierId);return true;})();
+}
+
+function payoutDate(daysAhead){const date=new Date();date.setUTCDate(date.getUTCDate()+daysAhead);return date.toISOString().slice(0,10);}
+function nextTuesdayPayoutDate(){const day=new Date().getUTCDay(),days=((2-day+7)%7)||7;return payoutDate(days);}
+function createManualPayoutsForOrder(reference){
+  const order=db.prepare(`SELECT o.*,s.business_name,j.courier_id,j.courier_cents,c.name courier_name
+    FROM marketplace_orders o JOIN store_profiles s ON s.order_reference=o.store_reference
+    LEFT JOIN local_delivery_jobs j ON j.order_reference=o.reference
+    LEFT JOIN local_delivery_couriers c ON c.id=j.courier_id
+    WHERE o.reference=? AND o.payment_status='approved' AND o.customer_confirmed_at IS NOT NULL`).get(reference);
+  if(!order)return false;
+  const scheduledFor=nextTuesdayPayoutDate(),storeDeductions=Math.max(0,order.platform_percent_cents+order.platform_fixed_cents+order.return_operation_cents),storeAmount=Math.max(0,order.products_cents-storeDeductions);
+  const insert=db.prepare(`INSERT OR IGNORE INTO marketplace_manual_payouts
+    (order_reference,recipient_type,recipient_reference,recipient_name,gross_cents,deductions_cents,amount_cents,scheduled_for)
+    VALUES (?,?,?,?,?,?,?,?)`);
+  insert.run(order.reference,'store',order.store_reference,order.business_name,order.products_cents,storeDeductions,storeAmount,scheduledFor);
+  if(order.courier_id)insert.run(order.reference,'courier',String(order.courier_id),order.courier_name||`Entregador ${order.courier_id}`,order.courier_cents,0,order.courier_cents,scheduledFor);
+  return true;
+}
+function requestPayoutAdvance(payout){
+  if(!payout||payout.status!=='pending'||payout.payout_speed!=='weekly')return false;
+  const fee=Math.round(payout.amount_cents*350/10000),amount=Math.max(0,payout.amount_cents-fee);
+  return Boolean(db.prepare(`UPDATE marketplace_manual_payouts SET payout_speed='advance',advance_fee_cents=?,
+    deductions_cents=deductions_cents+?,amount_cents=?,scheduled_for=?,advance_requested_at=CURRENT_TIMESTAMP,approval_status='pending',updated_at=CURRENT_TIMESTAMP
+    WHERE id=? AND status='pending' AND payout_speed='weekly'`).run(fee,fee,amount,payoutDate(1),payout.id).changes);
 }
 
 function storeMapLocation(body, current = {}) {
@@ -3958,7 +4011,8 @@ app.patch('/api/courier/jobs/:id',requireCourier,sameOriginOnly,(req,res)=>{cons
     else if(action==='pickup'){const result=db.prepare("UPDATE local_delivery_jobs SET status='picked_up',picked_up_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND courier_id=? AND status='assigned'").run(job.id,req.courier.id);if(!result.changes)throw new Error('transition_invalid');db.prepare("UPDATE marketplace_orders SET fulfillment_status='food_handed_off',updated_at=CURRENT_TIMESTAMP WHERE reference=? AND fulfillment_status='food_ready'").run(job.order_reference);recordDeliveryEvent(job.id,'picked_up','courier',req.courier.id);}
     else if(action==='deliver'){const result=db.prepare("UPDATE local_delivery_jobs SET status='delivered',delivered_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND courier_id=? AND status='picked_up'").run(job.id,req.courier.id);if(!result.changes)throw new Error('transition_invalid');recordDeliveryEvent(job.id,'delivered','courier',req.courier.id);}
     else throw new Error('action_invalid');})();return res.json({ok:true});}catch(error){return res.status(409).json({error:error.message==='job_unavailable'?'Esta corrida não está mais disponível.':'Mudança de etapa não permitida.'});}});
-app.get('/api/courier/wallet',requireCourier,(req,res)=>{const ledger=db.prepare('SELECT id,order_reference orderReference,withdrawal_id withdrawalId,entry_type entryType,amount_cents amountCents,created_at createdAt FROM local_delivery_ledger WHERE courier_id=? ORDER BY id DESC LIMIT 200').all(req.courier.id),withdrawals=db.prepare('SELECT id,amount_cents amountCents,status,pix_key_type pixKeyType,pix_key_last4 pixKeyLast4,admin_note adminNote,requested_at requestedAt,paid_at paidAt FROM local_delivery_withdrawals WHERE courier_id=? ORDER BY id DESC LIMIT 100').all(req.courier.id);return res.json({balanceCents:req.courier.balance_cents,ledger,withdrawals});});
+app.get('/api/courier/wallet',requireCourier,(req,res)=>{const ledger=db.prepare('SELECT id,order_reference orderReference,withdrawal_id withdrawalId,entry_type entryType,amount_cents amountCents,created_at createdAt FROM local_delivery_ledger WHERE courier_id=? ORDER BY id DESC LIMIT 200').all(req.courier.id),withdrawals=db.prepare('SELECT id,amount_cents amountCents,status,pix_key_type pixKeyType,pix_key_last4 pixKeyLast4,admin_note adminNote,requested_at requestedAt,paid_at paidAt FROM local_delivery_withdrawals WHERE courier_id=? ORDER BY id DESC LIMIT 100').all(req.courier.id),manualPayouts=db.prepare(`SELECT id,order_reference orderReference,gross_cents grossCents,deductions_cents deductionsCents,amount_cents amountCents,advance_fee_cents advanceFeeCents,payout_speed payoutSpeed,scheduled_for scheduledFor,status FROM marketplace_manual_payouts WHERE recipient_type='courier' AND recipient_reference=? ORDER BY id DESC LIMIT 100`).all(String(req.courier.id));return res.json({balanceCents:req.courier.balance_cents,ledger,withdrawals,manualPayouts,payoutPolicy:{weeklyDay:'tuesday',advanceFeePercent:3.5}});});
+app.post('/api/courier/payouts/:id/advance',requireCourier,sameOriginOnly,(req,res)=>{const payout=db.prepare("SELECT * FROM marketplace_manual_payouts WHERE id=? AND recipient_type='courier' AND recipient_reference=?").get(Number(req.params.id),String(req.courier.id));if(!payout)return res.status(404).json({error:'Repasse não encontrado.'});if(!requestPayoutAdvance(payout))return res.status(409).json({error:'Este repasse não pode mais ser antecipado.'});return res.json({ok:true,status:'pending_approval',scheduledFor:payoutDate(1),feePercent:3.5});});
 app.post('/api/courier/withdrawals',requireCourier,sameOriginOnly,(req,res)=>{const amount=Math.trunc(Number(req.body?.amountCents)),idempotencyKey=String(req.get('idempotency-key')||'').trim().slice(0,120);const current=db.prepare('SELECT * FROM local_delivery_couriers WHERE id=?').get(req.courier.id);if(!/^[A-Za-z0-9._:-]{12,120}$/.test(idempotencyKey))return res.status(400).json({error:'Envie uma chave de idempotência válida.'});if(!Number.isInteger(amount)||amount<100)return res.status(400).json({error:'O saque mínimo é R$ 1,00.'});if(!current.pix_key_encrypted)return res.status(409).json({error:'Cadastre uma chave Pix antes de solicitar saque.'});
   const prior=db.prepare('SELECT id,status FROM local_delivery_withdrawals WHERE courier_id=? AND idempotency_key=?').get(current.id,idempotencyKey);if(prior)return res.json({ok:true,id:prior.id,status:prior.status,replayed:true});
   try{const id=db.transaction(()=>{const result=db.prepare(`INSERT INTO local_delivery_withdrawals(courier_id,amount_cents,pix_key_type,pix_key_encrypted,pix_key_last4,idempotency_key) VALUES (?,?,?,?,?,?)`).run(current.id,amount,current.pix_key_type,current.pix_key_encrypted,current.pix_key_last4,idempotencyKey);applyCourierLedger({courierId:current.id,withdrawalId:Number(result.lastInsertRowid),entryType:'withdrawal_debit',amountCents:-amount,idempotencyKey:`withdrawal:${result.lastInsertRowid}:debit`});return Number(result.lastInsertRowid);})();return res.status(201).json({ok:true,id,status:'requested'});}catch(error){const replay=db.prepare('SELECT id,status FROM local_delivery_withdrawals WHERE courier_id=? AND idempotency_key=?').get(current.id,idempotencyKey);if(replay)return res.json({ok:true,id:replay.id,status:replay.status,replayed:true});return res.status(409).json({error:error.message==='courier_balance_insufficient'?'Saldo insuficiente.':'Não foi possível solicitar o saque.'});}});
@@ -4065,14 +4119,6 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
   const deliveryPlatformCents=deliveryMode==='local'?shippingQuote.platformCents:0;
   const deliveryCourierCents=deliveryMode==='local'?shippingQuote.courierCents:0;
   const marketplaceFeeCents=platformPercentCents+MARKETPLACE_FIXED_FEE_CENTS+returnOperationCents+(deliveryMode==='local'?effectiveShippingCents:0);
-  if(deliveryMode==='local'&&!marketplaceOAuthConfigured())return res.status(503).json({error:'O recebimento dividido do Mercado Pago ainda não está configurado.'});
-  if(marketplaceOAuthConfigured()){
-    const sellerAccount=db.prepare("SELECT * FROM marketplace_seller_accounts WHERE store_reference=? AND status='connected'").get(storeReference);
-    if(!sellerAccount)return res.status(409).json({error:'A loja precisa conectar sua conta Mercado Pago antes de receber pedidos.'});
-    try{token=await marketplaceSellerAccessToken(sellerAccount);splitMode='marketplace';}
-    catch{db.prepare("UPDATE marketplace_seller_accounts SET status='expired',updated_at=CURRENT_TIMESTAMP WHERE store_reference=?").run(storeReference);
-      return res.status(503).json({error:'A autorização Mercado Pago da loja precisa ser renovada.'});}
-  }
   if (!token || !process.env.MERCADOPAGO_WEBHOOK_SECRET) return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
   recordConsent(req, {
     userId: req.user.id, email: req.user.email, purpose: 'marketplace_buyer_terms',
@@ -6652,12 +6698,18 @@ app.get('/api/store-portal/:reference/marketplace', (req, res) => {
     o.id option_id,o.name option_name,o.price_delta_cents,o.active,o.sort_order option_sort FROM product_option_groups g
     LEFT JOIN product_options o ON o.group_id=g.id JOIN store_products p ON p.id=g.product_id WHERE p.store_reference=? ORDER BY g.sort_order,g.id,o.sort_order,o.id`).all(access.order.reference);
   const optionGroups=[];for(const row of optionRows){let group=optionGroups.find(item=>item.id===row.group_id);if(!group){group={id:row.group_id,productId:row.product_id,name:row.group_name,minSelect:row.min_select,maxSelect:row.max_select,required:Boolean(row.required),options:[]};optionGroups.push(group);}if(row.option_id)group.options.push({id:row.option_id,name:row.option_name,priceDeltaCents:row.price_delta_cents,active:Boolean(row.active)});}
+  const manualPayouts=db.prepare(`SELECT id,order_reference orderReference,gross_cents grossCents,deductions_cents deductionsCents,
+    amount_cents amountCents,advance_fee_cents advanceFeeCents,payout_speed payoutSpeed,scheduled_for scheduledFor,status,approval_status approvalStatus,
+    advance_requested_at advanceRequestedAt,paid_at paidAt FROM marketplace_manual_payouts
+    WHERE recipient_type='store' AND recipient_reference=? ORDER BY id DESC LIMIT 100`).all(access.order.reference);
   const maskedAccount=sellerAccount?{status:sellerAccount.status,providerUserIdMasked:String(sellerAccount.provider_user_id||'').replace(/.(?=.{4})/g,'•'),expiresAt:sellerAccount.expires_at,connectedAt:sellerAccount.connected_at}:null;
-  return res.json({ products, orders:decorated, returns, sellerProfile,operations:publicStoreOperations(access.order.reference),menuCategories,optionGroups,paymentSplit:{configured:marketplaceOAuthConfigured(),account:maskedAccount}, fees: {
+  return res.json({ products, orders:decorated, returns, manualPayouts, payoutPolicy:{weeklyDay:'tuesday',advanceFeePercent:3.5},sellerProfile,operations:publicStoreOperations(access.order.reference),menuCategories,optionGroups,paymentSplit:{mode:'central_manual',configured:true,account:maskedAccount}, fees: {
     percent: MARKETPLACE_COMMISSION_BPS / 100, fixedCents: MARKETPLACE_FIXED_FEE_CENTS,
     returnProvisionPerOrderCents: MARKETPLACE_RETURN_PROVISION_CENTS
   } });
 });
+
+app.post('/api/store-portal/:reference/payouts/:id/advance',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const payout=db.prepare("SELECT * FROM marketplace_manual_payouts WHERE id=? AND recipient_type='store' AND recipient_reference=?").get(Number(req.params.id),access.order.reference);if(!payout)return res.status(404).json({error:'Repasse não encontrado.'});if(!requestPayoutAdvance(payout))return res.status(409).json({error:'Este repasse não pode mais ser antecipado.'});return res.json({ok:true,status:'pending_approval',scheduledFor:payoutDate(1),feePercent:3.5});});
 
 app.put('/api/store-portal/:reference/seller-profile', sameOriginOnly, (req,res) => {
   const access=storePortalAccess(req,res);if(!access)return;
@@ -6962,6 +7014,12 @@ app.get('/api/admin/marketplace/reconciliation', requireAdmin, (req,res) => {
   return res.json({reconciliation:rows});
 });
 
+app.get('/api/admin/marketplace/manual-payouts',requireAdmin,(req,res)=>{const status=String(req.query.status||'').trim(),allowed=new Set(['','pending','paid','blocked']);if(!allowed.has(status))return res.status(400).json({error:'Status de repasse inválido.'});const payouts=db.prepare(`SELECT p.*,o.total_cents,o.products_cents,o.shipping_cents,o.delivery_platform_cents,o.delivery_courier_cents
+  FROM marketplace_manual_payouts p JOIN marketplace_orders o ON o.reference=p.order_reference
+  WHERE (?='' OR p.status=?) ORDER BY CASE WHEN p.approval_status='pending' THEN 0 ELSE 1 END,p.scheduled_for,p.id`).all(status,status);const totals=payouts.reduce((sum,payout)=>{sum.grossCents+=payout.gross_cents;sum.deductionsCents+=payout.deductions_cents;sum.amountCents+=payout.amount_cents;if(payout.status==='pending')sum.pendingCents+=payout.amount_cents;if(payout.status==='paid')sum.paidCents+=payout.amount_cents;return sum;},{grossCents:0,deductionsCents:0,amountCents:0,pendingCents:0,paidCents:0});return res.json({payouts,totals,policy:{weeklyDay:'tuesday',advanceFeePercent:3.5}});});
+
+app.post('/api/admin/marketplace/manual-payouts/:id/action',requireAdmin,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||''),id=Number(req.params.id);if(!Number.isInteger(id))return res.status(400).json({error:'Repasse inválido.'});if(action==='approve'){const changed=db.prepare("UPDATE marketplace_manual_payouts SET approval_status='approved',approved_at=CURRENT_TIMESTAMP,approved_by_user_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND approval_status='pending'").run(req.user.id,id);return changed.changes?res.json({ok:true,approvalStatus:'approved',status:'pending_payment'}):res.status(409).json({error:'Antecipação não está pendente de aprovação.'});}if(action==='reject'){const note=String(req.body?.note||'Antecipação recusada').trim().slice(0,500),changed=db.transaction(()=>{const payout=db.prepare("SELECT * FROM marketplace_manual_payouts WHERE id=? AND status='pending' AND approval_status='pending'").get(id);if(!payout)return 0;return db.prepare("UPDATE marketplace_manual_payouts SET payout_speed='weekly',advance_fee_cents=0,deductions_cents=deductions_cents-?,amount_cents=?,scheduled_for=?,approval_status='rejected',note=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND approval_status='pending'").run(payout.advance_fee_cents,payout.amount_cents+payout.advance_fee_cents,nextTuesdayPayoutDate(),note,id).changes;})();return changed?res.json({ok:true,approvalStatus:'rejected',status:'pending'}):res.status(409).json({error:'Antecipação não está pendente de aprovação.'});}if(action==='pay'){const proof=String(req.body?.proofReference||'').trim().slice(0,160),note=String(req.body?.note||'').trim().slice(0,500);if(proof.length<3)return res.status(400).json({error:'Informe a referência do comprovante.'});try{const changed=db.prepare("UPDATE marketplace_manual_payouts SET status='paid',paid_at=CURRENT_TIMESTAMP,proof_reference=?,note=?,paid_by_user_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND approval_status='approved'").run(proof,note,req.user.id,id);if(changed.changes)return res.json({ok:true,status:'paid'});const current=db.prepare('SELECT status,proof_reference FROM marketplace_manual_payouts WHERE id=?').get(id);if(current?.status==='paid'&&current.proof_reference===proof)return res.json({ok:true,status:'paid',replayed:true});return res.status(409).json({error:'O repasse precisa estar pendente e aprovado.'});}catch{return res.status(409).json({error:'Esta referência de comprovante já foi utilizada.'});}}return res.status(400).json({error:'Ação de repasse inválida.'});});
+
 app.get('/api/admin/marketplace/sellers', requireAdmin, (req,res) => {
   const status=String(req.query.status||'').trim(),allowed=new Set(['pending','verified','rejected']);
   if(status&&!allowed.has(status))return res.status(400).json({error:'Status cadastral inválido.'});
@@ -7115,7 +7173,7 @@ app.put('/api/store-portal/:reference/products/:productId/options',sameOriginOnl
     groups.forEach((group,index)=>{const name=String(group?.name||'').trim().slice(0,80),min=Math.trunc(Number(group?.minSelect)||0),max=Math.trunc(Number(group?.maxSelect)||1);if(name.length<2||min<0||max<1||max>20||min>max)throw new Error('invalid');const result=addGroup.run(product.id,name,min,max,group.required===true?1:0,index);const options=Array.isArray(group.options)?group.options.slice(0,50):[];if(!options.length)throw new Error('invalid');options.forEach((option,position)=>{const optionName=String(option?.name||'').trim().slice(0,100),price=Math.trunc(Number(option?.priceDeltaCents)||0);if(optionName.length<1||price<0||price>1000000)throw new Error('invalid');addOption.run(Number(result.lastInsertRowid),optionName,price,option.active===false?0:1,position);});});})();return res.json({ok:true});}catch{return res.status(400).json({error:'Revise os grupos e adicionais.'});}});
 
 app.post('/api/marketplace/orders/:reference/confirm-delivery',requireUser,sameOriginOnly,(req,res)=>{const order=db.prepare(`SELECT o.*,j.id job_id,j.courier_id,j.courier_cents,j.status job_status FROM marketplace_orders o JOIN local_delivery_jobs j ON j.order_reference=o.reference WHERE o.reference=? AND o.buyer_user_id=? AND o.delivery_mode='local' AND o.payment_status='approved'`).get(req.params.reference,req.user.id);if(!order)return res.status(404).json({error:'Pedido local pago não encontrado.'});if(order.job_status!=='delivered')return res.status(409).json({error:'O entregador ainda não marcou a entrega como concluída.'});if(!order.courier_id)return res.status(409).json({error:'Esta entrega não possui entregador atribuído.'});
-  try{const confirmed=db.transaction(()=>{const result=db.prepare("UPDATE marketplace_orders SET customer_confirmed_at=CURRENT_TIMESTAMP,fulfillment_status='delivered',updated_at=CURRENT_TIMESTAMP WHERE reference=? AND customer_confirmed_at IS NULL AND payment_status='approved'").run(order.reference);if(result.changes)applyCourierLedger({courierId:order.courier_id,orderReference:order.reference,entryType:'delivery_credit',amountCents:order.courier_cents,idempotencyKey:`delivery:${order.reference}:credit`});return Boolean(result.changes);})();return res.json({ok:true,confirmed,replayed:!confirmed});}catch{return res.status(409).json({error:'Não foi possível confirmar esta entrega.'});}});
+  try{const confirmed=db.transaction(()=>{const result=db.prepare("UPDATE marketplace_orders SET customer_confirmed_at=CURRENT_TIMESTAMP,fulfillment_status='delivered',updated_at=CURRENT_TIMESTAMP WHERE reference=? AND customer_confirmed_at IS NULL AND payment_status='approved'").run(order.reference);if(result.changes)createManualPayoutsForOrder(order.reference);return Boolean(result.changes);})();return res.json({ok:true,confirmed,replayed:!confirmed});}catch(error){console.error('Delivery confirmation error',error?.message||'unknown');return res.status(409).json({error:'Não foi possível confirmar esta entrega.'});}});
 
 app.get('/api/store-portal/:reference/paid-orders', (req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const afterId=Math.max(0,Math.trunc(Number(req.query.afterId)||0));
   const orders=db.prepare(`SELECT id,reference,total_cents totalCents,delivery_mode deliveryMode,updated_at updatedAt FROM marketplace_orders WHERE store_reference=? AND payment_status='approved' AND id>? ORDER BY id LIMIT 50`).all(access.order.reference,afterId);

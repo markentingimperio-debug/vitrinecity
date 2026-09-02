@@ -67,7 +67,7 @@ try{
   const alertId=intelligence.alerts.find(a=>a.status==='open').id;response=await request(`/api/admin/social/intelligence/alerts/${alertId}`,{method:'PATCH',headers:{cookie:adminCookie},body:JSON.stringify({status:'acknowledged',note:'Em revisão'})});assert.equal(response.status,200);
   const auditDb=new Database(path.join(dataDir,'vitrinecity.db'));const audits=auditDb.prepare('SELECT * FROM admin_login_audit ORDER BY id').all();auditDb.close();assert.equal(audits.length,3);assert.deepEqual(audits.map(a=>a.success),[0,1,1]);assert.ok(audits.every(a=>!a.email_hash.includes(email)));
   const page=readFileSync(new URL('../public/admin-login.html',import.meta.url),'utf8');assert.match(page,/Acesso administrativo/);assert.match(page,/noindex,nofollow/);assert.doesNotMatch(page,/Criar conta/);
-  const paymentsPage=readFileSync(new URL('../public/admin-pagamentos.html',import.meta.url),'utf8');assert.match(paymentsPage,/Client Secret será criptografado/);assert.match(paymentsPage,/noindex,nofollow/);
+  const paymentsPage=readFileSync(new URL('../public/admin-pagamentos.html',import.meta.url),'utf8');assert.match(paymentsPage,/Recebimento centralizado/);assert.match(paymentsPage,/toda terça-feira/);assert.match(paymentsPage,/3,5%/);assert.match(paymentsPage,/noindex,nofollow/);
   const metricsPage=readFileSync(new URL('../public/admin-metricas-externas.html',import.meta.url),'utf8');assert.match(metricsPage,/credenciais são criptografadas/);assert.match(metricsPage,/noindex,nofollow/);
   const identityPage=readFileSync(new URL('../public/admin-identidade.html',import.meta.url),'utf8');assert.match(identityPage,/segredo será criptografado/i);assert.match(identityPage,/noindex,nofollow/);
   console.log('admin-auth: ok');
