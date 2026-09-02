@@ -152,4 +152,4 @@ Antes de implementar algo novo, ler este arquivo, conferir `git status`, o últi
 - Configuração necessária na VPS: `GOOGLE_MAPS_ROUTES_API_KEY`, restrita à Routes API.
 - O painel permite configurar tarifas, comissão, alcance máximo, cidades ativas, entregadores, saldos e andamento das corridas.
 - Pedidos locais entram na fila somente após o pagamento ser aprovado.
-- Esta implementação ainda não foi publicada na VPS.
+- Implementação publicada na VPS em 02/09/2026; permanece desativada até configurar `GOOGLE_MAPS_ROUTES_API_KEY` e ativar uma cidade no painel.
