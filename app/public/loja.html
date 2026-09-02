@@ -21,4 +21,5 @@ const baseDigitalRender=render;render=()=>{baseDigitalRender();for(const product
 </script><script>
 const deliveryParams=new URLSearchParams(location.search);if(deliveryParams.get('delivery')==='local'){deliveryMode.value='local';deliveryMode.hidden=true;postalCode.hidden=true;shippingResult.textContent='Entrega realizada exclusivamente pela VC Entregas no endereço cadastrado.';const carrierOption=deliveryMode.querySelector('option[value="carrier"]');if(carrierOption)carrierOption.remove();document.querySelector('.shipping-form').insertAdjacentHTML('afterbegin','<strong style="grid-column:1/-1">Entrega local VC Entregas</strong>')}
 document.getElementById('close').onclick=()=>cartPanel.classList.remove('open');
+const vcCheckoutButton=document.getElementById('checkout'),vcCheckoutHandler=vcCheckoutButton.onclick;vcCheckoutButton.onclick=async event=>{const session=await fetch('/api/checkout/customer');if(session.status===401){location.href='/entrar.html?returnTo='+encodeURIComponent(location.pathname+location.search);return}return vcCheckoutHandler.call(vcCheckoutButton,event)};
 </script></body></html>
