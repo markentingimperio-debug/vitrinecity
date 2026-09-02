@@ -3827,11 +3827,11 @@ async function localDeliveryQuote(storeReference,address){
   if(store&&(!store.accepting_orders||store.fulfillment_mode==='pickup'))throw new Error('store_not_accepting_delivery');
   if(!store||!localDeliveryCityActive(store.city,store.state)||localDeliveryPlaceKey(store.city)!==localDeliveryPlaceKey(address.city)||
       String(store.state).trim().toUpperCase()!==String(address.state).trim().toUpperCase())throw new Error('local_delivery_city_unavailable');
-  const route=await googleRouteDistance({origin:formatDeliveryAddress(store),destination:formatDeliveryAddress(address),
+  const route=await googleRouteDistance({origin:`Centro, ${store.city}, ${store.state}`,destination:formatDeliveryAddress(address),
     apiKey:String(process.env.GOOGLE_MAPS_ROUTES_API_KEY||'').trim()});
-  const price=calculateLocalDelivery(route.distanceMeters,settings);
+  const operationalDistanceMeters=2000,billableDistanceMeters=route.distanceMeters+operationalDistanceMeters,price=calculateLocalDelivery(billableDistanceMeters,settings);
   const routeDurationSeconds=Math.max(0,Number.parseInt(route.duration)||0),eta=deliveryEta({preparationMinMinutes:store.preparation_min_minutes,preparationMaxMinutes:store.preparation_max_minutes,routeDurationSeconds});
-  return {...price,shippingCents:price.feeCents,duration:route.duration,routeDurationSeconds,preparationMinutes:{min:store.preparation_min_minutes,max:store.preparation_max_minutes},estimatedMinMinutes:eta.etaMinMinutes,estimatedMaxMinutes:eta.etaMaxMinutes,provider:'vitrinecity_local',service:'Entrega local VitrineCity'};
+  return {...price,routeDistanceMeters:route.distanceMeters,operationalDistanceMeters,shippingCents:price.feeCents,duration:route.duration,routeDurationSeconds,preparationMinutes:{min:store.preparation_min_minutes,max:store.preparation_max_minutes},estimatedMinMinutes:eta.etaMinMinutes,estimatedMaxMinutes:eta.etaMaxMinutes,provider:'vitrinecity_local',service:'Entrega local VitrineCity'};
 }
 
 app.post('/api/marketplace/local-delivery/quote',requireUser,sameOriginOnly,async(req,res)=>{
