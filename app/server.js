@@ -1181,6 +1181,7 @@ ensureColumn('marketplace_orders','delivery_mode',"TEXT NOT NULL DEFAULT 'carrie
 ensureColumn('marketplace_orders','delivery_distance_meters','INTEGER');
 ensureColumn('marketplace_orders','delivery_platform_cents','INTEGER NOT NULL DEFAULT 0');
 ensureColumn('marketplace_orders','delivery_courier_cents','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('marketplace_orders','customer_confirmed_at','TEXT');
 db.exec(`CREATE TABLE IF NOT EXISTS local_delivery_settings (
   id INTEGER PRIMARY KEY CHECK(id=1),
   enabled INTEGER NOT NULL DEFAULT 0,
@@ -1229,6 +1230,58 @@ CREATE TABLE IF NOT EXISTS local_delivery_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_local_delivery_jobs_status ON local_delivery_jobs(status,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_local_delivery_couriers_status ON local_delivery_couriers(status,city,state);`);
+ensureColumn('local_delivery_couriers','password_hash',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('local_delivery_couriers','pix_key_encrypted',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('local_delivery_couriers','pix_key_type',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('local_delivery_couriers','pix_key_last4',"TEXT NOT NULL DEFAULT ''");
+db.exec(`CREATE TABLE IF NOT EXISTS local_delivery_courier_sessions (
+  token_hash TEXT PRIMARY KEY,
+  courier_id INTEGER NOT NULL REFERENCES local_delivery_couriers(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS local_delivery_ledger (
+  id INTEGER PRIMARY KEY,
+  courier_id INTEGER NOT NULL REFERENCES local_delivery_couriers(id) ON DELETE CASCADE,
+  order_reference TEXT REFERENCES marketplace_orders(reference) ON DELETE SET NULL,
+  withdrawal_id INTEGER,
+  entry_type TEXT NOT NULL CHECK(entry_type IN ('delivery_credit','delivery_reversal','withdrawal_debit','withdrawal_refund')),
+  amount_cents INTEGER NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS local_delivery_withdrawals (
+  id INTEGER PRIMARY KEY,
+  courier_id INTEGER NOT NULL REFERENCES local_delivery_couriers(id) ON DELETE CASCADE,
+  amount_cents INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','approved','paid','rejected','cancelled')),
+  pix_key_type TEXT NOT NULL,
+  pix_key_encrypted TEXT NOT NULL,
+  pix_key_last4 TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL DEFAULT '',
+  proof_reference TEXT NOT NULL DEFAULT '',
+  admin_note TEXT NOT NULL DEFAULT '',
+  requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  reviewed_at TEXT,
+  paid_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS local_delivery_admin_audit (
+  id INTEGER PRIMARY KEY, admin_user_id INTEGER NOT NULL REFERENCES users(id), action TEXT NOT NULL,
+  withdrawal_id INTEGER REFERENCES local_delivery_withdrawals(id), proof_reference TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS marketplace_payment_events (
+  event_key TEXT PRIMARY KEY, order_reference TEXT NOT NULL REFERENCES marketplace_orders(reference) ON DELETE CASCADE,
+  payment_id TEXT NOT NULL, payment_status TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_courier_sessions_expiry ON local_delivery_courier_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_delivery_ledger_courier ON local_delivery_ledger(courier_id,id DESC);
+CREATE INDEX IF NOT EXISTS idx_delivery_withdrawals_courier ON local_delivery_withdrawals(courier_id,id DESC);`);
+ensureColumn('local_delivery_withdrawals','idempotency_key',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('local_delivery_withdrawals','proof_reference',"TEXT NOT NULL DEFAULT ''");
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_delivery_withdrawals_idempotency ON local_delivery_withdrawals(courier_id,idempotency_key);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_delivery_withdrawals_proof ON local_delivery_withdrawals(proof_reference) WHERE proof_reference!='';`);
 db.exec(`CREATE TABLE IF NOT EXISTS ad_campaign_conversions (
   id INTEGER PRIMARY KEY,
   campaign_id INTEGER NOT NULL REFERENCES ad_campaigns(id) ON DELETE CASCADE,
@@ -1886,6 +1939,27 @@ function saveStoreImage(reference, kind, value, currentUrl = '') {
   const filename = `${safeReference}-${kind}-${Date.now()}.${extension}`;
   fs.writeFileSync(path.join(folder, filename), buffer, { mode: 0o640 });
   return `/uploads/store-assets/${filename}`;
+}
+
+function marketplaceWebhookRouteSecret(){return String(process.env.MERCADOPAGO_WEBHOOK_ROUTE_SECRET||process.env.MERCADOPAGO_WEBHOOK_SECRET||managementSecret()||'');}
+function marketplaceWebhookRouteSignature(reference){const secret=marketplaceWebhookRouteSecret();if(!secret)throw new Error('webhook_route_secret_missing');return createHmac('sha256',secret).update(`marketplace-order:${String(reference)}`).digest('base64url');}
+function validMarketplaceWebhookRoute(reference,provided){const expected=marketplaceWebhookRouteSignature(reference),actual=String(provided||'');if(actual.length!==expected.length)return false;return timingSafeEqual(Buffer.from(actual),Buffer.from(expected));}
+
+const COURIER_SESSION_COOKIE='vc_courier_session';
+const COURIER_SESSION_MAX_AGE_SECONDS=30*24*60*60;
+function courierSecretKey(){const secret=String(process.env.LOCAL_DELIVERY_ENCRYPTION_KEY||managementSecret()||'');if(secret.length<24)throw new Error('courier_encryption_unavailable');return createHash('sha256').update(`courier:${secret}`).digest();}
+function encryptCourierValue(value){const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',courierSecretKey(),iv),encrypted=Buffer.concat([cipher.update(String(value),'utf8'),cipher.final()]);return [iv,cipher.getAuthTag(),encrypted].map(part=>part.toString('base64url')).join('.');}
+function decryptCourierValue(value){const [iv,tag,data]=String(value||'').split('.');if(!iv||!tag||!data)throw new Error('courier_secret_invalid');const decipher=createDecipheriv('aes-256-gcm',courierSecretKey(),Buffer.from(iv,'base64url'));decipher.setAuthTag(Buffer.from(tag,'base64url'));return Buffer.concat([decipher.update(Buffer.from(data,'base64url')),decipher.final()]).toString('utf8');}
+function courierFromRequest(req){const token=parseCookies(req)[COURIER_SESSION_COOKIE];if(!token)return null;return db.prepare(`SELECT c.* FROM local_delivery_courier_sessions s JOIN local_delivery_couriers c ON c.id=s.courier_id
+  WHERE s.token_hash=? AND s.expires_at>? AND c.status='active'`).get(sessionHash(token),Date.now())||null;}
+function requireCourier(req,res,next){const courier=courierFromRequest(req);if(!courier)return res.status(401).json({error:'Entre na conta do entregador.'});req.courier=courier;return next();}
+function grantCourierSession(res,courierId){const token=randomBytes(32).toString('base64url');db.prepare('DELETE FROM local_delivery_courier_sessions WHERE expires_at<=?').run(Date.now());db.prepare('INSERT INTO local_delivery_courier_sessions(token_hash,courier_id,expires_at) VALUES (?,?,?)').run(sessionHash(token),courierId,Date.now()+COURIER_SESSION_MAX_AGE_SECONDS*1000);res.append('Set-Cookie',`${COURIER_SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${COURIER_SESSION_MAX_AGE_SECONDS}`);}
+function applyCourierLedger({courierId,orderReference=null,withdrawalId=null,entryType,amountCents,idempotencyKey}){
+  const amount=Math.trunc(Number(amountCents));if(!Number.isInteger(amount)||amount===0)throw new Error('ledger_amount_invalid');
+  return db.transaction(()=>{const exists=db.prepare('SELECT id FROM local_delivery_ledger WHERE idempotency_key=?').get(idempotencyKey);if(exists)return false;
+    if(entryType==='withdrawal_debit'){const balance=db.prepare('SELECT balance_cents FROM local_delivery_couriers WHERE id=?').get(courierId);if(!balance||balance.balance_cents+amount<0)throw new Error('courier_balance_insufficient');}
+    db.prepare(`INSERT INTO local_delivery_ledger(courier_id,order_reference,withdrawal_id,entry_type,amount_cents,idempotency_key) VALUES (?,?,?,?,?,?)`).run(courierId,orderReference,withdrawalId,entryType,amount,idempotencyKey);
+    db.prepare('UPDATE local_delivery_couriers SET balance_cents=balance_cents+?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(amount,courierId);return true;})();
 }
 
 function storeMapLocation(body, current = {}) {
@@ -3516,7 +3590,8 @@ app.get('/api/admin/local-delivery',requireAdmin,(_req,res)=>{
     FROM local_delivery_jobs j JOIN marketplace_orders o ON o.reference=j.order_reference
     JOIN store_profiles s ON s.order_reference=o.store_reference LEFT JOIN local_delivery_couriers c ON c.id=j.courier_id
     ORDER BY j.id DESC LIMIT 200`).all();
-  return res.json({settings,cities,couriers,jobs,routesConfigured:Boolean(String(process.env.GOOGLE_MAPS_ROUTES_API_KEY||'').trim())});
+  const withdrawals=db.prepare(`SELECT w.id,w.courier_id courierId,c.name courierName,w.amount_cents amountCents,w.status,w.pix_key_type pixKeyType,w.pix_key_last4 pixKeyLast4,w.proof_reference proofReference,w.admin_note adminNote,w.requested_at requestedAt,w.paid_at paidAt FROM local_delivery_withdrawals w JOIN local_delivery_couriers c ON c.id=w.courier_id ORDER BY w.id DESC LIMIT 200`).all();
+  return res.json({settings,cities,couriers,jobs,withdrawals,routesConfigured:Boolean(String(process.env.GOOGLE_MAPS_ROUTES_API_KEY||'').trim())});
 });
 app.put('/api/admin/local-delivery/settings',requireAdmin,sameOriginOnly,(req,res)=>{
   const value=(name,min,max)=>{const number=Math.round(Number(req.body?.[name]));if(!Number.isInteger(number)||number<min||number>max)throw new Error(name);return number;};
@@ -3541,9 +3616,12 @@ app.post('/api/admin/local-delivery/couriers',requireAdmin,sameOriginOnly,(req,r
   const name=String(req.body?.name||'').trim().slice(0,120),whatsapp=String(req.body?.whatsapp||'').replace(/[^\d+]/g,'').slice(0,20),
     city=String(req.body?.city||'').trim().slice(0,100),state=String(req.body?.state||'').trim().toUpperCase().slice(0,2);
   if(name.length<2||whatsapp.replace(/\D/g,'').length<10||city.length<2||state.length!==2)return res.status(400).json({error:'Preencha corretamente os dados do entregador.'});
-  const result=db.prepare('INSERT INTO local_delivery_couriers(name,whatsapp,city,state) VALUES (?,?,?,?)').run(name,whatsapp,city,state);
-  return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});
+  const temporaryPassword=String(req.body?.password||randomBytes(9).toString('base64url'));
+  if(temporaryPassword.length<10)return res.status(400).json({error:'A senha do entregador deve ter ao menos 10 caracteres.'});
+  const result=db.prepare('INSERT INTO local_delivery_couriers(name,whatsapp,city,state,password_hash) VALUES (?,?,?,?,?)').run(name,whatsapp,city,state,hashPassword(temporaryPassword));
+  return res.status(201).json({ok:true,id:Number(result.lastInsertRowid),...(req.body?.password?{}:{temporaryPassword})});
 });
+app.patch('/api/admin/local-delivery/couriers/:id/access',requireAdmin,sameOriginOnly,(req,res)=>{const password=String(req.body?.password||randomBytes(9).toString('base64url'));if(password.length<10)return res.status(400).json({error:'A senha deve ter ao menos 10 caracteres.'});const result=db.prepare("UPDATE local_delivery_couriers SET password_hash=?,status=CASE WHEN status='blocked' THEN status ELSE 'active' END,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(hashPassword(password),Number(req.params.id));if(!result.changes)return res.status(404).json({error:'Entregador não encontrado.'});db.prepare('DELETE FROM local_delivery_courier_sessions WHERE courier_id=?').run(Number(req.params.id));return res.json({ok:true,...(req.body?.password?{}:{temporaryPassword:password})});});
 app.patch('/api/admin/local-delivery/jobs/:id',requireAdmin,sameOriginOnly,(req,res)=>{
   const status=String(req.body?.status||''),allowed=new Set(['available','assigned','picked_up','delivered','cancelled']),courierId=req.body?.courierId?Number(req.body.courierId):null;
   if(!allowed.has(status))return res.status(400).json({error:'Status de entrega inválido.'});
@@ -3552,9 +3630,33 @@ app.patch('/api/admin/local-delivery/jobs/:id',requireAdmin,sameOriginOnly,(req,
   const transitions={awaiting_payment:new Set(),available:new Set(['assigned','cancelled']),assigned:new Set(['available','picked_up','cancelled']),picked_up:new Set(['delivered','cancelled']),delivered:new Set(),cancelled:new Set()};
   if(!transitions[job.status]?.has(status))return res.status(409).json({error:'Essa mudança de status não é permitida para a etapa atual.'});
   db.transaction(()=>{db.prepare(`UPDATE local_delivery_jobs SET courier_id=COALESCE(?,courier_id),status=?,assigned_at=CASE WHEN ?='assigned' THEN COALESCE(assigned_at,CURRENT_TIMESTAMP) ELSE assigned_at END,picked_up_at=CASE WHEN ?='picked_up' THEN COALESCE(picked_up_at,CURRENT_TIMESTAMP) ELSE picked_up_at END,delivered_at=CASE WHEN ?='delivered' THEN COALESCE(delivered_at,CURRENT_TIMESTAMP) ELSE delivered_at END,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(courierId,status,status,status,status,job.id);
-    if(status==='delivered'&&job.status!=='delivered')db.prepare('UPDATE local_delivery_couriers SET balance_cents=balance_cents+?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(job.courier_cents,courierId);
   })();return res.json({ok:true});
 });
+
+app.post('/api/courier/auth/login',sameOriginOnly,(req,res)=>{const whatsapp=String(req.body?.whatsapp||'').replace(/\D/g,''),password=String(req.body?.password||'');
+  if(!allowAttempt(authAttempts,`courier-login-ip:${req.ip}`,10,15*60*1000)||!allowAttempt(authAttempts,`courier-login-phone:${whatsapp}`,6,15*60*1000))return res.set('Retry-After','900').status(429).json({error:'Muitas tentativas. Aguarde 15 minutos.'});
+  const courier=db.prepare("SELECT * FROM local_delivery_couriers WHERE replace(replace(replace(replace(whatsapp,'+',''),' ',''),'-',''),'(', '') LIKE ? AND status='active' ORDER BY id DESC LIMIT 1").get(`%${whatsapp.slice(-11)}`);
+  if(!courier||!courier.password_hash||!verifyPassword(password,courier.password_hash))return res.status(401).json({error:'WhatsApp ou senha incorretos.'});grantCourierSession(res,courier.id);return res.json({ok:true,courier:{id:courier.id,name:courier.name,city:courier.city,state:courier.state}});});
+app.post('/api/courier/auth/logout',sameOriginOnly,(req,res)=>{const token=parseCookies(req)[COURIER_SESSION_COOKIE];if(token)db.prepare('DELETE FROM local_delivery_courier_sessions WHERE token_hash=?').run(sessionHash(token));res.append('Set-Cookie',`${COURIER_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);return res.json({ok:true});});
+app.get('/api/courier/me',requireCourier,(req,res)=>res.json({courier:{id:req.courier.id,name:req.courier.name,whatsapp:req.courier.whatsapp,city:req.courier.city,state:req.courier.state,balanceCents:req.courier.balance_cents,pixConfigured:Boolean(req.courier.pix_key_encrypted),pixKeyType:req.courier.pix_key_type,pixKeyLast4:req.courier.pix_key_last4}}));
+app.put('/api/courier/pix-key',requireCourier,sameOriginOnly,(req,res)=>{const type=String(req.body?.type||''),value=String(req.body?.value||'').trim();if(!['cpf','cnpj','email','phone','random'].includes(type)||value.length<4||value.length>160)return res.status(400).json({error:'Informe uma chave Pix válida.'});let encrypted;try{encrypted=encryptCourierValue(value);}catch{return res.status(503).json({error:'Proteção da chave Pix indisponível.'});}db.prepare('UPDATE local_delivery_couriers SET pix_key_type=?,pix_key_encrypted=?,pix_key_last4=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(type,encrypted,value.replace(/\s/g,'').slice(-4),req.courier.id);return res.json({ok:true,type,last4:value.replace(/\s/g,'').slice(-4)});});
+app.get('/api/courier/jobs',requireCourier,(req,res)=>{const rows=db.prepare(`SELECT j.id,j.order_reference,j.distance_meters,j.duration_seconds,j.fee_cents,j.courier_cents,j.status,j.assigned_at,j.picked_up_at,j.delivered_at,s.business_name store_name,s.address store_address,s.city,s.state,
+  CASE WHEN j.courier_id=? THEN a.recipient_name ELSE '' END recipient_name,CASE WHEN j.courier_id=? THEN a.street||', '||a.number||CASE WHEN a.complement!='' THEN ', '||a.complement ELSE '' END ELSE '' END delivery_address,
+  CASE WHEN j.courier_id=? THEN a.neighborhood ELSE '' END delivery_neighborhood,CASE WHEN j.courier_id=? THEN u.whatsapp ELSE '' END customer_whatsapp
+  FROM local_delivery_jobs j JOIN marketplace_orders o ON o.reference=j.order_reference JOIN store_profiles s ON s.order_reference=o.store_reference JOIN customer_addresses a ON a.id=o.address_id JOIN users u ON u.id=o.buyer_user_id
+  WHERE j.courier_id=? OR (j.status='available' AND lower(s.city)=lower(?) AND upper(s.state)=upper(?)) ORDER BY j.id DESC LIMIT 100`).all(req.courier.id,req.courier.id,req.courier.id,req.courier.id,req.courier.id,req.courier.city,req.courier.state);return res.json({jobs:rows});});
+app.patch('/api/courier/jobs/:id',requireCourier,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||''),job=db.prepare(`SELECT j.*,s.city store_city,s.state store_state FROM local_delivery_jobs j JOIN marketplace_orders o ON o.reference=j.order_reference JOIN store_profiles s ON s.order_reference=o.store_reference WHERE j.id=?`).get(Number(req.params.id));if(!job)return res.status(404).json({error:'Entrega não encontrada.'});
+  try{db.transaction(()=>{if(action==='accept'){if(String(job.store_city).toLowerCase()!==String(req.courier.city).toLowerCase()||String(job.store_state).toUpperCase()!==String(req.courier.state).toUpperCase())throw new Error('job_unavailable');const result=db.prepare("UPDATE local_delivery_jobs SET courier_id=?,status='assigned',assigned_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='available' AND courier_id IS NULL").run(req.courier.id,job.id);if(!result.changes)throw new Error('job_unavailable');}
+    else if(action==='pickup'){const result=db.prepare("UPDATE local_delivery_jobs SET status='picked_up',picked_up_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND courier_id=? AND status='assigned'").run(job.id,req.courier.id);if(!result.changes)throw new Error('transition_invalid');}
+    else if(action==='deliver'){const result=db.prepare("UPDATE local_delivery_jobs SET status='delivered',delivered_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND courier_id=? AND status='picked_up'").run(job.id,req.courier.id);if(!result.changes)throw new Error('transition_invalid');}
+    else throw new Error('action_invalid');})();return res.json({ok:true});}catch(error){return res.status(409).json({error:error.message==='job_unavailable'?'Esta corrida não está mais disponível.':'Mudança de etapa não permitida.'});}});
+app.get('/api/courier/wallet',requireCourier,(req,res)=>{const ledger=db.prepare('SELECT id,order_reference orderReference,withdrawal_id withdrawalId,entry_type entryType,amount_cents amountCents,created_at createdAt FROM local_delivery_ledger WHERE courier_id=? ORDER BY id DESC LIMIT 200').all(req.courier.id),withdrawals=db.prepare('SELECT id,amount_cents amountCents,status,pix_key_type pixKeyType,pix_key_last4 pixKeyLast4,admin_note adminNote,requested_at requestedAt,paid_at paidAt FROM local_delivery_withdrawals WHERE courier_id=? ORDER BY id DESC LIMIT 100').all(req.courier.id);return res.json({balanceCents:req.courier.balance_cents,ledger,withdrawals});});
+app.post('/api/courier/withdrawals',requireCourier,sameOriginOnly,(req,res)=>{const amount=Math.trunc(Number(req.body?.amountCents)),idempotencyKey=String(req.get('idempotency-key')||'').trim().slice(0,120);const current=db.prepare('SELECT * FROM local_delivery_couriers WHERE id=?').get(req.courier.id);if(!/^[A-Za-z0-9._:-]{12,120}$/.test(idempotencyKey))return res.status(400).json({error:'Envie uma chave de idempotência válida.'});if(!Number.isInteger(amount)||amount<100)return res.status(400).json({error:'O saque mínimo é R$ 1,00.'});if(!current.pix_key_encrypted)return res.status(409).json({error:'Cadastre uma chave Pix antes de solicitar saque.'});
+  const prior=db.prepare('SELECT id,status FROM local_delivery_withdrawals WHERE courier_id=? AND idempotency_key=?').get(current.id,idempotencyKey);if(prior)return res.json({ok:true,id:prior.id,status:prior.status,replayed:true});
+  try{const id=db.transaction(()=>{const result=db.prepare(`INSERT INTO local_delivery_withdrawals(courier_id,amount_cents,pix_key_type,pix_key_encrypted,pix_key_last4,idempotency_key) VALUES (?,?,?,?,?,?)`).run(current.id,amount,current.pix_key_type,current.pix_key_encrypted,current.pix_key_last4,idempotencyKey);applyCourierLedger({courierId:current.id,withdrawalId:Number(result.lastInsertRowid),entryType:'withdrawal_debit',amountCents:-amount,idempotencyKey:`withdrawal:${result.lastInsertRowid}:debit`});return Number(result.lastInsertRowid);})();return res.status(201).json({ok:true,id,status:'requested'});}catch(error){const replay=db.prepare('SELECT id,status FROM local_delivery_withdrawals WHERE courier_id=? AND idempotency_key=?').get(current.id,idempotencyKey);if(replay)return res.json({ok:true,id:replay.id,status:replay.status,replayed:true});return res.status(409).json({error:error.message==='courier_balance_insufficient'?'Saldo insuficiente.':'Não foi possível solicitar o saque.'});}});
+app.patch('/api/admin/local-delivery/withdrawals/:id',requireAdmin,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||''),next={approve:'approved',pay:'paid',reject:'rejected'}[action],item=db.prepare('SELECT * FROM local_delivery_withdrawals WHERE id=?').get(Number(req.params.id)),proofReference=String(req.body?.proofReference||'').trim().slice(0,160);if(!next||!item)return res.status(404).json({error:'Saque não encontrado.'});if(action==='pay'&&!/^[A-Za-z0-9._:/-]{8,160}$/.test(proofReference))return res.status(400).json({error:'Informe a referência própria do comprovante de pagamento.'});
+  try{db.transaction(()=>{const expected=action==='approve'?'requested':action==='pay'?'approved':'requested';const result=db.prepare(`UPDATE local_delivery_withdrawals SET status=?,proof_reference=CASE WHEN ?='paid' THEN ? ELSE proof_reference END,admin_note=?,reviewed_at=COALESCE(reviewed_at,CURRENT_TIMESTAMP),paid_at=CASE WHEN ?='paid' THEN CURRENT_TIMESTAMP ELSE paid_at END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status=?`).run(next,next,proofReference,String(req.body?.note||'').trim().slice(0,500),next,item.id,expected);if(!result.changes)throw new Error('transition_invalid');if(action==='reject')applyCourierLedger({courierId:item.courier_id,withdrawalId:item.id,entryType:'withdrawal_refund',amountCents:item.amount_cents,idempotencyKey:`withdrawal:${item.id}:refund`});db.prepare('INSERT INTO local_delivery_admin_audit(admin_user_id,action,withdrawal_id,proof_reference) VALUES (?,?,?,?)').run(req.user.id,`withdrawal_${action}`,item.id,proofReference);})();return res.json({ok:true,status:next});}catch(error){return res.status(error.message?.includes('UNIQUE')?409:409).json({error:error.message?.includes('UNIQUE')?'Esta referência de pagamento já foi usada.':'Mudança de status não permitida.'});}});
+app.get('/api/admin/local-delivery/withdrawals/:id/pix-key',requireAdmin,(req,res)=>{const item=db.prepare('SELECT pix_key_type,pix_key_encrypted,pix_key_last4 FROM local_delivery_withdrawals WHERE id=?').get(Number(req.params.id));if(!item)return res.status(404).json({error:'Saque não encontrado.'});try{return res.json({type:item.pix_key_type,value:decryptCourierValue(item.pix_key_encrypted),last4:item.pix_key_last4});}catch{return res.status(503).json({error:'Não foi possível abrir a chave Pix.'});}});
 
 app.post('/api/marketplace/shipping/quote', sameOriginOnly, async (req,res) => {
   const requested=Array.isArray(req.body?.items)?req.body.items.slice(0,30):[];
@@ -3576,7 +3678,9 @@ app.get('/api/marketplace/orders', requireUser, (req, res) => {
     WHERE o.buyer_user_id=? ORDER BY o.created_at DESC LIMIT 100`).all(req.user.id);
   const items = db.prepare('SELECT * FROM marketplace_order_items WHERE order_reference=? ORDER BY id');
   const returns=db.prepare('SELECT id,reason,status,seller_note,requested_at,reviewed_at FROM marketplace_returns WHERE order_reference=? AND buyer_user_id=? ORDER BY id DESC');
-  return res.json({ orders: orders.map(order => ({ ...order, items: items.all(order.reference),returns:returns.all(order.reference,req.user.id) })) });
+  const delivery=db.prepare('SELECT status,courier_id courierId,delivered_at deliveredAt FROM local_delivery_jobs WHERE order_reference=?');
+  return res.json({ orders: orders.map(order => {const job=order.delivery_mode==='local'?delivery.get(order.reference):null;return {...order,customerConfirmedAt:order.customer_confirmed_at||null,
+    canConfirmDelivery:Boolean(job?.deliveredAt&&!order.customer_confirmed_at&&order.payment_status==='approved'),localDelivery:job,items:items.all(order.reference),returns:returns.all(order.reference,req.user.id)};}) });
 });
 
 app.post('/api/marketplace/orders/:reference/returns', requireUser, sameOriginOnly, (req,res) => {
@@ -3634,8 +3738,9 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
   let token=process.env.MERCADOPAGO_ACCESS_TOKEN,splitMode='central';
   const deliveryPlatformCents=deliveryMode==='local'?shippingQuote.platformCents:0;
   const deliveryCourierCents=deliveryMode==='local'?shippingQuote.courierCents:0;
-  const marketplaceFeeCents=platformPercentCents+MARKETPLACE_FIXED_FEE_CENTS+returnOperationCents+deliveryPlatformCents;
-  if(deliveryMode!=='local'&&marketplaceOAuthConfigured()){
+  const marketplaceFeeCents=platformPercentCents+MARKETPLACE_FIXED_FEE_CENTS+returnOperationCents+(deliveryMode==='local'?effectiveShippingCents:0);
+  if(deliveryMode==='local'&&!marketplaceOAuthConfigured())return res.status(503).json({error:'O recebimento dividido do Mercado Pago ainda não está configurado.'});
+  if(marketplaceOAuthConfigured()){
     const sellerAccount=db.prepare("SELECT * FROM marketplace_seller_accounts WHERE store_reference=? AND status='connected'").get(storeReference);
     if(!sellerAccount)return res.status(409).json({error:'A loja precisa conectar sua conta Mercado Pago antes de receber pedidos.'});
     try{token=await marketplaceSellerAccessToken(sellerAccount);splitMode='marketplace';}
@@ -3658,7 +3763,7 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
           ...(effectiveShippingCents?[{id:'shipping',title:shippingQuote.service,quantity:1,currency_id:'BRL',unit_price:effectiveShippingCents/100}]:[])],
         payer: { name: req.user.name, email: req.user.email, address: { zip_code: address.postal_code,
           street_name: address.street, street_number: address.number } },
-        external_reference: reference, notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
+        external_reference: reference, notification_url: `${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,
         back_urls: { success: `${SITE_URL}/pedidos.html?resultado=sucesso`, pending: `${SITE_URL}/pedidos.html?resultado=pendente`,
           failure: `${SITE_URL}/loja?resultado=falha` }, auto_return: 'approved', statement_descriptor: 'VITRINYCITY',
         ...(splitMode==='marketplace'?{marketplace_fee:marketplaceFeeCents/100}:{}),
@@ -5354,7 +5459,7 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
           description: 'Espaço digital para divulgar sua loja na VitrineCity', category_id: 'services',
           quantity: 1, currency_id: 'BRL', unit_price: plan.amountCents / 100 }],
         payer, external_reference: reference,
-        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
+        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,
         back_urls: {
           success: `${SITE_URL}/pagamento.html?resultado=sucesso`,
           pending: `${SITE_URL}/pagamento.html?resultado=pendente`,
@@ -5627,7 +5732,7 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
           category_id: 'services', quantity: 1, currency_id: 'BRL', unit_price: amountCents / 100 }],
         payer: { name: req.user.name, email: req.user.email },
         external_reference: reference,
-        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
+        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,
         back_urls: {
           success: `${SITE_URL}/carteira.html?resultado=sucesso&ref=${encodeURIComponent(reference)}`,
           pending: `${SITE_URL}/carteira.html?resultado=pendente&ref=${encodeURIComponent(reference)}`,
@@ -5684,7 +5789,7 @@ app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
           description: 'Curso digital com acesso individual na área do aluno', category_id: 'services',
           quantity: 1, currency_id: 'BRL', unit_price: course.priceCents / 100 }],
         payer: { name: req.user.name, email: req.user.email }, external_reference: reference,
-        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
+        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,
         back_urls: {
           success: `${SITE_URL}/meus-cursos.html?resultado=sucesso&ref=${encodeURIComponent(reference)}`,
           pending: `${SITE_URL}/meus-cursos.html?resultado=pendente&ref=${encodeURIComponent(reference)}`,
@@ -5765,7 +5870,7 @@ app.post('/api/services/videos/checkout', async (req, res) => {
           description: 'Criação e divulgação de 10 vídeos curtos para uma loja VitrineCity', category_id: 'services',
           quantity: 1, currency_id: 'BRL', unit_price: VIDEO_PACKAGE.amountCents / 100 }],
         payer: { name: name.trim().slice(0, 100), email: normalizedEmail }, external_reference: reference,
-        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
+        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,
         back_urls: {
           success: `${SITE_URL}/pagamento.html?resultado=sucesso&servico=videos`,
           pending: `${SITE_URL}/pagamento.html?resultado=pendente&servico=videos`,
@@ -5800,7 +5905,7 @@ app.post('/api/services/digital/:slug/checkout', sameOriginOnly, async (req,res)
     .run(reference,req.params.slug,String(name).trim().slice(0,100),normalizedEmail.slice(0,160),String(whatsapp).trim().slice(0,30),service.amountCents);
   adminAnalytics.recordCheckout(req,reference,'digital_service',service.amountCents);
   try{
-    const response=await fetch('https://api.mercadopago.com/checkout/preferences',{method:'POST',headers:{...mpHeaders(),'X-Idempotency-Key':reference},body:JSON.stringify({items:[{id:`vitrinecity-${req.params.slug}`,title:service.title,description:service.description,category_id:'services',quantity:1,currency_id:'BRL',unit_price:service.amountCents/100}],payer:{name:String(name).trim().slice(0,100),email:normalizedEmail},external_reference:reference,notification_url:`${SITE_URL}/api/payments/mercadopago/webhook`,back_urls:{success:`${SITE_URL}/pagamento.html?resultado=sucesso&servico=${encodeURIComponent(req.params.slug)}`,pending:`${SITE_URL}/pagamento.html?resultado=pendente&servico=${encodeURIComponent(req.params.slug)}`,failure:`${SITE_URL}/centro-educacional.html?resultado=falha#consultoria`},auto_return:'approved',statement_descriptor:'VITRINECITY',metadata:{product:'digital_service',service_slug:req.params.slug}}),signal:AbortSignal.timeout(12000)});
+    const response=await fetch('https://api.mercadopago.com/checkout/preferences',{method:'POST',headers:{...mpHeaders(),'X-Idempotency-Key':reference},body:JSON.stringify({items:[{id:`vitrinecity-${req.params.slug}`,title:service.title,description:service.description,category_id:'services',quantity:1,currency_id:'BRL',unit_price:service.amountCents/100}],payer:{name:String(name).trim().slice(0,100),email:normalizedEmail},external_reference:reference,notification_url:`${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,back_urls:{success:`${SITE_URL}/pagamento.html?resultado=sucesso&servico=${encodeURIComponent(req.params.slug)}`,pending:`${SITE_URL}/pagamento.html?resultado=pendente&servico=${encodeURIComponent(req.params.slug)}`,failure:`${SITE_URL}/centro-educacional.html?resultado=falha#consultoria`},auto_return:'approved',statement_descriptor:'VITRINECITY',metadata:{product:'digital_service',service_slug:req.params.slug}}),signal:AbortSignal.timeout(12000)});
     const data=await response.json();if(!response.ok||!data.id||!data.init_point)throw new Error(data?.message||'preference_failed');
     db.prepare("UPDATE service_orders SET status='pending',mp_preference_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(data.id,reference);
     return res.status(201).json({checkoutUrl:data.init_point,reference});
@@ -5936,24 +6041,33 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
     if (eventType !== 'payment') return res.sendStatus(200);
+    const routeReference=String(req.query.order||''),routeSignature=String(req.query.route_sig||'');
+    if(routeReference&&!validMarketplaceWebhookRoute(routeReference,routeSignature))return res.sendStatus(400);
+    const hintedReference=routeReference&&validMarketplaceWebhookRoute(routeReference,routeSignature)?routeReference:'';let paymentToken;
+    if(hintedReference.startsWith('shop_')){const hintedOrder=db.prepare('SELECT store_reference FROM marketplace_orders WHERE reference=?').get(hintedReference),hintedReconciliation=db.prepare('SELECT split_mode FROM marketplace_payment_reconciliation WHERE order_reference=?').get(hintedReference);if(!hintedOrder)return res.sendStatus(202);if(hintedReconciliation?.split_mode==='marketplace'){const account=db.prepare("SELECT * FROM marketplace_seller_accounts WHERE store_reference=? AND status='connected'").get(hintedOrder.store_reference);if(!account)return res.sendStatus(503);try{paymentToken=await marketplaceSellerAccessToken(account);}catch{return res.sendStatus(503);}}}
+    if(!paymentToken)paymentToken=process.env.MERCADOPAGO_ACCESS_TOKEN;
+    if(!paymentToken)return res.sendStatus(503);
     const response = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(dataId)}`, {
-      headers: mpHeaders(), signal: AbortSignal.timeout(10000)
+      headers: mpHeaders(paymentToken), signal: AbortSignal.timeout(10000)
     });
     if (!response.ok) return res.sendStatus(502);
     const payment = await response.json();
     const reference = String(payment.external_reference || '');
+    if(hintedReference&&reference!==hintedReference)return res.sendStatus(400);
     const amountCents = Math.round(Number(payment.transaction_amount) * 100);
     if (reference.startsWith('shop_')) {
       const order = db.prepare('SELECT * FROM marketplace_orders WHERE reference=?').get(reference);
       if (!order) return res.sendStatus(200);
       const reconciliation=db.prepare('SELECT * FROM marketplace_payment_reconciliation WHERE order_reference=?').get(reference);
+      if(!hintedReference&&reconciliation?.split_mode==='marketplace')return res.sendStatus(202);
       const sellerAccount=reconciliation?.split_mode==='marketplace'?
         db.prepare('SELECT provider_user_id FROM marketplace_seller_accounts WHERE store_reference=?').get(order.store_reference):null;
       const collectorId=String(payment.collector_id||payment.collector?.id||'');
       const collectorMatches=!sellerAccount||collectorId===String(sellerAccount.provider_user_id);
       const amountMatches=amountCents===order.total_cents&&payment.currency_id==='BRL';
       const reportedMarketplaceFee=Number(payment.marketplace_fee);
-      const feeMatches=payment.marketplace_fee==null||!Number.isFinite(reportedMarketplaceFee)||!reconciliation||Math.round(reportedMarketplaceFee*100)===reconciliation.expected_marketplace_fee_cents;
+      const feeMatches=reconciliation?.split_mode==='marketplace'?Number.isFinite(reportedMarketplaceFee)&&Math.round(reportedMarketplaceFee*100)===reconciliation.expected_marketplace_fee_cents:
+        payment.marketplace_fee==null||!Number.isFinite(reportedMarketplaceFee)||Math.round(reportedMarketplaceFee*100)===Number(reconciliation?.expected_marketplace_fee_cents||0);
       if(!amountMatches||!collectorMatches||!feeMatches){
         db.prepare(`UPDATE marketplace_payment_reconciliation SET payment_id=?,actual_gross_cents=?,payment_status=?,
           reconciliation_status='mismatch',last_event_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
@@ -5962,11 +6076,15 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       }
       const status = String(payment.status || 'unknown');
       const reversed = ['refunded', 'charged_back', 'cancelled', 'rejected'].includes(status);
+      const paymentRank=value=>['refunded','charged_back','cancelled','rejected'].includes(value)?2:value==='approved'?1:0;
+      const eventKey=`${payment.id}:${status}`;if(db.prepare('SELECT 1 FROM marketplace_payment_events WHERE event_key=?').get(eventKey))return res.sendStatus(200);
+      if(paymentRank(status)<paymentRank(order.payment_status))return res.sendStatus(200);
       const fulfillment = status === 'approved' ? 'fiscal_pending' : reversed ? 'cancelled' : order.fulfillment_status;
       const fiscal = status === 'approved' ? 'pending' : reversed ? 'cancelled' : order.fiscal_status;
       const reserveStock = status === 'approved' && order.payment_status !== 'approved';
       const releaseStock = reversed && order.payment_status === 'approved';
       db.transaction(() => {
+        db.prepare('INSERT INTO marketplace_payment_events(event_key,order_reference,payment_id,payment_status) VALUES (?,?,?,?)').run(eventKey,reference,String(payment.id),status);
         db.prepare(`UPDATE marketplace_orders SET payment_status=?,fulfillment_status=?,fiscal_status=?,
           mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?`)
           .run(status, fulfillment, fiscal, String(payment.id), reference);
@@ -5979,7 +6097,11 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
           reconciliation_status=?,last_event_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
           .run(String(payment.id),amountCents,status,reversed?'reversed':status==='approved'?'matched':'pending',reference);
         if(status==='approved')db.prepare("UPDATE local_delivery_jobs SET status='available',updated_at=CURRENT_TIMESTAMP WHERE order_reference=? AND status='awaiting_payment'").run(reference);
-        else if(reversed)db.prepare("UPDATE local_delivery_jobs SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE order_reference=? AND status!='delivered'").run(reference);
+        else if(reversed){
+          const delivery=db.prepare('SELECT * FROM local_delivery_jobs WHERE order_reference=?').get(reference);
+          db.prepare("UPDATE local_delivery_jobs SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE order_reference=? AND status!='delivered'").run(reference);
+          if(delivery?.courier_id&&db.prepare("SELECT 1 FROM local_delivery_ledger WHERE idempotency_key=?").get(`delivery:${reference}:credit`))applyCourierLedger({courierId:delivery.courier_id,orderReference:reference,entryType:'delivery_reversal',amountCents:-delivery.courier_cents,idempotencyKey:`delivery:${reference}:reversal`});
+        }
       })();
       if(order.ad_campaign_id){
         if(status==='approved')db.prepare(`INSERT INTO ad_campaign_conversions
@@ -6534,6 +6656,14 @@ app.get('/api/public/stores/:reference', (req, res) => {
   }
   return res.json(data);
 });
+
+app.post('/api/marketplace/orders/:reference/confirm-delivery',requireUser,sameOriginOnly,(req,res)=>{const order=db.prepare(`SELECT o.*,j.id job_id,j.courier_id,j.courier_cents,j.status job_status FROM marketplace_orders o JOIN local_delivery_jobs j ON j.order_reference=o.reference WHERE o.reference=? AND o.buyer_user_id=? AND o.delivery_mode='local' AND o.payment_status='approved'`).get(req.params.reference,req.user.id);if(!order)return res.status(404).json({error:'Pedido local pago não encontrado.'});if(order.job_status!=='delivered')return res.status(409).json({error:'O entregador ainda não marcou a entrega como concluída.'});if(!order.courier_id)return res.status(409).json({error:'Esta entrega não possui entregador atribuído.'});
+  try{const confirmed=db.transaction(()=>{const result=db.prepare("UPDATE marketplace_orders SET customer_confirmed_at=CURRENT_TIMESTAMP,fulfillment_status='delivered',updated_at=CURRENT_TIMESTAMP WHERE reference=? AND customer_confirmed_at IS NULL AND payment_status='approved'").run(order.reference);if(result.changes)applyCourierLedger({courierId:order.courier_id,orderReference:order.reference,entryType:'delivery_credit',amountCents:order.courier_cents,idempotencyKey:`delivery:${order.reference}:credit`});return Boolean(result.changes);})();return res.json({ok:true,confirmed,replayed:!confirmed});}catch{return res.status(409).json({error:'Não foi possível confirmar esta entrega.'});}});
+
+app.get('/api/store-portal/:reference/paid-orders', (req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const afterId=Math.max(0,Math.trunc(Number(req.query.afterId)||0));
+  const orders=db.prepare(`SELECT id,reference,total_cents totalCents,delivery_mode deliveryMode,updated_at updatedAt FROM marketplace_orders WHERE store_reference=? AND payment_status='approved' AND id>? ORDER BY id LIMIT 50`).all(access.order.reference,afterId);
+  const cursor=db.prepare("SELECT COALESCE(MAX(id),0) id FROM marketplace_orders WHERE store_reference=? AND payment_status='approved'").get(access.order.reference).id;
+  return res.json({cursor:Number(cursor),orders});});
 
 app.get('/api/maps/config', (_req, res) => {
   const apiKey = String(process.env.GOOGLE_MAPS_BROWSER_API_KEY || '').trim();
