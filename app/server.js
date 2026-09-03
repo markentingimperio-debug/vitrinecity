@@ -35,6 +35,7 @@ import {
 } from './external-social-metrics.js';
 import { buildLegalReviewDossier } from './legal-review.js';
 import { setupBusinessProspecting } from './business-prospecting.js';
+import { setupSalesAgentEngine } from './sales-agent-engine.js';
 
 const app = express();
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -1629,7 +1630,7 @@ function recordAdminLogin(req,email,success,reason){
   db.prepare("DELETE FROM admin_login_audit WHERE created_at<datetime('now','-180 days')").run();
 }
 
-const ADMIN_HTML_PATHS=new Set(['/admin','/admin.html','/admin-agentes.html','/admin-quizzes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html']);
+const ADMIN_HTML_PATHS=new Set(['/admin','/admin.html','/admin-agentes.html','/admin-sales-agents.html','/admin-quizzes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html']);
 
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
@@ -2109,9 +2110,11 @@ app.get('/admin-cursos.html',requireAdmin,publicPage('admin-cursos.html'));
 app.get('/admin-curso-preview.html',requireAdmin,publicPage('admin-curso-preview.html'));
 app.get('/afiliados.html', enhancedPublicPage('afiliados.html', ['/affiliate-creator.js']));
 app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
+app.get('/admin-sales-agents.html',requireAdmin,publicPage('admin-sales-agents.html'));
 app.get('/admin-quizzes.html',requireAdmin,publicPage('admin-quizzes.html'));
 app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
 app.get('/admin-tiktok.html',requireAdmin,publicPage('admin-tiktok.html'));
+setupSalesAgentEngine({app,db,requireAdmin});
 app.get('/admin-lojas.html',requireAdmin,publicPage('admin-lojas.html'));
 app.get('/admin-servicos.html',requireAdmin,publicPage('admin-servicos.html'));
 app.get('/recursos-social.html', enhancedPublicPage('recursos-social.html'));
