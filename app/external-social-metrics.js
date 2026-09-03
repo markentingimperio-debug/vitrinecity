@@ -92,8 +92,14 @@ async function metaRequest(url, { fetchImpl, timeoutMs }) {
   } catch {
     throw new Error('meta_api_unreachable');
   }
-  if (!response?.ok) throw new Error(`meta_api_${Number(response?.status) || 502}`);
   const data = await response.json().catch(() => null);
+  if (!response?.ok) {
+    const detail = data?.error || {};
+    console.error('Meta metrics request rejected', JSON.stringify({ status:Number(response?.status)||502,
+      code:Number(detail.code)||0, subcode:Number(detail.error_subcode)||0,
+      type:String(detail.type||'').slice(0,80), message:String(detail.message||'').slice(0,240) }));
+    throw new Error(`meta_api_${Number(response?.status) || 502}`);
+  }
   if (!data || typeof data !== 'object') throw new Error('meta_api_invalid_response');
   return data;
 }
