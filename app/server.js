@@ -3690,6 +3690,15 @@ app.get('/api/social/login', requireUser, (req, res) => {
   login.searchParams.set('state',socialOauthState(req.user.id,returnTo));
   login.searchParams.set('response_type','code');
   login.searchParams.set('config_id',String(process.env.META_SOCIAL_LOGIN_CONFIG_ID));
+  login.searchParams.set('scope',[
+    'pages_show_list',
+    'pages_read_engagement',
+    'pages_read_user_content',
+    'read_insights',
+    'instagram_basic',
+    'instagram_manage_insights'
+  ].join(','));
+  login.searchParams.set('auth_type','rerequest');
   return res.redirect(302,login.toString());
 });
 
