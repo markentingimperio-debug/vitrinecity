@@ -1627,7 +1627,7 @@ function recordAdminLogin(req,email,success,reason){
   db.prepare("DELETE FROM admin_login_audit WHERE created_at<datetime('now','-180 days')").run();
 }
 
-const ADMIN_HTML_PATHS=new Set(['/admin','/admin.html','/admin-agentes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html']);
+const ADMIN_HTML_PATHS=new Set(['/admin','/admin.html','/admin-agentes.html','/admin-quizzes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html']);
 
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
@@ -2107,6 +2107,7 @@ app.get('/admin-cursos.html',requireAdmin,publicPage('admin-cursos.html'));
 app.get('/admin-curso-preview.html',requireAdmin,publicPage('admin-curso-preview.html'));
 app.get('/afiliados.html', enhancedPublicPage('afiliados.html', ['/affiliate-creator.js']));
 app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
+app.get('/admin-quizzes.html',requireAdmin,publicPage('admin-quizzes.html'));
 app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
 app.get('/admin-tiktok.html',requireAdmin,publicPage('admin-tiktok.html'));
 app.get('/admin-lojas.html',requireAdmin,publicPage('admin-lojas.html'));
@@ -3889,7 +3890,7 @@ const OPENAI_RESPONSES_URL = AI_PROVIDER === 'openrouter'
 const aiConfigured = () => Boolean(AI_API_KEY);
 const AI_PUBLIC_ROOT = path.resolve(dir, 'public');
 const AI_BLOCKED_PAGES = new Set([
-  'admin.html', 'admin-agentes.html', 'admin-growth.html', 'admin-tiktok.html', 'admin-lojas.html', 'admin-servicos.html', 'carteira.html', 'painel-lojista.html',
+  'admin.html', 'admin-agentes.html', 'admin-quizzes.html', 'admin-growth.html', 'admin-tiktok.html', 'admin-lojas.html', 'admin-servicos.html', 'carteira.html', 'painel-lojista.html',
   'painel-afiliado.html', 'pagamento.html', 'curso-player.html'
 ]);
 
@@ -4488,7 +4489,9 @@ function viralQuizRow(id) {
   const row = db.prepare('SELECT * FROM admin_viral_quizzes WHERE id=?').get(id);
   if (!row) return null;
   const scenes=db.prepare('SELECT id,scene_number,duration_seconds,status,output_url,error_message FROM viral_quiz_scenes WHERE quiz_id=? ORDER BY scene_number').all(id);
-  return { ...row, questions: JSON.parse(row.questions_json || '[]'), scenes };
+  const distribution=db.prepare('SELECT provider,status,publication_id,error_message,updated_at FROM viral_distribution_jobs WHERE quiz_id=? ORDER BY provider').all(id);
+  const media=row.media_project_id?db.prepare('SELECT output_url,production_status,progress,duration_seconds FROM admin_media_projects WHERE id=?').get(row.media_project_id):null;
+  return { ...row, questions: JSON.parse(row.questions_json || '[]'), scenes, distribution, media };
 }
 app.get('/api/admin/viral-quizzes', requireAdmin, (_req,res) => {
   const quizzes = db.prepare('SELECT * FROM admin_viral_quizzes ORDER BY id DESC LIMIT 40').all()
