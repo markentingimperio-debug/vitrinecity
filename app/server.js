@@ -932,6 +932,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS viral_quiz_scenes (
   UNIQUE(quiz_id,scene_number)
 );
 CREATE INDEX IF NOT EXISTS idx_viral_quiz_scenes_status ON viral_quiz_scenes(status,id);`);
+ensureColumn('viral_quiz_scenes', 'attempt_count', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('viral_quiz_scenes', 'model', "TEXT NOT NULL DEFAULT ''");
 db.exec(`CREATE TABLE IF NOT EXISTS viral_distribution_jobs (
   id INTEGER PRIMARY KEY,
   quiz_id INTEGER NOT NULL REFERENCES admin_viral_quizzes(id) ON DELETE CASCADE,
@@ -4621,14 +4623,15 @@ async function processViralVideoFactory(){
   try{
     const pending=db.prepare(`SELECT s.* FROM viral_quiz_scenes s JOIN admin_viral_quizzes q ON q.id=s.quiz_id WHERE s.status='pending' AND q.status='in_production' ORDER BY s.quiz_id,s.scene_number LIMIT 1`).get();
     if(pending){const claimed=db.prepare("UPDATE viral_quiz_scenes SET status='submitting',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").run(pending.id);if(claimed.changes)try{
-      const result=await openRouterRequest('https://openrouter.ai/api/v1/videos',{method:'POST',body:JSON.stringify({model:OPENROUTER_VIDEO_MODEL,prompt:pending.prompt,duration:pending.duration_seconds,aspect_ratio:'9:16',resolution:'720p',generate_audio:true})},60000);
+      const models=[...new Set([OPENROUTER_VIDEO_MODEL,...MEDIA_VIDEO_MODELS])],model=models[Math.min(Number(pending.attempt_count||0),models.length-1)];
+      const result=await openRouterRequest('https://openrouter.ai/api/v1/videos',{method:'POST',body:JSON.stringify({model,prompt:pending.prompt,duration:pending.duration_seconds,aspect_ratio:'9:16',resolution:'720p',generate_audio:true})},60000);
       const jobId=String(result.data?.id||''),pollingUrl=String(result.data?.polling_url||'');if(!jobId||!/^https:\/\/openrouter\.ai\//i.test(pollingUrl))throw new Error('O provedor não devolveu uma tarefa de vídeo válida.');
-      db.prepare("UPDATE viral_quiz_scenes SET status='generating',remote_job_id=?,polling_url=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(jobId,pollingUrl,pending.id);
-    }catch(error){db.prepare("UPDATE viral_quiz_scenes SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(String(error?.message||'submit_failed').slice(0,500),pending.id);}}
+      db.prepare("UPDATE viral_quiz_scenes SET status='generating',remote_job_id=?,polling_url=?,model=?,attempt_count=attempt_count+1,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(jobId,pollingUrl,model,pending.id);
+    }catch(error){const message=String(error?.message||'submit_failed').slice(0,500),blocked=/insufficient credits|key limit exceeded/i.test(message);db.prepare("UPDATE viral_quiz_scenes SET status=?,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(blocked?'blocked_funds':'failed',message,pending.id);}}
     const generating=db.prepare("SELECT * FROM viral_quiz_scenes WHERE status='generating' ORDER BY id LIMIT 3").all();
-    for(const scene of generating)try{const result=await openRouterRequest(scene.polling_url,{method:'GET'},30000),status=String(result.data?.status||'').toLowerCase();if(['failed','cancelled'].includes(status))throw new Error(String(result.data?.error?.message||status));if(!['completed','succeeded'].includes(status))continue;
+    for(const scene of generating)try{const result=await openRouterRequest(scene.polling_url,{method:'GET'},30000),status=String(result.data?.status||'').toLowerCase();if(['failed','cancelled'].includes(status))throw new Error(String(result.data?.error?.message||result.data?.error||result.data?.message||status));if(!['completed','succeeded'].includes(status))continue;
       const mediaUrl=String(result.data?.unsigned_urls?.[0]||result.data?.data?.[0]?.url||result.data?.content_url||'');if(!/^https:\/\//i.test(mediaUrl))throw new Error('Cena concluída sem arquivo disponível.');const download=await fetch(mediaUrl,{headers:{Authorization:`Bearer ${AI_API_KEY}`},signal:AbortSignal.timeout(120000)});if(!download.ok)throw new Error(`Download da cena falhou (${download.status}).`);const buffer=Buffer.from(await download.arrayBuffer());if(!buffer.length||buffer.length>250*1024*1024)throw new Error('Cena inválida ou maior que 250 MB.');const name=`viral-${scene.quiz_id}-scene-${scene.scene_number}.mp4`,local=path.join(generatedMediaDir,name);fs.writeFileSync(local,buffer);db.prepare("UPDATE viral_quiz_scenes SET status='downloaded',local_path=?,output_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(local,`/uploads/generated-videos/${name}`,scene.id);await finishViralQuizVideo(scene.quiz_id);
-    }catch(error){db.prepare("UPDATE viral_quiz_scenes SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(String(error?.message||'scene_failed').slice(0,500),scene.id);}
+    }catch(error){const message=String(error?.message||'scene_failed').slice(0,500),retry=Number(scene.attempt_count||0)<3&&!/insufficient credits|key limit exceeded/i.test(message);db.prepare("UPDATE viral_quiz_scenes SET status=?,error_message=?,remote_job_id='',polling_url='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(retry?'pending':'failed',message,scene.id);}
   }finally{viralVideoFactoryRunning=false;}
 }
 app.get('/api/admin/viral-factory/automation',requireAdmin,(_req,res)=>res.json({settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get(),trends:db.prepare('SELECT * FROM viral_factory_trends ORDER BY id DESC LIMIT 20').all(),openrouterConfigured:aiConfigured()}));
