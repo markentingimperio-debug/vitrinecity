@@ -863,6 +863,11 @@
       .factory-progress { height:7px; background:#e5edf6; border-radius:9px; overflow:hidden; margin:9px 0; }
       .factory-progress i { display:block; height:100%; background:linear-gradient(90deg,#367cff,#35d7b0); }
       .factory-error { color:#b42318; font-size:11px; margin:6px 0; }
+      .viral-card { border:1px solid #315676; border-radius:14px; padding:12px; background:#07182b; }
+      .viral-card + .viral-card { margin-top:10px; }
+      .viral-card summary { cursor:pointer; color:#eef8ff; font-weight:800; }
+      .viral-card pre { white-space:pre-wrap; color:#b9d6e8; font:11px/1.55 Inter,system-ui,sans-serif; }
+      .viral-status { color:var(--amber); font-size:10px; margin:6px 0; text-transform:uppercase; letter-spacing:.7px; }
       .empty {
         padding: 18px;
         text-align: center;
@@ -1261,6 +1266,25 @@
               </form>
             </section>
             <section class="panel" id="fabrica-neural">
+              <h2>Fábrica Viral de Quizzes</h2>
+              <p class="panel-note">Monte um roteiro vertical de 65 segundos com perguntas, narração brasileira, legendas e CTA. A Gestora aprova antes da produção.</p>
+              <div class="budget-box" id="viralAutomationStatus">Verificando automação e tendências…</div>
+              <div class="activity-actions" style="margin-bottom:10px"><button class="primary" id="runViralNow" type="button">Buscar trends e gerar pauta agora</button><button id="toggleViral" type="button">Pausar automação</button></div>
+              <form id="viralForm">
+                <label class="field"><span>Tema do quiz</span><input id="viralTheme" maxlength="160" placeholder="Ex.: como identificar falta de nutrientes nas plantas" required></label>
+                <div class="factory-grid">
+                  <label class="field"><span>Categoria</span><select id="viralCategory"><option value="plants">Adubação, plantas e jardinagem</option><option value="curiosities">Curiosidades</option></select></label>
+                  <label class="field"><span>Dificuldade</span><select id="viralDifficulty"><option value="easy">Fácil</option><option value="medium" selected>Média</option><option value="hard">Difícil</option></select></label>
+                  <label class="field wide"><span>Voz brasileira</span><select id="viralVoice"><option value="br-feminina-energica">Feminina · energética</option><option value="br-masculina-amigavel">Masculina · amigável</option><option value="br-feminina-calma">Feminina · calma</option></select></label>
+                  <label class="field"><span>Destino</span><input id="viralDestinationLabel" value="Loja Agrotécnica" maxlength="100" required></label>
+                  <label class="field"><span>Link HTTPS</span><input id="viralDestinationUrl" type="url" value="https://vitrinecity.com/loja" required></label>
+                  <label class="field wide"><span>Canais</span><input id="viralChannels" value="Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai"></label>
+                </div>
+                <button class="btn" type="submit" style="width:100%;margin-top:12px">Criar roteiro e enviar à Gestora</button>
+              </form>
+              <div class="factory-jobs" id="viralJobs"><div class="empty">Nenhum quiz criado.</div></div>
+            </section>
+            <section class="panel" id="fabrica-neural-media">
               <h2>Fábrica Neural</h2>
               <p class="panel-note">Crie imagens e vídeos com OpenRouter, acompanhe o processamento e aprove antes de publicar.</p>
               <div class="budget-box" id="factoryBudget">Consultando limite do OpenRouter…</div>
@@ -1296,6 +1320,7 @@
       let agents = [],
         tasks = [],
         reviews = [],
+        viralQuizzes = [],
         mediaProjects = [],
         selectedId = null;
       const floors = {
@@ -1537,20 +1562,32 @@
         );
       }
       async function load() {
-        const [d, r, factory] = await Promise.all([
+        const [d, r, viral, factory] = await Promise.all([
           api("/api/admin/agents"),
           api("/api/admin/agents/business-reviews"),
+          api("/api/admin/viral-quizzes"),
           api("/api/admin/media-factory"),
         ]);
         agents = d.agents || [];
         tasks = d.tasks || [];
         reviews = r.reviews || [];
+        viralQuizzes = viral.quizzes || [];
         mediaProjects = factory.projects || [];
         render();
+        renderViral();
         renderFactory(factory);
         if (reviews.length) renderReview(reviews[0]);
       }
       function usd(value) { return Number(value || 0).toLocaleString("pt-BR", { style:"currency", currency:"USD", minimumFractionDigits:3 }); }
+      async function loadViralAutomation(){const d=await api("/api/admin/viral-factory/automation"),s=d.settings||{};window.viralSettings=s;$("#viralAutomationStatus").textContent=`${s.enabled?"Automação ativa":"Automação pausada"} · OpenRouter ${d.openrouterConfigured?"conectado":"sem chave"} · última execução: ${s.last_run_at||"ainda não executada"}${s.last_error?` · erro: ${s.last_error}`:""}`;$("#toggleViral").textContent=s.enabled?"Pausar automação":"Ativar automação";}
+      $("#runViralNow").onclick=async(e)=>{const b=e.currentTarget;b.disabled=true;b.textContent="Analisando tendências…";try{const d=await api("/api/admin/viral-factory/run",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});notify(`${d.created?.length||0} quizzes criados para aprovação.`);await load();await loadViralAutomation()}catch(x){notify(x.message,true)}finally{b.disabled=false;b.textContent="Buscar trends e gerar pauta agora"}};
+      $("#toggleViral").onclick=async(e)=>{const b=e.currentTarget;b.disabled=true;try{const s=window.viralSettings||{};await api("/api/admin/viral-factory/automation",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:!s.enabled,approvalRequired:true,destinationUrl:s.destination_url||$("#viralDestinationUrl").value,destinationLabel:s.destination_label||$("#viralDestinationLabel").value})});await loadViralAutomation();notify("Automação atualizada.")}catch(x){notify(x.message,true)}finally{b.disabled=false}};
+      function renderViral() {
+        const status={awaiting_approval:"Aguardando Gestora",approved:"Aprovado · na fila da Mídia",in_production:"Em produção",published:"Publicado",cancelled:"Cancelado"};
+        $("#viralJobs").innerHTML=viralQuizzes.length?viralQuizzes.map(q=>`<details class="viral-card" ${q===viralQuizzes[0]?"open":""}><summary>${esc(q.theme)}</summary><div class="viral-status">${esc(status[q.status]||q.status)} · 65 segundos · ${esc(q.voice)}</div><pre>${esc(q.script)}</pre><div class="factory-meta">Destino: ${esc(q.destination_label)} · ${esc(q.destination_url)}<br>Canais: ${esc(q.channels)}</div>${q.status==="awaiting_approval"?`<div class="activity-actions"><button class="primary" data-viral="${q.id}" data-viral-action="approve">Aprovar e enviar à Mídia</button></div>`:""}</details>`).join(""):`<div class="empty">Crie o primeiro quiz. Nenhuma publicação acontece sem aprovação.</div>`;
+      }
+      $("#viralForm").onsubmit=async(e)=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{await api("/api/admin/viral-quizzes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({theme:$("#viralTheme").value,category:$("#viralCategory").value,difficulty:$("#viralDifficulty").value,voice:$("#viralVoice").value,destinationLabel:$("#viralDestinationLabel").value,destinationUrl:$("#viralDestinationUrl").value,channels:$("#viralChannels").value})});$("#viralTheme").value="";notify("Roteiro de 65 segundos criado para aprovação.");await load()}catch(x){notify(x.message,true)}finally{b.disabled=false}};
+      $("#viralJobs").onclick=async(e)=>{const b=e.target.closest("[data-viral-action]");if(!b)return;b.disabled=true;try{await api(`/api/admin/viral-quizzes/${b.dataset.viral}/${b.dataset.viralAction}`,{method:"POST",headers:{"Content-Type":"application/json"}});notify("Quiz aprovado e enviado ao Estúdio Audiovisual.");await load()}catch(x){notify(x.message,true);b.disabled=false}};
       function updateFactoryModels(models = {}) {
         const options=$("#factoryFormat").value==="image"?(models.imageOptions||["qwen/qwen-image-3"]):(models.videoOptions||["google/veo-3.1-lite"]);
         const preferred=$("#factoryFormat").value==="image"?models.image:models.video;
@@ -1678,6 +1715,7 @@
         1000,
       );
       load().catch((e) => notify(e.message, true));
+      loadViralAutomation().catch((e) => notify(e.message, true));
       inspectWallet().catch(() => showWallet());
     </script>
   </body>

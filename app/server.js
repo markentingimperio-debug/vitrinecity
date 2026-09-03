@@ -871,6 +871,49 @@ ensureColumn('admin_media_projects', 'usage_cost_usd', 'REAL NOT NULL DEFAULT 0'
 ensureColumn('admin_media_projects', 'error_message', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('admin_media_projects', 'caption', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('admin_media_projects', 'published_post_id', "TEXT NOT NULL DEFAULT ''");
+db.exec(`CREATE TABLE IF NOT EXISTS admin_viral_quizzes (
+  id INTEGER PRIMARY KEY,
+  created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  theme TEXT NOT NULL,
+  category TEXT NOT NULL CHECK(category IN ('plants','curiosities')),
+  difficulty TEXT NOT NULL CHECK(difficulty IN ('easy','medium','hard')),
+  voice TEXT NOT NULL,
+  destination_url TEXT NOT NULL,
+  destination_label TEXT NOT NULL,
+  questions_json TEXT NOT NULL,
+  script TEXT NOT NULL,
+  captions TEXT NOT NULL,
+  channels TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'awaiting_approval' CHECK(status IN ('awaiting_approval','approved','in_production','published','cancelled')),
+  task_id INTEGER REFERENCES admin_agent_tasks(id) ON DELETE SET NULL,
+  media_project_id INTEGER REFERENCES admin_media_projects(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_admin_viral_quizzes_status ON admin_viral_quizzes(status,id DESC);`);
+db.exec(`CREATE TABLE IF NOT EXISTS viral_factory_settings (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  enabled INTEGER NOT NULL DEFAULT 1,
+  approval_required INTEGER NOT NULL DEFAULT 1,
+  plants_per_day INTEGER NOT NULL DEFAULT 2,
+  curiosities_per_day INTEGER NOT NULL DEFAULT 1,
+  destination_url TEXT NOT NULL DEFAULT 'https://vitrinecity.com/loja',
+  destination_label TEXT NOT NULL DEFAULT 'Loja Agrotécnica',
+  last_run_day TEXT,
+  last_run_at TEXT,
+  last_error TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT OR IGNORE INTO viral_factory_settings(id) VALUES (1);
+CREATE TABLE IF NOT EXISTS viral_factory_trends (
+  id INTEGER PRIMARY KEY,
+  source TEXT NOT NULL,
+  topic TEXT NOT NULL,
+  category TEXT NOT NULL,
+  score REAL NOT NULL DEFAULT 0,
+  captured_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_viral_factory_trends_captured ON viral_factory_trends(captured_at DESC,id DESC);`);
 db.exec(`CREATE TABLE IF NOT EXISTS admin_business_reviews (
   id INTEGER PRIMARY KEY,
   created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -4374,6 +4417,139 @@ app.get('/api/admin/agents', requireAdmin, (_req, res) => {
     ORDER BY CASE t.status WHEN 'awaiting_approval' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END,t.id DESC LIMIT 80`).all();
   return res.json({ mode: 'supervised', agents, tasks });
 });
+
+const VIRAL_QUIZ_VOICES = new Set(['br-feminina-energica','br-masculina-amigavel','br-feminina-calma']);
+function viralQuizQuestions(theme, category) {
+  const subject = theme.replace(/[?!.,;:]+$/g, '').trim();
+  if (category === 'curiosities') return [
+    { question: `Qual fato sobre ${subject} surpreende mais gente?`, options: ['O mais conhecido','O menos óbvio','Nenhum deles'], answer: 1 },
+    { question: `Em que situação ${subject} chama mais atenção?`, options: ['No cotidiano','Só em laboratório','Nunca acontece'], answer: 0 },
+    { question: `Você compartilharia esta curiosidade sobre ${subject}?`, options: ['Sim','Talvez','Já conhecia'], answer: 0 }
+  ];
+  return [
+    { question: `Qual é o primeiro sinal de que ${subject} precisa de atenção?`, options: ['Folhas e crescimento mudam','O vaso fica mais bonito','Nada muda'], answer: 0 },
+    { question: `Antes de cuidar de ${subject}, o que deve ser conferido?`, options: ['Luz, água e solo','Só a cor do vaso','Apenas o tamanho'], answer: 0 },
+    { question: `Qual prática é mais segura para ${subject}?`, options: ['Seguir a dose indicada','Dobrar a dose','Aplicar sem observar'], answer: 0 }
+  ];
+}
+function viralQuizPackage({ theme, category, voice, destinationUrl, destinationLabel }) {
+  const questions = viralQuizQuestions(theme, category);
+  const timeline = [
+    ['00–04s', `DESAFIO: você acerta 3 perguntas sobre ${theme}?`],
+    ['04–19s', `PERGUNTA 1: ${questions[0].question} Opções: A) ${questions[0].options[0]}; B) ${questions[0].options[1]}; C) ${questions[0].options[2]}. Resposta: ${'ABC'[questions[0].answer]}.`],
+    ['19–34s', `PERGUNTA 2: ${questions[1].question} Opções: A) ${questions[1].options[0]}; B) ${questions[1].options[1]}; C) ${questions[1].options[2]}. Resposta: ${'ABC'[questions[1].answer]}.`],
+    ['34–49s', `PERGUNTA 3: ${questions[2].question} Opções: A) ${questions[2].options[0]}; B) ${questions[2].options[1]}; C) ${questions[2].options[2]}. Resposta: ${'ABC'[questions[2].answer]}.`],
+    ['49–57s', 'RESULTADO: 3 acertos, especialista; 2, mandou bem; 0 ou 1, vale tentar outra vez.'],
+    ['57–65s', `CTA: descubra mais em ${destinationLabel}. Acesse ${destinationUrl}.`]
+  ];
+  return { questions, script: timeline.map(([time,text]) => `${time} — ${text}`).join('\n'),
+    captions: timeline.map(([time,text]) => `[${time}] ${text}`).join('\n'), voice };
+}
+function viralQuizRow(id) {
+  const row = db.prepare('SELECT * FROM admin_viral_quizzes WHERE id=?').get(id);
+  if (!row) return null;
+  return { ...row, questions: JSON.parse(row.questions_json || '[]') };
+}
+app.get('/api/admin/viral-quizzes', requireAdmin, (_req,res) => {
+  const quizzes = db.prepare('SELECT * FROM admin_viral_quizzes ORDER BY id DESC LIMIT 40').all()
+    .map(row => ({ ...row, questions: JSON.parse(row.questions_json || '[]') }));
+  return res.json({ mode:'supervised', durationSeconds:65, dailyRule:{ plants:2, curiosities:1 }, quizzes });
+});
+app.post('/api/admin/viral-quizzes', requireAdmin, (req,res) => {
+  const theme=String(req.body?.theme||'').trim().slice(0,160);
+  const category=['plants','curiosities'].includes(String(req.body?.category))?String(req.body.category):'plants';
+  const difficulty=['easy','medium','hard'].includes(String(req.body?.difficulty))?String(req.body.difficulty):'medium';
+  const voice=VIRAL_QUIZ_VOICES.has(String(req.body?.voice))?String(req.body.voice):'br-feminina-energica';
+  const destinationUrl=String(req.body?.destinationUrl||'').trim().slice(0,1000);
+  const destinationLabel=String(req.body?.destinationLabel||'').trim().slice(0,100)||'Vitrine City';
+  const channels=String(req.body?.channels||'Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai').trim().slice(0,300);
+  if(theme.length<5)return res.status(400).json({error:'Descreva o tema em pelo menos 5 caracteres.'});
+  let parsed; try{parsed=new URL(destinationUrl);}catch{return res.status(400).json({error:'Informe um link de destino válido.'});}
+  if(parsed.protocol!=='https:')return res.status(400).json({error:'O link de destino precisa usar HTTPS.'});
+  const pack=viralQuizPackage({theme,category,voice,destinationUrl,destinationLabel});
+  const result=db.prepare(`INSERT INTO admin_viral_quizzes
+    (created_by_user_id,theme,category,difficulty,voice,destination_url,destination_label,questions_json,script,captions,channels)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(req.user.id,theme,category,difficulty,voice,destinationUrl,destinationLabel,
+      JSON.stringify(pack.questions),pack.script,pack.captions,channels);
+  return res.status(201).json({quiz:viralQuizRow(Number(result.lastInsertRowid)),message:'Pacote criado e enviado para aprovação da Gestora.'});
+});
+app.post('/api/admin/viral-quizzes/:id/approve', requireAdmin, (req,res) => {
+  const id=Number(req.params.id),quiz=viralQuizRow(id);
+  if(!quiz)return res.status(404).json({error:'Quiz não encontrado.'});
+  if(quiz.status!=='awaiting_approval')return res.status(409).json({error:'Este quiz não está aguardando aprovação.'});
+  const media=db.prepare("SELECT id,status FROM admin_specialist_agents WHERE code='midia'").get();
+  if(!media||media.status!=='active')return res.status(409).json({error:'Ative o Estúdio Audiovisual antes de aprovar.'});
+  const tx=db.transaction(()=>{
+    const task=db.prepare(`INSERT INTO admin_agent_tasks (agent_id,created_by_user_id,title,instructions,priority,status)
+      VALUES (?,?,?,?,?,'queued')`).run(media.id,req.user.id,`Quiz viral: ${quiz.theme}`,quiz.script,'high');
+    const project=db.prepare(`INSERT INTO admin_media_projects
+      (task_id,format,channels,source_notes,prompt,aspect_ratio,duration_seconds,caption,production_status,progress,script)
+      VALUES (?,'short_video',?,?,?,?,65,?,'script',15,?)`).run(Number(task.lastInsertRowid),quiz.channels,quiz.script,
+        `Vídeo vertical de quiz, ritmo rápido, imagens próprias ou geradas, narração ${quiz.voice}, legendas grandes e CTA final. ${quiz.script}`,
+        '9:16',`Quiz: ${quiz.theme}. ${quiz.destination_label}: ${quiz.destination_url}`,quiz.script);
+    db.prepare("UPDATE admin_viral_quizzes SET status='approved',task_id=?,media_project_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
+      .run(Number(task.lastInsertRowid),Number(project.lastInsertRowid),id);
+  }); tx();
+  return res.json({quiz:viralQuizRow(id),message:'Quiz aprovado e enviado ao Estúdio Audiovisual.'});
+});
+function decodeXmlText(value='') { return String(value).replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim(); }
+async function viralTrendTopics() {
+  const collected=[];
+  try {
+    const response=await fetch('https://trends.google.com/trending/rss?geo=BR',{headers:{'User-Agent':'VitrineCity/1.0'},signal:AbortSignal.timeout(12000)});
+    if(response.ok){const xml=await response.text();for(const match of xml.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<ht:approx_traffic>([\s\S]*?)<\/ht:approx_traffic>[\s\S]*?<\/item>/gi)){
+      const topic=decodeXmlText(match[1]).slice(0,160),traffic=Number(decodeXmlText(match[2]).replace(/\D/g,''))||0;
+      if(topic)collected.push({source:'google_trends_br',topic,category:'curiosities',score:traffic});
+    }}
+  } catch {}
+  const internal=db.prepare(`SELECT category topic,ROUND(SUM(views+clicks*5+conversions*20),2) score
+    FROM social_external_insights GROUP BY category HAVING score>0 ORDER BY score DESC LIMIT 12`).all();
+  for(const item of internal)collected.push({source:'vitrine_social',topic:String(item.topic||'').slice(0,160),category:'plants',score:Number(item.score||0)});
+  const defaults=['adubação correta para plantas em vasos','sinais de falta de nutrientes nas folhas','como cuidar de plantas no calor','curiosidades sobre plantas brasileiras'];
+  for(const topic of defaults)collected.push({source:'editorial',topic,category:topic.startsWith('curiosidades')?'curiosities':'plants',score:1});
+  const seen=new Set();return collected.filter(item=>item.topic&&!seen.has(item.topic.toLowerCase())&&seen.add(item.topic.toLowerCase())).slice(0,30);
+}
+async function chooseViralThemes(trends,counts) {
+  const fallback=[...trends.filter(x=>x.category==='plants').slice(0,counts.plants),...trends.filter(x=>x.category==='curiosities').slice(0,counts.curiosities)];
+  if(!aiConfigured())return fallback;
+  try{
+    const data=await requestOpenAI({model:OPENAI_MODEL,store:false,max_output_tokens:700,
+      instructions:'Você seleciona pautas seguras para quizzes verticais da VitrineCity. Responda somente JSON válido, sem markdown: uma lista de objetos com theme e category. category deve ser plants ou curiosities. Evite política, tragédias, saúde, apostas, conteúdo adulto e alegações sem fonte. Priorize jardinagem para plants e curiosidades leves para curiosities.',
+      input:`Escolha exatamente ${counts.plants} pautas plants e ${counts.curiosities} curiosities. Tendências disponíveis: ${JSON.stringify(trends.slice(0,20))}`});
+    const parsed=JSON.parse(responseOutputText(data).trim());
+    if(!Array.isArray(parsed))return fallback;
+    const safe=parsed.filter(x=>x&&['plants','curiosities'].includes(x.category)&&String(x.theme||'').trim().length>=5)
+      .map(x=>({source:'openrouter_curator',topic:String(x.theme).trim().slice(0,160),category:x.category,score:100}));
+    if(safe.filter(x=>x.category==='plants').length===counts.plants&&safe.filter(x=>x.category==='curiosities').length===counts.curiosities)return safe;
+  }catch(error){console.error('Curadoria viral via IA falhou:',String(error?.message||'ai_failure').slice(0,200));}
+  return fallback;
+}
+let viralFactoryRunning=false;
+async function runViralFactory({force=false,userId=null}={}) {
+  if(viralFactoryRunning)return {skipped:true,reason:'running'};viralFactoryRunning=true;
+  const settings=db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get();
+  const day=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo'}).format(new Date());
+  if(!settings.enabled&&!force){viralFactoryRunning=false;return {skipped:true,reason:'disabled'};}
+  if(settings.last_run_day===day&&!force){viralFactoryRunning=false;return {skipped:true,reason:'already_ran'};}
+  try{
+    const trends=await viralTrendTopics(),insertTrend=db.prepare('INSERT INTO viral_factory_trends(source,topic,category,score) VALUES (?,?,?,?)');
+    db.transaction(()=>trends.slice(0,20).forEach(x=>insertTrend.run(x.source,x.topic,x.category,x.score)))();
+    const themes=await chooseViralThemes(trends,{plants:settings.plants_per_day,curiosities:settings.curiosities_per_day});
+    const insert=db.prepare(`INSERT INTO admin_viral_quizzes
+      (created_by_user_id,theme,category,difficulty,voice,destination_url,destination_label,questions_json,script,captions,channels,status)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,'awaiting_approval')`),created=[];
+    db.transaction(()=>{for(const item of themes){const pack=viralQuizPackage({theme:item.topic,category:item.category,voice:'br-feminina-energica',destinationUrl:settings.destination_url,destinationLabel:settings.destination_label});
+      const result=insert.run(userId,item.topic,item.category,'medium','br-feminina-energica',settings.destination_url,settings.destination_label,JSON.stringify(pack.questions),pack.script,pack.captions,'Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai');created.push(Number(result.lastInsertRowid));}
+      db.prepare("UPDATE viral_factory_settings SET last_run_day=?,last_run_at=CURRENT_TIMESTAMP,last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=1").run(day);})();
+    return {ok:true,created:created.map(viralQuizRow),trends:trends.slice(0,10)};
+  }catch(error){db.prepare('UPDATE viral_factory_settings SET last_error=?,last_run_at=CURRENT_TIMESTAMP WHERE id=1').run(String(error?.message||'automation_failed').slice(0,500));throw error;}
+  finally{viralFactoryRunning=false;}
+}
+app.get('/api/admin/viral-factory/automation',requireAdmin,(_req,res)=>res.json({settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get(),trends:db.prepare('SELECT * FROM viral_factory_trends ORDER BY id DESC LIMIT 20').all(),openrouterConfigured:aiConfigured()}));
+app.put('/api/admin/viral-factory/automation',requireAdmin,(req,res)=>{const enabled=Boolean(req.body?.enabled),approvalRequired=req.body?.approvalRequired!==false;
+  const destinationUrl=String(req.body?.destinationUrl||'').trim();let parsed;try{parsed=new URL(destinationUrl)}catch{return res.status(400).json({error:'Informe um destino válido.'})}if(parsed.protocol!=='https:')return res.status(400).json({error:'O destino precisa usar HTTPS.'});
+  db.prepare(`UPDATE viral_factory_settings SET enabled=?,approval_required=?,destination_url=?,destination_label=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(enabled?1:0,approvalRequired?1:0,destinationUrl,String(req.body?.destinationLabel||'Vitrine City').trim().slice(0,100));return res.json({ok:true,settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get()});});
+app.post('/api/admin/viral-factory/run',requireAdmin,async(req,res)=>{try{return res.status(201).json(await runViralFactory({force:true,userId:req.user.id}))}catch(error){return res.status(502).json({error:String(error?.message||'Falha na fábrica automática.').slice(0,400)})}});
 
 function mediaFactoryProject(id) {
   return db.prepare(`SELECT m.*,t.title,t.instructions,t.priority,t.status AS task_status,a.name AS agent_name
@@ -8135,4 +8311,6 @@ app.listen(process.env.PORT || 3000, () => {
   const whatsappScheduleTimer=setInterval(()=>processWhatsAppQrSchedules().catch(()=>{}),30000);whatsappScheduleTimer.unref();
   const automationInitial=setTimeout(()=>processOmnichannelAutomation().catch(()=>{}),20000);automationInitial.unref();
   const automationTimer=setInterval(()=>processOmnichannelAutomation().catch(()=>{}),60000);automationTimer.unref();
+  const viralInitial=setTimeout(()=>runViralFactory().catch(error=>console.error('Fábrica Viral:',String(error?.message||'automation_failed').slice(0,200))),45000);viralInitial.unref();
+  const viralTimer=setInterval(()=>runViralFactory().catch(error=>console.error('Fábrica Viral:',String(error?.message||'automation_failed').slice(0,200))),30*60*1000);viralTimer.unref();
 });
