@@ -124,7 +124,8 @@ export async function fetchMetaAggregatedInsights({
   const safeAccounts = Array.isArray(accounts) ? accounts.slice(0, 100) : [];
   if (!safeAccounts.length) throw new Error('meta_not_configured');
   const limit = boundedInteger(maxItems, 200, 1, 500);
-  const facebook = [], instagram = [];
+  const facebook = [], instagram = [], errors = [];
+  let successfulRequests = 0;
   for (const account of safeAccounts) {
     const token = String(account?.accessToken || '').trim();
     const pageId = String(account?.pageId || '').trim();
@@ -132,7 +133,17 @@ export async function fetchMetaAggregatedInsights({
     const pageUrl = metaUrl(apiVersion, `${pageId}/posts`,
       'id,created_time,reactions.limit(0).summary(true),comments.limit(0).summary(true),shares,insights.metric(post_impressions,post_clicks,post_video_views)',
       token, Math.min(100, limit));
-    const pageData = await metaRequest(pageUrl, { fetchImpl, timeoutMs });
+    let pageData;
+    try { pageData = await metaRequest(pageUrl, { fetchImpl, timeoutMs }); }
+    catch (error) {
+      if (error.message !== 'meta_api_400') { errors.push(error); continue; }
+      const basicPageUrl = metaUrl(apiVersion, `${pageId}/posts`,
+        'id,created_time,reactions.limit(0).summary(true),comments.limit(0).summary(true),shares',
+        token, Math.min(100, limit));
+      try { pageData = await metaRequest(basicPageUrl, { fetchImpl, timeoutMs }); }
+      catch (fallbackError) { errors.push(fallbackError); continue; }
+    }
+    successfulRequests++;
     for (const item of (pageData.data || []).slice(0, limit)) facebook.push({
       contentKey: String(item.id || ''), category: 'geral',
       views: insightValue(item.insights, 'post_impressions'), watchMs: 0, completions: 0,
@@ -145,7 +156,16 @@ export async function fetchMetaAggregatedInsights({
     const instagramUrl = metaUrl(apiVersion, `${instagramId}/media`,
       'id,timestamp,media_type,like_count,comments_count,insights.metric(views,reach,saved,shares,total_interactions)',
       token, Math.min(100, limit));
-    const instagramData = await metaRequest(instagramUrl, { fetchImpl, timeoutMs });
+    let instagramData;
+    try { instagramData = await metaRequest(instagramUrl, { fetchImpl, timeoutMs }); }
+    catch (error) {
+      if (error.message !== 'meta_api_400') { errors.push(error); continue; }
+      const basicInstagramUrl = metaUrl(apiVersion, `${instagramId}/media`,
+        'id,timestamp,media_type,like_count,comments_count', token, Math.min(100, limit));
+      try { instagramData = await metaRequest(basicInstagramUrl, { fetchImpl, timeoutMs }); }
+      catch (fallbackError) { errors.push(fallbackError); continue; }
+    }
+    successfulRequests++;
     for (const item of (instagramData.data || []).slice(0, limit)) instagram.push({
       contentKey: String(item.id || ''), category: 'geral',
       views: Math.max(insightValue(item.insights, 'views'), insightValue(item.insights, 'reach')),
@@ -154,7 +174,8 @@ export async function fetchMetaAggregatedInsights({
       clicks: 0, conversions: 0, measuredAt
     });
   }
-  return { provider: 'meta', measuredAt, facebook, instagram };
+  if (!successfulRequests && errors.length) throw errors[0];
+  return { provider: 'meta', measuredAt, facebook, instagram, skippedAccounts: errors.length };
 }
 
 export async function fetchKwaiAggregatedInsights({
