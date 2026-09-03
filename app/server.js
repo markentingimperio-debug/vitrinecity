@@ -14,6 +14,7 @@ import {
   timingSafeEqual
 } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import { originalCourse } from './course-content.js';
 import { setupAdminAnalytics } from './admin-analytics.js';
 import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marketplace-public.js';
@@ -894,7 +895,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_viral_quizzes_status ON admin_viral_quizzes
 db.exec(`CREATE TABLE IF NOT EXISTS viral_factory_settings (
   id INTEGER PRIMARY KEY CHECK(id=1),
   enabled INTEGER NOT NULL DEFAULT 1,
-  approval_required INTEGER NOT NULL DEFAULT 1,
+  approval_required INTEGER NOT NULL DEFAULT 0,
   plants_per_day INTEGER NOT NULL DEFAULT 2,
   curiosities_per_day INTEGER NOT NULL DEFAULT 1,
   destination_url TEXT NOT NULL DEFAULT 'https://vitrinecity.com/loja',
@@ -914,6 +915,35 @@ CREATE TABLE IF NOT EXISTS viral_factory_trends (
   captured_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_viral_factory_trends_captured ON viral_factory_trends(captured_at DESC,id DESC);`);
+db.exec(`CREATE TABLE IF NOT EXISTS viral_quiz_scenes (
+  id INTEGER PRIMARY KEY,
+  quiz_id INTEGER NOT NULL REFERENCES admin_viral_quizzes(id) ON DELETE CASCADE,
+  scene_number INTEGER NOT NULL,
+  duration_seconds INTEGER NOT NULL DEFAULT 8,
+  prompt TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','submitting','generating','downloaded','failed')),
+  remote_job_id TEXT NOT NULL DEFAULT '',
+  polling_url TEXT NOT NULL DEFAULT '',
+  local_path TEXT NOT NULL DEFAULT '',
+  output_url TEXT NOT NULL DEFAULT '',
+  error_message TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(quiz_id,scene_number)
+);
+CREATE INDEX IF NOT EXISTS idx_viral_quiz_scenes_status ON viral_quiz_scenes(status,id);`);
+db.exec(`CREATE TABLE IF NOT EXISTS viral_distribution_jobs (
+  id INTEGER PRIMARY KEY,
+  quiz_id INTEGER NOT NULL REFERENCES admin_viral_quizzes(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','awaiting_connection','published','failed')),
+  publication_id TEXT NOT NULL DEFAULT '',
+  publication_url TEXT NOT NULL DEFAULT '',
+  error_message TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(quiz_id,provider)
+);`);
 db.exec(`CREATE TABLE IF NOT EXISTS admin_business_reviews (
   id INTEGER PRIMARY KEY,
   created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -4448,11 +4478,12 @@ function viralQuizPackage({ theme, category, voice, destinationUrl, destinationL
 function viralQuizRow(id) {
   const row = db.prepare('SELECT * FROM admin_viral_quizzes WHERE id=?').get(id);
   if (!row) return null;
-  return { ...row, questions: JSON.parse(row.questions_json || '[]') };
+  const scenes=db.prepare('SELECT id,scene_number,duration_seconds,status,output_url,error_message FROM viral_quiz_scenes WHERE quiz_id=? ORDER BY scene_number').all(id);
+  return { ...row, questions: JSON.parse(row.questions_json || '[]'), scenes };
 }
 app.get('/api/admin/viral-quizzes', requireAdmin, (_req,res) => {
   const quizzes = db.prepare('SELECT * FROM admin_viral_quizzes ORDER BY id DESC LIMIT 40').all()
-    .map(row => ({ ...row, questions: JSON.parse(row.questions_json || '[]') }));
+    .map(row => viralQuizRow(row.id));
   return res.json({ mode:'supervised', durationSeconds:65, dailyRule:{ plants:2, curiosities:1 }, quizzes });
 });
 app.post('/api/admin/viral-quizzes', requireAdmin, (req,res) => {
@@ -4462,7 +4493,7 @@ app.post('/api/admin/viral-quizzes', requireAdmin, (req,res) => {
   const voice=VIRAL_QUIZ_VOICES.has(String(req.body?.voice))?String(req.body.voice):'br-feminina-energica';
   const destinationUrl=String(req.body?.destinationUrl||'').trim().slice(0,1000);
   const destinationLabel=String(req.body?.destinationLabel||'').trim().slice(0,100)||'Vitrine City';
-  const channels=String(req.body?.channels||'Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai').trim().slice(0,300);
+  const channels=String(req.body?.channels||'Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai, Bilibili').trim().slice(0,300);
   if(theme.length<5)return res.status(400).json({error:'Descreva o tema em pelo menos 5 caracteres.'});
   let parsed; try{parsed=new URL(destinationUrl);}catch{return res.status(400).json({error:'Informe um link de destino válido.'});}
   if(parsed.protocol!=='https:')return res.status(400).json({error:'O link de destino precisa usar HTTPS.'});
@@ -4473,24 +4504,34 @@ app.post('/api/admin/viral-quizzes', requireAdmin, (req,res) => {
       JSON.stringify(pack.questions),pack.script,pack.captions,channels);
   return res.status(201).json({quiz:viralQuizRow(Number(result.lastInsertRowid)),message:'Pacote criado e enviado para aprovação da Gestora.'});
 });
-app.post('/api/admin/viral-quizzes/:id/approve', requireAdmin, (req,res) => {
-  const id=Number(req.params.id),quiz=viralQuizRow(id);
-  if(!quiz)return res.status(404).json({error:'Quiz não encontrado.'});
-  if(quiz.status!=='awaiting_approval')return res.status(409).json({error:'Este quiz não está aguardando aprovação.'});
+function approveViralQuiz(id,userId){
+  const quiz=viralQuizRow(id);if(!quiz)throw Object.assign(new Error('Quiz não encontrado.'),{status:404});
+  if(quiz.status!=='awaiting_approval')throw Object.assign(new Error('Este quiz não está aguardando aprovação.'),{status:409});
   const media=db.prepare("SELECT id,status FROM admin_specialist_agents WHERE code='midia'").get();
-  if(!media||media.status!=='active')return res.status(409).json({error:'Ative o Estúdio Audiovisual antes de aprovar.'});
+  if(!media||media.status!=='active')throw Object.assign(new Error('Ative o Estúdio Audiovisual antes de aprovar.'),{status:409});
   const tx=db.transaction(()=>{
     const task=db.prepare(`INSERT INTO admin_agent_tasks (agent_id,created_by_user_id,title,instructions,priority,status)
-      VALUES (?,?,?,?,?,'queued')`).run(media.id,req.user.id,`Quiz viral: ${quiz.theme}`,quiz.script,'high');
+      VALUES (?,?,?,?,?,'queued')`).run(media.id,userId,`Quiz viral: ${quiz.theme}`,quiz.script,'high');
     const project=db.prepare(`INSERT INTO admin_media_projects
       (task_id,format,channels,source_notes,prompt,aspect_ratio,duration_seconds,caption,production_status,progress,script)
       VALUES (?,'short_video',?,?,?,?,65,?,'script',15,?)`).run(Number(task.lastInsertRowid),quiz.channels,quiz.script,
         `Vídeo vertical de quiz, ritmo rápido, imagens próprias ou geradas, narração ${quiz.voice}, legendas grandes e CTA final. ${quiz.script}`,
         '9:16',`Quiz: ${quiz.theme}. ${quiz.destination_label}: ${quiz.destination_url}`,quiz.script);
-    db.prepare("UPDATE admin_viral_quizzes SET status='approved',task_id=?,media_project_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
+    const questions=quiz.questions||[],sceneTexts=[`Gancho visual: desafio sobre ${quiz.theme}`,
+      `Pergunta 1: ${questions[0]?.question||quiz.theme}`,`Revelação 1: resposta ${'ABC'[questions[0]?.answer||0]} — ${questions[0]?.options?.[questions[0]?.answer||0]||''}`,
+      `Pergunta 2: ${questions[1]?.question||quiz.theme}`,`Revelação 2: resposta ${'ABC'[questions[1]?.answer||0]} — ${questions[1]?.options?.[questions[1]?.answer||0]||''}`,
+      `Pergunta 3: ${questions[2]?.question||quiz.theme}`,`Revelação 3: resposta ${'ABC'[questions[2]?.answer||0]} — ${questions[2]?.options?.[questions[2]?.answer||0]||''}`,
+      'Tela de resultado: especialista, mandou bem ou tente novamente',`Chamada final para ${quiz.destination_label}: ${quiz.destination_url}`];
+    const insertScene=db.prepare(`INSERT INTO viral_quiz_scenes(quiz_id,scene_number,duration_seconds,prompt) VALUES (?,?,?,?)`);
+    sceneTexts.forEach((text,index)=>insertScene.run(id,index+1,index===8?4:8,`Vídeo vertical 9:16, cena ${index+1} de 9 de um quiz brasileiro, ritmo rápido, visual consistente, sem marcas de terceiros. ${text}. Narração ${quiz.voice}, texto grande em português e transição limpa para a próxima cena.`));
+    db.prepare("UPDATE admin_viral_quizzes SET status='in_production',task_id=?,media_project_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
       .run(Number(task.lastInsertRowid),Number(project.lastInsertRowid),id);
   }); tx();
-  return res.json({quiz:viralQuizRow(id),message:'Quiz aprovado e enviado ao Estúdio Audiovisual.'});
+  return viralQuizRow(id);
+}
+app.post('/api/admin/viral-quizzes/:id/approve', requireAdmin, (req,res) => {
+  try{return res.json({quiz:approveViralQuiz(Number(req.params.id),req.user.id),message:'Quiz aprovado. Nove cenas foram enviadas à produção automática.'});}
+  catch(error){return res.status(error.status||500).json({error:error.message});}
 });
 function decodeXmlText(value='') { return String(value).replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim(); }
 async function viralTrendTopics() {
@@ -4539,11 +4580,44 @@ async function runViralFactory({force=false,userId=null}={}) {
       (created_by_user_id,theme,category,difficulty,voice,destination_url,destination_label,questions_json,script,captions,channels,status)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,'awaiting_approval')`),created=[];
     db.transaction(()=>{for(const item of themes){const pack=viralQuizPackage({theme:item.topic,category:item.category,voice:'br-feminina-energica',destinationUrl:settings.destination_url,destinationLabel:settings.destination_label});
-      const result=insert.run(userId,item.topic,item.category,'medium','br-feminina-energica',settings.destination_url,settings.destination_label,JSON.stringify(pack.questions),pack.script,pack.captions,'Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai');created.push(Number(result.lastInsertRowid));}
+      const result=insert.run(userId,item.topic,item.category,'medium','br-feminina-energica',settings.destination_url,settings.destination_label,JSON.stringify(pack.questions),pack.script,pack.captions,'Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai, Bilibili');created.push(Number(result.lastInsertRowid));}
       db.prepare("UPDATE viral_factory_settings SET last_run_day=?,last_run_at=CURRENT_TIMESTAMP,last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=1").run(day);})();
+    if(!settings.approval_required)for(const id of created)approveViralQuiz(id,userId);
     return {ok:true,created:created.map(viralQuizRow),trends:trends.slice(0,10)};
   }catch(error){db.prepare('UPDATE viral_factory_settings SET last_error=?,last_run_at=CURRENT_TIMESTAMP WHERE id=1').run(String(error?.message||'automation_failed').slice(0,500));throw error;}
   finally{viralFactoryRunning=false;}
+}
+function runFfmpeg(args){return new Promise((resolve,reject)=>{const child=spawn('ffmpeg',args,{stdio:['ignore','ignore','pipe']});let error='';child.stderr.on('data',chunk=>error+=chunk);child.once('error',reject);child.once('close',code=>code===0?resolve():reject(new Error(`FFmpeg encerrou com código ${code}: ${error.slice(-500)}`)));});}
+async function finishViralQuizVideo(quizId){
+  const quiz=viralQuizRow(quizId),scenes=db.prepare("SELECT * FROM viral_quiz_scenes WHERE quiz_id=? AND status='downloaded' ORDER BY scene_number").all(quizId);
+  if(!quiz||scenes.length!==9)return false;
+  const listPath=path.join(generatedMediaDir,`viral-${quizId}-concat.txt`),outputName=`viral-quiz-${quizId}-${Date.now()}.mp4`,outputPath=path.join(generatedMediaDir,outputName);
+  fs.writeFileSync(listPath,scenes.map(scene=>`file '${scene.local_path.replaceAll("'","'\\''")}'`).join('\n'));
+  try{
+    await runFfmpeg(['-y','-f','concat','-safe','0','-i',listPath,'-t','65','-vf','scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p','-c:v','libx264','-preset','veryfast','-c:a','aac','-ar','48000','-movflags','+faststart',outputPath]);
+    const url=`/uploads/generated-videos/${outputName}`;
+    db.transaction(()=>{db.prepare("UPDATE admin_viral_quizzes SET status='approved',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(quizId);db.prepare("UPDATE admin_media_projects SET output_url=?,production_status='approved',progress=100,duration_seconds=65,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(url,quiz.media_project_id);db.prepare("UPDATE admin_agent_tasks SET status='completed',result_summary=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").run('Vídeo final de 65 segundos montado com 9 cenas e aprovado pelo time.',quiz.task_id);
+      const add=db.prepare('INSERT OR IGNORE INTO viral_distribution_jobs(quiz_id,provider,status) VALUES (?,?,?)');for(const provider of ['vitrine_social','instagram','facebook','tiktok','youtube','kwai','bilibili'])add.run(quizId,provider,provider==='vitrine_social'?'pending':'awaiting_connection');})();
+    await publishViralToVitrine(quizId).catch(error=>db.prepare("UPDATE viral_distribution_jobs SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE quiz_id=? AND provider='vitrine_social'").run(String(error?.message||'publish_failed').slice(0,500),quizId));return true;
+  }finally{try{fs.unlinkSync(listPath)}catch{}}
+}
+async function publishViralToVitrine(quizId){const quiz=viralQuizRow(quizId),project=mediaFactoryProject(quiz?.media_project_id);if(!quiz||!project?.output_url)throw new Error('Vídeo final ainda não está disponível.');const userId=quiz.created_by_user_id||db.prepare('SELECT id FROM users WHERE is_admin=1 ORDER BY id LIMIT 1').get()?.id;if(!userId)throw new Error('Nenhum administrador disponível para assinar a publicação.');
+  const accountId=String(process.env.CLOUDFLARE_ACCOUNT_ID||'').trim(),token=String(process.env.CLOUDFLARE_STREAM_API_TOKEN||'').trim();if(!accountId||!token)throw new Error('Cloudflare Stream não está configurado.');const copy=await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/copy`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({url:new URL(project.output_url,SITE_URL).toString(),meta:{name:project.title}}),signal:AbortSignal.timeout(30000)});const payload=await copy.json().catch(()=>({}));if(!copy.ok||!payload?.result?.uid)throw new Error(payload?.errors?.[0]?.message||'Cloudflare Stream recusou o vídeo.');const postId=randomUUID();db.transaction(()=>{db.prepare(`INSERT INTO social_posts (id,user_id,video_uid,caption,category,status,moderation_status,moderated_by,moderated_at) VALUES (?,?,?,?,?,'uploading','approved',?,CURRENT_TIMESTAMP)`).run(postId,userId,payload.result.uid,project.caption||project.title,'quiz',userId);db.prepare("UPDATE viral_distribution_jobs SET status='published',publication_id=?,updated_at=CURRENT_TIMESTAMP WHERE quiz_id=? AND provider='vitrine_social'").run(postId,quizId);db.prepare("UPDATE admin_viral_quizzes SET status='published',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(quizId);db.prepare("UPDATE admin_media_projects SET production_status='published',published_post_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(postId,project.id);})();return postId;}
+let viralVideoFactoryRunning=false;
+async function processViralVideoFactory(){
+  if(viralVideoFactoryRunning||!aiConfigured()||AI_PROVIDER!=='openrouter')return;viralVideoFactoryRunning=true;
+  try{
+    const pending=db.prepare(`SELECT s.* FROM viral_quiz_scenes s JOIN admin_viral_quizzes q ON q.id=s.quiz_id WHERE s.status='pending' AND q.status='in_production' ORDER BY s.quiz_id,s.scene_number LIMIT 1`).get();
+    if(pending){const claimed=db.prepare("UPDATE viral_quiz_scenes SET status='submitting',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").run(pending.id);if(claimed.changes)try{
+      const result=await openRouterRequest('https://openrouter.ai/api/v1/videos',{method:'POST',body:JSON.stringify({model:OPENROUTER_VIDEO_MODEL,prompt:pending.prompt,duration:pending.duration_seconds,aspect_ratio:'9:16',resolution:'720p',generate_audio:true})},60000);
+      const jobId=String(result.data?.id||''),pollingUrl=String(result.data?.polling_url||'');if(!jobId||!/^https:\/\/openrouter\.ai\//i.test(pollingUrl))throw new Error('O provedor não devolveu uma tarefa de vídeo válida.');
+      db.prepare("UPDATE viral_quiz_scenes SET status='generating',remote_job_id=?,polling_url=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(jobId,pollingUrl,pending.id);
+    }catch(error){db.prepare("UPDATE viral_quiz_scenes SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(String(error?.message||'submit_failed').slice(0,500),pending.id);}}
+    const generating=db.prepare("SELECT * FROM viral_quiz_scenes WHERE status='generating' ORDER BY id LIMIT 3").all();
+    for(const scene of generating)try{const result=await openRouterRequest(scene.polling_url,{method:'GET'},30000),status=String(result.data?.status||'').toLowerCase();if(['failed','cancelled'].includes(status))throw new Error(String(result.data?.error?.message||status));if(!['completed','succeeded'].includes(status))continue;
+      const mediaUrl=String(result.data?.unsigned_urls?.[0]||result.data?.data?.[0]?.url||result.data?.content_url||'');if(!/^https:\/\//i.test(mediaUrl))throw new Error('Cena concluída sem arquivo disponível.');const download=await fetch(mediaUrl,{headers:{Authorization:`Bearer ${AI_API_KEY}`},signal:AbortSignal.timeout(120000)});if(!download.ok)throw new Error(`Download da cena falhou (${download.status}).`);const buffer=Buffer.from(await download.arrayBuffer());if(!buffer.length||buffer.length>250*1024*1024)throw new Error('Cena inválida ou maior que 250 MB.');const name=`viral-${scene.quiz_id}-scene-${scene.scene_number}.mp4`,local=path.join(generatedMediaDir,name);fs.writeFileSync(local,buffer);db.prepare("UPDATE viral_quiz_scenes SET status='downloaded',local_path=?,output_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(local,`/uploads/generated-videos/${name}`,scene.id);await finishViralQuizVideo(scene.quiz_id);
+    }catch(error){db.prepare("UPDATE viral_quiz_scenes SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(String(error?.message||'scene_failed').slice(0,500),scene.id);}
+  }finally{viralVideoFactoryRunning=false;}
 }
 app.get('/api/admin/viral-factory/automation',requireAdmin,(_req,res)=>res.json({settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get(),trends:db.prepare('SELECT * FROM viral_factory_trends ORDER BY id DESC LIMIT 20').all(),openrouterConfigured:aiConfigured()}));
 app.put('/api/admin/viral-factory/automation',requireAdmin,(req,res)=>{const enabled=Boolean(req.body?.enabled),approvalRequired=req.body?.approvalRequired!==false;
@@ -8313,4 +8387,6 @@ app.listen(process.env.PORT || 3000, () => {
   const automationTimer=setInterval(()=>processOmnichannelAutomation().catch(()=>{}),60000);automationTimer.unref();
   const viralInitial=setTimeout(()=>runViralFactory().catch(error=>console.error('Fábrica Viral:',String(error?.message||'automation_failed').slice(0,200))),45000);viralInitial.unref();
   const viralTimer=setInterval(()=>runViralFactory().catch(error=>console.error('Fábrica Viral:',String(error?.message||'automation_failed').slice(0,200))),30*60*1000);viralTimer.unref();
+  const viralVideoInitial=setTimeout(()=>processViralVideoFactory().catch(()=>{}),60000);viralVideoInitial.unref();
+  const viralVideoTimer=setInterval(()=>processViralVideoFactory().catch(()=>{}),60000);viralVideoTimer.unref();
 });
