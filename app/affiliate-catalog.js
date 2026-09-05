@@ -40,7 +40,18 @@ export async function checkAffiliateLink(url, platform, fetcher = fetch) {
 }
 
 function document(title, body, canonical, image = '', description = '') {
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} | VitrineCity</title><meta name="description" content="${esc(description || title)}"><link rel="canonical" href="${esc(canonical)}"><meta property="og:description" content="${esc(description || title)}"><meta property="og:site_name" content="VitrineCity"><meta property="og:title" content="${esc(title)}"><meta property="og:type" content="website"><meta property="og:url" content="${esc(canonical)}">${image ? `<meta property="og:image" content="${esc(image)}">` : ''}<link rel="stylesheet" href="/affiliate-catalog.css"></head><body><header><a class="brand" href="/">vitrine<span>city</span></a><nav><a href="/pesquisar.html">Pesquisar</a><a href="/ofertas">Seleção de produtos</a></nav></header><main>${body}</main><footer>VitrineCity · <a href="/privacy.html">Privacidade</a> · <a href="/contato.html">Contato</a></footer></body></html>`;
+  const styles = '<link rel="stylesheet" href="/affiliate-catalog.css"><link rel="stylesheet" href="/affiliate-products.css">';
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} | VitrineCity</title><meta name="description" content="${esc(description || title)}"><link rel="canonical" href="${esc(canonical)}"><meta property="og:description" content="${esc(description || title)}"><meta property="og:site_name" content="VitrineCity"><meta property="og:title" content="${esc(title)}"><meta property="og:type" content="website"><meta property="og:url" content="${esc(canonical)}">${image ? `<meta property="og:image" content="${esc(image)}">` : ''}${styles}</head><body class="affiliate-public"><a class="skip-link" href="#main-content">Pular para o conteúdo</a><header><a class="brand" href="/">vitrine<span>city</span></a><nav aria-label="Navegação principal"><a href="/pesquisar.html">Pesquisar</a><a href="/ofertas">Seleção de produtos</a></nav></header><main id="main-content">${body}</main><footer>VitrineCity · <a href="/privacy.html">Privacidade</a> · <a href="/contato.html">Contato</a></footer></body></html>`;
+}
+
+const searchText = value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+const queryText = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
+function selectionUrl({ platform = '', category = '', query = '' } = {}) {
+  const params = new URLSearchParams();
+  if (platform) params.set('plataforma', platform);
+  if (category) params.set('categoria', category);
+  if (query) params.set('q', query);
+  return '/ofertas' + (params.size ? '?' + params.toString() : '');
 }
 
 export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, siteUrl, publicDir, startMonitor = true, fetcher = fetch }) {
@@ -135,22 +146,49 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
   });
 
   function card(p) {
-    return `<article class="card">${p.image?`<a href="${pagePath(p)}"><img src="${esc(p.image)}" alt="${esc(p.title)}" loading="lazy" width="360" height="240"></a>`:''}<div><span class="eyebrow">${esc(p.category)} · ${platforms[p.platform]}</span><h2><a href="${pagePath(p)}">${esc(p.title)}</a></h2><p>${esc(p.description)}</p><a class="button secondary" href="${pagePath(p)}">Ver detalhes e oferta</a></div></article>`;
+    return `<article class="card"><a class="card-media" href="${pagePath(p)}" aria-label="${esc(p.title)}">${p.image?`<img src="${esc(p.image)}" alt="" loading="lazy" decoding="async" width="360" height="240">`:'<span class="image-placeholder">Imagem não informada</span>'}</a><div><span class="eyebrow">${esc(p.category)} · ${platforms[p.platform]}</span><h2><a href="${pagePath(p)}">${esc(p.title)}</a></h2><p class="card-description">${esc(p.description)}</p><p class="card-condition">${canBuy(p)?'Preço e frete na loja parceira':'Oferta em revisão'}</p><a class="button secondary" href="${pagePath(p)}">Ver detalhes e oferta <span aria-hidden="true">→</span></a></div></article>`;
   }
   app.get('/api/affiliate-highlights', (_req,res) => res.set('Cache-Control','public, max-age=60').json({items:
     published().filter(canBuy).slice(0,12).map(p=>({title:p.title,description:p.description,image:p.image,url:pagePath(p),platform:platforms[p.platform]}))}));
   app.get('/ofertas', (req,res) => {
-    const platform = platforms[req.query.plataforma] ? req.query.plataforma : '';
-    const items = published().filter(p=>!platform || p.platform===platform);
-    const body = `<section class="intro"><span class="eyebrow">Curadoria VitrineCity</span><h1>Escolhas para o seu dia a dia</h1><p>Ferramentas, cozinha e casa conectada. Uma seleção por utilidade e pelos sinais de procura informados nas plataformas.</p><p class="disclosure">Publicidade · Alguns links são de afiliado e podem gerar comissão para a VitrineCity.</p></section><nav class="filters" aria-label="Plataformas"><a href="/ofertas" ${!platform?'aria-current="page"':''}>Todas</a>${Object.entries(platforms).map(([id,label])=>`<a href="/ofertas?plataforma=${id}" ${platform===id?'aria-current="page"':''}>${label}</a>`).join('')}</nav><section class="grid">${items.map(card).join('') || '<p>Estamos preparando a seleção desta plataforma.</p>'}</section><section class="note"><h2>Guias para escolher e usar</h2><p>${affiliateArticles.map(article=>`<a href="${esc(article.url)}">${esc(article.title)}</a>`).join(' · ')}</p></section><section class="note"><h2>Como selecionamos</h2><p>A seleção inicial do Mercado Livre reúne produtos identificados como “Mais vendido” na central de afiliados em 05/09/2026. Isso não representa um ranking de todo o mercado nem um teste de uso da VitrineCity. Confira vendedor, modelo, voltagem, frete, garantia e preço antes de comprar.</p></section>`;
+    const requestedPlatform = queryText(req.query.plataforma, 30);
+    const platform = Object.hasOwn(platforms, requestedPlatform) ? requestedPlatform : '';
+    const query = queryText(req.query.q, 160), category = queryText(req.query.categoria, 80);
+    const rows = published();
+    const categories = [...new Set(rows.map(p=>p.category))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+    const terms = searchText(query).split(/\s+/).filter(Boolean);
+    const items = rows.filter(p=>(!platform || p.platform===platform) && (!category || p.category===category) &&
+      terms.every(term=>searchText(p.title+' '+p.description+' '+p.keywords+' '+p.category+' '+platforms[p.platform]).includes(term)));
+    const body = `<section class="intro catalog-intro"><span class="eyebrow">Curadoria VitrineCity</span><h1>Escolhas para o seu dia a dia</h1><p>Explore produtos por categoria, descubra os detalhes e confira as condições diretamente na loja parceira.</p><p class="disclosure">Publicidade · Alguns links são de afiliado e podem gerar comissão para a VitrineCity.</p></section>
+      <form class="catalog-search" action="/ofertas" method="get" role="search" aria-label="Buscar produtos da seleção">
+        ${platform?`<input type="hidden" name="plataforma" value="${platform}">`:''}
+        <label>O que você procura?<input type="search" name="q" value="${esc(query)}" maxlength="160" placeholder="Ex.: potes de vidro, ferramentas"></label>
+        <label>Categoria<select name="categoria"><option value="">Todas as categorias</option>${category&&!categories.includes(category)?`<option value="${esc(category)}" selected>${esc(category)}</option>`:''}${categories.map(c=>`<option value="${esc(c)}" ${c===category?'selected':''}>${esc(c)}</option>`).join('')}</select></label>
+        <button type="submit">Buscar produtos</button>
+      </form>
+      <nav class="filters" aria-label="Plataformas"><a href="${esc(selectionUrl({category,query}))}" ${!platform?'aria-current="page"':''}>Todas</a>${Object.entries(platforms).map(([id,label])=>`<a href="${esc(selectionUrl({platform:id,category,query}))}" ${platform===id?'aria-current="page"':''}>${label}</a>`).join('')}</nav>
+      <div class="results-heading"><h2>${items.length} ${items.length===1?'produto encontrado':'produtos encontrados'}</h2>${query||category||platform?'<a href="/ofertas">Limpar filtros</a>':'<span class="muted">Conheça antes de escolher</span>'}</div>
+      <section class="grid" aria-label="Produtos encontrados">${items.map(card).join('') || '<div class="empty-selection"><h2>Nenhum produto nesta combinação</h2><p>Tente outra palavra, categoria ou plataforma.</p><a class="button secondary" href="/ofertas">Ver todos os produtos</a></div>'}</section><section class="note"><h2>Guias para escolher e usar</h2><p>${affiliateArticles.map(article=>`<a href="${esc(article.url)}">${esc(article.title)}</a>`).join(' · ')}</p></section><section class="note"><h2>Como selecionamos</h2><p>A seleção inicial do Mercado Livre reúne produtos identificados como “Mais vendido” na central de afiliados em 05/09/2026. Isso não representa um ranking de todo o mercado nem um teste de uso da VitrineCity. Confira vendedor, modelo, voltagem, frete, garantia e preço antes de comprar.</p></section>`;
     return res.type('html').send(document('Seleção de produtos',body,origin+'/ofertas'));
   });
   app.get('/ofertas/:slug',(req,res) => {
     const p = db.prepare('SELECT * FROM affiliate_catalog WHERE slug=?').get(req.params.slug);
     if (!p || p.status==='draft') return res.status(404).type('html').send(document('Produto não encontrado','<h1>Produto não encontrado</h1><a href="/ofertas">Ver seleção de produtos</a>',origin+'/ofertas'));
-    const body = `<p><a href="/ofertas">← Seleção de produtos</a></p><section class="detail">${p.image?`<img src="${esc(p.image)}" alt="${esc(p.title)}" width="540" height="420">`:''}<div><span class="eyebrow">${esc(p.category)} · ${platforms[p.platform]}</span><h1>${esc(p.title)}</h1><p>${esc(p.description)}</p>${p.evidence?`<p class="muted">${esc(p.evidence)}</p>`:''}<p class="disclosure">Publicidade · Link de afiliado: a VitrineCity pode receber comissão.</p>${canBuy(p)?`<a class="button" href="${esc(p.affiliate_url)}" data-affiliate-id="${p.slug}" rel="sponsored noopener noreferrer" target="_blank">Conferir preço no ${platforms[p.platform]} ↗</a><p class="muted">Preço, estoque e condições são confirmados na plataforma de compra.</p>`:'<p class="unavailable">Oferta temporariamente indisponível. Estamos revisando o link de compra.</p><a class="button secondary" href="/ofertas">Explorar outros produtos</a>'}</div></section><section class="note"><h2>Antes de escolher</h2><p>Confira a descrição completa do vendedor e compare as medidas, a versão e os acessórios incluídos. Para aparelhos elétricos, verifique a voltagem. A compra e o atendimento do pedido acontecem na plataforma indicada.</p></section><script src="/affiliate-click.js" defer></script>`;
-    const related=published().filter(other=>other.slug!==p.slug&&other.category===p.category&&canBuy(other)).slice(0,3);
-    const relatedHtml=related.length?`<section class="note"><h2>Veja também nesta categoria</h2><ul>${related.map(other=>`<li><a href="${pagePath(other)}">${esc(other.title)}</a></li>`).join('')}</ul></section>`:'';
+    const destination = (p.platform==='shopee'?'na ':'no ')+platforms[p.platform];
+    const body = `<nav class="breadcrumbs" aria-label="Caminho da página"><a href="/ofertas">Seleção de produtos</a><span aria-hidden="true">/</span><a href="${esc(selectionUrl({category:p.category}))}">${esc(p.category)}</a></nav>
+      <section class="detail product-detail"><figure class="product-media">${p.image?`<img src="${esc(p.image)}" alt="${esc(p.title)}" width="540" height="420" fetchpriority="high">`:'<div class="image-placeholder">Imagem não informada</div>'}<figcaption>Confira a variação e as imagens completas no anúncio.</figcaption></figure>
+        <div class="product-summary"><span class="platform-label">${platforms[p.platform]}</span><h1>${esc(p.title)}</h1>
+          <dl class="product-facts"><div><dt>Categoria</dt><dd><a href="${esc(selectionUrl({category:p.category}))}">${esc(p.category)}</a></dd></div><div><dt>Compra e atendimento</dt><dd>${platforms[p.platform]}</dd></div></dl>
+          <div class="offer-box"><p class="offer-title">Confira a oferta atual</p><p class="muted">Preço, frete, estoque e condições são confirmados na plataforma de compra.</p><p class="disclosure">Publicidade · Link de afiliado: a VitrineCity pode receber comissão.</p>
+          ${canBuy(p)?`<a class="button purchase-link" href="${esc(p.affiliate_url)}" data-affiliate-id="${p.slug}" rel="sponsored noopener noreferrer" target="_blank">Ver preço ${destination} <span aria-hidden="true">↗</span></a><span class="destination-note">Você será direcionado à loja parceira em outra aba.</span>`:'<p class="unavailable">Oferta temporariamente indisponível. Estamos revisando o link de compra.</p><a class="button secondary" href="/ofertas">Explorar outros produtos</a>'}</div>
+          <a class="description-link" href="#detalhes-produto">Ler descrição e cuidados <span aria-hidden="true">↓</span></a>
+        </div></section>
+      <div class="product-information"><section class="note" id="detalhes-produto"><span class="eyebrow">Conheça o produto</span><h2>Descrição e cuidados</h2><p class="product-description">${esc(p.description)}</p>${p.evidence?`<details class="selection-evidence"><summary>Fonte das informações da seleção</summary><p class="muted">${esc(p.evidence)}</p></details>`:''}</section>
+        <section class="note purchase-checklist"><h2>Antes de escolher</h2><ul><li>Confira o modelo, as medidas e a quantidade da variação.</li><li>Verifique o vendedor, o frete e o prazo para o seu endereço.</li><li>Compare os acessórios incluídos e as condições de garantia.</li><li>Para aparelhos elétricos, confirme a voltagem e a alimentação.</li></ul><p class="muted">A compra e o atendimento do pedido acontecem na plataforma indicada.</p></section></div><script src="/affiliate-click.js" defer></script>`;
+    const alternatives=published().filter(other=>other.slug!==p.slug&&canBuy(other));
+    const sameCategory=alternatives.filter(other=>other.category===p.category);
+    const related=(sameCategory.length?sameCategory:alternatives).slice(0,3);
+    const relatedHtml=related.length?`<section class="related-products"><div class="results-heading"><h2>${sameCategory.length?'Veja também nesta categoria':'Outros produtos da seleção'}</h2><a href="/ofertas">Ver seleção completa</a></div><div class="grid">${related.map(card).join('')}</div></section>`:'';
     return res.type('html').set('Cache-Control','no-store').send(document(p.title,body+relatedHtml,origin+pagePath(p),p.image,p.description.slice(0,180)));
   });
   // Aggregate button events only: these are not unique visitors, orders or commissions.
