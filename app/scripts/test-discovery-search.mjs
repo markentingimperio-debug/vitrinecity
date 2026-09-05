@@ -18,7 +18,7 @@ for (const [id,ref,name,active] of [[1,'published','Bolo de café',1],[2,'publis
   db.prepare('INSERT INTO store_products VALUES (?,?,?,?,?,?,?,?)').run(id,ref,name,'Receita especial','Cozinha',2000,'',active);
 }
 db.exec("INSERT INTO marketplace_product_reviews VALUES (2,5,'published',1),(2,5,'published',1),(1,5,'published',0),(1,5,'pending',1)");
-const app = express();setupDiscoverySearch(app,db,row=>'/loja/'+row.order_reference,()=>[{title:'Bolo simples',description:'Receita publicada',url:'/receitas/bolo',kind:'recipe'}]);
+const app = express();setupDiscoverySearch(app,db,row=>'/loja/'+row.order_reference,()=>[{title:'Bolo simples',description:'Receita publicada',url:'/receitas/bolo',kind:'recipe'},{title:'Futebol',description:'Esportes',url:'/esportes/futebol',kind:'sports'}]);
 const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
 const origin='http://127.0.0.1:'+server.address().port;
 const get=async(route,q,city='')=>{const r=await fetch(origin+route+'?'+new URLSearchParams({q,city}));assert.equal(r.status,200);return r.json();};
@@ -42,5 +42,6 @@ try {
   assert.equal(result.contents[0].url,'/receitas/bolo');
   assert.deepEqual(new Set(result.products.map(p=>p.id)),new Set([1,2,4,6]),'Related inventory remains products, separately from published recipes.');
   assert.equal(result.contents.length,1,'Only the explicitly published content is a recipe.');
+  result=await get('/api/discovery/search/suggestions','como fazer bol');assert.ok(!result.suggestions.some(item=>item.label==='Futebol'),'Partial words must begin at word boundaries.');
   console.log('discovery-search: all behavioral checks passed');
 } finally { await new Promise(resolve=>server.close(resolve));db.close(); }
