@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { setupSearchAi } from './search-ai.js';
 
 export const SEARCH_ENGINES = Object.freeze({
   google: 'Google', bing: 'Bing', duckduckgo: 'DuckDuckGo', yahoo: 'Yahoo', brave: 'Brave',
@@ -35,7 +36,7 @@ export function normalizeWebResults(data, engines) {
   return { results: [...results.values()].slice(0, 40), suggestions, unavailable };
 }
 
-export function setupMetasearch(app, { env = process.env, fetchImpl = fetch, now = Date.now } = {}) {
+export function setupMetasearch(app, { db, env = process.env, fetchImpl = fetch, now = Date.now } = {}) {
   let base;
   try {
     base = new URL(env.SEARXNG_URL || '');
@@ -81,6 +82,12 @@ export function setupMetasearch(app, { env = process.env, fetchImpl = fetch, now
     }).finally(()=>pending.delete(key));
     pending.set(key,promise);return promise;
   }
+  setupSearchAi(app, { db, env, fetchImpl, now, lookup: query => {
+    if (!base) throw new Error('unconfigured');
+    return cached(JSON.stringify([query,'all',1]), async () => normalizeWebResults(await getJson('/search', {
+      q:query,format:'json',language:'pt-BR',engines:enabled.join(','),categories:'general,videos',pageno:'1',safesearch:'1'
+    }), enabled),120000);
+  }});
   app.get('/api/search/providers', (_req,res)=>res.json({ configured:Boolean(base),
     providers:enabled.map(id=>({id,name:SEARCH_ENGINES[id],type:id==='youtube'?'video':'web'})) }));
   app.get('/api/search/web', async (req,res)=>{

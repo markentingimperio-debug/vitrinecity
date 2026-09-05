@@ -18,6 +18,7 @@
     <nav class="filters" aria-label="Tipos de resultado"><button type="button" data-filter="all" aria-pressed="true">Tudo</button><button type="button" data-filter="web" aria-pressed="false">Sites</button><button type="button" data-filter="videos" aria-pressed="false">Vídeos</button><button type="button" data-filter="local" aria-pressed="false">Na Vitrine</button></nav>
     <p id="search-status" class="status" role="status" aria-live="polite">Digite o que procura para começar.</p>
     <div class="layout"><div>
+      <section id="ai-panel" class="panel" hidden><h2 class="section-title">Uma ajuda para entender</h2><p class="status">Ao solicitar, sua consulta e os trechos encontrados serão enviados a um provedor de IA. A resposta pode conter erros; confira as fontes.</p><button id="ai-button" class="primary" type="button">Explicar resultados com IA</button><div id="ai-answer" aria-live="polite"></div></section>
       <section id="web-results" data-section="web" aria-label="Resultados da internet" hidden></section>
       <section id="local-section" data-section="local" hidden><div class="local-head"><h2 class="section-title">Na Vitrine</h2><label>Cidade da loja <input id="city" type="search" maxlength="100" placeholder="Todas as cidades"></label></div><p class="status">Lojas e produtos publicados. A cidade filtra apenas estes resultados.</p><div id="local-results"></div></section>
       <section id="ads-section" data-section="local" aria-label="Anúncios" hidden></section>

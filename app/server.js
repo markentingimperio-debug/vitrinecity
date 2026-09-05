@@ -2664,7 +2664,7 @@ function publicAddress(row) {
 }
 
 setupDiscoverySearch(app, db, publicStorePath);
-setupMetasearch(app);
+setupMetasearch(app, { db });
 
 app.get('/api/search/suggestions', (req, res) => {
   const query = String(req.query.q || '').trim().slice(0, 80);

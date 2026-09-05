@@ -4,6 +4,8 @@
   let version = 0, controller, suggestController, timer, activeOption = -1, options = [], filter = 'all';
   let searched = '', webVersion = 0, webController, webNext = null, webPending = false;
   const webUrls = new Set();
+  let aiEnabled = false, aiController;
+  fetch('/api/search/ai/status').then(r => r.json()).then(data => { aiEnabled = data.enabled === true; applyFilter(); }).catch(() => {});
   const node = (tag, text, className) => {
     const el = document.createElement(tag);
     if (text !== undefined) el.textContent = text;
@@ -29,6 +31,7 @@
     query.setAttribute('aria-expanded', 'false'); query.removeAttribute('aria-activedescendant');
   };
   function applyFilter() {
+    $('ai-panel').hidden = !aiEnabled || !searched || filter === 'local';
     document.querySelectorAll('[data-section]').forEach(section => {
       const matches = filter === 'all' || (section.dataset.section === 'web' ? filter !== 'local' : filter === 'local');
       section.hidden = !searched || !matches || section.id === 'ads-section' && !section.childElementCount;
@@ -36,16 +39,9 @@
   }
   function renderWebSearch(value) {
     const panel = node('div', undefined, 'panel');
-    panel.append(node('h2', 'Pesquise também na internet'),
-      node('p', 'Escolha onde pesquisar “' + value + '”.', 'muted'));
-    const providers = [
-      ['Google · sites', 'https://www.google.com/search?' + new URLSearchParams({q:value,hl:'pt-BR'})],
-      ['Yahoo · sites', 'https://search.yahoo.com/search?' + new URLSearchParams({p:value})],
-      ['YouTube · vídeos', 'https://www.youtube.com/results?' + new URLSearchParams({search_query:value})]
-    ];
-    const links = node('div',undefined,'source-links');
-    for(const [label,url] of providers){const a=link(label+' ↗',url);a.className='pill';links.append(a);}
-    panel.append(links,node('p', 'Os resultados abrem no serviço escolhido, em outra aba.', 'status'));
+    panel.append(node('h2', 'A pesquisa está temporariamente indisponível'),
+      node('p', 'Tente novamente em instantes. As lojas e os produtos da Vitrine continuam disponíveis.', 'muted'));
+    const retry = node('button', 'Tentar novamente', 'primary'); retry.type = 'button'; retry.onclick = () => loadWeb(value); panel.append(retry);
     $('web-results').replaceChildren(panel);
   }
   function relatedQueries(values) {
@@ -76,18 +72,16 @@
         webUrls.add(result.url);added++;
         const article=node('article',undefined,'site'),heading=node('h3');heading.append(link(result.title,url));
         article.append(node('small',(result.type==='video'?'Vídeo · ':'')+new URL(url).hostname),heading,node('p',result.description));
-        article.append(node('small','Encontrado por: '+(result.providers||[]).join(', ')));box.append(article);
+        box.append(article);
       }
-      if(!webUrls.size)box.append(node('p','Nenhum resultado disponível agora. Tente outra palavra ou pesquise diretamente em uma das fontes.','panel status'));
+      if(!webUrls.size)box.append(node('p','Nenhum resultado disponível agora. Tente outra palavra ou pesquise novamente em instantes.','panel status'));
       if(data.suggestions?.length)relatedQueries(data.suggestions);
       webNext=added?data.nextPage:null;
       if(webNext){const more=node('button','Mais resultados','primary');more.type='button';more.dataset.moreWeb='1';more.onclick=()=>loadWeb(value,webNext);box.append(more);}
-      if(page===1){const fallback=node('details');fallback.append(node('summary','Pesquisar diretamente em outra fonte'));
-        for(const [name,url] of [['Google','https://www.google.com/search?'+new URLSearchParams({q:value})],['Yahoo','https://search.yahoo.com/search?'+new URLSearchParams({p:value})],['YouTube','https://www.youtube.com/results?'+new URLSearchParams({search_query:value})]]){const a=link(name+' ↗',url);a.className='pill';fallback.append(a);}box.append(fallback);}
       $('search-status').textContent='Resultados para “'+value+'”.';
     }catch(error){
       if(error.name==='AbortError'||own!==webVersion)return;
-      if(page===1){renderWebSearch(value);box.prepend(node('p','Não foi possível consultar os buscadores neste momento. A busca da Vitrine continua disponível.','panel status'));$('search-status').textContent='Busca concluída com fontes externas indisponíveis.';}
+      if(page===1){renderWebSearch(value);$('search-status').textContent='Pesquisa temporariamente indisponível. Tente novamente.';}
       else {const retry=node('button','Tentar carregar mais resultados','primary');retry.type='button';retry.dataset.moreWeb='1';retry.onclick=()=>loadWeb(value,page);box.append(retry);}
     }finally{if(own===webVersion)webPending=false;}
   }
@@ -115,6 +109,7 @@
     value = String(value).trim().slice(0,300);
     if (value.length < 2) { query.focus(); return; }
     searched = value; query.value = value;
+    aiController?.abort(); $('ai-answer').replaceChildren(); $('ai-button').disabled = false;
     const run = ++version;
     controller?.abort(); controller = new AbortController();
     suggestController?.abort(); clearTimeout(timer); closeSuggestions();
@@ -156,6 +151,21 @@
       $('ads-section').replaceChildren(node('h2','Ofertas patrocinadas','section-title'),grid);applyFilter();
     }catch{ /* Ads are independent of organic search availability. */ }
   }
+  $('ai-button').addEventListener('click', async () => {
+    aiController?.abort(); const current = new AbortController(); aiController = current;
+    const target = searched, box = $('ai-answer'); $('ai-button').disabled = true;
+    box.replaceChildren(node('p','Preparando uma explicação com as fontes encontradas…','status'));
+    try {
+      const response = await fetch('/api/search/ai', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({q:target}), signal:current.signal });
+      const data = await response.json(); if (current.signal.aborted || searched !== target) return;
+      if (!response.ok || data.status !== 'ready') throw Error('unavailable');
+      const answer = node('p',data.answer); answer.style.whiteSpace = 'pre-wrap';
+      box.replaceChildren(answer,node('small','Resposta gerada por '+data.provider+(data.cached?' · reutilizada para economizar consultas':'')));
+      const sources = node('ol'); for (const source of data.sources || []) { const item=node('li'); item.append(link(source.title,source.url)); sources.append(item); }
+      box.append(sources);
+    } catch (error) { if (error.name !== 'AbortError' && searched === target) box.replaceChildren(node('p','A IA está indisponível ou atingiu o limite de uso. Você pode continuar consultando os sites e vídeos abaixo.','status')); }
+    finally { if (aiController === current) $('ai-button').disabled = false; }
+  });
   query.addEventListener('input', () => {
     clearTimeout(timer); suggestController?.abort(); closeSuggestions();
     const value = query.value.trim(); if (value.length < 2) return;

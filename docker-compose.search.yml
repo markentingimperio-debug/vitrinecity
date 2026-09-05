@@ -4,6 +4,11 @@ services:
     environment:
       SEARXNG_URL: http://search:8080
       SEARCH_ENGINES: google,bing,duckduckgo,yahoo,brave,qwant,startpage,mojeek,wikipedia,youtube
+      SEARCH_AI_FREE_PROVIDERS: ${SEARCH_AI_FREE_PROVIDERS:-}
+      SEARCH_AI_GEMINI_KEY: ${SEARCH_AI_GEMINI_KEY:-}
+      SEARCH_AI_GROQ_KEY: ${SEARCH_AI_GROQ_KEY:-}
+      SEARCH_AI_GEMINI_DAILY: ${SEARCH_AI_GEMINI_DAILY:-20}
+      SEARCH_AI_GROQ_DAILY: ${SEARCH_AI_GROQ_DAILY:-100}
   search:
     image: docker.io/searxng/searxng:${SEARXNG_VERSION:-latest}
     restart: unless-stopped
