@@ -24,7 +24,7 @@ async function start() {
     const item=list[i];try{const u=new URL(item.url,location.origin);if(u.origin!==location.origin||seen.has(u.href))continue;seen.add(u.href);items.push(item);}catch{}
   }
   if(!items.length)return;
-  const css=document.createElement('link');css.rel='stylesheet';css.href='/market-outdoor.css?v=2';document.head.append(css);
+  if(window.__vcMarketStylesReady && !await window.__vcMarketStylesReady)return;
   const root=document.createElement('section');root.id='vc-outdoor';root.setAttribute('aria-roledescription','carrossel');root.setAttribute('aria-label','Destaques da VitrineCity');
   root.innerHTML='<div class="vc-od-heading"><div><span>EM DESTAQUE NA VITRINECITY</span><h2>Seu próximo achado está aqui.</h2></div><a href="/ofertas">Explorar ofertas ↗</a></div><div class="vc-od-stage"><div class="vc-od-copy"><span class="vc-od-label"></span><h3></h3><p class="vc-od-description"></p><p class="vc-od-disclosure"></p><a class="vc-od-cta"></a></div><div class="vc-od-visual"><img width="480" height="340" alt="" decoding="async"><span class="vc-od-fallback" hidden>VitrineCity</span></div></div><div class="vc-od-controls"><span class="vc-od-count" aria-live="off"></span><div><button type="button" data-action="prev" aria-label="Destaque anterior">←</button><button type="button" data-action="pause">Pausar</button><button type="button" data-action="next" aria-label="Próximo destaque">→</button></div></div>';
   const footer=document.querySelector('body > footer');

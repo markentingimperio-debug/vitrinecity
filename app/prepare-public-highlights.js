@@ -10,7 +10,7 @@ function visit(dir) {
     if(!entry.name.endsWith('.html'))continue;
     const html=fs.readFileSync(file,'utf8');
     if(!/<\/body>/i.test(html)||html.includes('/global-market-banner.js'))continue;
-    fs.writeFileSync(file,html.replace(/<\/body>/i,'<script src="/global-market-banner.js?v=6" defer></script></body>'));
+    fs.writeFileSync(file,html.replace(/<\/body>/i,'<script src="/global-market-banner.js?v=7" defer></script></body>'));
   }
 }
 visit(fileURLToPath(new URL('./public',import.meta.url)));
