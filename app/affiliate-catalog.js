@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { affiliateArticles } from './affiliate-articles.js';
 
 export const platforms = { mercadolivre: 'Mercado Livre', shopee: 'Shopee', tiktok: 'TikTok' };
 const hosts = {
@@ -135,7 +136,7 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
   app.get('/ofertas', (req,res) => {
     const platform = platforms[req.query.plataforma] ? req.query.plataforma : '';
     const items = published().filter(p=>!platform || p.platform===platform);
-    const body = `<section class="intro"><span class="eyebrow">Curadoria VitrineCity</span><h1>Escolhas para o seu dia a dia</h1><p>Ferramentas, cozinha e casa conectada. Uma seleção por utilidade e pelos sinais de procura informados nas plataformas.</p><p class="disclosure">Publicidade · Alguns links são de afiliado e podem gerar comissão para a VitrineCity.</p></section><nav class="filters" aria-label="Plataformas"><a href="/ofertas" ${!platform?'aria-current="page"':''}>Todas</a>${Object.entries(platforms).map(([id,label])=>`<a href="/ofertas?plataforma=${id}" ${platform===id?'aria-current="page"':''}>${label}</a>`).join('')}</nav><section class="grid">${items.map(card).join('') || '<p>Estamos preparando a seleção desta plataforma.</p>'}</section><section class="note"><h2>Como selecionamos</h2><p>A seleção inicial do Mercado Livre reúne produtos identificados como “Mais vendido” na central de afiliados em 05/09/2026. Isso não representa um ranking de todo o mercado nem um teste de uso da VitrineCity. Confira vendedor, modelo, voltagem, frete, garantia e preço antes de comprar.</p></section>`;
+    const body = `<section class="intro"><span class="eyebrow">Curadoria VitrineCity</span><h1>Escolhas para o seu dia a dia</h1><p>Ferramentas, cozinha e casa conectada. Uma seleção por utilidade e pelos sinais de procura informados nas plataformas.</p><p class="disclosure">Publicidade · Alguns links são de afiliado e podem gerar comissão para a VitrineCity.</p></section><nav class="filters" aria-label="Plataformas"><a href="/ofertas" ${!platform?'aria-current="page"':''}>Todas</a>${Object.entries(platforms).map(([id,label])=>`<a href="/ofertas?plataforma=${id}" ${platform===id?'aria-current="page"':''}>${label}</a>`).join('')}</nav><section class="grid">${items.map(card).join('') || '<p>Estamos preparando a seleção desta plataforma.</p>'}</section><section class="note"><h2>Guias para escolher e usar</h2><p>${affiliateArticles.map(article=>`<a href="${esc(article.url)}">${esc(article.title)}</a>`).join(' · ')}</p></section><section class="note"><h2>Como selecionamos</h2><p>A seleção inicial do Mercado Livre reúne produtos identificados como “Mais vendido” na central de afiliados em 05/09/2026. Isso não representa um ranking de todo o mercado nem um teste de uso da VitrineCity. Confira vendedor, modelo, voltagem, frete, garantia e preço antes de comprar.</p></section>`;
     return res.type('html').send(document('Seleção de produtos',body,origin+'/ofertas'));
   });
   app.get('/ofertas/:slug',(req,res) => {
@@ -156,8 +157,8 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
     return res.status(204).end();
   });
   return {
-    searchContent: () => published().map(p=>({kind:'article',title:p.title,description:'Seleção com link de afiliado. '+p.description,keywords:p.keywords+' '+p.category+' '+platforms[p.platform],url:pagePath(p)})),
-    sitemapPaths: () => ['/ofertas',...published().map(pagePath)],
+    searchContent: () => [...affiliateArticles,...published().map(p=>({kind:'article',title:p.title,description:'Seleção com link de afiliado. '+p.description,keywords:p.keywords+' '+p.category+' '+platforms[p.platform],url:pagePath(p)}))],
+    sitemapPaths: () => ['/ofertas',...affiliateArticles.map(article=>article.url),...published().map(pagePath)],
     checkDue, close: () => { clearInterval(timer);clearTimeout(initial); }
   };
 }
