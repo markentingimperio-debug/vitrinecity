@@ -79,3 +79,14 @@ try {
   try {assert.equal((await (await fetch('http://127.0.0.1:'+s.address().port+'/api/search/ai/status')).json()).enabled,false);} finally {s.close();}
   console.log('search-ai: Cloudflare request, envelope, both fallback directions, daily quota and account validation passed');
 } finally {cfServer.close();cfDb.close();}
+
+const promoDb=new Database(':memory:');let promoSent;
+const promoApp=express();promoApp.use(express.json());setupSearchAi(promoApp,{db:promoDb,lookup,env:{SEARCH_AI_FREE_PROVIDERS:'groq',SEARCH_AI_GROQ_KEY:'test'},fetchImpl:async (_url,o)=>{promoSent=JSON.parse(JSON.parse(o.body).messages[1].content);return Response.json({choices:[{message:{content:'Consulte a indicação de afiliado [1].'}}]});}});
+const promoServer=promoApp.listen(0,'127.0.0.1');await new Promise(r=>promoServer.once('listening',r));
+try {
+  const r=await fetch('http://127.0.0.1:'+promoServer.address().port+'/api/search/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:'como anunciar no TikTok'})});const data=await r.json();
+  assert.equal(r.status,200);assert.equal(data.sources[0].affiliate,true);assert.equal(data.sources[0].url,'https://getstartedtiktok.partnerlinks.io/gzte5cj93jzz');
+  assert.equal(data.sources[1].url,'https://vitrinecity.com/artigos/tiktok-ads.html');assert.match(promoSent.fontes[0].excerpt,/afiliado/);
+  assert.equal(data.sources[2].url,'https://example.com/receita');
+  console.log('search-ai: affiliate placement precedes web sources with disclosure and guide');
+} finally {promoServer.close();promoDb.close();}
