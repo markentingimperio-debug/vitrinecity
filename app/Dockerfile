@@ -6,6 +6,7 @@ RUN npm install --omit=dev
 COPY *.js ./
 COPY affiliate-catalog-seed.json ./
 COPY public ./public
+RUN node prepare-public-highlights.js
 RUN mkdir -p /data
 EXPOSE 3000
 CMD ["node", "server.js"]

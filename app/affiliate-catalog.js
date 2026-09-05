@@ -135,6 +135,8 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
   function card(p) {
     return `<article class="card">${p.image?`<a href="${pagePath(p)}"><img src="${esc(p.image)}" alt="${esc(p.title)}" loading="lazy" width="360" height="240"></a>`:''}<div><span class="eyebrow">${esc(p.category)} · ${platforms[p.platform]}</span><h2><a href="${pagePath(p)}">${esc(p.title)}</a></h2><p>${esc(p.description)}</p><a class="button secondary" href="${pagePath(p)}">Ver detalhes e oferta</a></div></article>`;
   }
+  app.get('/api/affiliate-highlights', (_req,res) => res.set('Cache-Control','public, max-age=60').json({items:
+    published().filter(canBuy).slice(0,12).map(p=>({title:p.title,description:p.description,image:p.image,url:pagePath(p),platform:platforms[p.platform]}))}));
   app.get('/ofertas', (req,res) => {
     const platform = platforms[req.query.plataforma] ? req.query.plataforma : '';
     const items = published().filter(p=>!platform || p.platform===platform);

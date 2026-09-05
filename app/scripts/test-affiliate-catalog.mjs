@@ -38,5 +38,8 @@ assert.equal((await fetch(base+'/ofertas/'+p.slug)).status,200,'Paused page must
 assert(!(await (await fetch(base+'/ofertas/'+p.slug)).text()).includes('data-affiliate-id'));
 assert(!catalog.searchContent().some(x=>x.url.endsWith(p.slug)));
 assert(!catalog.sitemapPaths().some(x=>x.endsWith(p.slug)));
+const highlights=await (await fetch(base+'/api/affiliate-highlights')).json();
+assert(!highlights.items.some(x=>x.url.endsWith(p.slug)),'Paused products must not appear in outdoor');
+assert(highlights.items.every(x=>x.url.startsWith('/ofertas/')&&!('affiliate_url' in x)&&!('evidence' in x)),'Public highlights expose only display fields and permanent page links');
 console.log('Affiliate catalog: auth, editing, persistent URLs, relevance source, pauses, monitor and redirect safety passed.');
 }finally{catalog.close();await new Promise(r=>server.close(r));db.close();}
