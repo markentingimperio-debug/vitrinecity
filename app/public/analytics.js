@@ -2,6 +2,8 @@
   if (location.pathname.startsWith('/admin') || window.__vcAnalyticsLoaded) return;
   window.__vcAnalyticsLoaded = true;
   const CONSENT_KEY = 'vc_analytics_consent';
+  const GOOGLE_KEY = 'vc_google_analytics_consent_v1';
+  const googleEnabled = !!document.querySelector('script[data-vc-google-analytics="enabled"]');
   const SESSION_KEY = 'vc_analytics_session';
   const TOUCH_KEY = 'vc_analytics_first_touch_v1';
   const read = (area, key) => { try { return window[area].getItem(key); } catch { return null; } };
@@ -33,7 +35,14 @@
     }
     return true;
   };
-  let activeExperiment = null;
+  let activeExperiment = null, pageViewStarted = false, googleRequested = false;
+  const loadGoogle = () => {
+    if (!googleEnabled || googleRequested || !allowed() || read('localStorage', GOOGLE_KEY) !== 'accepted') return;
+    googleRequested = true;
+    const script = document.createElement('script');
+    script.type = 'module'; script.src = '/google-analytics.js?v=ga4-20260905';
+    document.head.appendChild(script);
+  };
   const send = (eventName, detail = {}) => {
     if (!context()) return Promise.resolve();
     const metadata = { ...(detail.metadata || {}) };
@@ -53,7 +62,8 @@
     }
   };
   const loadExperiment = async () => {
-    if (!context()) return;
+    if (!context() || pageViewStarted) return;
+    pageViewStarted = true;
     await send('page_view');
     try {
       const response = await fetch('/api/experiments/assignment?path=' + encodeURIComponent(location.pathname),
@@ -75,18 +85,39 @@
     } catch {}
     return nativeFetch(input, init);
   };
-  const consent = read('localStorage', CONSENT_KEY);
-  if (!consent) {
+  let activeBanner = null;
+  const showConsent = () => {
+    if (activeBanner) return;
     const banner = document.createElement('aside');banner.id = 'vc-consent';
-    banner.innerHTML = `<div><strong>Privacidade</strong><p>Dados opcionais nos ajudam a melhorar a cidade.</p></div><div class="vc-consent-actions"><button data-choice="essential">Essenciais</button><button data-choice="accepted">Aceitar</button></div>`;
-    const style = document.createElement('style');style.textContent = `#vc-consent{position:fixed;z-index:99999;left:50%;bottom:12px;transform:translateX(-50%);width:min(680px,calc(100% - 24px));padding:11px 13px;border-radius:14px;background:#071b3ff2;color:#fff;box-shadow:0 14px 38px #00132c66;display:flex;gap:14px;align-items:center;justify-content:space-between;font:13px/1.35 system-ui;backdrop-filter:blur(10px)}#vc-consent p{margin:2px 0 0;color:#d7e5ff}.vc-consent-actions{display:flex;gap:7px;flex:none}#vc-consent button{border:1px solid #6f91c6;border-radius:9px;padding:8px 11px;background:transparent;color:#fff;font-weight:800;cursor:pointer}#vc-consent button:last-child{background:#1973ed;border-color:#1973ed}@media(max-width:540px){#vc-consent{left:10px;right:10px;bottom:8px;transform:none;width:auto;padding:9px 10px;gap:8px}#vc-consent p{font-size:11px}.vc-consent-actions{gap:5px}#vc-consent button{padding:7px 8px;font-size:11px}}`;
+    activeBanner = banner;
+    const message = googleEnabled
+      ? 'Com sua permissão, a VitrineCity e o Google Analytics usam cookies e dados de navegação para medir visitas às páginas públicas. Não enviamos campos de formulários ao Google. A medição é opcional.'
+      : 'Dados opcionais nos ajudam a melhorar a cidade.';
+    banner.innerHTML = `<div><strong>Privacidade</strong><p>${message}</p></div><div class="vc-consent-actions"><button type="button" data-choice="essential">Só essenciais</button><button type="button" data-choice="accepted">Aceitar medição</button></div>`;
+    const style = document.createElement('style');style.textContent = `#vc-consent{box-sizing:border-box;position:fixed;z-index:99999;left:50%;bottom:12px;transform:translateX(-50%);width:min(760px,calc(100% - 24px));max-height:85vh;overflow:auto;padding:12px 14px;border-radius:14px;background:#071b3ff2;color:#fff;box-shadow:0 14px 38px #00132c66;display:flex;gap:14px;align-items:center;justify-content:space-between;font:13px/1.4 system-ui;backdrop-filter:blur(10px)}#vc-consent p{margin:3px 0 0;color:#d7e5ff}.vc-consent-actions{display:flex;gap:7px;flex:none}#vc-consent button{min-height:44px;border:1px solid #6f91c6;border-radius:9px;padding:8px 11px;background:transparent;color:#fff;font-weight:700;cursor:pointer}#vc-consent button:last-child{background:#1973ed;border-color:#1973ed}#vc-consent button:focus-visible{outline:3px solid #fff;outline-offset:2px}@media(max-width:600px){#vc-consent{flex-direction:column;align-items:stretch;gap:10px;font-size:12px}.vc-consent-actions button{flex:1}}`;
     document.head.appendChild(style);document.body.appendChild(banner);
     banner.addEventListener('click', event => {
       const choice = event.target.dataset.choice;if (!choice) return;
       if (!['essential', 'accepted'].includes(choice)) return;
-      write('localStorage', CONSENT_KEY, choice);banner.remove();if (choice === 'accepted') loadExperiment();
+      write('localStorage', CONSENT_KEY, choice);
+      if (googleEnabled) {
+        write('localStorage', GOOGLE_KEY, choice);
+        document.dispatchEvent(new Event('vc:measurement-consent'));
+      }
+      banner.remove(); style.remove(); activeBanner = null;
+      if (choice === 'accepted') { loadExperiment(); loadGoogle(); }
     });
-  } else if (consent === 'accepted') loadExperiment();
+  };
+  const consent = read('localStorage', CONSENT_KEY);
+  if (!consent || (googleEnabled && consent === 'accepted' && !read('localStorage', GOOGLE_KEY))) showConsent();
+  if (consent === 'accepted') { loadExperiment(); loadGoogle(); }
+  if (googleEnabled) {
+    const preferences = document.createElement('button');
+    preferences.type = 'button'; preferences.textContent = 'Preferências de privacidade';
+    preferences.style.cssText = 'display:block;margin:12px auto;padding:10px 14px;min-height:44px;border:1px solid #6781a5;border-radius:8px;background:#071b3f;color:#fff;font:12px system-ui;cursor:pointer';
+    preferences.addEventListener('click', showConsent);
+    document.body.appendChild(preferences);
+  }
   document.addEventListener('click', event => {
     const link = event.target.closest('a,button');if (!link) return;
     const href = link.getAttribute('href') || '';

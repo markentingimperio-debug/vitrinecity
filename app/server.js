@@ -24,6 +24,7 @@ import { spawn } from 'node:child_process';
 import { originalCourse } from './course-content.js';
 import { setupAdminAnalytics } from './admin-analytics.js';
 import { setupOrganicAcquisition, recordAcquisitionSignup } from './organic-acquisition.js';
+import { injectPublicMeasurement } from './public-measurement.js';
 import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marketplace-public.js';
 import { setupTrendRadar } from './trend-radar.js';
 import { setupDigitalPublisher } from './digital-publisher.js';
@@ -2544,7 +2545,7 @@ app.use((req, res, next) => {
     const looksLikeHtml = typeof candidate === 'string' && /^\s*(?:<!doctype\s+html|<html\b)/i.test(candidate);
     if (req.method !== 'GET' || req.path.startsWith('/admin') || (!type.includes('text/html') && !looksLikeHtml)) return send(body);
     const wasBuffer = Buffer.isBuffer(body);
-    let page = candidate;
+    let page = injectPublicMeasurement(candidate, req.path);
     if (typeof page !== 'string') return send(body);
     if (page.includes('</head>') && !page.includes('rel="manifest"')) {
       page = page.replace('</head>', '<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#071f4b"><link rel="apple-touch-icon" href="/assets/pwa-icon-192.png"></head>');
