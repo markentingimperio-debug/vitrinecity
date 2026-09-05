@@ -43,5 +43,15 @@ try {
   assert.deepEqual(new Set(result.products.map(p=>p.id)),new Set([1,2,4,6]),'Related inventory remains products, separately from published recipes.');
   assert.equal(result.contents.length,1,'Only the explicitly published content is a recipe.');
   result=await get('/api/discovery/search/suggestions','como fazer bol');assert.ok(!result.suggestions.some(item=>item.label==='Futebol'),'Partial words must begin at word boundaries.');
+  for (const q of ['TikTok Ads','como anunciar no tik tok','como criar uma campanha no TikTok','quanto custa um anúncio no tiktok','tráfego pago no TikTok']) {
+    result=await get('/api/discovery/search',q);
+    assert.equal(result.contents[0].url,'https://getstartedtiktok.partnerlinks.io/gzte5cj93jzz');
+    assert.equal(result.contents[0].kind,'affiliate');assert.match(result.contents[0].description,/comissão/);
+    assert.equal(result.contents[1].url,'/artigos/tiktok-ads.html');
+  }
+  for (const q of ['TikTok Shop afiliado','baixar vídeos do TikTok','Google Ads','como fazer bolo','tiktok','tiktok addsong']) {
+    result=await get('/api/discovery/search',q);assert.ok(!result.contents.some(item=>item.kind==='affiliate'));
+  }
+  result=await get('/api/discovery/search/suggestions','tik tok ads');assert.equal(result.suggestions[0].category,'Oferta de afiliado');
   console.log('discovery-search: all behavioral checks passed');
 } finally { await new Promise(resolve=>server.close(resolve));db.close(); }

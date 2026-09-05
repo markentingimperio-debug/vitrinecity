@@ -1,3 +1,4 @@
+import { searchPromotions } from './search-promotions.js';
 // VitrineRank v1: explainable local relevance, using only published inventory.
 export function normalizeSearch(value) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -41,7 +42,8 @@ export function setupDiscoverySearch(app, db, publicStorePath, contentProvider =
         sp.name,sp.id LIMIT 60`).all(normalizeSearch(query), normalizeSearch(query), location, location, ...terms.map(term => ' '+term))
       .map(row => ({ ...row, productUrl: `/produto/${row.id}/${normalizeSearch(row.name).replaceAll(' ', '-') || 'produto'}`,
         rankReason: row.verifiedReviews ? 'Relevância e avaliações de compras verificadas' : 'Correspondência com a sua busca' }));
-    const contents = contentProvider().filter(item => terms.every(term => (' '+normalizeSearch([item.title,item.description,item.keywords].filter(Boolean).join(' '))).includes(' '+term)))
+    const promoted = searchPromotions(query);
+    const contents = [...promoted, ...contentProvider().filter(item => !promoted.some(p => p.url === item.url) && terms.every(term => (' '+normalizeSearch([item.title,item.description,item.keywords].filter(Boolean).join(' '))).includes(' '+term)))]
       .slice(0, 20);
     return { stores, products, contents };
   }

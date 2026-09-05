@@ -171,7 +171,7 @@
       if (!response.ok || data.status !== 'ready') throw Error('unavailable');
       const answer = node('p',data.answer); answer.style.whiteSpace = 'pre-wrap';
       box.replaceChildren(answer,node('small','Resposta gerada por '+data.provider+(data.cached?' · reutilizada para economizar consultas':'')));
-      const sources = node('ol'); for (const source of data.sources || []) { const item=node('li'); item.append(link(source.title,source.url)); sources.append(item); }
+      const sources = node('ol'); for (const source of data.sources || []) { const item=node('li'), a=link(source.title,source.url); if (source.affiliate && a.tagName === 'A') a.rel='sponsored noopener noreferrer'; item.append(a); if (source.affiliate) item.append(node('small',' · Link de afiliado — podemos receber comissão')); sources.append(item); }
       box.append(sources);
     } catch (error) { if (error.name !== 'AbortError' && searched === target) box.replaceChildren(node('p','A IA está indisponível ou atingiu o limite de uso. Você pode continuar consultando os sites e vídeos abaixo.','status')); }
     finally { if (aiController === current) $('ai-button').disabled = false; }
