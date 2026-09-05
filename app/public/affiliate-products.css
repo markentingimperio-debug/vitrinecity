@@ -75,11 +75,12 @@
   .affiliate-public .catalog-search button { grid-column: auto; }
   .affiliate-public .breadcrumbs { margin-bottom: 12px; gap: 8px; }
   .affiliate-public .product-media { padding: 12px; border-radius: 18px; }
-  .affiliate-public .product-media img { height: 230px; }
+  .affiliate-public .product-media img { height: 200px; }
   .affiliate-public .product-media .image-placeholder { min-height: 180px; }
   .affiliate-public .product-media figcaption { padding-top: 8px; }
   .affiliate-public .product-summary h1 { font-size: 28px; letter-spacing: -.7px; margin: 12px 0 16px; }
-  .affiliate-public .product-facts { gap: 12px; margin-bottom: 16px; }
+  /* Category and store remain visible in breadcrumbs and the platform label. */
+  .affiliate-public .product-facts { display: none; }
   .affiliate-public .offer-box { padding: 18px; }
   .affiliate-public .product-information .note { padding: 22px; margin-top: 24px; }
   .affiliate-public .card > div { padding: 20px; }
