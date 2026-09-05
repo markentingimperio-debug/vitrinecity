@@ -1,4 +1,5 @@
 .env
+.env.search
 .env.binance.local
 .env.binance.testnet
 app/.binance-local-state.json
