@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { affiliateArticles } from './affiliate-articles.js';
+import { setupAffiliateIndexNow } from './affiliate-indexnow.js';
 
 export const platforms = { mercadolivre: 'Mercado Livre', shopee: 'Shopee', tiktok: 'TikTok' };
 const hosts = {
@@ -65,6 +66,7 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
     })();
   }
   const all = () => db.prepare('SELECT * FROM affiliate_catalog ORDER BY title').all();
+  const indexnow = setupAffiliateIndexNow({db,siteUrl,rows:all,fetcher,start:startMonitor});
   const published = () => all().filter(p => p.status === 'published');
   const audit = (slug, action, detail) => db.prepare('INSERT INTO affiliate_catalog_audit(slug,action,detail) VALUES (?,?,?)').run(slug,action,detail);
   const origin = new URL(siteUrl).origin;
@@ -159,6 +161,6 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
   return {
     searchContent: () => [...affiliateArticles,...published().map(p=>({kind:'article',title:p.title,description:'Seleção com link de afiliado. '+p.description,keywords:p.keywords+' '+p.category+' '+platforms[p.platform],url:pagePath(p)}))],
     sitemapPaths: () => ['/ofertas',...affiliateArticles.map(article=>article.url),...published().map(pagePath)],
-    checkDue, close: () => { clearInterval(timer);clearTimeout(initial); }
+    checkDue, indexnow, close: () => { clearInterval(timer);clearTimeout(initial);indexnow.close(); }
   };
 }
