@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily database backup for VitrineCity
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target
