@@ -1,33 +1,48 @@
 (() => {
-  if (location.pathname.startsWith('/admin')) return;
+  if (location.pathname.startsWith('/admin') || window.__vcAnalyticsLoaded) return;
+  window.__vcAnalyticsLoaded = true;
   const CONSENT_KEY = 'vc_analytics_consent';
   const SESSION_KEY = 'vc_analytics_session';
-  const params = new URLSearchParams(location.search);
-  const campaign = {
-    utmSource: params.get('utm_source') || '', utmMedium: params.get('utm_medium') || '',
-    utmCampaign: params.get('utm_campaign') || '', utmContent: params.get('utm_content') || '',
-    utmTerm: params.get('utm_term') || '', gclid: params.get('gclid') || '',
-    fbclid: params.get('fbclid') || '', ttclid: params.get('ttclid') || ''
+  const TOUCH_KEY = 'vc_analytics_first_touch_v1';
+  const read = (area, key) => { try { return window[area].getItem(key); } catch { return null; } };
+  const write = (area, key, value) => { try { window[area].setItem(key, value); } catch {} };
+  const allowed = () => read('localStorage', CONSENT_KEY) === 'accepted';
+  const nativeFetch = window.fetch.bind(window);
+  let sid = '', campaign = null;
+  const context = () => {
+    if (!allowed()) return false;
+    if (sid && campaign) return true;
+    sid = read('sessionStorage', SESSION_KEY) || '';
+    if (!/^[a-zA-Z0-9_-]{16,80}$/.test(sid)) {
+      const bytes = crypto.getRandomValues(new Uint8Array(18));
+      sid = `vc_${Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')}`;
+      write('sessionStorage', SESSION_KEY, sid);
+    }
+    try { campaign = JSON.parse(read('sessionStorage', TOUCH_KEY)); } catch {}
+    if (!campaign || campaign.sessionId !== sid) {
+      const params = new URLSearchParams(location.search);
+      let referrer = '';
+      try { referrer = new URL(document.referrer).origin; } catch {}
+      campaign = { sessionId: sid, landingPath: location.pathname, referrer };
+      for (const [key, query] of Object.entries({ utmSource: 'utm_source', utmMedium: 'utm_medium',
+        utmCampaign: 'utm_campaign', utmContent: 'utm_content', utmTerm: 'utm_term',
+        gclid: 'gclid', fbclid: 'fbclid', ttclid: 'ttclid' })) {
+        campaign[key] = (params.get(query) || '').slice(0, 160);
+      }
+      write('sessionStorage', TOUCH_KEY, JSON.stringify(campaign));
+    }
+    return true;
   };
-  let sid = sessionStorage.getItem(SESSION_KEY);
-  if (!sid) {
-    const bytes = crypto.getRandomValues(new Uint8Array(18));
-    sid = `vc_${Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')}`;
-    sessionStorage.setItem(SESSION_KEY, sid);
-  }
-  const allowed = () => localStorage.getItem(CONSENT_KEY) === 'accepted';
   let activeExperiment = null;
   const send = (eventName, detail = {}) => {
-    if (!allowed()) return;
+    if (!context()) return Promise.resolve();
     const metadata = { ...(detail.metadata || {}) };
     if (activeExperiment) {
       metadata.experimentKey = activeExperiment.key;
       metadata.variantKey = activeExperiment.variant;
     }
-    fetch('/api/analytics/events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-VC-Session': sid },
-      keepalive: true, body: JSON.stringify({ sessionId: sid, eventName, path: location.pathname,
-        landingPath: sessionStorage.getItem('vc_landing') || location.pathname, referrer: document.referrer,
-        ...campaign, ...detail, metadata })
+    return nativeFetch('/api/analytics/events', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-VC-Session': sid, 'X-VC-Analytics-Consent': 'accepted' },
+      keepalive: true, body: JSON.stringify({ ...detail, ...campaign, sessionId: sid, eventName, path: location.pathname, metadata })
     }).catch(() => {});
   };
   const applyExperiment = experiment => {
@@ -38,7 +53,8 @@
     }
   };
   const loadExperiment = async () => {
-    if (!allowed()) return send('page_view');
+    if (!context()) return;
+    await send('page_view');
     try {
       const response = await fetch('/api/experiments/assignment?path=' + encodeURIComponent(location.pathname),
         { headers: { 'X-VC-Session': sid } });
@@ -46,18 +62,20 @@
       activeExperiment = data.experiment || null;
       if (activeExperiment) applyExperiment(activeExperiment);
     } catch {}
-    send('page_view');
   };
-  if (!sessionStorage.getItem('vc_landing')) sessionStorage.setItem('vc_landing', `${location.pathname}${location.search}`);
-  const nativeFetch = window.fetch.bind(window);
   window.fetch = (input, init = {}) => {
-    const url = typeof input === 'string' ? input : input.url;
-    if (url?.startsWith('/') && !url.startsWith('/api/analytics/')) {
-      init = { ...init, headers: { ...(init.headers || {}), 'X-VC-Session': sid } };
-    }
+    try {
+      const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+      if (allowed() && url.origin === location.origin && url.pathname.startsWith('/api/') && !url.pathname.startsWith('/api/analytics/') && context()) {
+        const headers = new Headers(init.headers === undefined && input instanceof Request ? input.headers : init.headers);
+        headers.set('X-VC-Session', sid);
+        headers.set('X-VC-Analytics-Consent', 'accepted');
+        init = { ...init, headers };
+      }
+    } catch {}
     return nativeFetch(input, init);
   };
-  const consent = localStorage.getItem(CONSENT_KEY);
+  const consent = read('localStorage', CONSENT_KEY);
   if (!consent) {
     const banner = document.createElement('aside');banner.id = 'vc-consent';
     banner.innerHTML = `<div><strong>Privacidade</strong><p>Dados opcionais nos ajudam a melhorar a cidade.</p></div><div class="vc-consent-actions"><button data-choice="essential">Essenciais</button><button data-choice="accepted">Aceitar</button></div>`;
@@ -65,7 +83,8 @@
     document.head.appendChild(style);document.body.appendChild(banner);
     banner.addEventListener('click', event => {
       const choice = event.target.dataset.choice;if (!choice) return;
-      localStorage.setItem(CONSENT_KEY, choice);banner.remove();if (choice === 'accepted') loadExperiment();
+      if (!['essential', 'accepted'].includes(choice)) return;
+      write('localStorage', CONSENT_KEY, choice);banner.remove();if (choice === 'accepted') loadExperiment();
     });
   } else if (consent === 'accepted') loadExperiment();
   document.addEventListener('click', event => {

@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { originalCourse } from './course-content.js';
 import { setupAdminAnalytics } from './admin-analytics.js';
+import { setupOrganicAcquisition, recordAcquisitionSignup } from './organic-acquisition.js';
 import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marketplace-public.js';
 import { setupTrendRadar } from './trend-radar.js';
 import { setupDigitalPublisher } from './digital-publisher.js';
@@ -2027,6 +2028,7 @@ function recordAdminLogin(req,email,success,reason){
 
 const ADMIN_HTML_PATHS=new Set(['/admin-vendas-afiliadas.html','/admin','/admin.html','/admin-agentes.html','/admin-sales-agents.html','/admin-crypto-matrix.html','/admin-quizzes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html','/admin-conteudos.html','/admin-entregas.html']);
 ADMIN_HTML_PATHS.add('/admin-live.html');
+ADMIN_HTML_PATHS.add('/admin-captacao.html');
 ADMIN_HTML_PATHS.add('/admin-live');
 
 function requireAdmin(req, res, next) {
@@ -2571,6 +2573,7 @@ app.use((req, res, next) => {
   next();
 });
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
+setupOrganicAcquisition({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly, allowAttempt });
 const affiliateCatalog = setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, siteUrl: SITE_URL, publicDir: path.join(dir, 'public') });
 app.use('/vendor/three', express.static(path.join(dir, 'node_modules/three/build')));
@@ -2665,6 +2668,7 @@ app.get('/painel-lojista.html',(_req,res)=>{const page=fs.readFileSync(path.join
 app.get('/sitemap.xml', (_req, res) => {
   const origin = new URL(SITE_URL).origin;
   const fixedPaths = [
+    '/guias/plantas-em-vasos.html',
     '/', '/cidade', '/cidade/bairro-premium', '/cidade/praca-central', '/cidade/avenida-premium',
     '/social', '/descobrir', '/loja', '/centro-educacional.html', '/afiliados.html', '/grupos-whatsapp.html',
     '/conteudo', '/noticias', '/esportes', '/receitas', '/plantas-e-jardinagem', '/tecnologia', '/inteligencia-artificial', '/entretenimento', '/livros',
@@ -3009,6 +3013,7 @@ app.post('/api/auth/register', sameOriginOnly, (req, res) => {
     recordConsent(req,{userId,email:normalizedEmail,purpose:'account_terms',version:'terms-2026-08-22',source:'account_registration'});
     recordConsent(req,{userId,email:normalizedEmail,purpose:'adult_declaration',version:'adult-2026-08-22',source:'account_registration'});
     setSession(res, userId);
+    recordAcquisitionSignup(db, req, userId);
     return res.status(201).json({ ok: true });
   } catch (error) {
     if (String(error?.message || '').includes('UNIQUE')) return res.status(409).json({ error: 'Este e-mail já possui uma conta.' });
@@ -3025,7 +3030,7 @@ app.post('/api/customer/register', sameOriginOnly, (req, res) => {
   if(locationConsent&&!validLocation)return res.status(400).json({error:'A localização autorizada é inválida.'});
   const secret=managementSecret();if(secret.length<24)return res.status(503).json({error:'Cadastro seguro temporariamente indisponível.'});
   const fingerprint=createHmac('sha256',secret).update(`customer-cpf:${cpf}`).digest('hex');
-  try{const userId=db.transaction(()=>{const result=db.prepare(`INSERT INTO users(name,email,whatsapp,password_hash,adult_confirmed,cpf_fingerprint,cpf_last4) VALUES (?,?,?,?,1,?,?)`).run(name,normalizedEmail.slice(0,160),whatsapp,hashPassword(password),fingerprint,cpf.slice(-4));const id=Number(result.lastInsertRowid);db.prepare('INSERT INTO wallets(user_id,balance_units) VALUES (?,0)').run(id);db.prepare(`INSERT INTO customer_addresses(user_id,label,recipient_name,postal_code,street,number,complement,neighborhood,city,state,is_default,latitude,longitude,location_consent) VALUES (?,'Casa',?,?,?,?,?,?,?,?,1,?,?,?)`).run(id,name,address.postal,address.street,address.number,address.complement,address.neighborhood,address.city,address.state,locationConsent?latitude:null,locationConsent?longitude:null,locationConsent?1:0);return id;})();recordConsent(req,{userId,email:normalizedEmail,purpose:'account_terms',version:'terms-2026-08-22',source:'customer_registration'});recordConsent(req,{userId,email:normalizedEmail,purpose:'adult_declaration',version:'adult-2026-08-22',source:'customer_registration'});if(locationConsent)recordConsent(req,{userId,email:normalizedEmail,purpose:'customer_location',version:'privacy-2026-08-22',source:'customer_registration'});setSession(res,userId);return res.status(201).json({ok:true});}catch(error){if(String(error?.message||'').includes('cpf_fingerprint'))return res.status(409).json({error:'Este CPF já possui uma conta.'});if(String(error?.message||'').includes('UNIQUE'))return res.status(409).json({error:'Este e-mail já possui uma conta.'});return res.status(500).json({error:'Não foi possível criar sua conta agora.'});}
+  try{const userId=db.transaction(()=>{const result=db.prepare(`INSERT INTO users(name,email,whatsapp,password_hash,adult_confirmed,cpf_fingerprint,cpf_last4) VALUES (?,?,?,?,1,?,?)`).run(name,normalizedEmail.slice(0,160),whatsapp,hashPassword(password),fingerprint,cpf.slice(-4));const id=Number(result.lastInsertRowid);db.prepare('INSERT INTO wallets(user_id,balance_units) VALUES (?,0)').run(id);db.prepare(`INSERT INTO customer_addresses(user_id,label,recipient_name,postal_code,street,number,complement,neighborhood,city,state,is_default,latitude,longitude,location_consent) VALUES (?,'Casa',?,?,?,?,?,?,?,?,1,?,?,?)`).run(id,name,address.postal,address.street,address.number,address.complement,address.neighborhood,address.city,address.state,locationConsent?latitude:null,locationConsent?longitude:null,locationConsent?1:0);return id;})();recordConsent(req,{userId,email:normalizedEmail,purpose:'account_terms',version:'terms-2026-08-22',source:'customer_registration'});recordConsent(req,{userId,email:normalizedEmail,purpose:'adult_declaration',version:'adult-2026-08-22',source:'customer_registration'});if(locationConsent)recordConsent(req,{userId,email:normalizedEmail,purpose:'customer_location',version:'privacy-2026-08-22',source:'customer_registration'});setSession(res,userId);recordAcquisitionSignup(db,req,userId);return res.status(201).json({ok:true});}catch(error){if(String(error?.message||'').includes('cpf_fingerprint'))return res.status(409).json({error:'Este CPF já possui uma conta.'});if(String(error?.message||'').includes('UNIQUE'))return res.status(409).json({error:'Este e-mail já possui uma conta.'});return res.status(500).json({error:'Não foi possível criar sua conta agora.'});}
 });
 
 app.post('/api/auth/login', sameOriginOnly, (req, res) => {
