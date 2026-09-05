@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Pesquise assuntos, descubra sites relacionados e encontre lojas e produtos na Vitrine City.">
+  <title>Pesquisar | Vitrine City</title>
+  <link rel="stylesheet" href="/search.css"><script src="/search.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Pular para o conteúdo</a>
+  <header><a class="brand" href="/">vitrine<span>city</span></a><nav aria-label="Navegação principal"><a href="/social">Para você</a><a href="/descobrir">Descobrir</a><a href="/cidade">Mapa da cidade</a></nav></header>
+  <main id="main">
+    <section class="intro"><span class="eyebrow">Sua curiosidade começa aqui</span><h1>O que você quer descobrir?</h1><p>Uma dúvida, uma receita, um produto. Pesquise e encontre seu próximo passo.</p>
+      <form class="search" id="search-form" role="search"><div class="search-row"><input id="q" name="q" type="search" role="combobox" aria-label="Pesquisar assuntos, sites, lojas e produtos" aria-autocomplete="list" aria-expanded="false" aria-controls="suggestions" autocomplete="off" maxlength="500" minlength="2" required placeholder="Ex.: como fazer bolo"><button class="primary" type="submit">Pesquisar</button></div><ul class="suggestions" id="suggestions" role="listbox" aria-label="Sugestões de busca" hidden></ul></form>
+      <p class="search-note">A busca e as sugestões consultam fontes externas. Evite digitar dados pessoais.</p>
+      <div id="examples" class="examples" aria-label="Experimente uma pesquisa"><button type="button" data-query="como fazer bolo">Como fazer bolo</button><button type="button" data-query="como cuidar de rosa do deserto">Cuidar de rosa do deserto</button><button type="button" data-query="ideias de decoração para sala pequena">Decorar uma sala pequena</button></div>
+    </section>
+    <nav class="filters" aria-label="Tipos de resultado"><button type="button" data-filter="all" aria-pressed="true">Tudo</button><button type="button" data-filter="web" aria-pressed="false">Sites</button><button type="button" data-filter="videos" aria-pressed="false">Vídeos</button><button type="button" data-filter="shopping" aria-pressed="false">Compras</button><button type="button" data-filter="social" aria-pressed="false">Redes sociais</button><button type="button" data-filter="local" aria-pressed="false">Na Vitrine</button></nav>
+    <label id="platform-filter" class="status">Filtrar plataforma <select id="platform"><option value="all">Todas as plataformas</option value="mercadolivre">Mercado Livre</option><option value="shopee">Shopee</option><option value="kwai">Kwai</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option></select></label>
+    <p id="platform-note" class="status" hidden>Conteúdos públicos encontrados na web. Alguns resultados podem exigir login na plataforma de destino.</p>
+    <p id="search-status" class="status" role="status" aria-live="polite">Digite o que procura para começar.</p>
+    <div class="layout"><div>
+      <section id="ai-panel" class="panel" hidden><h2 class="section-title">Uma ajuda para entender</h2><p class="status">Ao solicitar, sua consulta e os trechos encontrados serão enviados a um provedor de IA. A resposta pode conter erros; confira as fontes.</p><button id="ai-button" class="primary" type="button">Explicar resultados com IA</button><div id="ai-answer" aria-live="polite"></div></section>
+      <section id="local-section" data-section="local" hidden><div class="local-head"><h2 class="section-title">Na Vitrine</h2><label>Cidade da loja <input id="city" type="search" maxlength="100" placeholder="Todas as cidades"></label></div><p class="status">Lojas e produtos publicados. A cidade filtra apenas estes resultados.</p><div id="local-results"></div></section>
+      <section id="ads-section" data-section="local" aria-label="Anúncios" hidden></section>
+      <section id="web-results" data-section="web" aria-label="Resultados da internet" hidden></section>
+    </div><aside><section id="related" class="panel related" aria-label="Pesquisas relacionadas" hidden></section><section class="panel"><span class="eyebrow">Continue descobrindo</span><h2 class="section-title">A cidade tem mais</h2><p class="muted">Conheça conteúdos, pessoas e negócios.</p><p><a href="/social">Explorar vídeos →</a></p><p><a href="/descobrir">Encontrar pessoas e lojas →</a></p><p><a href="/cidade">Abrir o mapa →</a></p></section></aside></div>
+  </main><footer>Vitrine City · <a href="/privacy.html">Privacidade</a> · <a href="/contato.html">Contato</a></footer>
+</body></html>

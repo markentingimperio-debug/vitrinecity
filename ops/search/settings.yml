@@ -1,0 +1,51 @@
+use_default_settings:
+  engines:
+    keep_only:
+      - google
+      - bing
+      - duckduckgo
+      - yahoo
+      - brave
+      - qwant
+      - startpage
+      - mojeek
+      - wikipedia
+      - youtube
+general:
+  instance_name: Vitrine City Busca
+  enable_metrics: false
+search:
+  safe_search: 1
+  autocomplete: duckduckgo
+  autocomplete_min: 2
+  default_lang: pt-BR
+  formats: [html, json]
+server:
+  # The service is accessible only on the private Compose network. Public API limits live in the app.
+  limiter: false
+  image_proxy: false
+  secret_key: overridden-by-SEARXNG_SECRET
+outgoing:
+  request_timeout: 6.0
+  max_request_timeout: 10.0
+engines:
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: startpage
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: youtube
+    disabled: false

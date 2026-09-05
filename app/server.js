@@ -1,4 +1,7 @@
 import express from 'express';
+import { setupDiscoverySearch } from './discovery-search.js';
+import { setupMetasearch } from './metasearch.js';
+import { createSearchContentProvider } from './search-content.js';
 import Database from 'better-sqlite3';
 import nodemailer from 'nodemailer';
 import fs from 'node:fs';
@@ -2660,6 +2663,9 @@ function publicAddress(row) {
     street: row.street, number: row.number, complement: row.complement || '', neighborhood: row.neighborhood,
     city: row.city, state: row.state, isDefault: Boolean(row.is_default) };
 }
+
+setupDiscoverySearch(app, db, publicStorePath, createSearchContentProvider(dataDir, () => managedCourses(true)));
+setupMetasearch(app, { db });
 
 app.get('/api/search/suggestions', (req, res) => {
   const query = String(req.query.q || '').trim().slice(0, 80);

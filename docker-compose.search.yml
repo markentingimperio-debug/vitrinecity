@@ -1,0 +1,34 @@
+# Overlay: docker compose -f docker-compose.yml -f docker-compose.search.yml up -d --build app search
+services:
+  app:
+    environment:
+      SEARXNG_URL: http://search:8080
+      SEARCH_ENGINES: google,bing,duckduckgo,yahoo,brave,qwant,startpage,mojeek,wikipedia,youtube
+      SEARCH_AI_FREE_PROVIDERS: ${SEARCH_AI_FREE_PROVIDERS:-}
+      SEARCH_AI_GEMINI_KEY: ${SEARCH_AI_GEMINI_KEY:-}
+      SEARCH_AI_GROQ_KEY: ${SEARCH_AI_GROQ_KEY:-}
+      SEARCH_AI_GEMINI_DAILY: ${SEARCH_AI_GEMINI_DAILY:-20}
+      SEARCH_AI_GROQ_DAILY: ${SEARCH_AI_GROQ_DAILY:-100}
+  search:
+    image: docker.io/searxng/searxng:${SEARXNG_VERSION:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env.search
+    environment:
+      FORCE_OWNERSHIP: "false"
+    volumes:
+      - ./ops/search/settings.yml:/etc/searxng/settings.yml:ro
+      - search_cache:/var/cache/searxng
+    mem_limit: 768m
+    cpus: 0.75
+    # No published ports: only the Vitrine application can expose search results.
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "/usr/local/searxng/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+volumes:
+  search_cache:
