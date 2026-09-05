@@ -1,3 +1,4 @@
+import { setupProductionHardening } from './production-hardening.js';
 import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { setupDiscoverySearch } from './discovery-search.js';
@@ -42,6 +43,7 @@ import { setupBusinessProspecting } from './business-prospecting.js';
 import { setupSalesAgentEngine } from './sales-agent-engine.js';
 
 const app = express();
+setupProductionHardening(app);
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.DATA_DIR || '/data';
 const courseFilesDir = path.resolve(process.env.COURSE_FILES_DIR || '/private-courses');
