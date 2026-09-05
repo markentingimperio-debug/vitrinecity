@@ -1,6 +1,7 @@
 (() => {
   if(window.__vcGlobalMarketBannerLoaded || location.pathname.startsWith('/admin'))return;
   window.__vcGlobalMarketBannerLoaded=true;
+  import('/platform-performance.js?v=1').catch(()=>{});
   import('/market-outdoor.js?v=4').catch(()=>{});
   // Preserve the existing paid advertising placement, separately labelled.
   fetch('/api/ads/serve?placement=banner').then(r=>r.ok?r.json():{}).then(data=>{

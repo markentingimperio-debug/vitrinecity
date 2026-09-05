@@ -53,5 +53,8 @@ try {
     result=await get('/api/discovery/search',q);assert.ok(!result.contents.some(item=>item.kind==='affiliate'));
   }
   result=await get('/api/discovery/search/suggestions','tik tok ads');assert.equal(result.suggestions[0].category,'Oferta de afiliado');
+  result=await get('/api/discovery/search','confetaria');assert.equal(result.suggestedQuery,'confeitaria');assert.equal(result.stores.length,0,'Never silently replace the query');
+  result=await get('/api/discovery/search/suggestions','confetaria');assert.equal(result.suggestions[0].label,'confeitaria');
+  result=await get('/api/discovery/search','confetaria','cidade inexistente');assert.equal(result.suggestedQuery,null,'Correction respects city filter');
   console.log('discovery-search: all behavioral checks passed');
 } finally { await new Promise(resolve=>server.close(resolve));db.close(); }

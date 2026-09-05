@@ -113,6 +113,7 @@
       local.append(node('h3', title), grid);
     }
     if (!local.childElementCount) local.append(node('p','Nenhuma loja ou produto encontrado para esta busca na Vitrine. Você pode pesquisar na internet ou tentar outro termo.','panel muted'));
+    if(data.suggestedQuery){const button=node('button','Você quis dizer “'+data.suggestedQuery+'”?','primary');button.type='button';button.onclick=()=>search(data.suggestedQuery);local.prepend(button);}
   }
   async function search(value) {
     value = String(value).trim().slice(0,300);
@@ -137,7 +138,7 @@
       const data = await response.json(); if (run !== version) return;
       renderLocal(data);
       const count = (data.stores?.length || 0) + (data.products?.length || 0) + (data.contents?.length || 0);
-      if (filter === 'all') $('local-section').hidden = count === 0;
+      if (filter === 'all') $('local-section').hidden = count === 0 && !data.suggestedQuery;
       if(filter==='local')$('search-status').textContent = count + ' resultados na Vitrine para “' + value + '”.';
     } catch (error) {
       if (error.name === 'AbortError' || run !== version) return;

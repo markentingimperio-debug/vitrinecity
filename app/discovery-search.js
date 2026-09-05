@@ -1,4 +1,6 @@
 import { searchPromotions } from './search-promotions.js';
+import { suggestSpelling } from './search-spelling.js';
+import { recordOperation } from './platform-operations.js';
 // VitrineRank v1: explainable local relevance, using only published inventory.
 export function normalizeSearch(value) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -7,6 +9,12 @@ export function normalizeSearch(value) {
 
 export function setupDiscoverySearch(app, db, publicStorePath, contentProvider = () => []) {
   db.function('vc_normalize', { deterministic: true }, normalizeSearch);
+  function correction(query,city){
+    const titles=[...db.prepare("SELECT business_name AS title FROM store_profiles WHERE review_status='published' LIMIT 1000").all(),
+      ...db.prepare("SELECT sp.name AS title FROM store_products sp JOIN store_profiles p ON p.order_reference=sp.store_reference WHERE sp.active=1 AND p.review_status='published' LIMIT 2000").all(),...contentProvider()].map(x=>x.title);
+    const candidate=suggestSpelling(query,titles);if(!candidate)return null;
+    const found=search(candidate,city);return (found.stores.length+found.products.length+(found.contents?.length||0))?candidate:null;
+  }
   function search(query, city) {
     const stopWords = new Set(['como','fazer','um','uma','de','do','da','para','com','o','a','os','as','e','em','no','na','quero','comprar']);
     const words = normalizeSearch(query).split(' ').filter(Boolean);
@@ -55,11 +63,14 @@ export function setupDiscoverySearch(app, db, publicStorePath, contentProvider =
     const suggestions = [...contents.slice(0, 3).map(item => ({ label: item.title, type: 'content', category: kinds[item.kind] || 'Conteúdo' })),...stores.slice(0, 4).map(s => ({ label: s.name, type: 'store', category: s.segment, city: s.city })),
       ...products.slice(0, 6).map(p => ({ label: p.name, type: 'product', category: p.category, city: p.city }))]
       .filter(item => { const key = normalizeSearch(item.label); if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, 8);
+    if(!suggestions.length){const candidate=correction(query,req.query.city);if(candidate)suggestions.push({label:candidate,type:'content',category:'Você quis dizer?'});}
     res.json({ suggestions });
   });
   app.get('/api/discovery/search', (req, res) => {
     const query = String(req.query.q || '').trim().slice(0, 80);
     const city = String(req.query.city || '').trim().slice(0, 100);
-    res.json({ query, city, rankingVersion: 'vitrine-local-v1', ...search(query, city) });
+    const result=search(query,city),total=result.stores.length+result.products.length+(result.contents?.length||0);
+    if(normalizeSearch(query).length>=2){recordOperation(db,'search');if(!total)recordOperation(db,'search_empty');}
+    res.json({ query, city, rankingVersion: 'vitrine-local-v2', ...result, suggestedQuery:total?null:correction(query,city) });
   });
 }
