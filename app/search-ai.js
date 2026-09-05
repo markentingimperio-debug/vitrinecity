@@ -6,7 +6,9 @@ export function setupSearchAi(app, { db, lookup, env = process.env, fetchImpl = 
   const limit = (value, fallback) => Math.max(0, Math.min(1000, Math.floor(Number(value ?? fallback) || 0)));
   const providers = [
     { id: 'gemini', key: env.SEARCH_AI_GEMINI_KEY, model: 'gemini-2.5-flash-lite', cap: limit(env.SEARCH_AI_GEMINI_DAILY, 20) },
-    { id: 'groq', key: env.SEARCH_AI_GROQ_KEY, model: 'openai/gpt-oss-20b', cap: limit(env.SEARCH_AI_GROQ_DAILY, 100) }
+    { id: 'groq', key: env.SEARCH_AI_GROQ_KEY, model: 'openai/gpt-oss-20b', cap: limit(env.SEARCH_AI_GROQ_DAILY, 100) },
+    { id: 'cloudflare', key: /^[a-f0-9]{32}$/i.test(env.SEARCH_AI_CLOUDFLARE_ACCOUNT_ID || '') ? env.SEARCH_AI_CLOUDFLARE_KEY : '', account: env.SEARCH_AI_CLOUDFLARE_ACCOUNT_ID,
+      model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast', cap: limit(env.SEARCH_AI_CLOUDFLARE_DAILY, 100) }
   ].filter(p => db && p.key && p.cap && confirmed.includes(p.id));
   const cache = new Map(), pending = new Map(), visitors = new Map(), cooling = new Map();
   let turn = 0;
@@ -31,9 +33,11 @@ export function setupSearchAi(app, { db, lookup, env = process.env, fetchImpl = 
       // Reserve before awaiting the network, persist across application restarts.
       db.prepare('INSERT INTO search_ai_usage(day,provider,requests) VALUES(?,?,1) ON CONFLICT(day,provider) DO UPDATE SET requests=requests+1').run(day(), p.id);
       db.prepare('DELETE FROM search_ai_usage WHERE day < ?').run(new Date(now() - 86400000 * 7).toISOString().slice(0, 10));
-      const gemini = p.id === 'gemini';
-      const url = gemini ? `https://generativelanguage.googleapis.com/v1beta/models/${p.model}:generateContent` : 'https://api.groq.com/openai/v1/chat/completions';
+      const gemini = p.id === 'gemini', cloudflare = p.id === 'cloudflare';
+      const url = gemini ? `https://generativelanguage.googleapis.com/v1beta/models/${p.model}:generateContent`
+        : cloudflare ? `https://api.cloudflare.com/client/v4/accounts/${p.account}/ai/run/${p.model}` : 'https://api.groq.com/openai/v1/chat/completions';
       const body = gemini ? { systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 512, temperature: 0.2 } }
+        : cloudflare ? { messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }], max_tokens: 512, temperature: 0.2 }
         : { model: p.model, messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }], max_completion_tokens: 1024, reasoning_effort: 'low', temperature: 0.2 };
       try {
         const response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(12000),
@@ -51,7 +55,8 @@ export function setupSearchAi(app, { db, lookup, env = process.env, fetchImpl = 
           while (true) { const part = await reader.read(); if (part.done) break; size += part.value.length; if (size > 100000) { await reader.cancel(); throw Error('large'); } chunks.push(Buffer.from(part.value)); }
         } finally { reader.releaseLock(); }
         const result = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-        const answer = String(gemini ? (result.candidates?.[0]?.content?.parts || []).filter(x => !x.thought).map(x => x.text || '').join('\n') : result.choices?.[0]?.message?.content || '').trim().slice(0, 2500);
+        const answer = String(gemini ? (result.candidates?.[0]?.content?.parts || []).filter(x => !x.thought).map(x => x.text || '').join('\n')
+          : cloudflare ? (result.success === true ? result.result?.response || '' : '') : result.choices?.[0]?.message?.content || '').trim().slice(0, 2500);
         if (!answer) { cooling.set(p.id, now() + 60000); continue; }
         return { status: 'ready', answer, provider: p.id, sources: sources.map(({ excerpt, ...source }) => source) };
       } catch { cooling.set(p.id, now() + 60000); }

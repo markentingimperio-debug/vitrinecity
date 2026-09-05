@@ -43,7 +43,7 @@ Filtros Compras (Mercado Livre e Shopee), Redes sociais (Kwai, Instagram e TikTo
 
 ## Rateio opcional de IA
 
-Gemini e Groq podem explicar os trechos encontrados, somente quando o visitante pede. Não buscam páginas nem executam ferramentas. `/api/search/ai/status` informa se a função está configurada. Sem credenciais autorizadas, o botão fica oculto e nenhuma consulta de IA é feita.
+Gemini, Groq e Cloudflare Workers AI podem explicar os trechos encontrados, somente quando o visitante pede. Não buscam páginas nem executam ferramentas. `/api/search/ai/status` informa se a função está configurada. Sem credenciais autorizadas, o botão fica oculto e nenhuma consulta de IA é feita.
 
 No `.env` privado da VPS, configure `SEARCH_AI_GEMINI_KEY` e/ou `SEARCH_AI_GROQ_KEY` e confirme os provedores cujas contas permanecem no plano gratuito em `SEARCH_AI_FREE_PROVIDERS=gemini,groq`. Os padrões são Gemini 2.5 Flash Lite e Groq GPT OSS 20B. Confira disponibilidade e condições diretamente nas contas antes de habilitar. O software não consegue comprovar o plano de faturamento de uma chave; a ausência de cobrança depende também da configuração da conta no provedor. Não há cadastro, upgrade ou fallback pago automático.
 
@@ -54,3 +54,6 @@ O pedido e até cinco trechos públicos são enviados ao provedor escolhido; o v
 Validação do rateio: `npm run test:search` inclui fallback de 429, pausa, cache, limites por visitante, esgotamento diário, persistência após recriar o serviço e desativação sem confirmação do plano gratuito.
 
 Referências: https://docs.searxng.org/dev/search_api.html e https://docs.searxng.org/admin/installation-docker
+
+Cloudflare: configure SEARCH_AI_CLOUDFLARE_KEY, SEARCH_AI_CLOUDFLARE_ACCOUNT_ID e SEARCH_AI_CLOUDFLARE_DAILY=100. Inclua cloudflare em SEARCH_AI_FREE_PROVIDERS somente após confirmar Workers Free. Modelo fixo: @cf/meta/llama-3.1-8b-instruct-fp8-fast, com até 512 tokens de saída. O token deve ter somente Workers AI Read/Edit na conta selecionada. Não requer Worker público nem alteração de DNS. A cota do provedor é compartilhada pela conta; ao esgotar, o serviço gratuito rejeita chamadas. O módulo tenta outro provedor habilitado e mantém a busca normal quando todos esgotam. Testes cobrem o formato nativo da resposta, falhas nas duas direções, limites e validação do ID da conta.
+
