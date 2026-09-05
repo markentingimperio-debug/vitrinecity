@@ -3,6 +3,7 @@
   window.__vcAnalyticsLoaded = true;
   const CONSENT_KEY = 'vc_analytics_consent';
   const GOOGLE_KEY = 'vc_google_analytics_consent_v1';
+  const CONVERSION_KEY = 'vc_conversion_measurement_consent_v1';
   const googleEnabled = !!document.querySelector('script[data-vc-google-analytics="enabled"]');
   const SESSION_KEY = 'vc_analytics_session';
   const TOUCH_KEY = 'vc_analytics_first_touch_v1';
@@ -40,7 +41,7 @@
     if (!googleEnabled || googleRequested || !allowed() || read('localStorage', GOOGLE_KEY) !== 'accepted') return;
     googleRequested = true;
     const script = document.createElement('script');
-    script.type = 'module'; script.src = '/google-analytics.js?v=ga4-20260905';
+    script.type = 'module'; script.src = '/google-analytics.js?v=conversions-20260905';
     document.head.appendChild(script);
   };
   const send = (eventName, detail = {}) => {
@@ -80,10 +81,24 @@
         const headers = new Headers(init.headers === undefined && input instanceof Request ? input.headers : init.headers);
         headers.set('X-VC-Session', sid);
         headers.set('X-VC-Analytics-Consent', 'accepted');
+        if (read('localStorage', GOOGLE_KEY) === 'accepted' && read('localStorage', CONVERSION_KEY) === 'accepted') headers.set('X-VC-Google-Analytics-Consent', 'accepted');
         init = { ...init, headers };
       }
     } catch {}
-    return nativeFetch(input, init);
+    return nativeFetch(input, init).then(async response => {
+      try {
+        const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+        const paths = ['/api/auth/register', '/api/customer/register', '/api/leads', '/api/community/capture', '/api/contact', '/api/marketplace/checkout', '/api/marketplace/orders'];
+        if (!response.ok || url.origin !== location.origin || !paths.includes(url.pathname) || !allowed() || read('localStorage', GOOGLE_KEY) !== 'accepted' || read('localStorage', CONVERSION_KEY) !== 'accepted') return response;
+        const header = response.headers.get('X-VC-Measurement');
+        const receipts = header ? [JSON.parse(header)] : url.pathname === '/api/marketplace/orders' ? (await response.clone().json()).measurementReceipts : [];
+        if (receipts?.length) {
+          const { enqueueReceipts } = await import('/measurement-receipts.js');
+          enqueueReceipts(receipts);
+        }
+      } catch { /* Never forward request bodies or let optional measurement fail a form. */ }
+      return response;
+    });
   };
   let activeBanner = null;
   const showConsent = () => {
@@ -91,7 +106,7 @@
     const banner = document.createElement('aside');banner.id = 'vc-consent';
     activeBanner = banner;
     const message = googleEnabled
-      ? 'Com sua permissão, a VitrineCity e o Google Analytics usam cookies e dados de navegação para medir visitas às páginas públicas. Não enviamos campos de formulários ao Google. A medição é opcional.'
+      ? 'Com sua permissão, a VitrineCity e o Google Analytics medem visitas, cadastros, contatos comerciais e compras. Não enviamos campos de formulários ao Google. A medição é opcional.'
       : 'Dados opcionais nos ajudam a melhorar a cidade.';
     banner.innerHTML = `<div><strong>Privacidade</strong><p>${message}</p></div><div class="vc-consent-actions"><button type="button" data-choice="essential">Só essenciais</button><button type="button" data-choice="accepted">Aceitar medição</button></div>`;
     const style = document.createElement('style');style.textContent = `#vc-consent{box-sizing:border-box;position:fixed;z-index:99999;left:50%;bottom:12px;transform:translateX(-50%);width:min(760px,calc(100% - 24px));max-height:85vh;overflow:auto;padding:12px 14px;border-radius:14px;background:#071b3ff2;color:#fff;box-shadow:0 14px 38px #00132c66;display:flex;gap:14px;align-items:center;justify-content:space-between;font:13px/1.4 system-ui;backdrop-filter:blur(10px)}#vc-consent p{margin:3px 0 0;color:#d7e5ff}.vc-consent-actions{display:flex;gap:7px;flex:none}#vc-consent button{min-height:44px;border:1px solid #6f91c6;border-radius:9px;padding:8px 11px;background:transparent;color:#fff;font-weight:700;cursor:pointer}#vc-consent button:last-child{background:#1973ed;border-color:#1973ed}#vc-consent button:focus-visible{outline:3px solid #fff;outline-offset:2px}@media(max-width:600px){#vc-consent{flex-direction:column;align-items:stretch;gap:10px;font-size:12px}.vc-consent-actions button{flex:1}}`;
@@ -102,14 +117,16 @@
       write('localStorage', CONSENT_KEY, choice);
       if (googleEnabled) {
         write('localStorage', GOOGLE_KEY, choice);
+        write('localStorage', CONVERSION_KEY, choice);
         document.dispatchEvent(new Event('vc:measurement-consent'));
       }
+      if (choice === 'essential') { try { localStorage.removeItem('vc_measurement_pending_v1'); } catch {} }
       banner.remove(); style.remove(); activeBanner = null;
       if (choice === 'accepted') { loadExperiment(); loadGoogle(); }
     });
   };
   const consent = read('localStorage', CONSENT_KEY);
-  if (!consent || (googleEnabled && consent === 'accepted' && !read('localStorage', GOOGLE_KEY))) showConsent();
+  if (!consent || (googleEnabled && consent === 'accepted' && (!read('localStorage', GOOGLE_KEY) || (read('localStorage', GOOGLE_KEY) === 'accepted' && !read('localStorage', CONVERSION_KEY))))) showConsent();
   if (consent === 'accepted') { loadExperiment(); loadGoogle(); }
   if (googleEnabled) {
     const preferences = document.createElement('button');

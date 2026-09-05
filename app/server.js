@@ -25,6 +25,7 @@ import { originalCourse } from './course-content.js';
 import { setupAdminAnalytics } from './admin-analytics.js';
 import { setupOrganicAcquisition, recordAcquisitionSignup } from './organic-acquisition.js';
 import { injectPublicMeasurement } from './public-measurement.js';
+import { conversionHeader, orderMeasurementReceipts } from './conversion-measurement.js';
 import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marketplace-public.js';
 import { setupTrendRadar } from './trend-radar.js';
 import { setupDigitalPublisher } from './digital-publisher.js';
@@ -2835,6 +2836,7 @@ app.post('/api/leads', sameOriginOnly, (req, res) => {
     .run(name.trim().slice(0, 100), email.trim().toLowerCase().slice(0, 160), String(whatsapp).slice(0, 30), String(interest).slice(0, 80));
   recordConsent(req,{email,purpose:'marketing_communications',version:'privacy-2026-08-22',source:'lead_form',evidence:{interest:String(interest).slice(0,80)}});
   adminAnalytics.recordLead(req, String(interest).slice(0, 80));
+  conversionHeader(req, res, 'generate_lead');
   return res.status(201).json({ ok: true });
 });
 
@@ -2845,6 +2847,7 @@ app.post('/api/community/capture',sameOriginOnly,(req,res)=>{
   db.prepare('INSERT INTO leads (name,email,whatsapp,interest,consent) VALUES (?,?,?,?,1)').run(name,email,whatsapp,`grupo:${interest}`);
   recordConsent(req,{email,purpose:'whatsapp_community_invite',version:'privacy-2026-08-22',source:'community_capture',evidence:{interest}});
   adminAnalytics.recordLead(req,`grupo:${interest}`);
+  conversionHeader(req, res, 'generate_lead');
   const row=db.prepare(`SELECT whatsapp_group_url FROM omnichannel_automation_settings WHERE whatsapp_group_url LIKE 'https://chat.whatsapp.com/%' ORDER BY updated_at DESC LIMIT 1`).get();
   return res.status(201).json({ok:true,joinUrl:row?.whatsapp_group_url||'',message:row?.whatsapp_group_url?'Inscrição concluída. Entre no grupo pelo botão abaixo.':'Inscrição concluída. Enviaremos o convite assim que a próxima turma abrir.'});
 });
@@ -2882,6 +2885,7 @@ app.post('/api/contact', sameOriginOnly, (req, res) => {
     .run(name, email, whatsapp, subject, priority, accountReference, details);
   recordConsent(req,{email,purpose:'contact_request_processing',version:'privacy-2026-08-22',source:'contact_form',evidence:{subject}});
   adminAnalytics.recordLead(req, `Contato: ${subject}`);
+  if (['Cadastrar minha empresa', 'VitrineCity Ads', 'Cursos', 'Parceria'].includes(subject)) conversionHeader(req, res, 'generate_lead');
   return res.status(201).json({ ok: true, protocol: `VC-${String(result.lastInsertRowid).padStart(6,'0')}` });
 });
 
@@ -3015,6 +3019,7 @@ app.post('/api/auth/register', sameOriginOnly, (req, res) => {
     recordConsent(req,{userId,email:normalizedEmail,purpose:'adult_declaration',version:'adult-2026-08-22',source:'account_registration'});
     setSession(res, userId);
     recordAcquisitionSignup(db, req, userId);
+    conversionHeader(req, res, 'sign_up');
     return res.status(201).json({ ok: true });
   } catch (error) {
     if (String(error?.message || '').includes('UNIQUE')) return res.status(409).json({ error: 'Este e-mail já possui uma conta.' });
@@ -3031,7 +3036,7 @@ app.post('/api/customer/register', sameOriginOnly, (req, res) => {
   if(locationConsent&&!validLocation)return res.status(400).json({error:'A localização autorizada é inválida.'});
   const secret=managementSecret();if(secret.length<24)return res.status(503).json({error:'Cadastro seguro temporariamente indisponível.'});
   const fingerprint=createHmac('sha256',secret).update(`customer-cpf:${cpf}`).digest('hex');
-  try{const userId=db.transaction(()=>{const result=db.prepare(`INSERT INTO users(name,email,whatsapp,password_hash,adult_confirmed,cpf_fingerprint,cpf_last4) VALUES (?,?,?,?,1,?,?)`).run(name,normalizedEmail.slice(0,160),whatsapp,hashPassword(password),fingerprint,cpf.slice(-4));const id=Number(result.lastInsertRowid);db.prepare('INSERT INTO wallets(user_id,balance_units) VALUES (?,0)').run(id);db.prepare(`INSERT INTO customer_addresses(user_id,label,recipient_name,postal_code,street,number,complement,neighborhood,city,state,is_default,latitude,longitude,location_consent) VALUES (?,'Casa',?,?,?,?,?,?,?,?,1,?,?,?)`).run(id,name,address.postal,address.street,address.number,address.complement,address.neighborhood,address.city,address.state,locationConsent?latitude:null,locationConsent?longitude:null,locationConsent?1:0);return id;})();recordConsent(req,{userId,email:normalizedEmail,purpose:'account_terms',version:'terms-2026-08-22',source:'customer_registration'});recordConsent(req,{userId,email:normalizedEmail,purpose:'adult_declaration',version:'adult-2026-08-22',source:'customer_registration'});if(locationConsent)recordConsent(req,{userId,email:normalizedEmail,purpose:'customer_location',version:'privacy-2026-08-22',source:'customer_registration'});setSession(res,userId);recordAcquisitionSignup(db,req,userId);return res.status(201).json({ok:true});}catch(error){if(String(error?.message||'').includes('cpf_fingerprint'))return res.status(409).json({error:'Este CPF já possui uma conta.'});if(String(error?.message||'').includes('UNIQUE'))return res.status(409).json({error:'Este e-mail já possui uma conta.'});return res.status(500).json({error:'Não foi possível criar sua conta agora.'});}
+  try{const userId=db.transaction(()=>{const result=db.prepare(`INSERT INTO users(name,email,whatsapp,password_hash,adult_confirmed,cpf_fingerprint,cpf_last4) VALUES (?,?,?,?,1,?,?)`).run(name,normalizedEmail.slice(0,160),whatsapp,hashPassword(password),fingerprint,cpf.slice(-4));const id=Number(result.lastInsertRowid);db.prepare('INSERT INTO wallets(user_id,balance_units) VALUES (?,0)').run(id);db.prepare(`INSERT INTO customer_addresses(user_id,label,recipient_name,postal_code,street,number,complement,neighborhood,city,state,is_default,latitude,longitude,location_consent) VALUES (?,'Casa',?,?,?,?,?,?,?,?,1,?,?,?)`).run(id,name,address.postal,address.street,address.number,address.complement,address.neighborhood,address.city,address.state,locationConsent?latitude:null,locationConsent?longitude:null,locationConsent?1:0);return id;})();recordConsent(req,{userId,email:normalizedEmail,purpose:'account_terms',version:'terms-2026-08-22',source:'customer_registration'});recordConsent(req,{userId,email:normalizedEmail,purpose:'adult_declaration',version:'adult-2026-08-22',source:'customer_registration'});if(locationConsent)recordConsent(req,{userId,email:normalizedEmail,purpose:'customer_location',version:'privacy-2026-08-22',source:'customer_registration'});setSession(res,userId);recordAcquisitionSignup(db,req,userId);conversionHeader(req,res,'sign_up');return res.status(201).json({ok:true});}catch(error){if(String(error?.message||'').includes('cpf_fingerprint'))return res.status(409).json({error:'Este CPF já possui uma conta.'});if(String(error?.message||'').includes('UNIQUE'))return res.status(409).json({error:'Este e-mail já possui uma conta.'});return res.status(500).json({error:'Não foi possível criar sua conta agora.'});}
 });
 
 app.post('/api/auth/login', sameOriginOnly, (req, res) => {
@@ -4267,6 +4272,7 @@ app.post('/api/marketplace/shipping/quote', sameOriginOnly, async (req,res) => {
 });
 
 app.get('/api/marketplace/orders', requireUser, (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const orders = db.prepare(`SELECT o.*,s.business_name AS store_name
     FROM marketplace_orders o JOIN store_profiles s ON s.order_reference=o.store_reference
     WHERE o.buyer_user_id=? ORDER BY o.created_at DESC LIMIT 100`).all(req.user.id);
@@ -4274,7 +4280,7 @@ app.get('/api/marketplace/orders', requireUser, (req, res) => {
   const returns=db.prepare('SELECT id,reason,status,seller_note,requested_at,reviewed_at FROM marketplace_returns WHERE order_reference=? AND buyer_user_id=? ORDER BY id DESC');
   const delivery=db.prepare('SELECT status,courier_id courierId,delivered_at deliveredAt FROM local_delivery_jobs WHERE order_reference=?');
   const deliveryReviews=db.prepare("SELECT id,target_type targetType,rating,comment,moderation_status moderationStatus FROM verified_delivery_reviews WHERE order_reference=? ORDER BY target_type");
-  return res.json({ orders: orders.map(order => {const job=order.delivery_mode==='local'?delivery.get(order.reference):null;return {...order,customerConfirmedAt:order.customer_confirmed_at||null,
+  return res.json({ measurementReceipts: orderMeasurementReceipts(db, req, orders), orders: orders.map(order => {const job=order.delivery_mode==='local'?delivery.get(order.reference):null;return {...order,customerConfirmedAt:order.customer_confirmed_at||null,
     canConfirmDelivery:Boolean(job?.deliveredAt&&!order.customer_confirmed_at&&order.payment_status==='approved'),localDelivery:job,deliveryTracking:deliveryTracking(order.reference),deliveryReview:deliveryReviews.all(order.reference),alreadyReviewed:Boolean(deliveryReviews.all(order.reference).length),items:items.all(order.reference),returns:returns.all(order.reference,req.user.id)};}) });
 });
 app.get('/api/marketplace/orders/:reference/tracking',requireUser,(req,res)=>{const order=db.prepare('SELECT reference FROM marketplace_orders WHERE reference=? AND buyer_user_id=?').get(req.params.reference,req.user.id);return order?res.json({tracking:deliveryTracking(order.reference)}):res.status(404).json({error:'Pedido não encontrado.'});});
@@ -4407,6 +4413,9 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
         VALUES (?,?,?,?,?,?)`).run(reference,shippingQuote.distanceMeters,Math.max(0,Number.parseInt(shippingQuote.duration)||0),effectiveShippingCents,deliveryPlatformCents,deliveryCourierCents);
     });
     insertOrder();
+    adminAnalytics.recordOrderAttribution(req, reference, 'marketplace');
+    adminAnalytics.recordCheckout(req, reference, 'marketplace', productsCents);
+    conversionHeader(req, res, 'begin_checkout', { value: productsCents / 100 });
     return res.status(201).json({ reference, checkoutUrl: payment.init_point, shipping:shippingQuote });
   } catch (error) {
     console.error('Marketplace checkout error', error?.message || 'unknown');

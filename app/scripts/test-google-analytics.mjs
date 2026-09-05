@@ -10,7 +10,7 @@ test('public allowlist excludes account, payment, forms and unknown routes', () 
     // Browser-normalized paths are used by the loader.
     assert.equal(measurementPage(new URL(route, 'https://vitrinecity.com').pathname), null, route);
   }
-  for (const route of ['/', '/index.html', '/social', '/loja.html', '/guias/plantas-em-vasos.html', '/produto/123', '/ofertas/adubo', '/artigo/novo']) assert.ok(measurementPage(route), route);
+  for (const route of ['/', '/index.html', '/porque-vitrinecity.html', '/social', '/loja.html', '/guias/plantas-em-vasos.html', '/produto/123', '/ofertas', '/ofertas/adubo', '/artigo/novo']) assert.ok(measurementPage(route), route);
 });
 test('only bounded campaign identifiers survive; user content and private referrers do not', () => {
   const url = new URL('https://vitrinecity.com/produto/nome-de-pessoa?email=secret%40example.com&token=abc&q=confidential&utm_source=meta&utm_medium=paid_social&utm_campaign=campanha_01&utm_term=private%40mail.com&gclid=Safe-ID_123#private-form');
@@ -22,7 +22,7 @@ test('only bounded campaign identifiers survive; user content and private referr
 });
 test('injection covers static and dynamic HTML once and leaves private/non-HTML responses untouched', () => {
   const original = '<html><body>Welcome</body></html>';
-  for (const route of ['/', '/guias/plantas-em-vasos.html', '/ofertas/plantas']) {
+  for (const route of ['/', '/porque-vitrinecity.html', '/guias/plantas-em-vasos.html', '/ofertas/plantas']) {
     const html = injectPublicMeasurement(original, route);
     assert.match(html, /data-vc-google-analytics="enabled"/); assert.equal(injectPublicMeasurement(html, route), html);
     assert.equal((injectPublicMeasurement('<body><script src="/analytics.js" defer></script><script src="/analytics.js?v=old"></script></body>', route).match(/src="\/analytics\.js/g) || []).length, 1);
@@ -31,11 +31,11 @@ test('injection covers static and dynamic HTML once and leaves private/non-HTML 
   assert.equal(injectPublicMeasurement('{"ok":true}', '/'), '{"ok":true}');
 });
 
-const source = readFileSync(new URL('../public/google-analytics.js', import.meta.url), 'utf8').replace(/^import .*\r?\n/, '');
+const source = readFileSync(new URL('../public/google-analytics.js', import.meta.url), 'utf8').replace(/^import .*\r?\n/gm, '');
 function run({ consent = 'accepted', googleConsent = 'accepted', href = 'https://vitrinecity.com/?email=secret%40example.com&utm_source=meta', blocked = false } = {}) {
   const values = new Map([['vc_analytics_consent', consent], ['vc_google_analytics_consent_v1', googleConsent]]);
   const listeners = {}, scripts = [];
-  const sandbox = { measurementContext, location: new URL(href), Date,
+  const sandbox = { measurementContext, flushReceipts: () => {}, clearPendingReceipts: () => {}, location: new URL(href), Date,
     localStorage: { getItem: key => { if (blocked) throw Error('unavailable'); return values.get(key); } },
     addEventListener: (name, fn) => { listeners[name] = fn; },
     document: { referrer: 'https://ref.example/private?token=secret', createElement: () => ({}),

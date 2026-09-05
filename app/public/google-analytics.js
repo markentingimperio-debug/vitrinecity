@@ -1,4 +1,5 @@
 import { measurementContext } from './measurement-policy.js';
+import { flushReceipts, clearPendingReceipts } from './measurement-receipts.js';
 
 // Public measurement ID, verified in the Vitrine City web stream (not an API secret).
 const id = 'G-0V9KJQMH0V';
@@ -9,6 +10,7 @@ const allowed = () => {
 };
 function syncConsent() {
   window[`ga-disable-${id}`] = !allowed();
+  if (!allowed()) clearPendingReceipts();
 }
 if (context && ['vitrinecity.com', 'www.vitrinecity.com'].includes(location.hostname) && allowed() && !window.__vcGoogleAnalyticsLoaded) {
   window.__vcGoogleAnalyticsLoaded = true;
@@ -27,6 +29,9 @@ if (context && ['vitrinecity.com', 'www.vitrinecity.com'].includes(location.host
   gtag('js', new Date());
   gtag('config', id, { ...context, send_page_view: false, allow_google_signals: false, allow_ad_personalization_signals: false });
   gtag('event', 'page_view', { ...context, send_to: id });
+  const flush = () => flushReceipts(gtag, context, id);
+  document.addEventListener('vc:measurement-receipts', flush);
+  flush();
   const script = document.createElement('script');
   script.async = true;
   script.referrerPolicy = 'strict-origin';

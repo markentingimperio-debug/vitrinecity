@@ -5,7 +5,7 @@ export function measurementPage(pathname) {
     '/pesquisar.html', '/buscar.html', '/plantas-e-jardinagem', '/noticias', '/receitas', '/esportes',
     '/tecnologia', '/inteligencia-artificial', '/entretenimento', '/conteudo', '/livros',
     '/centro-educacional.html', '/para-empresas.html', '/solucoes.html', '/como-funciona.html',
-    '/sobre.html', '/contato.html', '/afiliados.html', '/guias/plantas-em-vasos.html']);
+    '/sobre.html', '/contato.html', '/afiliados.html', '/porque-vitrinecity.html', '/ofertas', '/guias/plantas-em-vasos.html']);
   if (fixed.has(pathname)) return { path: pathname === '/index.html' ? '/' : pathname, title: 'VitrineCity — ' + (pathname === '/' || pathname === '/index.html' ? 'Início' : pathname.replace(/^\//, '').replace(/\.html$/, '').replaceAll('-', ' ')) };
   // Group public detail pages. Do not export user-authored slugs or store identifiers.
   for (const prefix of ['produto', 'ofertas', 'artigo', 'livro', 'loja', 'cidade']) {
