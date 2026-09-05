@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 // Mock only the dynamic-import boundary; the real receipt module has its own behavioral suite.
 const source = readFileSync(new URL('../public/analytics.js', import.meta.url), 'utf8')
-  .replace("import('/measurement-receipts.js')", 'Promise.resolve({ enqueueReceipts })');
+  .replace("import('/measurement-receipts.js')", 'loadMeasurementModule()');
 const storage = seed => { const values = new Map(Object.entries(seed || {})); return { getItem: k => values.get(k) || null, setItem: (k, v) => values.set(k, String(v)), values }; };
 function page({ consent, googleConsent, conversionConsent, googleEnabled = false, session = storage(), href = 'https://vitrinecity.com/guias/plantas-em-vasos.html?utm_source=instagram&utm_medium=organic_social&utm_campaign=plantas_vasos', blocked = false, responseFactory } = {}) {
   const calls = [], elements = [], scripts = [], listeners = {}, receipts = [];
@@ -18,7 +18,7 @@ function page({ consent, googleConsent, conversionConsent, googleEnabled = false
     createElement: element, querySelector: s => googleEnabled && s === 'script[data-vc-google-analytics="enabled"]' ? {} : null,
     addEventListener: (name, fn) => { listeners[name] = fn; }, dispatchEvent: e => listeners[e.type]?.(e) };
   const sandbox = { document, location: new URL(href), localStorage: local, sessionStorage: session, crypto: webcrypto, URL, URLSearchParams, Headers, Request, Uint8Array, Event,
-    enqueueReceipts: values => receipts.push(...values),
+    loadMeasurementModule: async () => ({ enqueueReceipts: values => receipts.push(...values) }),
     fetch: async (input, init) => { calls.push({ input, init }); return responseFactory?.(input) || { json: async () => ({ experiment: null }) }; } };
   sandbox.window = sandbox; vm.createContext(sandbox); vm.runInContext(source, sandbox);
   return { sandbox, calls, elements, scripts, listeners, local, session, receipts };
@@ -103,7 +103,7 @@ test('response observer ignores failures, foreign APIs and form bodies, and leav
   });
   await settle();
   const response = await p.sandbox.fetch('/api/customer/register', { method: 'POST', body: JSON.stringify({ password: 'secret' }) });
-  assert.equal((await response.json()).ok, true); assert.deepEqual(p.receipts, [receipt]);
+  assert.equal((await response.json()).ok, true); assert.deepEqual(JSON.parse(JSON.stringify(p.receipts)), [receipt]);
   status = 409; await p.sandbox.fetch('/api/customer/register');
   await p.sandbox.fetch('https://third.example/api/customer/register');
   assert.equal(p.receipts.length, 1);
