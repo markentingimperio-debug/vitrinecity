@@ -1,4 +1,5 @@
 import express from 'express';
+import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { setupDiscoverySearch } from './discovery-search.js';
 import { setupMetasearch } from './metasearch.js';
 import { createSearchContentProvider } from './search-content.js';
@@ -1633,7 +1634,7 @@ function recordAdminLogin(req,email,success,reason){
   db.prepare("DELETE FROM admin_login_audit WHERE created_at<datetime('now','-180 days')").run();
 }
 
-const ADMIN_HTML_PATHS=new Set(['/admin','/admin.html','/admin-agentes.html','/admin-sales-agents.html','/admin-quizzes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html']);
+const ADMIN_HTML_PATHS=new Set(['/admin-vendas-afiliadas.html','/admin','/admin.html','/admin-agentes.html','/admin-sales-agents.html','/admin-quizzes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html']);
 
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
@@ -2084,6 +2085,7 @@ app.use((req, res, next) => {
 });
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly, allowAttempt });
+const affiliateCatalog = setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, siteUrl: SITE_URL, publicDir: path.join(dir, 'public') });
 app.use('/vendor/three', express.static(path.join(dir, 'node_modules/three/build')));
 app.use('/uploads/social-media', express.static(socialMediaDir, { maxAge: '30d', immutable: true, fallthrough: false }));
 app.use('/uploads/store-assets', express.static(path.join(dataDir, 'store-assets'), {
@@ -2162,6 +2164,7 @@ app.get('/sitemap.xml', (_req, res) => {
   const cities = db.prepare(`SELECT DISTINCT city FROM social_posts
     WHERE status='ready' AND TRIM(city)<>'' ORDER BY city`).all();
   const dynamicPaths = [
+    ...affiliateCatalog.sitemapPaths(),
     ...stores.map(store => publicStorePath(store)),
     ...products.map(product => `/produto/${product.id}/${marketplaceSlug(product.name, 'produto')}`),
     ...categories.map(row => `/categoria/${marketplaceSlug(row.category, 'categoria')}`),
@@ -2664,7 +2667,8 @@ function publicAddress(row) {
     city: row.city, state: row.state, isDefault: Boolean(row.is_default) };
 }
 
-setupDiscoverySearch(app, db, publicStorePath, createSearchContentProvider(dataDir, () => managedCourses(true)));
+const existingSearchContent = createSearchContentProvider(dataDir, () => managedCourses(true));
+setupDiscoverySearch(app, db, publicStorePath, () => [...affiliateCatalog.searchContent(), ...existingSearchContent()]);
 setupMetasearch(app, { db });
 
 app.get('/api/search/suggestions', (req, res) => {
