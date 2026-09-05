@@ -1,3 +1,5 @@
+import { integrationHealth } from './integration-health.js';
+
 export function recordOperation(db,metric,value=1){
   try{db.prepare(`INSERT INTO platform_operations_daily(day,metric,count,total) VALUES (date('now'),?,1,?)
     ON CONFLICT(day,metric) DO UPDATE SET count=count+1,total=total+excluded.total`).run(metric,value);}catch{}
@@ -21,6 +23,7 @@ export function setupPlatformOperations({app,db,requireAdmin,sameOriginOnly,publ
   app.get('/admin-saude.html',requireAdmin,(_req,res)=>res.sendFile(publicDir+'/admin-saude.html'));
   app.get('/api/admin/platform-health',requireAdmin,(_req,res)=>{
     res.set('Cache-Control','no-store').json({uptimeSeconds:Math.round(process.uptime()),
+      integrations:integrationHealth(db),
       metrics:db.prepare("SELECT metric,SUM(count) count,SUM(total) total FROM platform_operations_daily WHERE day>=date('now','-7 days') GROUP BY metric").all(),
       affiliates:db.prepare("SELECT status,health,COUNT(*) count,SUM(clicks) clicks FROM affiliate_catalog GROUP BY status,health").all(),
       linksToReview:db.prepare("SELECT slug,title,health,checked_at FROM affiliate_catalog WHERE status='published' AND health IN ('broken','review','unchecked') ORDER BY checked_at LIMIT 30").all(),

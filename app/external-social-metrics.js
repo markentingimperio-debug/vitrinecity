@@ -1,3 +1,5 @@
+import { classifyIntegrationFailure } from './integration-health.js';
+
 export const OFFICIAL_METRIC_PROVIDERS = Object.freeze([
   { id: 'instagram', label: 'Instagram', implemented: true },
   { id: 'facebook', label: 'Facebook', implemented: true },
@@ -95,10 +97,12 @@ async function metaRequest(url, { fetchImpl, timeoutMs }) {
   const data = await response.json().catch(() => null);
   if (!response?.ok) {
     const detail = data?.error || {};
+    const diagnosticCode = classifyIntegrationFailure({status: response.status, providerCode: detail.code, message: detail.message});
     console.error('Meta metrics request rejected', JSON.stringify({ status:Number(response?.status)||502,
-      code:Number(detail.code)||0, subcode:Number(detail.error_subcode)||0,
-      type:String(detail.type||'').slice(0,80), message:String(detail.message||'').slice(0,240) }));
-    throw new Error(`meta_api_${Number(response?.status) || 502}`);
+      code:Number(detail.code)||0, subcode:Number(detail.error_subcode)||0, diagnosticCode }));
+    const error = new Error(`meta_api_${Number(response?.status) || 502}`);
+    error.diagnosticCode = diagnosticCode;
+    throw error;
   }
   if (!data || typeof data !== 'object') throw new Error('meta_api_invalid_response');
   return data;
@@ -142,7 +146,7 @@ export async function fetchMetaAggregatedInsights({
     let pageData;
     try { pageData = await metaRequest(pageUrl, { fetchImpl, timeoutMs }); }
     catch (error) {
-      if (error.message !== 'meta_api_400') { errors.push(error); continue; }
+      if (error.message !== 'meta_api_400' || ['permissions','authentication','access_blocked'].includes(error.diagnosticCode)) { errors.push(error); continue; }
       const basicPageUrl = metaUrl(apiVersion, `${pageId}/posts`,
         'id,created_time,reactions.limit(0).summary(true),comments.limit(0).summary(true),shares',
         token, Math.min(100, limit));
@@ -165,7 +169,7 @@ export async function fetchMetaAggregatedInsights({
     let instagramData;
     try { instagramData = await metaRequest(instagramUrl, { fetchImpl, timeoutMs }); }
     catch (error) {
-      if (error.message !== 'meta_api_400') { errors.push(error); continue; }
+      if (error.message !== 'meta_api_400' || ['permissions','authentication','access_blocked'].includes(error.diagnosticCode)) { errors.push(error); continue; }
       const basicInstagramUrl = metaUrl(apiVersion, `${instagramId}/media`,
         'id,timestamp,media_type,like_count,comments_count', token, Math.min(100, limit));
       try { instagramData = await metaRequest(basicInstagramUrl, { fetchImpl, timeoutMs }); }

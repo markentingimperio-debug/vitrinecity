@@ -1,1 +1,39 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Saúde da plataforma | VitrineCity</title><style>body{margin:0;background:#f4f8fd;color:#071f4b;font:16px/1.55 Arial,sans-serif}header,main{max-width:1080px;margin:auto;padding:24px}header{display:flex;justify-content:space-between}a{color:#145abd}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}.card,section{background:white;padding:22px;border:1px solid #d5e2f1;border-radius:16px;margin-bottom:20px}.card strong{display:block;font-size:30px}.muted{color:#526b8b}button{padding:12px 18px;background:#1768e6;color:white;border:0;border-radius:10px;cursor:pointer}li{margin:12px 0}</style><script src="/admin-saude.js" defer></script></head><body><header><b>VitrineCity · Operação</b><nav><a href="/admin.html">Painel</a> · <a href="/admin-vendas-afiliadas.html">Afiliados</a></nav></header><main><h1>Saúde da plataforma</h1><p>Visão dos últimos sete dias para acompanhar falhas, buscas e ofertas.</p><button id="refresh">Atualizar</button><p id="status" role="status">Carregando…</p><div id="cards" class="cards"></div><section><h2>Ofertas para revisar</h2><p class="muted">Endereço bloqueado ou sem resposta não confirma falta de estoque.</p><ul id="links"></ul></section><section><h2>Avisos aos buscadores</h2><p id="indexnow"></p><p class="muted">O recebimento pelo IndexNow não confirma indexação. A produção diária de conteúdo ainda depende do Codex e Chrome deste computador.</p></section><p class="muted">Tempos de carregamento são amostras de visitantes que aceitaram analytics. Não são uma medição completa de Core Web Vitals. Cliques de afiliados não representam vendas confirmadas.</p></main></body></html>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Saúde da plataforma | VitrineCity</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f4f8fd;color:#071f4b;font:16px/1.55 Arial,sans-serif}
+    header,main{max-width:1080px;margin:auto;padding:24px}header{display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px}
+    a{color:#145abd}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:16px}
+    .card,section{background:white;padding:22px;border:1px solid #d5e2f1;border-radius:16px;margin-bottom:20px;min-width:0;overflow-wrap:anywhere}
+    .card strong{display:block;font-size:30px}.muted{color:#526b8b}
+    button{padding:12px 18px;background:#1768e6;color:white;border:0;border-radius:10px;cursor:pointer}
+    li{margin:12px 0}.integration{margin:0;padding:16px}.integration h3{font-size:17px;margin:0 0 12px}
+    .integration p{margin:10px 0}.integration a{display:inline-block;padding:8px 0}
+    .badge{display:inline-block;padding:4px 10px;border-radius:8px;font-size:13px;font-weight:bold;background:#e7edf5;color:#354962}
+    .badge.completed{background:#e5f4ea;color:#175b2d}.badge.failed,.badge.stalled{background:#fff0eb;color:#9d3214}
+    .badge.stale{background:#fff5d6;color:#755500}.badge.running{background:#eaf1ff;color:#164e9c}
+    a:focus-visible,button:focus-visible{outline:3px solid #e29b00;outline-offset:4px}
+  </style>
+  <script src="/admin-saude.js?v=2" defer></script>
+</head>
+<body>
+  <header><b>VitrineCity · Operação</b><nav><a href="/admin.html">Painel</a> · <a href="/admin-vendas-afiliadas.html">Afiliados</a></nav></header>
+  <main>
+    <h1>Saúde da plataforma</h1><p>Visão dos últimos sete dias para acompanhar falhas, buscas e ofertas.</p>
+    <button id="refresh">Atualizar</button><p id="status" role="status">Carregando…</p>
+    <div id="cards" class="cards"></div>
+    <section aria-labelledby="integrations-title">
+      <h2 id="integrations-title">Integrações e pendências</h2>
+      <p class="muted">Resultados de operações reais, sem disparar consultas pagas ou publicações. A observação do OpenRouter começa a cada reinício; as métricas sociais usam o histórico salvo.</p>
+      <div id="integrations" class="cards"></div>
+    </section>
+    <section><h2>Ofertas para revisar</h2><p class="muted">Endereço bloqueado ou sem resposta não confirma falta de estoque.</p><ul id="links"></ul></section>
+    <section><h2>Avisos aos buscadores</h2><p id="indexnow"></p><p class="muted">O recebimento pelo IndexNow não confirma indexação. A produção diária de conteúdo ainda depende do Codex e Chrome deste computador.</p></section>
+    <p class="muted">Tempos de carregamento são amostras de visitantes que aceitaram analytics. Não são uma medição completa de Core Web Vitals. Cliques de afiliados não representam vendas confirmadas.</p>
+  </main>
+</body>
+</html>

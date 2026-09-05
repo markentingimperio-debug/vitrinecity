@@ -1,4 +1,5 @@
 import { setupProductionHardening } from './production-hardening.js';
+import { integrationObserver, openRouterOperation } from './integration-health.js';
 import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { setupDiscoverySearch } from './discovery-search.js';
@@ -4114,6 +4115,10 @@ function openRouterHeaders() {
 }
 
 async function openRouterRequest(url, options = {}, timeout = 60000) {
+  return integrationObserver.run(openRouterOperation(url), () => performOpenRouterRequest(url, options, timeout));
+}
+
+async function performOpenRouterRequest(url, options = {}, timeout = 60000) {
   if (AI_PROVIDER !== 'openrouter' || !AI_API_KEY) {
     const error = new Error('Configure OPENROUTER_API_KEY na VPS.'); error.status = 503; throw error;
   }
@@ -7397,7 +7402,7 @@ async function syncOfficialMetaMetrics(triggerType='admin'){
         imported_count=?,finished_at=CURRENT_TIMESTAMP WHERE id=?`).run(imported[provider],runIds[provider]);
       return {ok:true,provider:'meta',imported,measuredAt:result.measuredAt};
     }catch(error){
-      const code=String(error?.message||'meta_sync_failed').slice(0,80);
+      const code=String(error?.diagnosticCode||error?.message||'meta_sync_failed').slice(0,80);
       for(const provider of ['facebook','instagram'])db.prepare(`UPDATE social_external_sync_runs SET status='failed',
         error_code=?,finished_at=CURRENT_TIMESTAMP WHERE id=?`).run(code,runIds[provider]);
       throw error;
