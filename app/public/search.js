@@ -89,6 +89,13 @@
   }
   function renderLocal(data) {
     local.replaceChildren();
+    for (const item of data.contents || []) {
+      const card = node('article',undefined,'local-card'), heading = node('h3');
+      const affiliate = item.kind === 'affiliate';
+      const a = link(item.title,item.url,!affiliate); if (affiliate && a.tagName === 'A') a.rel = 'sponsored noopener noreferrer';
+      heading.append(a); card.append(node('small',affiliate?'OFERTA DE AFILIADO · Podemos receber comissão':'CONTEÚDO DA VITRINE'),heading,node('p',item.description));
+      local.append(card);
+    }
     for (const [key, title] of [['stores', 'Lojas'], ['products', 'Produtos']]) {
       const rows = Array.isArray(data[key]) ? data[key] : [];
       if (!rows.length) continue;
@@ -129,7 +136,8 @@
       if (!response.ok) throw new Error('search_failed');
       const data = await response.json(); if (run !== version) return;
       renderLocal(data);
-      const count = (data.stores?.length || 0) + (data.products?.length || 0);
+      const count = (data.stores?.length || 0) + (data.products?.length || 0) + (data.contents?.length || 0);
+      if (filter === 'all') $('local-section').hidden = count === 0;
       if(filter==='local')$('search-status').textContent = count + ' resultados na Vitrine para “' + value + '”.';
     } catch (error) {
       if (error.name === 'AbortError' || run !== version) return;
@@ -183,7 +191,7 @@
           .filter(item=>{const key=item.label?.toLocaleLowerCase();if(!key||seen.has(key))return false;seen.add(key);return true;}).slice(0,10);
         suggestions.replaceChildren(...options.map((item,index) => {
           const el = node('li',item.label); el.id='suggestion-'+index;el.role='option';el.setAttribute('aria-selected','false');
-          el.append(node('small',[item.type==='web'?'Sugestão de pesquisa':item.type==='store'?'Loja da Vitrine':'Produto da Vitrine',item.category].filter(Boolean).join(' · ')));
+          el.append(node('small',[item.type==='web'?'Sugestão de pesquisa':item.type==='store'?'Loja da Vitrine':item.type==='content'?'Conteúdo da Vitrine':'Produto da Vitrine',item.category].filter(Boolean).join(' · ')));
           el.addEventListener('pointerdown',e=>e.preventDefault());el.addEventListener('click',()=>search(item.label));return el;
         }));
         suggestions.hidden = !options.length;query.setAttribute('aria-expanded',String(Boolean(options.length)));

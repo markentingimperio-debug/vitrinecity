@@ -1,13 +1,16 @@
 // VitrineRank v1: explainable local relevance, using only published inventory.
 export function normalizeSearch(value) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
+    .toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-export function setupDiscoverySearch(app, db, publicStorePath) {
+export function setupDiscoverySearch(app, db, publicStorePath, contentProvider = () => []) {
   db.function('vc_normalize', { deterministic: true }, normalizeSearch);
   function search(query, city) {
-    const terms = normalizeSearch(query).split(' ').filter(Boolean).slice(0, 8);
+    const stopWords = new Set(['como','fazer','um','uma','de','do','da','para','com','o','a','os','as','e','em','no','na','quero','comprar']);
+    const words = normalizeSearch(query).split(' ').filter(Boolean);
+    const relevant = words.filter(word => !stopWords.has(word));
+    const terms = (relevant.length ? relevant : words).slice(0, 8);
     if (normalizeSearch(query).length < 2) return { stores: [], products: [] };
     const location = normalizeSearch(city);
     const match = expression => terms.map(() => `instr(vc_normalize(${expression}), ?) > 0`).join(' AND ');
@@ -38,13 +41,15 @@ export function setupDiscoverySearch(app, db, publicStorePath) {
         sp.name,sp.id LIMIT 60`).all(normalizeSearch(query), normalizeSearch(query), location, location, ...terms)
       .map(row => ({ ...row, productUrl: `/produto/${row.id}/${normalizeSearch(row.name).replaceAll(' ', '-') || 'produto'}`,
         rankReason: row.verifiedReviews ? 'Relevância e avaliações de compras verificadas' : 'Correspondência com a sua busca' }));
-    return { stores, products };
+    const contents = contentProvider().filter(item => terms.every(term => normalizeSearch([item.title,item.description,item.keywords].filter(Boolean).join(' ')).includes(term)))
+      .slice(0, 20);
+    return { stores, products, contents };
   }
   app.get('/api/discovery/search/suggestions', (req, res) => {
     const query = String(req.query.q || '').trim().slice(0, 80);
-    const { stores, products } = search(query, req.query.city);
+    const { stores, products, contents = [] } = search(query, req.query.city);
     const seen = new Set();
-    const suggestions = [...stores.slice(0, 4).map(s => ({ label: s.name, type: 'store', category: s.segment, city: s.city })),
+    const suggestions = [...contents.slice(0, 3).map(item => ({ label: item.title, type: 'content', category: item.kind })),...stores.slice(0, 4).map(s => ({ label: s.name, type: 'store', category: s.segment, city: s.city })),
       ...products.slice(0, 6).map(p => ({ label: p.name, type: 'product', category: p.category, city: p.city }))]
       .filter(item => { const key = normalizeSearch(item.label); if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, 8);
     res.json({ suggestions });

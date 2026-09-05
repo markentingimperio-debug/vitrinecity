@@ -18,7 +18,7 @@ for (const [id,ref,name,active] of [[1,'published','Bolo de café',1],[2,'publis
   db.prepare('INSERT INTO store_products VALUES (?,?,?,?,?,?,?,?)').run(id,ref,name,'Receita especial','Cozinha',2000,'',active);
 }
 db.exec("INSERT INTO marketplace_product_reviews VALUES (2,5,'published',1),(2,5,'published',1),(1,5,'published',0),(1,5,'pending',1)");
-const app = express();setupDiscoverySearch(app,db,row=>'/loja/'+row.order_reference);
+const app = express();setupDiscoverySearch(app,db,row=>'/loja/'+row.order_reference,()=>[{title:'Bolo simples',description:'Receita publicada',url:'/receitas/bolo',kind:'recipe'}]);
 const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
 const origin='http://127.0.0.1:'+server.address().port;
 const get=async(route,q,city='')=>{const r=await fetch(origin+route+'?'+new URLSearchParams({q,city}));assert.equal(r.status,200);return r.json();};
@@ -38,6 +38,9 @@ try {
   assert.equal((await get('/api/discovery/search','%')).products.length,0);
   assert.equal((await get('/api/discovery/search',"' OR 1=1 --")).products.length,0);
   assert.equal((await get('/api/discovery/search','x')).stores.length,0);
-  assert.equal((await get('/api/discovery/search','como fazer bolo')).products.length,0,'Recipes must not be fabricated from local products.');
+  result=await get('/api/discovery/search','como fazer bolo');
+  assert.equal(result.contents[0].url,'/receitas/bolo');
+  assert.deepEqual(new Set(result.products.map(p=>p.id)),new Set([1,2,4,6]),'Related inventory remains products, separately from published recipes.');
+  assert.equal(result.contents.length,1,'Only the explicitly published content is a recipe.');
   console.log('discovery-search: all behavioral checks passed');
 } finally { await new Promise(resolve=>server.close(resolve));db.close(); }

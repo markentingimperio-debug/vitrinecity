@@ -37,6 +37,8 @@ Os testes automatizados usam respostas controladas para validar falhas, cache e 
 
 ## Plataformas e redes
 
+Resultados relevantes da Vitrine aparecem antes da web. Cursos ativos são incluídos automaticamente. Para indexar receitas, notícias, esportes e artigos próprios já publicados, ou ofertas de afiliado aprovadas, o catálogo opcional `/data/search-content.json` aceita uma lista com `title`, `description`, `keywords`, `kind`, `url` e `status: "published"`. Tipos: `recipe`, `news`, `sports`, `article`, `affiliate`. Conteúdos próprios devem usar caminhos públicos sob `/receitas/`, `/noticias/`, `/esportes/`, `/artigos/` ou `/conteudo/`; o catálogo não cria essas páginas. URLs afiliadas devem ser os links HTTPS legítimos da conta. A oferta recebe identificação de afiliado e `rel=sponsored`. Não há links ou afiliações fictícias cadastradas. O arquivo permanece no volume de dados e alterações válidas são recarregadas sem reiniciar.
+
 Filtros Compras (Mercado Livre e Shopee), Redes sociais (Kwai, Instagram e TikTok) e seletor individual restringem a consulta aos domínios oficiais e filtram URLs retornadas. São resultados públicos indexados, não uma integração com catálogos privados, preços em tempo real ou feeds autenticados. Domínios parecidos de terceiros não passam pelo filtro. A interface apresenta o domínio de destino, não o nome do buscador intermediário.
 
 ## Rateio opcional de IA
