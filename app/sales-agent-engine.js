@@ -16,9 +16,16 @@ export function setupSalesAgentEngine({app,db,requireAdmin}){
   CREATE INDEX IF NOT EXISTS idx_sales_agent_events_agent ON sales_agent_events(agent_id,id);`);
   const columns=db.prepare('PRAGMA table_info(marketplace_orders)').all().map(x=>x.name);
   if(!columns.includes('sales_agent_code'))db.exec("ALTER TABLE marketplace_orders ADD COLUMN sales_agent_code TEXT NOT NULL DEFAULT ''");
+const omniColumns=db.prepare('PRAGMA table_info(omnichannel_automation_jobs)').all().map(x=>x.name);
+if(!omniColumns.includes('sales_agent_code'))db.exec("ALTER TABLE omnichannel_automation_jobs ADD COLUMN sales_agent_code TEXT NOT NULL DEFAULT ''");
+const bridgeMarker='[SALES_AGENT_BRIDGE]';
+const instagramSettings=db.prepare("SELECT enabled,instructions FROM omnichannel_automation_settings WHERE channel='instagram'").get();
+if(instagramSettings?.enabled&&!String(instagramSettings.instructions||'').includes(bridgeMarker))db.prepare("UPDATE omnichannel_automation_settings SET instructions=instructions||?,approval_required=1,updated_at=CURRENT_TIMESTAMP WHERE channel='instagram'").run('\n'+bridgeMarker+' O Vendedor Autônomo 01 prepara convites somente após interesse real, sem spam ou promessas. Toda resposta exige aprovação humana.');
+const facebookSettings=db.prepare("SELECT enabled,instructions FROM omnichannel_automation_settings WHERE channel='facebook'").get();
+if(facebookSettings?.enabled&&!String(facebookSettings.instructions||'').includes(bridgeMarker))db.prepare("UPDATE omnichannel_automation_settings SET instructions=instructions||?,approval_required=1,updated_at=CURRENT_TIMESTAMP WHERE channel='facebook'").run('\n'+bridgeMarker+' O Vendedor Autônomo 01 responde interações e mensagens elegíveis do Facebook, convidando somente após interesse real. Sem spam ou promessas; toda resposta exige aprovação humana.');
   if(!db.prepare('SELECT 1 FROM sales_agents LIMIT 1').get())db.prepare(`INSERT INTO sales_agents(code,name,algorithm_json) VALUES (?,?,?)`).run(token(),'Vendedor Autônomo 01',JSON.stringify(BASE_ALGORITHM));
 
-  function lifecycle(){
+  function lifecycle(){const channelAgent=db.prepare("SELECT code FROM sales_agents WHERE status='active' ORDER BY tier DESC,profit_cents DESC,id LIMIT 1").get();if(channelAgent)db.prepare("UPDATE omnichannel_automation_jobs SET sales_agent_code=? WHERE channel IN ('instagram','facebook') AND status IN ('pending','awaiting_approval') AND sales_agent_code=''").run(channelAgent.code);
     const orders=db.prepare(`SELECT o.reference,o.sales_agent_code,o.products_cents,
       MAX(0,o.platform_percent_cents+o.platform_fixed_cents-o.return_operation_cents) profit_cents
       FROM marketplace_orders o WHERE o.payment_status='approved' AND o.sales_agent_code<>''`).all();
@@ -33,6 +40,6 @@ export function setupSalesAgentEngine({app,db,requireAdmin}){
     const qualified=db.prepare("SELECT COUNT(*) n FROM sales_agents WHERE tier='standard' AND revenue_cents>=1000000").get().n,superCount=db.prepare("SELECT COUNT(*) n FROM sales_agents WHERE tier='super'").get().n;
     if(qualified>=10&&!superCount){const best=db.prepare("SELECT * FROM sales_agents WHERE tier='standard' ORDER BY profit_cents DESC LIMIT 1").get();for(let i=1;i<=10;i++)db.prepare(`INSERT INTO sales_agents(parent_id,code,name,tier,generation,algorithm_version,algorithm_json) VALUES (?,?,?,'super',?,?,?)`).run(best.id,token(),`Super Agente ${String(i).padStart(2,'0')}`,best.generation+1,best.algorithm_version+1,best.algorithm_json);}
   }
-  app.get('/api/admin/sales-agents',requireAdmin,(_req,res)=>{lifecycle();const agents=db.prepare(`SELECT a.*,(SELECT COUNT(*) FROM sales_agents c WHERE c.parent_id=a.id) children FROM sales_agents a ORDER BY a.tier DESC,a.id`).all().map(a=>({...a,algorithm:JSON.parse(a.algorithm_json)}));res.json({agents,rules:{standardCap:10,superUnlockRevenueCents:1000000,reserveRateBps:500,inactivityHours:24}})});
+  app.get('/api/admin/sales-agents',requireAdmin,(_req,res)=>{lifecycle();const agents=db.prepare(`SELECT a.*,(SELECT COUNT(*) FROM sales_agents c WHERE c.parent_id=a.id) children FROM sales_agents a ORDER BY a.tier DESC,a.id`).all().map(a=>({...a,algorithm:JSON.parse(a.algorithm_json)}));const instagram=db.prepare("SELECT enabled,approval_required FROM omnichannel_automation_settings WHERE channel='instagram'").get(),facebook=db.prepare("SELECT enabled,approval_required FROM omnichannel_automation_settings WHERE channel='facebook'").get();res.json({agents,bridge:{instagram:Boolean(instagram?.enabled),facebook:Boolean(facebook?.enabled),approvalRequired:Boolean(instagram?.approval_required)&&Boolean(facebook?.approval_required),provider:'ChatbotX'},rules:{standardCap:10,superUnlockRevenueCents:1000000,reserveRateBps:500,inactivityHours:24}})});
   lifecycle();const timer=setInterval(lifecycle,5*60*1000);timer.unref();
 }

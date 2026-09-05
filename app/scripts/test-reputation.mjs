@@ -1,0 +1,2 @@
+import assert from 'node:assert/strict';import {sanitizeReviewComment,bayesianRating,reputationScore,basicReviewFraud} from '../reputation.js';
+assert.equal(sanitizeReviewComment('<b>Ótimo</b>\n atendimento'),'Ótimo atendimento');assert.equal(bayesianRating({ratingSum:5,ratingCount:1}),4.09);assert.ok(reputationScore({ratingSum:5,ratingCount:1})<90);assert.deepEqual(basicReviewFraud({reviewsLastDay:8,sameCommentCount:2,accountAgeHours:2,comment:'comentário repetido com texto'}),['velocity','duplicate_comment','new_account']);console.log('reputation tests passed');

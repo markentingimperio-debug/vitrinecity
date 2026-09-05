@@ -1,5 +1,757 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Explorar a cidade — VitrineCity</title><style>
-:root{--navy:#09275d;--blue:#1768e6;--yellow:#ffca28;--road:#56697d;--grass:#b8dfad;--line:#dce9f8}*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;color:var(--navy);background:#eff7ff;overflow:hidden}header{height:70px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 5%;position:relative;z-index:5}.brand{font-size:25px;font-weight:900}.brand i{display:inline-block;width:26px;height:26px;background:var(--blue);border-radius:8px 8px 3px 3px;vertical-align:-4px;margin-right:7px}.back{color:var(--blue);text-decoration:none;font-weight:800;font-size:14px}.info{position:fixed;z-index:4;top:91px;left:22px;background:#fffffff2;border:1px solid #dce9f8;border-radius:18px;padding:19px;max-width:280px;box-shadow:0 10px 28px #173a651f}.info h1{font-size:22px;margin:0 0 8px}.info p{font-size:14px;line-height:1.45;margin:0;color:#597091}.badge{display:inline-block;font-size:12px;font-weight:800;background:#dcecff;color:#1554b4;padding:7px 9px;border-radius:99px;margin-top:12px}.controls{position:fixed;right:20px;bottom:23px;z-index:4;background:#fff;border:1px solid var(--line);border-radius:14px;padding:7px;display:flex;gap:6px;box-shadow:0 8px 20px #173a651f}.controls button{width:38px;height:38px;border:0;border-radius:9px;background:#edf5ff;color:var(--navy);font-weight:900;font-size:20px;cursor:pointer}.hint{position:fixed;z-index:4;bottom:25px;left:22px;font-size:13px;color:#456184;background:#ffffffe8;border-radius:99px;padding:10px 13px}.viewport{height:calc(100vh - 70px);overflow:hidden;touch-action:none;cursor:grab}.viewport.dragging{cursor:grabbing}.world{width:2200px;height:1500px;transform-origin:0 0;position:relative;background-color:var(--grass);background-image:radial-gradient(#7ab672 1px,transparent 1px),radial-gradient(#edf9ec 2px,transparent 2px);background-size:27px 27px,88px 88px;background-position:0 0,35px 50px}.road{position:absolute;background:var(--road);box-shadow:inset 0 4px #dce6ee,inset 0 -4px #dce6ee}.road:after{content:"";position:absolute;inset:50% 0 auto;border-top:5px dashed #ffe989}.road.h{height:170px;left:0;right:0}.road.v{width:170px;top:0;bottom:0}.road.v:after{inset:0 auto 0 50%;border-left:5px dashed #ffe989;border-top:0}.r1{top:180px}.r2{top:650px}.r3{top:1120px}.c1{left:260px}.c2{left:820px}.c3{left:1380px}.c4{left:1940px}.plaza{position:absolute;left:940px;top:455px;width:340px;height:340px;border-radius:50%;background:#eaf9e5;border:28px solid #f7f2e8;box-shadow:inset 0 0 0 15px #81b877,0 0 0 20px #d6e6dc}.plaza:after{content:"⛲";font-size:70px;position:absolute;left:105px;top:100px}.trees{position:absolute;width:24px;height:24px;border-radius:50%;background:#589655;box-shadow:0 4px #3f7545}.shop{position:absolute;width:155px;height:118px;border:0;border-radius:10px 10px 3px 3px;background:#fff;box-shadow:0 10px 13px #223b4d4a;cursor:pointer;color:#fff;font-weight:900;text-align:center;padding-top:48px;font-size:14px;line-height:1.22}.shop:before{content:"";position:absolute;left:0;right:0;top:0;height:28px;border-radius:10px 10px 0 0;background:repeating-linear-gradient(90deg,#fff2cf 0 15px,#ffbf29 15px 30px)}.shop:after{content:"";position:absolute;bottom:0;left:55px;width:43px;height:43px;background:#20334a;border-radius:3px 3px 0 0}.shop.country{left:490px;top:420px;background:#81512f;outline:5px solid #ffca28;box-shadow:0 0 0 10px #ffe69a,0 10px 16px #223b4d66}.shop.country b{position:absolute;top:-45px;left:0;right:0;color:#132e62;background:#ffca28;border-radius:10px;padding:8px}.shop.fashion{left:1050px;top:320px;background:#7655af}.shop.agro{left:1510px;top:470px;background:#488c5b}.shop.food{left:1670px;top:865px;background:#c46e2b}.shop.services{left:630px;top:900px;background:#1f6cab}.shop.home{left:1130px;top:990px;background:#bd5b70}.shop.market{left:300px;top:1020px;background:#4e8e91}.lot{position:absolute;width:88px;height:70px;border:3px dashed #8bad80;border-radius:8px;background:#ffffff55;color:#4c7750;font-size:11px;font-weight:800;cursor:pointer}.lot:hover{background:#fffbc6;outline:4px solid #ffca28}.l1{left:430px;top:320px}.l2{left:670px;top:310px}.l3{left:720px;top:525px}.l4{left:1420px;top:320px}.l5{left:1770px;top:430px}.l6{left:430px;top:880px}.l7{left:760px;top:820px}.l8{left:1430px;top:880px}.l9{left:1870px;top:920px}.sign{position:absolute;left:1120px;top:225px;background:#1768e6;color:#fff;border-radius:12px;padding:12px 15px;font-weight:900;box-shadow:0 8px 18px #1768e655}.drawer{position:fixed;z-index:7;right:18px;top:88px;width:min(350px,calc(100vw - 36px));background:#fff;border:1px solid var(--line);border-radius:20px;padding:22px;box-shadow:0 22px 55px #173a6544;display:none}.drawer.show{display:block}.drawer .close{float:right;border:0;background:#edf5ff;border-radius:8px;width:31px;height:31px;font-size:18px;cursor:pointer}.drawer h2{font-size:25px;margin:12px 0 8px}.drawer p{color:#5d7192;line-height:1.45;font-size:14px}.drawer .tag{font-size:12px;font-weight:900;color:#1554b4;background:#dcecff;border-radius:99px;padding:7px 9px}.drawer a{display:block;text-align:center;background:#1768e6;color:#fff;text-decoration:none;font-weight:900;border-radius:11px;padding:13px;margin-top:16px}@media(max-width:760px){.info{top:84px;left:12px;max-width:225px;padding:14px}.info h1{font-size:18px}.info p{font-size:12px}.hint{display:none}.controls{right:13px;bottom:15px}.drawer{top:auto;bottom:13px;right:13px}.world{transform:scale(.34)}header{padding:0 18px}}
-</style><script src="/analytics.js" defer></script></head><body><header><div class="brand"><i></i>VitrineCity</div><a class="back" href="/">← Voltar ao início</a></header><aside class="info"><h1>Explore as ruas</h1><p>Arraste o mapa para passear pela cidade. Toque nas lojas, letreiros ou lotes disponíveis.</p><span class="badge">10.000 lotes na cidade completa</span></aside><div class="hint">Arraste para navegar • Use + e − para aproximar</div><div class="controls"><button id="minus" aria-label="Diminuir zoom">−</button><button id="home" aria-label="Centralizar mapa">⌂</button><button id="plus" aria-label="Aumentar zoom">+</button></div><aside id="drawer" class="drawer"><button class="close" id="close">×</button><span class="tag" id="type">LOJA</span><h2 id="title">Loja</h2><p id="desc">Descrição</p><a id="action" href="/#lojista">Visitar vitrine</a></aside><main class="viewport" id="view"><div class="world" id="world"><div class="road h r1"></div><div class="road h r2"></div><div class="road h r3"></div><div class="road v c1"></div><div class="road v c2"></div><div class="road v c3"></div><div class="road v c4"></div><div class="plaza"></div><div class="sign">PRAÇA VITRINECITY</div><i class="trees" style="left:905px;top:400px"></i><i class="trees" style="left:1320px;top:825px"></i><i class="trees" style="left:300px;top:500px"></i><i class="trees" style="left:1870px;top:720px"></i><button class="shop country" data-title="Sertaneja Moda Country" data-type="LOJA EM DESTAQUE" data-desc="Moda country, acessórios e promoções. Letreiro ativo: Semana Country — até 50% OFF."><b>DESTAQUE</b>SERTANEJA<br>MODA COUNTRY</button><button class="shop fashion" data-title="Avenida da Moda" data-type="MODA" data-desc="Espaço para boutiques, roupas, calçados e acessórios.">AVENIDA<br>DA MODA</button><button class="shop agro" data-title="Agro Vitrine" data-type="AGRO" data-desc="Produtos para jardinagem, agricultura e animais.">AGRO<br>VITRINE</button><button class="shop food" data-title="Praça da Alimentação" data-type="ALIMENTAÇÃO" data-desc="Restaurantes, receitas, confeitaria e delivery.">PRAÇA DA<br>ALIMENTAÇÃO</button><button class="shop services" data-title="Centro de Serviços" data-type="SERVIÇOS" data-desc="Prestadores de serviços, profissionais e empresas locais.">CENTRO DE<br>SERVIÇOS</button><button class="shop home" data-title="Casa & Decoração" data-type="CASA" data-desc="Lojas de móveis, decoração e construção.">CASA &<br>DECORAÇÃO</button><button class="shop market" data-title="Mercado Vitrine" data-type="COMÉRCIO" data-desc="Produtos e negócios de todos os segmentos.">MERCADO<br>VITRINE</button><button class="lot l1">LOTE LIVRE</button><button class="lot l2">LOTE LIVRE</button><button class="lot l3">LOTE LIVRE</button><button class="lot l4">LOTE LIVRE</button><button class="lot l5">OUTDOOR</button><button class="lot l6">LOTE LIVRE</button><button class="lot l7">LOTE LIVRE</button><button class="lot l8">LOTE LIVRE</button><button class="lot l9">LOTE LIVRE</button></div></main><script>
-const view=document.getElementById('view'),world=document.getElementById('world'),drawer=document.getElementById('drawer'),title=document.getElementById('title'),type=document.getElementById('type'),desc=document.getElementById('desc');let z=innerWidth<760?.34:.58,x=innerWidth<760?-200:-260,y=innerWidth<760?-100:-190,drag=null;function paint(){world.style.transform=`translate(${x}px,${y}px) scale(${z})`}paint();function zoom(d){z=Math.max(.25,Math.min(1.15,z+d));paint()}document.getElementById('plus').onclick=()=>zoom(.1);document.getElementById('minus').onclick=()=>zoom(-.1);document.getElementById('home').onclick=()=>{z=innerWidth<760?.34:.58;x=innerWidth<760?-200:-260;y=innerWidth<760?-100:-190;paint()};view.addEventListener('wheel',e=>{e.preventDefault();zoom(e.deltaY>0?-.07:.07)},{passive:false});view.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,ox:x,oy:y};view.setPointerCapture(e.pointerId);view.classList.add('dragging')});view.addEventListener('pointermove',e=>{if(!drag)return;x=drag.ox+e.clientX-drag.x;y=drag.oy+e.clientY-drag.y;paint()});view.addEventListener('pointerup',()=>{drag=null;view.classList.remove('dragging')});document.querySelectorAll('.shop,.lot').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();type.textContent=b.dataset.type||'LOTE DISPONÍVEL';title.textContent=b.dataset.title||'Seu espaço na VitrineCity';desc.textContent=b.dataset.desc||'Este lote está disponível para sua marca. Escolha o plano e tenha uma vitrine dentro da cidade.';drawer.classList.add('show')}));document.getElementById('close').onclick=()=>drawer.classList.remove('show');
-</script></body></html>
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Explorar a cidade — VitrineCity</title>
+    <style>
+      :root {
+        --navy: #09275d;
+        --blue: #1768e6;
+        --yellow: #ffca28;
+        --road: #56697d;
+        --grass: #b8dfad;
+        --line: #dce9f8;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: Arial, Helvetica, sans-serif;
+        color: var(--navy);
+        background: #eff7ff;
+        overflow: hidden;
+      }
+      header {
+        height: 70px;
+        background: #fff;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 5%;
+        position: relative;
+        z-index: 5;
+      }
+      .brand {
+        font-size: 25px;
+        font-weight: 900;
+      }
+      .brand i {
+        display: inline-block;
+        width: 26px;
+        height: 26px;
+        background: var(--blue);
+        border-radius: 8px 8px 3px 3px;
+        vertical-align: -4px;
+        margin-right: 7px;
+      }
+      .back {
+        color: var(--blue);
+        text-decoration: none;
+        font-weight: 800;
+        font-size: 14px;
+      }
+      .info {
+        position: fixed;
+        z-index: 4;
+        top: 91px;
+        left: 22px;
+        background: #fffffff2;
+        border: 1px solid #dce9f8;
+        border-radius: 18px;
+        padding: 19px;
+        max-width: 280px;
+        box-shadow: 0 10px 28px #173a651f;
+      }
+      .info h1 {
+        font-size: 22px;
+        margin: 0 0 8px;
+      }
+      .info p {
+        font-size: 14px;
+        line-height: 1.45;
+        margin: 0;
+        color: #597091;
+      }
+      .badge {
+        display: inline-block;
+        font-size: 12px;
+        font-weight: 800;
+        background: #dcecff;
+        color: #1554b4;
+        padding: 7px 9px;
+        border-radius: 99px;
+        margin-top: 12px;
+      }
+      .controls {
+        position: fixed;
+        right: 20px;
+        bottom: 23px;
+        z-index: 4;
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 7px;
+        display: flex;
+        gap: 6px;
+        box-shadow: 0 8px 20px #173a651f;
+      }
+      .controls button {
+        width: 38px;
+        height: 38px;
+        border: 0;
+        border-radius: 9px;
+        background: #edf5ff;
+        color: var(--navy);
+        font-weight: 900;
+        font-size: 20px;
+        cursor: pointer;
+      }
+      .hint {
+        position: fixed;
+        z-index: 4;
+        bottom: 25px;
+        left: 22px;
+        font-size: 13px;
+        color: #456184;
+        background: #ffffffe8;
+        border-radius: 99px;
+        padding: 10px 13px;
+      }
+      .viewport {
+        height: calc(100vh - 70px);
+        overflow: hidden;
+        touch-action: none;
+        cursor: grab;
+      }
+      .viewport.dragging {
+        cursor: grabbing;
+      }
+      .world {
+        width: 2200px;
+        height: 1500px;
+        transform-origin: 0 0;
+        position: relative;
+        background-color: var(--grass);
+        background-image:
+          radial-gradient(#7ab672 1px, transparent 1px),
+          radial-gradient(#edf9ec 2px, transparent 2px);
+        background-size:
+          27px 27px,
+          88px 88px;
+        background-position:
+          0 0,
+          35px 50px;
+      }
+      .road {
+        position: absolute;
+        background: var(--road);
+        box-shadow:
+          inset 0 4px #dce6ee,
+          inset 0 -4px #dce6ee;
+      }
+      .road:after {
+        content: "";
+        position: absolute;
+        inset: 50% 0 auto;
+        border-top: 5px dashed #ffe989;
+      }
+      .road.h {
+        height: 170px;
+        left: 0;
+        right: 0;
+      }
+      .road.v {
+        width: 170px;
+        top: 0;
+        bottom: 0;
+      }
+      .road.v:after {
+        inset: 0 auto 0 50%;
+        border-left: 5px dashed #ffe989;
+        border-top: 0;
+      }
+      .r1 {
+        top: 180px;
+      }
+      .r2 {
+        top: 650px;
+      }
+      .r3 {
+        top: 1120px;
+      }
+      .c1 {
+        left: 260px;
+      }
+      .c2 {
+        left: 820px;
+      }
+      .c3 {
+        left: 1380px;
+      }
+      .c4 {
+        left: 1940px;
+      }
+      .plaza {
+        position: absolute;
+        left: 940px;
+        top: 455px;
+        width: 340px;
+        height: 340px;
+        border-radius: 50%;
+        background: #eaf9e5;
+        border: 28px solid #f7f2e8;
+        box-shadow:
+          inset 0 0 0 15px #81b877,
+          0 0 0 20px #d6e6dc;
+      }
+      .plaza:after {
+        content: "⛲";
+        font-size: 70px;
+        position: absolute;
+        left: 105px;
+        top: 100px;
+      }
+      .trees {
+        position: absolute;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: #589655;
+        box-shadow: 0 4px #3f7545;
+      }
+      .shop {
+        position: absolute;
+        width: 155px;
+        height: 118px;
+        border: 0;
+        border-radius: 10px 10px 3px 3px;
+        background: #fff;
+        box-shadow: 0 10px 13px #223b4d4a;
+        cursor: pointer;
+        color: #fff;
+        font-weight: 900;
+        text-align: center;
+        padding-top: 48px;
+        font-size: 14px;
+        line-height: 1.22;
+      }
+      .shop:before {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        height: 28px;
+        border-radius: 10px 10px 0 0;
+        background: repeating-linear-gradient(
+          90deg,
+          #fff2cf 0 15px,
+          #ffbf29 15px 30px
+        );
+      }
+      .shop:after {
+        content: "";
+        position: absolute;
+        bottom: 0;
+        left: 55px;
+        width: 43px;
+        height: 43px;
+        background: #20334a;
+        border-radius: 3px 3px 0 0;
+      }
+      .shop.country {
+        left: 490px;
+        top: 420px;
+        background: #81512f;
+        outline: 5px solid #ffca28;
+        box-shadow:
+          0 0 0 10px #ffe69a,
+          0 10px 16px #223b4d66;
+      }
+      .shop.country b {
+        position: absolute;
+        top: -45px;
+        left: 0;
+        right: 0;
+        color: #132e62;
+        background: #ffca28;
+        border-radius: 10px;
+        padding: 8px;
+      }
+      .shop.fashion {
+        left: 1050px;
+        top: 320px;
+        background: #7655af;
+      }
+      .shop.agro {
+        left: 1510px;
+        top: 470px;
+        background: #488c5b;
+      }
+      .shop.food {
+        left: 1670px;
+        top: 865px;
+        background: #c46e2b;
+      }
+      .shop.services {
+        left: 630px;
+        top: 900px;
+        background: #1f6cab;
+      }
+      .shop.home {
+        left: 1130px;
+        top: 990px;
+        background: #bd5b70;
+      }
+      .shop.market {
+        left: 300px;
+        top: 1020px;
+        background: #4e8e91;
+      }
+      .lot {
+        position: absolute;
+        width: 88px;
+        height: 70px;
+        border: 3px dashed #8bad80;
+        border-radius: 8px;
+        background: #ffffff55;
+        color: #4c7750;
+        font-size: 11px;
+        font-weight: 800;
+        cursor: pointer;
+      }
+      .lot:hover {
+        background: #fffbc6;
+        outline: 4px solid #ffca28;
+      }
+      .l1 {
+        left: 430px;
+        top: 320px;
+      }
+      .l2 {
+        left: 670px;
+        top: 310px;
+      }
+      .l3 {
+        left: 720px;
+        top: 525px;
+      }
+      .l4 {
+        left: 1420px;
+        top: 320px;
+      }
+      .l5 {
+        left: 1770px;
+        top: 430px;
+      }
+      .l6 {
+        left: 430px;
+        top: 880px;
+      }
+      .l7 {
+        left: 760px;
+        top: 820px;
+      }
+      .l8 {
+        left: 1430px;
+        top: 880px;
+      }
+      .l9 {
+        left: 1870px;
+        top: 920px;
+      }
+      .city-ad {
+        position: absolute;
+        z-index: 4;
+        width: 210px;
+        min-height: 105px;
+        padding: 12px;
+        border: 8px solid #17314c;
+        border-radius: 5px;
+        background: linear-gradient(145deg, #0969da, #34a5ff);
+        color: #fff;
+        box-shadow: 0 15px 20px #0b294a55;
+        cursor: pointer;
+        font-weight: 900;
+      }
+      .city-ad::before,
+      .city-ad::after {
+        content: "";
+        position: absolute;
+        top: 100%;
+        width: 9px;
+        height: 65px;
+        background: #17314c;
+      }
+      .city-ad::before {
+        left: 34px;
+      }
+      .city-ad::after {
+        right: 34px;
+      }
+      .city-ad span,
+      .city-ad small {
+        display: block;
+      }
+      .city-ad span {
+        margin: 5px 0;
+        font-size: 17px;
+        line-height: 1.05;
+      }
+      .city-ad small {
+        color: #ffe36e;
+      }
+      .ad1 {
+        left: 1730px;
+        top: 390px;
+      }
+      .ad2 {
+        left: 1510px;
+        top: 1040px;
+      }
+      .ad3 {
+        left: 510px;
+        top: 1080px;
+      }
+      .ad4 {
+        left: 250px;
+        top: 260px;
+      }
+      .sign {
+        position: absolute;
+        left: 1120px;
+        top: 225px;
+        background: #1768e6;
+        color: #fff;
+        border-radius: 12px;
+        padding: 12px 15px;
+        font-weight: 900;
+        box-shadow: 0 8px 18px #1768e655;
+      }
+      .drawer {
+        position: fixed;
+        z-index: 7;
+        right: 18px;
+        top: 88px;
+        width: min(350px, calc(100vw - 36px));
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 22px;
+        box-shadow: 0 22px 55px #173a6544;
+        display: none;
+      }
+      .drawer.show {
+        display: block;
+      }
+      .drawer .close {
+        float: right;
+        border: 0;
+        background: #edf5ff;
+        border-radius: 8px;
+        width: 31px;
+        height: 31px;
+        font-size: 18px;
+        cursor: pointer;
+      }
+      .drawer h2 {
+        font-size: 25px;
+        margin: 12px 0 8px;
+      }
+      .drawer p {
+        color: #5d7192;
+        line-height: 1.45;
+        font-size: 14px;
+      }
+      .drawer .tag {
+        font-size: 12px;
+        font-weight: 900;
+        color: #1554b4;
+        background: #dcecff;
+        border-radius: 99px;
+        padding: 7px 9px;
+      }
+      .drawer a {
+        display: block;
+        text-align: center;
+        background: #1768e6;
+        color: #fff;
+        text-decoration: none;
+        font-weight: 900;
+        border-radius: 11px;
+        padding: 13px;
+        margin-top: 16px;
+      }
+      @media (max-width: 760px) {
+        .info {
+          top: 84px;
+          left: 12px;
+          max-width: 225px;
+          padding: 14px;
+        }
+        .info h1 {
+          font-size: 18px;
+        }
+        .info p {
+          font-size: 12px;
+        }
+        .hint {
+          display: none;
+        }
+        .controls {
+          right: 13px;
+          bottom: 15px;
+        }
+        .drawer {
+          top: auto;
+          bottom: 13px;
+          right: 13px;
+        }
+        .world {
+          transform: scale(0.34);
+        }
+        header {
+          padding: 0 18px;
+        }
+      }
+    </style>
+    <script src="/analytics.js" defer></script>
+  <script src="/openai-ads.js" defer></script></head>
+  <body>
+    <header>
+      <div class="brand"><i></i>VitrineCity</div>
+      <a class="back" href="/">← Voltar ao início</a>
+    </header>
+    <aside class="info">
+      <h1>Explore as ruas</h1>
+      <p>
+        Arraste o mapa para passear pela cidade. Toque nas lojas, letreiros ou
+        lotes disponíveis.
+      </p>
+      <span class="badge">10.000 lotes na cidade completa</span>
+    </aside>
+    <div class="hint">Arraste para navegar • Use + e − para aproximar</div>
+    <div class="controls">
+      <button id="minus" aria-label="Diminuir zoom">−</button
+      ><button id="home" aria-label="Centralizar mapa">⌂</button
+      ><button id="plus" aria-label="Aumentar zoom">+</button>
+    </div>
+    <aside id="drawer" class="drawer">
+      <button class="close" id="close">×</button
+      ><span class="tag" id="type">LOJA</span>
+      <h2 id="title">Loja</h2>
+      <p id="desc">Descrição</p>
+      <a id="action" href="/#lojista">Visitar vitrine</a>
+    </aside>
+    <main class="viewport" id="view">
+      <div class="world" id="world">
+        <div class="road h r1"></div>
+        <div class="road h r2"></div>
+        <div class="road h r3"></div>
+        <div class="road v c1"></div>
+        <div class="road v c2"></div>
+        <div class="road v c3"></div>
+        <div class="road v c4"></div>
+        <div class="plaza"></div>
+        <div class="sign">PRAÇA VITRINECITY</div>
+        <i class="trees" style="left: 905px; top: 400px"></i
+        ><i class="trees" style="left: 1320px; top: 825px"></i
+        ><i class="trees" style="left: 300px; top: 500px"></i
+        ><i class="trees" style="left: 1870px; top: 720px"></i
+        ><button
+          class="shop country"
+          data-title="Sertaneja Moda Country"
+          data-type="LOJA EM DESTAQUE"
+          data-desc="Moda country, acessórios e promoções. Letreiro ativo: Semana Country — até 50% OFF."
+        >
+          <b>DESTAQUE</b>SERTANEJA<br />MODA COUNTRY</button
+        ><button
+          class="shop fashion"
+          data-title="Avenida da Moda"
+          data-type="MODA"
+          data-desc="Espaço para boutiques, roupas, calçados e acessórios."
+        >
+          AVENIDA<br />DA MODA</button
+        ><button
+          class="shop agro"
+          data-title="Agro Vitrine"
+          data-type="AGRO"
+          data-desc="Produtos para jardinagem, agricultura e animais."
+        >
+          AGRO<br />VITRINE</button
+        ><button
+          class="shop food"
+          data-title="Praça da Alimentação"
+          data-type="ALIMENTAÇÃO"
+          data-desc="Restaurantes, receitas, confeitaria e delivery."
+        >
+          PRAÇA DA<br />ALIMENTAÇÃO</button
+        ><button
+          class="shop services"
+          data-title="Centro de Serviços"
+          data-type="SERVIÇOS"
+          data-desc="Prestadores de serviços, profissionais e empresas locais."
+        >
+          CENTRO DE<br />SERVIÇOS</button
+        ><button
+          class="shop home"
+          data-title="Casa & Decoração"
+          data-type="CASA"
+          data-desc="Lojas de móveis, decoração e construção."
+        >
+          CASA &<br />DECORAÇÃO</button
+        ><button
+          class="shop market"
+          data-title="Mercado Vitrine"
+          data-type="COMÉRCIO"
+          data-desc="Produtos e negócios de todos os segmentos."
+        >
+          MERCADO<br />VITRINE</button
+        ><button class="lot l1">LOTE LIVRE</button
+        ><button class="lot l2">LOTE LIVRE</button
+        ><button class="lot l3">LOTE LIVRE</button
+        ><button class="lot l4">LOTE LIVRE</button
+        ><button class="lot l5">LOTE LIVRE</button
+        ><button class="lot l6">LOTE LIVRE</button
+        ><button class="lot l7">LOTE LIVRE</button
+        ><button class="lot l8">LOTE LIVRE</button
+        ><button class="lot l9">LOTE LIVRE</button
+        ><button
+          class="city-ad ad1"
+          data-type="OUTDOOR DIGITAL"
+          data-href="/servicos-digitais.html"
+        >
+          <small>PUBLICIDADE</small
+          ><span data-ad-title>Serviços VitrineCity</span
+          ><small data-ad-price>Conheça as soluções</small></button
+        ><button
+          class="city-ad ad2"
+          data-type="OUTDOOR DIGITAL"
+          data-href="/servicos-digitais.html"
+        >
+          <small>PUBLICIDADE</small><span data-ad-title>Divulgue sua marca</span
+          ><small data-ad-price>Planos acessíveis</small></button
+        ><button
+          class="city-ad ad3"
+          data-type="OUTDOOR DIGITAL"
+          data-href="/servicos-digitais.html"
+        >
+          <small>PUBLICIDADE</small><span data-ad-title>Loja digital</span
+          ><small data-ad-price>Venda na cidade</small></button
+        ><button
+          class="city-ad ad4"
+          data-type="OUTDOOR DIGITAL"
+          data-href="/servicos-digitais.html"
+        >
+          <small>PUBLICIDADE</small><span data-ad-title>Conteúdo e vídeos</span
+          ><small data-ad-price>Fortaleça sua marca</small>
+        </button>
+      </div>
+    </main>
+    <script>
+      const view = document.getElementById("view"),
+        world = document.getElementById("world"),
+        drawer = document.getElementById("drawer"),
+        title = document.getElementById("title"),
+        type = document.getElementById("type"),
+        desc = document.getElementById("desc");
+      let z = innerWidth < 760 ? 0.34 : 0.58,
+        x = innerWidth < 760 ? -200 : -260,
+        y = innerWidth < 760 ? -100 : -190,
+        drag = null;
+      function paint() {
+        world.style.transform = `translate(${x}px,${y}px) scale(${z})`;
+      }
+      paint();
+      function zoom(d) {
+        z = Math.max(0.25, Math.min(1.15, z + d));
+        paint();
+      }
+      document.getElementById("plus").onclick = () => zoom(0.1);
+      document.getElementById("minus").onclick = () => zoom(-0.1);
+      document.getElementById("home").onclick = () => {
+        z = innerWidth < 760 ? 0.34 : 0.58;
+        x = innerWidth < 760 ? -200 : -260;
+        y = innerWidth < 760 ? -100 : -190;
+        paint();
+      };
+      view.addEventListener(
+        "wheel",
+        (e) => {
+          e.preventDefault();
+          zoom(e.deltaY > 0 ? -0.07 : 0.07);
+        },
+        { passive: false },
+      );
+      view.addEventListener("pointerdown", (e) => {
+        drag = { x: e.clientX, y: e.clientY, ox: x, oy: y };
+        view.setPointerCapture(e.pointerId);
+        view.classList.add("dragging");
+      });
+      view.addEventListener("pointermove", (e) => {
+        if (!drag) return;
+        x = drag.ox + e.clientX - drag.x;
+        y = drag.oy + e.clientY - drag.y;
+        paint();
+      });
+      view.addEventListener("pointerup", () => {
+        drag = null;
+        view.classList.remove("dragging");
+      });
+      const action = document.getElementById("action");
+      document.querySelectorAll(".shop,.lot,.city-ad").forEach((b) =>
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          type.textContent = b.dataset.type || "LOTE DISPONÍVEL";
+          title.textContent = b.dataset.title || "Seu espaço na VitrineCity";
+          desc.textContent =
+            b.dataset.desc ||
+            "Este lote está disponível para sua marca. Escolha o plano e tenha uma vitrine dentro da cidade.";
+          action.href = b.dataset.href || "/#lojista";
+          action.textContent = b.classList.contains("city-ad")
+            ? "Contratar serviço"
+            : "Visitar vitrine";
+          drawer.classList.add("show");
+        }),
+      );
+      document.getElementById("close").onclick = () =>
+        drawer.classList.remove("show");
+      const ads = [...document.querySelectorAll(".city-ad")];
+      const money = (value) =>
+        Number(value || 0).toLocaleString("pt-BR", {
+          style: "currency",
+          currency: "BRL",
+        });
+      fetch("/api/promotions")
+        .then((response) => (response.ok ? response.json() : Promise.reject()))
+        .then((payload) => {
+          const services = payload.items || payload.services || [];
+          if (!services.length) return;
+          let offset = 0;
+          const renderAds = () =>
+            ads.forEach((ad, index) => {
+              const service = services[(offset + index) % services.length];
+              ad.dataset.title = service.title;
+              const price = (service.amountCents || 0) / 100 || service.price;
+              const priceText = service.amountCents
+                ? `A partir de ${money(price)}`
+                : service.label;
+              ad.dataset.type = service.label || "PUBLICIDADE";
+              ad.dataset.desc = `${service.description}${service.amountCents ? ` ${priceText}.` : ""}`;
+              ad.dataset.href = service.url || service.checkoutUrl || "/";
+              ad.querySelector("[data-ad-title]").textContent = service.title;
+              ad.querySelector("[data-ad-price]").textContent = priceText;
+            });
+          renderAds();
+          window.setInterval(() => {
+            offset = (offset + 1) % services.length;
+            renderAds();
+          }, 7000);
+        })
+        .catch(() => {});
+    </script>
+  </body>
+</html>

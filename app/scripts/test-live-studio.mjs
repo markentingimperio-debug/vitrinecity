@@ -1,0 +1,62 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { validateLiveConfig, setupLiveStudio, validateLiveServer, selectedPlatforms } from '../live-studio.js';
+const valid={title:'VitrineCity',media:'quiz.mp4',destination:'https://vitrinecity.com',repetitions:3,server:'',key:''};
+assert.deepEqual(selectedPlatforms({targets:['instagram','youtube','tiktok']}),['instagram','youtube','tiktok']);
+for(const targets of [[],['instagram','instagram'],['evil'],'youtube',[null]]) assert.throws(()=>selectedPlatforms({targets}));
+assert.equal(validateLiveConfig(valid).repetitions,3);
+assert.equal(validateLiveConfig({...valid,repetitions:0}).repetitions,0);
+for (const repetitions of [null, '', false, true, undefined]) assert.throws(()=>validateLiveConfig({...valid,repetitions}));
+for(const change of [{repetitions:-1},{repetitions:4},{media:'../secret.mp4'},{destination:'https://evil.test'},{server:'rtmps://localhost/live'},{server:'rtmps://instagram.com.evil.test/live'},{server:'http://instagram.com'},{server:'rtmps://instagram.com:999/live'},{key:'secret\n'}]) {
+  // trailing whitespace is intentionally trimmed from pasted keys.
+  if(change.key) change.key='sec\nret';
+  assert.throws(()=>validateLiveConfig({...valid,...change}));
+}
+assert.equal(validateLiveConfig({...valid,server:'rtmps://live-upload.instagram.com:443/rtmp/'}).server,'rtmps://live-upload.instagram.com:443/rtmp/');
+for(const [platform,server] of [['youtube','rtmps://a.rtmps.youtube.com:443/live2'],['tiktok','rtmp://push.tiktok.com/live'],['tiktok','rtmps://push.tiktokv.com/live']]) assert.doesNotThrow(()=>validateLiveServer(server,platform));
+for(const [platform,server] of [['youtube','rtmp://a.rtmp.youtube.com/live2'],['tiktok','rtmp://127.0.0.1/live'],['tiktok','rtmps://tiktok.com.evil.test/live'],['youtube','rtmps://push.tiktok.com/live'],['unknown',''],['youtube','rtmps://a.rtmps.youtube.com:1935/live2'],['youtube','rtmps://user:pass@youtube.com/live']]) assert.throws(()=>validateLiveServer(server,platform));
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'vc-live-test-'));
+const routes=new Map(), auth=()=>{}, origin=()=>{};
+const app=Object.fromEntries(['get','put','post'].map(method=>[method,(url,...handlers)=>routes.set(method+url,handlers)]));
+setupLiveStudio({app,requireAdmin:auth,sameOriginOnly:origin,root});
+for(const [route,handlers] of routes){assert.equal(handlers[0],auth);if(!route.startsWith('get'))assert.equal(handlers[1],origin);}
+fs.writeFileSync(path.join(root,'media.json'),JSON.stringify([{file:'quiz.mp4',duration:65,label:'Quiz'}]));
+function call(route,body={}){let code=200,result;const res={status(c){code=c;return this},set(){return this},json(data){result=data;return this}};routes.get(route).at(-1)({body,user:{id:1}},res);return {code,result};}
+assert.equal(call('put/api/admin/live-studio/config',valid).code,200);
+const ig={...valid,server:'rtmps://live-upload.instagram.com:443/rtmp/',key:'secret-instagram'};
+assert.equal(call('put/api/admin/live-studio/config',ig).code,200);
+assert.equal(call('put/api/admin/live-studio/config',{...valid,platform:'youtube',server:'rtmps://a.rtmps.youtube.com/live2',key:'secret-youtube'}).code,200);
+let view=call('get/api/admin/live-studio').result;
+assert.equal(view.profiles.instagram.hasKey,true);assert.equal(view.profiles.youtube.hasKey,true);
+assert.ok(!JSON.stringify(view).includes('secret-'));
+assert.equal(call('put/api/admin/live-studio/config',{...ig,key:''}).code,200);
+assert.equal(JSON.parse(fs.readFileSync(path.join(root,'config.json'))).key,'secret-instagram');
+assert.equal(call('put/api/admin/live-studio/config',{...ig,key:'',clearKey:true}).code,200);
+view=call('get/api/admin/live-studio').result;
+assert.equal(view.profiles.instagram.hasKey,false);assert.equal(view.profiles.youtube.hasKey,true);
+assert.equal(call('put/api/admin/live-studio/config',valid).code,200);
+assert.equal(call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR'}).code,503);
+fs.writeFileSync(path.join(root,'status.json'),JSON.stringify({updatedAt:Date.now(),streaming:false,recording:false}));
+assert.equal(call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR'}).code,400);
+assert.equal(call('post/api/admin/live-studio/control',{action:'preview'}).code,202);
+assert.equal(call('post/api/admin/live-studio/control',{action:'preview'}).code,409);
+const status=call('get/api/admin/live-studio').result;
+assert.equal(status.commentsConnected,false);assert.ok(!('key' in status.config));
+fs.unlinkSync(path.join(root,'command.json'));
+assert.equal(call('put/api/admin/live-studio/config',{...ig,targets:['instagram','youtube','tiktok']}).code,200);
+assert.equal(call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR'}).code,400);
+assert.ok(!fs.existsSync(path.join(root,'command.json')));
+assert.equal(call('put/api/admin/live-studio/config',{...valid,platform:'tiktok',server:'rtmps://push.tiktok.com/live',key:'secret-tiktok',targets:['instagram','youtube','tiktok']}).code,200);
+assert.equal(call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR'}).code,202);
+assert.ok(!fs.readFileSync(path.join(root,'command.json'),'utf8').includes('secret-'));
+fs.unlinkSync(path.join(root,'command.json'));
+assert.equal(call('post/api/admin/live-studio/control',{action:'stop-network',platform:'evil'}).code,400);
+assert.equal(call('post/api/admin/live-studio/control',{action:'stop-network',platform:'tiktok'}).code,202);
+assert.equal(JSON.parse(fs.readFileSync(path.join(root,'command.json'))).platform,'tiktok');
+assert.ok(!JSON.stringify(call('get/api/admin/live-studio').result).includes('secret-'));
+fs.renameSync(path.join(root,'command.json'),path.join(root,'executing-command.json'));
+assert.equal(call('put/api/admin/live-studio/config',valid).code,409);
+assert.equal(call('post/api/admin/live-studio/control',{action:'preview'}).code,409);
+console.log('Live Studio: validation, admin/CSRF middleware, secret redaction, offline/duplicate guards OK');

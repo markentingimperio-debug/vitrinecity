@@ -1,0 +1,28 @@
+services:
+  app:
+    environment:
+      LIVE_STUDIO_DIR: /live-studio
+    volumes:
+      - live_studio:/live-studio
+  live-studio:
+    build: ./ops/live-studio
+    restart: unless-stopped
+    init: true
+    mem_limit: 1536m
+    cpus: 1.5
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - live_studio:/live-studio
+    # No host ports. OBS WebSocket stays inside this isolated container.
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import json,time; s=json.load(open('/live-studio/status.json')); assert time.time()*1000-s['updatedAt']<20000"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+volumes:
+  live_studio:

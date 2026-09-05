@@ -39,4 +39,24 @@ assert.match(html, /\\u003c\/script>\\u003cscript>alert/);
 assert.match(html, /\/produto\/7\/produto-especial/);
 assert.match(html, /R\$ 15,90|R\$ 15,90/);
 
+const foodHtml = renderPublicStorePage({
+  siteUrl: 'https://vitrinecity.com',
+  store: {
+    order_reference: 'FOOD-1', business_name: 'Sabor da Cidade', description: 'Refeições feitas na hora.',
+    business_type: 'food', accepts_orders: 1, is_open: true,
+    preparation_min_minutes: 20, preparation_max_minutes: 35
+  },
+  products: [
+    { id: 10, name: 'Prato feito', category: 'Almoço', price_cents: 2490, stock_quantity: 99, available_now: 1 },
+    { id: 11, name: 'Suco', category: 'Bebidas', price_cents: 700, stock_quantity: 99, available_now: 0 }
+  ]
+});
+assert.match(foodHtml, /Cardápio/);
+assert.match(foodHtml, /Aberto · aceitando pedidos/);
+assert.match(foodHtml, /20–35 min de preparo/);
+assert.match(foodHtml, /<h2>Almoço<\/h2>/);
+assert.match(foodHtml, /<h2>Bebidas<\/h2>/);
+assert.match(foodHtml, /Indisponível agora/);
+assert.doesNotMatch(foodHtml, /99 em estoque/);
+
 console.log('marketplace-public: ok');

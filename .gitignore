@@ -9,3 +9,17 @@ app/binance-demo-analyst.log
 app/.binance-demo-state.json
 app/binance-demo-journal.jsonl
 node_modules/
+
+# Deployment-local secrets, recovery copies and persistent content.
+.env.*
+!.env.example
+!*.env.example
+backups/
+*.bak*
+private-courses/
+app/inspect-*.mjs
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.log
