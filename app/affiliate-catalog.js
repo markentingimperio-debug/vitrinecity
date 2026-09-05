@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { affiliateArticles } from './affiliate-articles.js';
 import { setupAffiliateIndexNow } from './affiliate-indexnow.js';
+import { setupPlatformOperations } from './platform-operations.js';
 
 export const platforms = { mercadolivre: 'Mercado Livre', shopee: 'Shopee', tiktok: 'TikTok' };
 const hosts = {
@@ -38,8 +39,8 @@ export async function checkAffiliateLink(url, platform, fetcher = fetch) {
   return 'review';
 }
 
-function document(title, body, canonical, image = '') {
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} | VitrineCity</title><meta name="description" content="${esc(title)}. Conheça a seleção da VitrineCity, confira os detalhes e consulte ofertas nas plataformas parceiras."><link rel="canonical" href="${esc(canonical)}"><meta property="og:title" content="${esc(title)}"><meta property="og:type" content="website"><meta property="og:url" content="${esc(canonical)}">${image ? `<meta property="og:image" content="${esc(image)}">` : ''}<link rel="stylesheet" href="/affiliate-catalog.css"></head><body><header><a class="brand" href="/">vitrine<span>city</span></a><nav><a href="/pesquisar.html">Pesquisar</a><a href="/ofertas">Seleção de produtos</a></nav></header><main>${body}</main><footer>VitrineCity · <a href="/privacy.html">Privacidade</a> · <a href="/contato.html">Contato</a></footer></body></html>`;
+function document(title, body, canonical, image = '', description = '') {
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} | VitrineCity</title><meta name="description" content="${esc(description || title)}"><link rel="canonical" href="${esc(canonical)}"><meta property="og:description" content="${esc(description || title)}"><meta property="og:site_name" content="VitrineCity"><meta property="og:title" content="${esc(title)}"><meta property="og:type" content="website"><meta property="og:url" content="${esc(canonical)}">${image ? `<meta property="og:image" content="${esc(image)}">` : ''}<link rel="stylesheet" href="/affiliate-catalog.css"></head><body><header><a class="brand" href="/">vitrine<span>city</span></a><nav><a href="/pesquisar.html">Pesquisar</a><a href="/ofertas">Seleção de produtos</a></nav></header><main>${body}</main><footer>VitrineCity · <a href="/privacy.html">Privacidade</a> · <a href="/contato.html">Contato</a></footer></body></html>`;
 }
 
 export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, siteUrl, publicDir, startMonitor = true, fetcher = fetch }) {
@@ -67,6 +68,7 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
   }
   const all = () => db.prepare('SELECT * FROM affiliate_catalog ORDER BY title').all();
   const indexnow = setupAffiliateIndexNow({db,siteUrl,rows:all,fetcher,start:startMonitor});
+  setupPlatformOperations({app,db,requireAdmin,sameOriginOnly,publicDir});
   const published = () => all().filter(p => p.status === 'published');
   const audit = (slug, action, detail) => db.prepare('INSERT INTO affiliate_catalog_audit(slug,action,detail) VALUES (?,?,?)').run(slug,action,detail);
   const origin = new URL(siteUrl).origin;
@@ -147,7 +149,9 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
     const p = db.prepare('SELECT * FROM affiliate_catalog WHERE slug=?').get(req.params.slug);
     if (!p || p.status==='draft') return res.status(404).type('html').send(document('Produto não encontrado','<h1>Produto não encontrado</h1><a href="/ofertas">Ver seleção de produtos</a>',origin+'/ofertas'));
     const body = `<p><a href="/ofertas">← Seleção de produtos</a></p><section class="detail">${p.image?`<img src="${esc(p.image)}" alt="${esc(p.title)}" width="540" height="420">`:''}<div><span class="eyebrow">${esc(p.category)} · ${platforms[p.platform]}</span><h1>${esc(p.title)}</h1><p>${esc(p.description)}</p>${p.evidence?`<p class="muted">${esc(p.evidence)}</p>`:''}<p class="disclosure">Publicidade · Link de afiliado: a VitrineCity pode receber comissão.</p>${canBuy(p)?`<a class="button" href="${esc(p.affiliate_url)}" data-affiliate-id="${p.slug}" rel="sponsored noopener noreferrer" target="_blank">Conferir preço no ${platforms[p.platform]} ↗</a><p class="muted">Preço, estoque e condições são confirmados na plataforma de compra.</p>`:'<p class="unavailable">Oferta temporariamente indisponível. Estamos revisando o link de compra.</p><a class="button secondary" href="/ofertas">Explorar outros produtos</a>'}</div></section><section class="note"><h2>Antes de escolher</h2><p>Confira a descrição completa do vendedor e compare as medidas, a versão e os acessórios incluídos. Para aparelhos elétricos, verifique a voltagem. A compra e o atendimento do pedido acontecem na plataforma indicada.</p></section><script src="/affiliate-click.js" defer></script>`;
-    return res.type('html').set('Cache-Control','no-store').send(document(p.title,body,origin+pagePath(p),p.image));
+    const related=published().filter(other=>other.slug!==p.slug&&other.category===p.category&&canBuy(other)).slice(0,3);
+    const relatedHtml=related.length?`<section class="note"><h2>Veja também nesta categoria</h2><ul>${related.map(other=>`<li><a href="${pagePath(other)}">${esc(other.title)}</a></li>`).join('')}</ul></section>`:'';
+    return res.type('html').set('Cache-Control','no-store').send(document(p.title,body+relatedHtml,origin+pagePath(p),p.image,p.description.slice(0,180)));
   });
   // Aggregate button events only: these are not unique visitors, orders or commissions.
   const clickWindows = new Map();
