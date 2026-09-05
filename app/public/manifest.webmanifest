@@ -1,0 +1,32 @@
+{
+  "id": "/",
+  "name": "VitrineCity — Cidade Digital",
+  "short_name": "VitrineCity",
+  "description": "Lojas, serviços, cursos, ofertas e comunidade em uma cidade digital.",
+  "lang": "pt-BR",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#f4f9ff",
+  "theme_color": "#071f4b",
+  "categories": ["business", "shopping", "social"],
+  "icons": [
+    { "src": "/assets/pwa-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/pwa-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/pwa-icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Navegar e viajar",
+      "short_name": "Navegar",
+      "url": "/navegar.html",
+      "icons": [{ "src": "/assets/pwa-icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    { "name": "Explorar a cidade", "short_name": "Cidade", "url": "/cidade?source=pwa" },
+    { "name": "Lojas perto de mim", "short_name": "Perto de mim", "url": "/cidade-premium?source=pwa&perto=1" },
+    { "name": "Abrir a loja", "short_name": "Loja", "url": "/loja?source=pwa" },
+    { "name": "Minha conta", "short_name": "Conta", "url": "/minha-conta?source=pwa" }
+  ]
+}

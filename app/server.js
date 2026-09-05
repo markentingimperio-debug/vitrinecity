@@ -24,7 +24,14 @@ import { spawn } from 'node:child_process';
 import { originalCourse } from './course-content.js';
 import { setupAdminAnalytics } from './admin-analytics.js';
 import { marketplaceSlug, publicStorePath, renderPublicStorePage } from './marketplace-public.js';
+import { setupTrendRadar } from './trend-radar.js';
+import { setupDigitalPublisher } from './digital-publisher.js';
 import { marketplaceShippingQuote, melhorEnvioConfig } from './marketplace-shipping.js';
+import { calculateLocalDelivery, formatDeliveryAddress, googleRouteDistance, LOCAL_DELIVERY_DEFAULTS } from './local-delivery.js';
+import { normalizeStoreOperations, deliveryEta, canTransitionFoodOrder } from './food-operations.js';
+import { eligibleCouriers } from './courier-dispatch.js';
+import { STORE_AD_PLANS, storeAdQuote, rankSponsored } from './store-ads.js';
+import { sanitizeReviewComment, bayesianRating, reputationScore, basicReviewFraud } from './reputation.js';
 import { checkoutMelhorEnvioShipment,createMelhorEnvioShipment,generateMelhorEnvioShipment,
   melhorEnvioShipmentPayload,printMelhorEnvioShipment } from './melhor-envio-fulfillment.js';
 import {
@@ -42,6 +49,8 @@ import {
 import { buildLegalReviewDossier } from './legal-review.js';
 import { setupBusinessProspecting } from './business-prospecting.js';
 import { setupSalesAgentEngine } from './sales-agent-engine.js';
+import { setupLiveStudio } from './live-studio.js';
+import { sendInstagramLiveDirect } from './instagram-live-direct.js';
 
 const app = express();
 setupProductionHardening(app);
@@ -376,6 +385,9 @@ ensureColumn('lot_orders', 'mp_subscription_id', 'TEXT');
 ensureColumn('users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('users', 'totp_secret_encrypted', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('users', 'totp_enabled', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('users', 'cpf_fingerprint', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('users', 'cpf_last4', "TEXT NOT NULL DEFAULT ''");
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cpf_fingerprint ON users(cpf_fingerprint) WHERE cpf_fingerprint<>''");
 db.exec(`CREATE TABLE IF NOT EXISTS admin_login_audit (
   id INTEGER PRIMARY KEY,
   email_hash TEXT NOT NULL,
@@ -429,6 +441,36 @@ ensureColumn('ad_campaigns', 'starts_on', 'TEXT');
 ensureColumn('ad_campaigns', 'campaign_channel', "TEXT NOT NULL DEFAULT 'internal'");
 ensureColumn('ad_campaigns', 'external_campaign_id', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('ad_campaigns', 'external_platform_status', "TEXT NOT NULL DEFAULT 'not_applicable'");
+db.exec(`CREATE TABLE IF NOT EXISTS store_ad_settings (
+  id INTEGER PRIMARY KEY CHECK(id=1),enabled INTEGER NOT NULL DEFAULT 1,quality_threshold INTEGER NOT NULL DEFAULT 40,
+  city_weight REAL NOT NULL DEFAULT 30,category_weight REAL NOT NULL DEFAULT 25,quality_weight REAL NOT NULL DEFAULT 30,
+  fairness_weight REAL NOT NULL DEFAULT 15,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);INSERT OR IGNORE INTO store_ad_settings(id) VALUES(1);
+CREATE TABLE IF NOT EXISTS store_ad_campaigns (
+  id INTEGER PRIMARY KEY,store_reference TEXT NOT NULL REFERENCES store_profiles(order_reference) ON DELETE CASCADE,
+  plan_code TEXT NOT NULL,placement TEXT NOT NULL,target_city TEXT NOT NULL DEFAULT '',target_category TEXT NOT NULL DEFAULT '',
+  creative_title TEXT NOT NULL,creative_text TEXT NOT NULL DEFAULT '',image_url TEXT NOT NULL DEFAULT '',destination_url TEXT NOT NULL,
+  daily_budget_cents INTEGER NOT NULL,duration_days INTEGER NOT NULL,media_budget_cents INTEGER NOT NULL,management_fee_cents INTEGER NOT NULL,
+  management_fee_bps INTEGER NOT NULL,quality_score INTEGER NOT NULL DEFAULT 50,status TEXT NOT NULL DEFAULT 'pending_review',
+  starts_at TEXT,ends_at TEXT,admin_notes TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_store_ads_target ON store_ad_campaigns(status,placement,target_city,target_category);
+CREATE TABLE IF NOT EXISTS store_ad_events (
+  id INTEGER PRIMARY KEY,campaign_id INTEGER NOT NULL REFERENCES store_ad_campaigns(id) ON DELETE CASCADE,event_type TEXT NOT NULL CHECK(event_type IN ('impression','click','order','conversion')),
+  event_token TEXT NOT NULL,visitor_key TEXT NOT NULL,event_day TEXT NOT NULL,order_reference TEXT,value_cents INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(event_token,event_type)
+);CREATE INDEX IF NOT EXISTS idx_store_ad_events_campaign ON store_ad_events(campaign_id,event_type,event_day);
+CREATE TABLE IF NOT EXISTS store_ad_weight_audit (
+  id INTEGER PRIMARY KEY,admin_user_id INTEGER REFERENCES users(id),settings_json TEXT NOT NULL,reason TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS platform_promotion_slots (
+  id INTEGER PRIMARY KEY,slot TEXT NOT NULL CHECK(slot IN ('platform_header','platform_footer')),title TEXT NOT NULL,
+  text TEXT NOT NULL DEFAULT '',image_url TEXT NOT NULL DEFAULT '',cta_label TEXT NOT NULL,cta_url TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,sort_order INTEGER NOT NULL DEFAULT 0,starts_at TEXT,ends_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS platform_promotion_audit (
+  id INTEGER PRIMARY KEY,promotion_id INTEGER,admin_user_id INTEGER REFERENCES users(id),action TEXT NOT NULL,snapshot_json TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`);
 db.exec(`
 CREATE TABLE IF NOT EXISTS social_profiles (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -686,6 +728,19 @@ CREATE INDEX IF NOT EXISTS idx_social_reposts_user ON social_reposts(user_id,cre
 CREATE INDEX IF NOT EXISTS idx_social_posts_feed ON social_posts(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_posts_user ON social_posts(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_comments_post ON social_comments(post_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS social_comment_automations (
+  id INTEGER PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  comment_id INTEGER NOT NULL REFERENCES social_comments(id) ON DELETE CASCADE,
+  sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  trigger_text TEXT NOT NULL DEFAULT '',
+  destination_url TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'sent',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(post_id,recipient_id)
+);
+CREATE INDEX IF NOT EXISTS idx_social_comment_automations_recipient ON social_comment_automations(recipient_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_follows_followed ON social_follows(followed_id);
 CREATE INDEX IF NOT EXISTS idx_social_blocks_blocked ON social_blocks(blocked_id,blocker_id);
 CREATE INDEX IF NOT EXISTS idx_social_mutes_user ON social_mutes(user_id,muted_id);
@@ -778,6 +833,27 @@ ensureColumn('store_profiles', 'gallery_1_url', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('store_profiles', 'gallery_2_url', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('store_profiles', 'gallery_3_url', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('store_profiles', 'wants_google_profile', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_profiles', 'latitude', 'REAL');
+ensureColumn('store_profiles', 'longitude', 'REAL');
+ensureColumn('store_profiles', 'google_place_id', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'show_on_real_map', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_profiles', 'location_precision', "TEXT NOT NULL DEFAULT 'exact'");
+ensureColumn('store_profiles', 'business_type', "TEXT NOT NULL DEFAULT 'retail'");
+ensureColumn('store_profiles', 'street', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'address_number', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'address_complement', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'neighborhood', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'preparation_min_minutes', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_profiles', 'preparation_max_minutes', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_profiles', 'pickup_instructions', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_profiles', 'accepting_orders', 'INTEGER NOT NULL DEFAULT 1');
+ensureColumn('store_profiles', 'fulfillment_mode', "TEXT NOT NULL DEFAULT 'delivery'");
+db.exec(`CREATE TABLE IF NOT EXISTS store_business_hours (
+  store_reference TEXT NOT NULL REFERENCES store_profiles(order_reference) ON DELETE CASCADE,
+  day_of_week INTEGER NOT NULL CHECK(day_of_week BETWEEN 0 AND 6),
+  closed INTEGER NOT NULL DEFAULT 1, opens_at TEXT, closes_at TEXT,
+  PRIMARY KEY(store_reference,day_of_week)
+);`);
 db.exec(`CREATE TABLE IF NOT EXISTS ad_delivery_events (
   id INTEGER PRIMARY KEY,
   campaign_id INTEGER NOT NULL REFERENCES ad_campaigns(id) ON DELETE CASCADE,
@@ -830,56 +906,13 @@ CREATE TABLE IF NOT EXISTS ai_profit_allocations (
   status TEXT NOT NULL DEFAULT 'reserved' CHECK(status IN ('reserved','released','used')),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,expires_at INTEGER NOT NULL,used_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens(user_id,expires_at);
 CREATE INDEX IF NOT EXISTS idx_ai_profit_allocations_user ON ai_profit_allocations(user_id,id);`);
-db.exec(`CREATE TABLE IF NOT EXISTS admin_specialist_agents (
-  id INTEGER PRIMARY KEY,
-  code TEXT NOT NULL UNIQUE,
-  name TEXT NOT NULL,
-  specialty TEXT NOT NULL,
-  description TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused')),
-  approval_required INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS admin_agent_tasks (
-  id INTEGER PRIMARY KEY,
-  agent_id INTEGER NOT NULL REFERENCES admin_specialist_agents(id) ON DELETE CASCADE,
-  created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  title TEXT NOT NULL,
-  instructions TEXT NOT NULL,
-  priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','high')),
-  status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','in_progress','awaiting_approval','completed','cancelled')),
-  result_summary TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  completed_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_admin_agent_tasks_agent_status ON admin_agent_tasks(agent_id,status,id);`);
-db.exec(`CREATE TABLE IF NOT EXISTS admin_media_projects (
-  id INTEGER PRIMARY KEY,
-  task_id INTEGER NOT NULL UNIQUE REFERENCES admin_agent_tasks(id) ON DELETE CASCADE,
-  format TEXT NOT NULL DEFAULT 'short_video' CHECK(format IN ('short_video','long_video','image','campaign_kit','audio')),
-  channels TEXT NOT NULL DEFAULT 'VitrineCity',
-  source_notes TEXT,
-  production_status TEXT NOT NULL DEFAULT 'briefing' CHECK(production_status IN ('briefing','script','assets','editing','review','approved','published','cancelled')),
-  script TEXT,
-  output_url TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_admin_media_projects_status ON admin_media_projects(production_status,id);`);
-ensureColumn('admin_media_projects', 'prompt', "TEXT NOT NULL DEFAULT ''");
-ensureColumn('admin_media_projects', 'aspect_ratio', "TEXT NOT NULL DEFAULT '9:16'");
-ensureColumn('admin_media_projects', 'duration_seconds', 'INTEGER NOT NULL DEFAULT 4');
-ensureColumn('admin_media_projects', 'model', "TEXT NOT NULL DEFAULT ''");
-ensureColumn('admin_media_projects', 'remote_job_id', "TEXT NOT NULL DEFAULT ''");
-ensureColumn('admin_media_projects', 'polling_url', "TEXT NOT NULL DEFAULT ''");
-ensureColumn('admin_media_projects', 'progress', 'INTEGER NOT NULL DEFAULT 0');
-ensureColumn('admin_media_projects', 'usage_cost_usd', 'REAL NOT NULL DEFAULT 0');
-ensureColumn('admin_media_projects', 'error_message', "TEXT NOT NULL DEFAULT ''");
-ensureColumn('admin_media_projects', 'caption', "TEXT NOT NULL DEFAULT ''");
-ensureColumn('admin_media_projects', 'published_post_id', "TEXT NOT NULL DEFAULT ''");
 db.exec(`CREATE TABLE IF NOT EXISTS admin_viral_quizzes (
   id INTEGER PRIMARY KEY,
   created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -954,6 +987,82 @@ db.exec(`CREATE TABLE IF NOT EXISTS viral_distribution_jobs (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(quiz_id,provider)
 );`);
+/* Duplicated ai schema retained in the incoming patch context; disabled below.
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  page_path TEXT NOT NULL,
+  category TEXT NOT NULL,
+  risk TEXT NOT NULL CHECK(risk IN ('low','medium','high')),
+  current_issue TEXT NOT NULL,
+  proposed_change TEXT NOT NULL,
+  expected_impact TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','implemented','rolled_back')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  reviewed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ai_proposals_status ON ai_optimization_proposals(status,id);
+CREATE TABLE IF NOT EXISTS ai_profit_allocations (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  period_label TEXT NOT NULL,
+  source TEXT NOT NULL,
+  net_profit_cents INTEGER NOT NULL,
+  reserve_rate_bps INTEGER NOT NULL DEFAULT 500,
+  reserve_cents INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'reserved' CHECK(status IN ('reserved','released','used')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ai_profit_allocations_user ON ai_profit_allocations(user_id,id);`);
+*/
+db.exec(`CREATE TABLE IF NOT EXISTS admin_specialist_agents (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  specialty TEXT NOT NULL,
+  description TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused')),
+  approval_required INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS admin_agent_tasks (
+  id INTEGER PRIMARY KEY,
+  agent_id INTEGER NOT NULL REFERENCES admin_specialist_agents(id) ON DELETE CASCADE,
+  created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  instructions TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','high')),
+  status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','in_progress','awaiting_approval','completed','cancelled')),
+  result_summary TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_admin_agent_tasks_agent_status ON admin_agent_tasks(agent_id,status,id);`);
+db.exec(`CREATE TABLE IF NOT EXISTS admin_media_projects (
+  id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL UNIQUE REFERENCES admin_agent_tasks(id) ON DELETE CASCADE,
+  format TEXT NOT NULL DEFAULT 'short_video' CHECK(format IN ('short_video','long_video','image','campaign_kit','audio')),
+  channels TEXT NOT NULL DEFAULT 'VitrineCity',
+  source_notes TEXT,
+  production_status TEXT NOT NULL DEFAULT 'briefing' CHECK(production_status IN ('briefing','script','assets','editing','review','approved','published','cancelled')),
+  script TEXT,
+  output_url TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_admin_media_projects_status ON admin_media_projects(production_status,id);`);
+ensureColumn('admin_media_projects', 'prompt', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('admin_media_projects', 'aspect_ratio', "TEXT NOT NULL DEFAULT '9:16'");
+ensureColumn('admin_media_projects', 'duration_seconds', 'INTEGER NOT NULL DEFAULT 4');
+ensureColumn('admin_media_projects', 'model', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('admin_media_projects', 'remote_job_id', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('admin_media_projects', 'polling_url', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('admin_media_projects', 'progress', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('admin_media_projects', 'usage_cost_usd', 'REAL NOT NULL DEFAULT 0');
+ensureColumn('admin_media_projects', 'error_message', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('admin_media_projects', 'caption', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('admin_media_projects', 'published_post_id', "TEXT NOT NULL DEFAULT ''");
 db.exec(`CREATE TABLE IF NOT EXISTS admin_business_reviews (
   id INTEGER PRIMARY KEY,
   created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -979,7 +1088,10 @@ const defaultSpecialistAgents = [
   ['atendimento','Agente de Atendimento','Relacionamento','Prepara respostas e identifica casos que precisam de atenção humana.'],
   ['lojistas','Agente de Lojistas','Cadastro e qualidade','Orienta cadastros, revisa informações e aponta pendências de lojas.'],
   ['marketing','Agente de Marketing','Conteúdo e campanhas','Cria pautas, ofertas e propostas de comunicação para aprovação.'],
+  ['redacao','Agente Redator','Redação editorial','Produz textos originais, claros, estruturados e adequados à editoria e ao público.'],
+  ['fontes','Agente Verificador de Fontes','Checagem editorial','Valida origem, atualidade e consistência das informações antes de autorizar uma publicação.'],
   ['midia','Estúdio Audiovisual','Vídeo, imagem e áudio','Transforma missões em roteiros, cenas, edições e versões para cada canal, sempre com revisão antes de publicar.'],
+  ['editora','Coordenador da Editora Digital','Livros digitais e revisão editorial','Coordena pauta, estrutura, redação, capa, revisão e aprovação dos livros digitais. Exige conteúdo original, no mínimo 30 páginas e impede promessas enganosas ou publicação incompleta.'],
   ['cripto','Agente de Cripto e Tesouraria','Criptoativos e gestão de risco','Monitora a carteira operacional, pesquisa oportunidades e prepara propostas de alocação com risco, liquidez, custos e cenário de perda. Nunca promete retorno nem movimenta fundos fora das políticas da carteira.'],
   ['vendas','Agente de Vendas','Conversão','Analisa oportunidades, funil e ações para aumentar vendas.'],
   ['tecnico','Agente Técnico','Site e integrações','Monitora integrações, erros e melhorias técnicas seguras.']
@@ -1089,6 +1201,11 @@ ensureColumn('omnichannel_automation_settings','start_hour','INTEGER NOT NULL DE
 ensureColumn('omnichannel_automation_settings','end_hour','INTEGER NOT NULL DEFAULT 20');
 ensureColumn('omnichannel_automation_settings','approval_required','INTEGER NOT NULL DEFAULT 1');
 ensureColumn('omnichannel_automation_jobs','reply_text',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('omnichannel_automation_jobs','source_kind',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('omnichannel_automation_jobs','media_id',"TEXT NOT NULL DEFAULT ''");
+db.exec(`CREATE TABLE IF NOT EXISTS instagram_live_direct_attempts (
+  comment_id TEXT PRIMARY KEY, job_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`);
 db.exec(`CREATE TABLE IF NOT EXISTS social_accounts (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1151,6 +1268,13 @@ db.exec(`CREATE TABLE IF NOT EXISTS customer_addresses (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_customer_addresses_user ON customer_addresses(user_id,is_default,id);
+CREATE TABLE IF NOT EXISTS customer_favorite_stores (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  store_reference TEXT NOT NULL REFERENCES store_profiles(order_reference) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(user_id,store_reference)
+);
+CREATE INDEX IF NOT EXISTS idx_customer_favorite_stores_user ON customer_favorite_stores(user_id,created_at);
 CREATE TABLE IF NOT EXISTS store_products (
   id INTEGER PRIMARY KEY,
   store_reference TEXT NOT NULL REFERENCES store_profiles(order_reference) ON DELETE CASCADE,
@@ -1175,6 +1299,30 @@ ensureColumn('store_products', 'variation_label', "TEXT NOT NULL DEFAULT 'Única
 ensureColumn('store_products', 'delivery_min_days', 'INTEGER NOT NULL DEFAULT 3');
 ensureColumn('store_products', 'delivery_max_days', 'INTEGER NOT NULL DEFAULT 7');
 ensureColumn('store_products', 'return_days', 'INTEGER NOT NULL DEFAULT 7');
+ensureColumn('store_products', 'product_type', "TEXT NOT NULL DEFAULT 'retail'");
+ensureColumn('store_products', 'menu_category_id', 'INTEGER');
+ensureColumn('store_products', 'menu_sort_order', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_products', 'preparation_minutes', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('store_products', 'available', 'INTEGER NOT NULL DEFAULT 1');
+ensureColumn('store_products', 'dietary_tags', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_products', 'allergens', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('store_products', 'featured', 'INTEGER NOT NULL DEFAULT 0');
+db.exec(`CREATE TABLE IF NOT EXISTS menu_categories (
+  id INTEGER PRIMARY KEY, store_reference TEXT NOT NULL REFERENCES store_profiles(order_reference) ON DELETE CASCADE,
+  name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(store_reference,name)
+);
+CREATE TABLE IF NOT EXISTS product_option_groups (
+  id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, min_select INTEGER NOT NULL DEFAULT 0, max_select INTEGER NOT NULL DEFAULT 1,
+  required INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS product_options (
+  id INTEGER PRIMARY KEY, group_id INTEGER NOT NULL REFERENCES product_option_groups(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, price_delta_cents INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);`);
 db.exec(`CREATE TABLE IF NOT EXISTS marketplace_product_reviews (
   id INTEGER PRIMARY KEY,
   product_id INTEGER NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
@@ -1189,6 +1337,50 @@ db.exec(`CREATE TABLE IF NOT EXISTS marketplace_product_reviews (
   UNIQUE(product_id,user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_marketplace_reviews_product ON marketplace_product_reviews(product_id,status,created_at DESC);`);
+db.exec(`CREATE TABLE IF NOT EXISTS verified_delivery_reviews (
+  id INTEGER PRIMARY KEY,order_reference TEXT NOT NULL REFERENCES marketplace_orders(reference) ON DELETE CASCADE,
+  reviewer_user_id INTEGER NOT NULL REFERENCES users(id),target_type TEXT NOT NULL CHECK(target_type IN ('store','courier')),
+  target_reference TEXT NOT NULL,rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),comment TEXT NOT NULL DEFAULT '',
+  moderation_status TEXT NOT NULL DEFAULT 'published' CHECK(moderation_status IN ('pending','published','rejected','hidden')),
+  fraud_flags TEXT NOT NULL DEFAULT '[]',reviewer_fingerprint TEXT NOT NULL,response_text TEXT NOT NULL DEFAULT '',responded_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(order_reference,target_type),UNIQUE(reviewer_user_id,order_reference,target_type)
+);
+CREATE INDEX IF NOT EXISTS idx_verified_reviews_target ON verified_delivery_reviews(target_type,target_reference,moderation_status,created_at DESC);
+CREATE TABLE IF NOT EXISTS review_rewards (
+  id INTEGER PRIMARY KEY,review_id INTEGER NOT NULL UNIQUE REFERENCES verified_delivery_reviews(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id),reward_units INTEGER NOT NULL DEFAULT 500,idempotency_key TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS review_reports (
+  id INTEGER PRIMARY KEY,review_id INTEGER NOT NULL REFERENCES verified_delivery_reviews(id) ON DELETE CASCADE,
+  reporter_user_id INTEGER NOT NULL REFERENCES users(id),reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(review_id,reporter_user_id)
+);
+CREATE TABLE IF NOT EXISTS review_appeals (
+  id INTEGER PRIMARY KEY,review_id INTEGER NOT NULL REFERENCES verified_delivery_reviews(id) ON DELETE CASCADE,
+  appellant_type TEXT NOT NULL,appellant_reference TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',admin_note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,reviewed_at TEXT,UNIQUE(review_id,appellant_type,appellant_reference)
+);
+CREATE TABLE IF NOT EXISTS review_moderation_audit (
+  id INTEGER PRIMARY KEY,review_id INTEGER NOT NULL REFERENCES verified_delivery_reviews(id) ON DELETE CASCADE,
+  admin_user_id INTEGER REFERENCES users(id),action TEXT NOT NULL,note TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS admin_profile_audit (
+  id INTEGER PRIMARY KEY,admin_user_id INTEGER NOT NULL REFERENCES users(id),profile_type TEXT NOT NULL,
+  profile_reference TEXT NOT NULL,action TEXT NOT NULL,changes_json TEXT NOT NULL DEFAULT '{}',proof_reference TEXT,
+  idempotency_key TEXT UNIQUE,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS profile_messages (
+  id INTEGER PRIMARY KEY,profile_type TEXT NOT NULL,profile_reference TEXT NOT NULL,sender_type TEXT NOT NULL,
+  sender_id TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,read_at TEXT
+);CREATE INDEX IF NOT EXISTS idx_profile_messages_subject ON profile_messages(profile_type,profile_reference,id);
+`);
+ensureColumn('customer_addresses','latitude','REAL');
+ensureColumn('customer_addresses','longitude','REAL');
+ensureColumn('customer_addresses','location_consent','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('users','account_status',"TEXT NOT NULL DEFAULT 'active'");
+ensureColumn('store_profiles','operational_status',"TEXT NOT NULL DEFAULT 'active'");
 db.exec(`CREATE TABLE IF NOT EXISTS marketplace_orders (
   id INTEGER PRIMARY KEY,
   reference TEXT NOT NULL UNIQUE,
@@ -1236,6 +1428,163 @@ ensureColumn('marketplace_orders','shipping_service_name',"TEXT NOT NULL DEFAULT
 ensureColumn('marketplace_orders','shipping_provider_order_id',"TEXT NOT NULL DEFAULT ''");
 ensureColumn('marketplace_orders','shipping_provider_status',"TEXT NOT NULL DEFAULT ''");
 ensureColumn('marketplace_orders','shipping_provider_error',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('marketplace_orders','delivery_mode',"TEXT NOT NULL DEFAULT 'carrier'");
+ensureColumn('marketplace_orders','delivery_distance_meters','INTEGER');
+ensureColumn('marketplace_orders','delivery_platform_cents','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('marketplace_orders','delivery_courier_cents','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('marketplace_orders','customer_confirmed_at','TEXT');
+ensureColumn('marketplace_orders','preparation_minutes_snapshot','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('marketplace_orders','route_duration_seconds_snapshot','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('marketplace_orders','estimated_min_minutes_snapshot','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('marketplace_orders','estimated_max_minutes_snapshot','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('marketplace_order_items','options_snapshot_json',"TEXT NOT NULL DEFAULT '[]'");
+ensureColumn('marketplace_order_items','options_total_cents','INTEGER NOT NULL DEFAULT 0');
+db.exec(`CREATE TABLE IF NOT EXISTS local_delivery_settings (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  enabled INTEGER NOT NULL DEFAULT 0,
+  base_fee_cents INTEGER NOT NULL DEFAULT 500,
+  base_distance_meters INTEGER NOT NULL DEFAULT 1000,
+  additional_km_cents INTEGER NOT NULL DEFAULT 50,
+  platform_commission_bps INTEGER NOT NULL DEFAULT 1000,
+  max_distance_meters INTEGER NOT NULL DEFAULT 30000,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT OR IGNORE INTO local_delivery_settings(id) VALUES (1);
+CREATE TABLE IF NOT EXISTS local_delivery_cities (
+  id INTEGER PRIMARY KEY,
+  city TEXT NOT NULL COLLATE NOCASE,
+  state TEXT NOT NULL COLLATE NOCASE,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(city,state)
+);
+CREATE TABLE IF NOT EXISTS local_delivery_couriers (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  whatsapp TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL,
+  state TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','blocked')),
+  balance_cents INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS local_delivery_jobs (
+  id INTEGER PRIMARY KEY,
+  order_reference TEXT NOT NULL UNIQUE REFERENCES marketplace_orders(reference) ON DELETE CASCADE,
+  courier_id INTEGER REFERENCES local_delivery_couriers(id) ON DELETE SET NULL,
+  distance_meters INTEGER NOT NULL,
+  duration_seconds INTEGER NOT NULL DEFAULT 0,
+  fee_cents INTEGER NOT NULL,
+  platform_cents INTEGER NOT NULL,
+  courier_cents INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'awaiting_payment' CHECK(status IN ('awaiting_payment','available','assigned','picked_up','delivered','cancelled')),
+  assigned_at TEXT,
+  picked_up_at TEXT,
+  delivered_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_local_delivery_jobs_status ON local_delivery_jobs(status,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_local_delivery_couriers_status ON local_delivery_couriers(status,city,state);`);
+ensureColumn('local_delivery_couriers','password_hash',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('local_delivery_couriers','pix_key_encrypted',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('local_delivery_couriers','pix_key_type',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('local_delivery_couriers','current_latitude','REAL');
+ensureColumn('local_delivery_couriers','current_longitude','REAL');
+ensureColumn('local_delivery_couriers','location_accuracy','REAL');
+ensureColumn('local_delivery_couriers','location_at','TEXT');
+ensureColumn('local_delivery_couriers','available','INTEGER NOT NULL DEFAULT 0');
+db.exec(`CREATE TABLE IF NOT EXISTS courier_applications (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  whatsapp TEXT NOT NULL,
+  cpf_hash TEXT NOT NULL UNIQUE,
+  cpf_last4 TEXT NOT NULL,
+  city TEXT NOT NULL,
+  state TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+  terms_version TEXT NOT NULL,
+  privacy_version TEXT NOT NULL,
+  terms_accepted_at TEXT NOT NULL,
+  privacy_accepted_at TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  request_fingerprint TEXT NOT NULL DEFAULT '',
+  courier_id INTEGER REFERENCES local_delivery_couriers(id) ON DELETE SET NULL,
+  review_note TEXT NOT NULL DEFAULT '',
+  reviewed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_courier_applications_status_created ON courier_applications(status,created_at DESC);`);
+db.exec(`CREATE TABLE IF NOT EXISTS local_delivery_offers (
+  id INTEGER PRIMARY KEY,job_id INTEGER NOT NULL REFERENCES local_delivery_jobs(id) ON DELETE CASCADE,
+  courier_id INTEGER NOT NULL REFERENCES local_delivery_couriers(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'offered' CHECK(status IN ('offered','accepted','declined','expired','cancelled')),
+  distance_to_store_meters INTEGER NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  responded_at TEXT, UNIQUE(job_id,courier_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_delivery_offer_exclusive ON local_delivery_offers(job_id) WHERE status='offered';
+CREATE TABLE IF NOT EXISTS local_delivery_events (
+  id INTEGER PRIMARY KEY,job_id INTEGER NOT NULL REFERENCES local_delivery_jobs(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,actor_type TEXT NOT NULL,actor_id INTEGER,metadata_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_delivery_events_job ON local_delivery_events(job_id,id);
+CREATE TABLE IF NOT EXISTS courier_location_history (
+  id INTEGER PRIMARY KEY,courier_id INTEGER NOT NULL REFERENCES local_delivery_couriers(id) ON DELETE CASCADE,
+  job_id INTEGER REFERENCES local_delivery_jobs(id) ON DELETE SET NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,
+  accuracy REAL,heading REAL,speed REAL,captured_at TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_courier_location_history ON courier_location_history(courier_id,created_at DESC);`);
+ensureColumn('local_delivery_couriers','pix_key_last4',"TEXT NOT NULL DEFAULT ''");
+db.exec(`CREATE TABLE IF NOT EXISTS local_delivery_courier_sessions (
+  token_hash TEXT PRIMARY KEY,
+  courier_id INTEGER NOT NULL REFERENCES local_delivery_couriers(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS local_delivery_ledger (
+  id INTEGER PRIMARY KEY,
+  courier_id INTEGER NOT NULL REFERENCES local_delivery_couriers(id) ON DELETE CASCADE,
+  order_reference TEXT REFERENCES marketplace_orders(reference) ON DELETE SET NULL,
+  withdrawal_id INTEGER,
+  entry_type TEXT NOT NULL CHECK(entry_type IN ('delivery_credit','delivery_reversal','withdrawal_debit','withdrawal_refund')),
+  amount_cents INTEGER NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS local_delivery_withdrawals (
+  id INTEGER PRIMARY KEY,
+  courier_id INTEGER NOT NULL REFERENCES local_delivery_couriers(id) ON DELETE CASCADE,
+  amount_cents INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','approved','paid','rejected','cancelled')),
+  pix_key_type TEXT NOT NULL,
+  pix_key_encrypted TEXT NOT NULL,
+  pix_key_last4 TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL DEFAULT '',
+  proof_reference TEXT NOT NULL DEFAULT '',
+  admin_note TEXT NOT NULL DEFAULT '',
+  requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  reviewed_at TEXT,
+  paid_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS local_delivery_admin_audit (
+  id INTEGER PRIMARY KEY, admin_user_id INTEGER NOT NULL REFERENCES users(id), action TEXT NOT NULL,
+  withdrawal_id INTEGER REFERENCES local_delivery_withdrawals(id), proof_reference TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS marketplace_payment_events (
+  event_key TEXT PRIMARY KEY, order_reference TEXT NOT NULL REFERENCES marketplace_orders(reference) ON DELETE CASCADE,
+  payment_id TEXT NOT NULL, payment_status TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_courier_sessions_expiry ON local_delivery_courier_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_delivery_ledger_courier ON local_delivery_ledger(courier_id,id DESC);
+CREATE INDEX IF NOT EXISTS idx_delivery_withdrawals_courier ON local_delivery_withdrawals(courier_id,id DESC);`);
+ensureColumn('local_delivery_withdrawals','idempotency_key',"TEXT NOT NULL DEFAULT ''");
+ensureColumn('local_delivery_withdrawals','proof_reference',"TEXT NOT NULL DEFAULT ''");
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_delivery_withdrawals_idempotency ON local_delivery_withdrawals(courier_id,idempotency_key);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_delivery_withdrawals_proof ON local_delivery_withdrawals(proof_reference) WHERE proof_reference!='';`);
 db.exec(`CREATE TABLE IF NOT EXISTS ad_campaign_conversions (
   id INTEGER PRIMARY KEY,
   campaign_id INTEGER NOT NULL REFERENCES ad_campaigns(id) ON DELETE CASCADE,
@@ -1277,6 +1626,34 @@ CREATE TABLE IF NOT EXISTS marketplace_payment_reconciliation (
   last_event_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_marketplace_reconciliation_status ON marketplace_payment_reconciliation(reconciliation_status,updated_at DESC);`);
+db.exec(`CREATE TABLE IF NOT EXISTS marketplace_manual_payouts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_reference TEXT NOT NULL REFERENCES marketplace_orders(reference) ON DELETE CASCADE,
+  recipient_type TEXT NOT NULL CHECK(recipient_type IN ('store','courier')),
+  recipient_reference TEXT NOT NULL,
+  recipient_name TEXT NOT NULL,
+  gross_cents INTEGER NOT NULL CHECK(gross_cents>=0),
+  deductions_cents INTEGER NOT NULL DEFAULT 0 CHECK(deductions_cents>=0),
+  amount_cents INTEGER NOT NULL CHECK(amount_cents>=0),
+  advance_fee_cents INTEGER NOT NULL DEFAULT 0 CHECK(advance_fee_cents>=0),
+  payout_speed TEXT NOT NULL DEFAULT 'weekly' CHECK(payout_speed IN ('weekly','advance')),
+  scheduled_for TEXT NOT NULL,
+  advance_requested_at TEXT,
+  approval_status TEXT NOT NULL DEFAULT 'approved' CHECK(approval_status IN ('pending','approved','rejected')),
+  approved_at TEXT,
+  approved_by_user_id INTEGER REFERENCES users(id),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','paid','blocked')),
+  eligible_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  paid_at TEXT,
+  proof_reference TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  paid_by_user_id INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(order_reference,recipient_type)
+);
+CREATE INDEX IF NOT EXISTS idx_marketplace_manual_payouts_status ON marketplace_manual_payouts(status,recipient_type,eligible_at);`);
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_marketplace_manual_payouts_proof ON marketplace_manual_payouts(proof_reference) WHERE proof_reference<>'';`);
 db.exec(`CREATE TABLE IF NOT EXISTS marketplace_app_settings (
   id INTEGER PRIMARY KEY CHECK(id=1), client_id TEXT NOT NULL, client_secret_encrypted TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -1381,8 +1758,17 @@ const ADS_INTERNAL_CLICK_COST_UNITS = 480;
 const COURSE_PRICE_CENTS = 2399;
 const VIDEO_PACKAGE = Object.freeze({ slug: '10-videos-loja', amountCents: 20000, quantity: 10 });
 const DIGITAL_SERVICE_PACKAGES = Object.freeze({
-  'google-maps-essencial': Object.freeze({ title:'Otimização Google e Maps', amountCents:15000, description:'Diagnóstico, palavras-chave, informações, fotos e plano de otimização do Perfil da Empresa no Google' }),
-  'pagina-empresa': Object.freeze({ title:'Página profissional da empresa', amountCents:50000, description:'Criação de página empresarial responsiva com apresentação, contatos, localização e chamada para ação' })
+  'ads-banner-outdoor-7-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 7 dias', amountCents:5000, imageUrl:'/assets/services/ads-7-dias.jpg', description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 7 dias, após aprovação do material.' }),
+  'ads-banner-outdoor-15-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 15 dias', amountCents:7500, imageUrl:'/assets/services/ads-15-dias.jpg', description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 15 dias, após aprovação do material.' }),
+  'ads-banner-outdoor-30-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 30 dias', amountCents:10000, imageUrl:'/assets/services/ads-30-dias.jpg', description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 30 dias, após aprovação do material.' }),
+  'ads-banner-outdoor-60-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 60 dias', amountCents:17500, imageUrl:'/assets/services/ads-60-dias.jpg', description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 60 dias, após aprovação do material.' }),
+  'google-maps-essencial': Object.freeze({ title:'Otimização Google e Maps', amountCents:15000, imageUrl:'/assets/services/google-maps.jpg', description:'Diagnóstico, palavras-chave, informações, fotos e plano de otimização do Perfil da Empresa no Google' }),
+  'pagina-empresa': Object.freeze({ title:'Página profissional da empresa', amountCents:50000, imageUrl:'/assets/services/pagina-empresa.jpg', description:'Criação de página empresarial responsiva com apresentação, contatos, localização e chamada para ação' }),
+  '10-videos-loja': Object.freeze({ title:'Pacote de 10 vídeos curtos', amountCents:20000, imageUrl:'/assets/services/videos-curtos.jpg', description:'Roteiro, criação e entrega de dez vídeos verticais para divulgar produtos, serviços e ofertas' }),
+  'identidade-social': Object.freeze({ title:'Kit de identidade para redes sociais', amountCents:29900, imageUrl:'/assets/services/identidade-social.jpg', description:'Foto de perfil, capa, paleta visual e dez artes editáveis para redes sociais' }),
+  'seo-local': Object.freeze({ title:'SEO local e presença digital', amountCents:35000, imageUrl:'/assets/services/seo-local.jpg', description:'Auditoria de buscas locais, palavras-chave, páginas e plano de conteúdo para atrair clientes da região' }),
+  'chatbot-atendimento': Object.freeze({ title:'Configuração de chatbot de atendimento', amountCents:45000, imageUrl:'/assets/services/chatbot.jpg', description:'Configuração inicial de respostas, horários, captação de leads e encaminhamento para atendimento humano' }),
+  'loja-digital': Object.freeze({ title:'Implantação de loja digital', amountCents:75000, imageUrl:'/assets/services/loja-digital.jpg', description:'Cadastro visual da loja, organização inicial de até vinte produtos, contatos, pagamentos e orientação de operação' })
 });
 const REFERRAL_RATE_BPS = 600;
 const COURSE_REFERRAL_RATE_BPS = 4500;
@@ -1493,6 +1879,10 @@ const checkoutAttempts = new Map();
 const authAttempts = new Map();
 const aiAttempts = new Map();
 
+db.exec(`CREATE TABLE IF NOT EXISTS rate_limit_attempts (
+  id INTEGER PRIMARY KEY,bucket TEXT NOT NULL,attempt_key TEXT NOT NULL,attempted_at INTEGER NOT NULL
+);CREATE INDEX IF NOT EXISTS idx_rate_limit_lookup ON rate_limit_attempts(bucket,attempt_key,attempted_at);`);
+
 const mpHeaders = (token = process.env.MERCADOPAGO_ACCESS_TOKEN) => ({
   Authorization: `Bearer ${token}`,
   'Content-Type': 'application/json'
@@ -1502,17 +1892,15 @@ const pixAccessToken = () => process.env.MERCADOPAGO_PIX_ACCESS_TOKEN || '';
 const pixHeaders = () => mpHeaders(pixAccessToken());
 
 function allowAttempt(store, key, limit, windowMs) {
-  const now = Date.now();
-  if (store.size > 10000) {
-    for (const [entryKey, times] of store) {
-      if (!times.some(time => now - time < windowMs)) store.delete(entryKey);
-    }
-    while (store.size > 9000) store.delete(store.keys().next().value);
-  }
-  const recent = (store.get(key) || []).filter(time => now - time < windowMs);
-  if (recent.length >= limit) return false;
-  store.set(key, [...recent, now]);
-  return true;
+  const now=Date.now(),bucket=store===authAttempts?'auth':store===checkoutAttempts?'checkout':store===aiAttempts?'ai':'general';
+  return db.transaction(()=>{
+    db.prepare('DELETE FROM rate_limit_attempts WHERE bucket=? AND attempt_key=? AND attempted_at<?').run(bucket,key,now-windowMs);
+    const count=Number(db.prepare('SELECT COUNT(*) total FROM rate_limit_attempts WHERE bucket=? AND attempt_key=? AND attempted_at>=?').get(bucket,key,now-windowMs).total||0);
+    if(count>=limit)return false;
+    db.prepare('INSERT INTO rate_limit_attempts(bucket,attempt_key,attempted_at) VALUES (?,?,?)').run(bucket,key,now);
+    if(Math.random()<0.002)db.prepare('DELETE FROM rate_limit_attempts WHERE attempted_at<?').run(now-24*60*60*1000);
+    return true;
+  })();
 }
 
 function courseRoot(slug) {
@@ -1606,7 +1994,7 @@ function setSession(res, userId,maxAgeSeconds=SESSION_MAX_AGE_SECONDS) {
 function currentUser(req) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (!token) return null;
-  return db.prepare(`SELECT u.id,u.name,u.email,u.whatsapp,u.adult_confirmed,u.is_admin,u.totp_enabled,u.totp_secret_encrypted
+  return db.prepare(`SELECT u.id,u.name,u.email,u.whatsapp,u.cpf_last4,u.adult_confirmed,u.is_admin,u.totp_enabled,u.totp_secret_encrypted,u.account_status
     FROM sessions s JOIN users u ON u.id=s.user_id
     WHERE s.token_hash=? AND s.expires_at>?`).get(sessionHash(token), Date.now()) || null;
 }
@@ -1637,7 +2025,9 @@ function recordAdminLogin(req,email,success,reason){
   db.prepare("DELETE FROM admin_login_audit WHERE created_at<datetime('now','-180 days')").run();
 }
 
-const ADMIN_HTML_PATHS=new Set(['/admin-vendas-afiliadas.html','/admin','/admin.html','/admin-agentes.html','/admin-sales-agents.html','/admin-quizzes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html']);
+const ADMIN_HTML_PATHS=new Set(['/admin-vendas-afiliadas.html','/admin','/admin.html','/admin-agentes.html','/admin-sales-agents.html','/admin-crypto-matrix.html','/admin-quizzes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html','/admin-conteudos.html','/admin-entregas.html']);
+ADMIN_HTML_PATHS.add('/admin-live.html');
+ADMIN_HTML_PATHS.add('/admin-live');
 
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
@@ -1660,6 +2050,7 @@ function requireAdmin(req, res, next) {
 function requireUser(req, res, next) {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'Entre na sua conta para continuar.' });
+  if(user.account_status!=='active'&&!isAdministrativeUser(user))return res.status(403).json({error:'Conta temporariamente restrita.'});
   req.user = user;
   return next();
 }
@@ -1855,6 +2246,10 @@ function publicStoreProfile(reference) {
       googleMapsUrl: profile.google_maps_url || '', promotionText: profile.promotion_text || '',
       address: profile.address || '', city: profile.city || '', state: profile.state || '',
       postalCode: profile.postal_code || '', locationNotes: profile.location_notes || '',
+      latitude: Number.isFinite(profile.latitude) ? profile.latitude : null,
+      longitude: Number.isFinite(profile.longitude) ? profile.longitude : null,
+      googlePlaceId: profile.google_place_id || '', showOnRealMap: Boolean(profile.show_on_real_map),
+      locationPrecision: profile.location_precision === 'area' ? 'area' : 'exact',
       videoUrl: profile.video_url || '', gallery1Url: profile.gallery_1_url || '',
       gallery2Url: profile.gallery_2_url || '', gallery3Url: profile.gallery_3_url || '',
       wantsWebsite: Boolean(profile.wants_website), wantsBrandArt: Boolean(profile.wants_brand_art),
@@ -1882,6 +2277,71 @@ function saveStoreImage(reference, kind, value, currentUrl = '') {
   return `/uploads/store-assets/${filename}`;
 }
 
+function courierApplicationFingerprint(value) {
+  if(!managementSecret())throw new Error('courier_data_secret_missing');
+  return createHmac('sha256',managementSecret()).update('courier-application:'+String(value).replace(/\D/g,'')).digest('hex');
+}
+
+function marketplaceWebhookRouteSecret(){return String(process.env.MERCADOPAGO_WEBHOOK_ROUTE_SECRET||process.env.MERCADOPAGO_WEBHOOK_SECRET||managementSecret()||'');}
+function marketplaceWebhookRouteSignature(reference){const secret=marketplaceWebhookRouteSecret();if(!secret)throw new Error('webhook_route_secret_missing');return createHmac('sha256',secret).update(`marketplace-order:${String(reference)}`).digest('base64url');}
+function validMarketplaceWebhookRoute(reference,provided){const expected=marketplaceWebhookRouteSignature(reference),actual=String(provided||'');if(actual.length!==expected.length)return false;return timingSafeEqual(Buffer.from(actual),Buffer.from(expected));}
+
+const COURIER_SESSION_COOKIE='vc_courier_session';
+const COURIER_SESSION_MAX_AGE_SECONDS=30*24*60*60;
+function courierSecretKey(){const secret=String(process.env.LOCAL_DELIVERY_ENCRYPTION_KEY||managementSecret()||'');if(secret.length<24)throw new Error('courier_encryption_unavailable');return createHash('sha256').update(`courier:${secret}`).digest();}
+function encryptCourierValue(value){const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',courierSecretKey(),iv),encrypted=Buffer.concat([cipher.update(String(value),'utf8'),cipher.final()]);return [iv,cipher.getAuthTag(),encrypted].map(part=>part.toString('base64url')).join('.');}
+function decryptCourierValue(value){const [iv,tag,data]=String(value||'').split('.');if(!iv||!tag||!data)throw new Error('courier_secret_invalid');const decipher=createDecipheriv('aes-256-gcm',courierSecretKey(),Buffer.from(iv,'base64url'));decipher.setAuthTag(Buffer.from(tag,'base64url'));return Buffer.concat([decipher.update(Buffer.from(data,'base64url')),decipher.final()]).toString('utf8');}
+function courierFromRequest(req){const token=parseCookies(req)[COURIER_SESSION_COOKIE];if(!token)return null;return db.prepare(`SELECT c.* FROM local_delivery_courier_sessions s JOIN local_delivery_couriers c ON c.id=s.courier_id
+  WHERE s.token_hash=? AND s.expires_at>? AND c.status='active'`).get(sessionHash(token),Date.now())||null;}
+function requireCourier(req,res,next){const courier=courierFromRequest(req);if(!courier)return res.status(401).json({error:'Entre na conta do entregador.'});req.courier=courier;return next();}
+function grantCourierSession(res,courierId){const token=randomBytes(32).toString('base64url');db.prepare('DELETE FROM local_delivery_courier_sessions WHERE expires_at<=?').run(Date.now());db.prepare('INSERT INTO local_delivery_courier_sessions(token_hash,courier_id,expires_at) VALUES (?,?,?)').run(sessionHash(token),courierId,Date.now()+COURIER_SESSION_MAX_AGE_SECONDS*1000);res.append('Set-Cookie',`${COURIER_SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${COURIER_SESSION_MAX_AGE_SECONDS}`);}
+function applyCourierLedger({courierId,orderReference=null,withdrawalId=null,entryType,amountCents,idempotencyKey}){
+  const amount=Math.trunc(Number(amountCents));if(!Number.isInteger(amount)||amount===0)throw new Error('ledger_amount_invalid');
+  return db.transaction(()=>{const exists=db.prepare('SELECT id FROM local_delivery_ledger WHERE idempotency_key=?').get(idempotencyKey);if(exists)return false;
+    if(entryType==='withdrawal_debit'){const balance=db.prepare('SELECT balance_cents FROM local_delivery_couriers WHERE id=?').get(courierId);if(!balance||balance.balance_cents+amount<0)throw new Error('courier_balance_insufficient');}
+    db.prepare(`INSERT INTO local_delivery_ledger(courier_id,order_reference,withdrawal_id,entry_type,amount_cents,idempotency_key) VALUES (?,?,?,?,?,?)`).run(courierId,orderReference,withdrawalId,entryType,amount,idempotencyKey);
+    db.prepare('UPDATE local_delivery_couriers SET balance_cents=balance_cents+?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(amount,courierId);return true;})();
+}
+
+function payoutDate(daysAhead){const date=new Date();date.setUTCDate(date.getUTCDate()+daysAhead);return date.toISOString().slice(0,10);}
+function nextTuesdayPayoutDate(){const day=new Date().getUTCDay(),days=((2-day+7)%7)||7;return payoutDate(days);}
+function createManualPayoutsForOrder(reference){
+  const order=db.prepare(`SELECT o.*,s.business_name,j.courier_id,j.courier_cents,c.name courier_name
+    FROM marketplace_orders o JOIN store_profiles s ON s.order_reference=o.store_reference
+    LEFT JOIN local_delivery_jobs j ON j.order_reference=o.reference
+    LEFT JOIN local_delivery_couriers c ON c.id=j.courier_id
+    WHERE o.reference=? AND o.payment_status='approved' AND o.customer_confirmed_at IS NOT NULL`).get(reference);
+  if(!order)return false;
+  const scheduledFor=nextTuesdayPayoutDate(),storeDeductions=Math.max(0,order.platform_percent_cents+order.platform_fixed_cents+order.return_operation_cents),storeAmount=Math.max(0,order.products_cents-storeDeductions);
+  const insert=db.prepare(`INSERT OR IGNORE INTO marketplace_manual_payouts
+    (order_reference,recipient_type,recipient_reference,recipient_name,gross_cents,deductions_cents,amount_cents,scheduled_for)
+    VALUES (?,?,?,?,?,?,?,?)`);
+  insert.run(order.reference,'store',order.store_reference,order.business_name,order.products_cents,storeDeductions,storeAmount,scheduledFor);
+  if(order.courier_id)insert.run(order.reference,'courier',String(order.courier_id),order.courier_name||`Entregador ${order.courier_id}`,order.courier_cents,0,order.courier_cents,scheduledFor);
+  return true;
+}
+function requestPayoutAdvance(payout){
+  if(!payout||payout.status!=='pending'||payout.payout_speed!=='weekly')return false;
+  const fee=Math.round(payout.amount_cents*350/10000),amount=Math.max(0,payout.amount_cents-fee);
+  return Boolean(db.prepare(`UPDATE marketplace_manual_payouts SET payout_speed='advance',advance_fee_cents=?,
+    deductions_cents=deductions_cents+?,amount_cents=?,scheduled_for=?,advance_requested_at=CURRENT_TIMESTAMP,approval_status='pending',updated_at=CURRENT_TIMESTAMP
+    WHERE id=? AND status='pending' AND payout_speed='weekly'`).run(fee,fee,amount,payoutDate(1),payout.id).changes);
+}
+
+function storeMapLocation(body, current = {}) {
+  const latitude = body.latitude === '' || body.latitude == null ? current.latitude ?? null : Number(body.latitude);
+  const longitude = body.longitude === '' || body.longitude == null ? current.longitude ?? null : Number(body.longitude);
+  const valid = Number.isFinite(latitude) && latitude >= -90 && latitude <= 90 &&
+    Number.isFinite(longitude) && longitude >= -180 && longitude <= 180;
+  return {
+    latitude: valid ? latitude : null,
+    longitude: valid ? longitude : null,
+    googlePlaceId: String(body.googlePlaceId ?? current.google_place_id ?? '').trim().slice(0, 240),
+    showOnRealMap: body.showOnRealMap === undefined ? Boolean(current.show_on_real_map) : body.showOnRealMap === true,
+    locationPrecision: body.locationPrecision === 'area' ? 'area' : 'exact'
+  };
+}
+
 function storePortalPrimaryAccess(req, res) {
   const reference = String(req.params.reference || '');
   const token = String(req.query.token || req.body?.token || req.get('x-store-token') || '');
@@ -1903,7 +2363,7 @@ function storePortalPrimaryAccess(req, res) {
 function sellerMfaCookieName(reference){return `vc_store_mfa_${createHash('sha256').update(reference).digest('hex').slice(0,12)}`;}
 function sellerMfaAuthenticated(req,reference){const token=parseCookies(req)[sellerMfaCookieName(reference)];if(!token)return false;return Boolean(db.prepare('SELECT 1 FROM seller_mfa_sessions WHERE session_hash=? AND store_reference=? AND expires_at>?').get(sessionHash(token),reference,Date.now()));}
 function grantSellerMfaSession(res,reference){const token=randomBytes(32).toString('base64url'),maxAge=8*60*60;db.prepare('DELETE FROM seller_mfa_sessions WHERE expires_at<=?').run(Date.now());db.prepare('INSERT INTO seller_mfa_sessions(session_hash,store_reference,expires_at) VALUES (?,?,?)').run(sessionHash(token),reference,Date.now()+maxAge*1000);res.append('Set-Cookie',`${sellerMfaCookieName(reference)}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`);}
-function storePortalAccess(req,res){const access=storePortalPrimaryAccess(req,res);if(!access)return null;const seller=db.prepare('SELECT totp_enabled FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);if(seller?.totp_enabled&&!sellerMfaAuthenticated(req,access.order.reference)){res.status(428).json({error:'Confirme o segundo fator do lojista.',mfaRequired:true});return null;}return access;}
+function storePortalAccess(req,res){const access=storePortalPrimaryAccess(req,res);if(!access)return null;const operation=db.prepare('SELECT operational_status FROM store_profiles WHERE order_reference=?').get(access.order.reference);if(operation&&operation.operational_status!=='active'){res.status(403).json({error:'Operação da loja temporariamente restrita.'});return null;}const seller=db.prepare('SELECT totp_enabled FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);if(seller?.totp_enabled&&!sellerMfaAuthenticated(req,access.order.reference)){res.status(428).json({error:'Confirme o segundo fator do lojista.',mfaRequired:true});return null;}return access;}
 
 const SMTP_USER = String(process.env.SMTP_USER || '').trim();
 const SMTP_PASS = String(process.env.SMTP_PASS || '').trim();
@@ -2074,6 +2534,30 @@ function publicWallet(userId) {
 }
 
 app.use(express.json({ limit: '5mb', verify: (req, _res, buffer) => { req.rawBody = Buffer.from(buffer); } }));
+app.use((req, res, next) => {
+  const send = res.send.bind(res);
+  res.send = body => {
+    const type = String(res.getHeader('content-type') || '');
+    const candidate = Buffer.isBuffer(body) ? body.toString('utf8') : body;
+    const looksLikeHtml = typeof candidate === 'string' && /^\s*(?:<!doctype\s+html|<html\b)/i.test(candidate);
+    if (req.method !== 'GET' || req.path.startsWith('/admin') || (!type.includes('text/html') && !looksLikeHtml)) return send(body);
+    const wasBuffer = Buffer.isBuffer(body);
+    let page = candidate;
+    if (typeof page !== 'string') return send(body);
+    if (page.includes('</head>') && !page.includes('rel="manifest"')) {
+      page = page.replace('</head>', '<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#071f4b"><link rel="apple-touch-icon" href="/assets/pwa-icon-192.png"></head>');
+    }
+    if (page.includes('</body>') && !page.includes('/pwa-install.js')) {
+      page = page.replace('</body>', '<script src="/pwa-install.js?v=2" defer></script></body>');
+    }
+    if (page.includes('</body>') && !page.includes('/global-market-banner.js')) {
+      page = page.replace('</body>', '<script src="/global-market-banner.js?v=5" defer></script></body>');
+    }
+    if (wasBuffer) res.setHeader('Content-Length', Buffer.byteLength(page));
+    return send(wasBuffer ? Buffer.from(page) : page);
+  };
+  next();
+});
 app.set('trust proxy', 1);
 app.use((req, res, next) => {
   res.set({
@@ -2097,10 +2581,23 @@ app.use('/uploads/store-assets', express.static(path.join(dataDir, 'store-assets
 app.use('/uploads/generated-videos', express.static(path.join(dataDir, 'generated-videos'), {
   immutable: true, maxAge: '30d', fallthrough: false
 }));
-const publicPage = file => (_req, res) => res.sendFile(path.join(dir, 'public', file));
+const publicPage = file => (req, res) => {
+  const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
+  if (
+    req.path.startsWith('/admin') ||
+    page.includes('/global-market-banner.js') ||
+    !page.includes('</body>')
+  ) return res.type('html').send(page);
+  return res.type('html').send(page.replace(
+    '</body>',
+    '<script src="/global-market-banner.js?v=5" defer></script></body>'
+  ));
+};
+setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft, reviewEditorialDraft });
+setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover,generateBookIllustration});
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
-  const tags = [...scripts, '/social-accessibility.js'].map(src => `<script src="${src}" defer></script>`).join('');
+  const tags = [...scripts, '/social-accessibility.js','/global-market-banner.js?v=3'].map(src => `<script src="${src}" defer></script>`).join('');
   return res.type('html').send(page.replace('</body>', `${tags}</body>`));
 };
 const publicErrorPage = (res, status) => res.status(status).sendFile(path.join(dir, 'public', `${status}.html`));
@@ -2109,7 +2606,21 @@ app.get('/loja', (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', 'loja.html'), 'utf8');
   return res.type('html').send(page.replace('</body>', '<script src="/marketplace-terms.js"></script></body>'));
 });
-app.get(['/descobrir', '/descobrir-social.html'], enhancedPublicPage('descobrir-social.html', ['/discover-enhancements.js']));
+app.get(['/entregas', '/entregas.html'], (_req,res)=>res.sendFile(path.join(dir,'public','entregas.html')));
+app.get('/descobrir', publicPage('descobrir.html'));
+app.get('/descobrir-social.html', enhancedPublicPage('descobrir-social.html', ['/discover-enhancements.js']));
+app.get('/api/discover', (_req,res) => {
+  const articles=db.prepare(`SELECT slug,portal,title,summary,image_url imageUrl,published_at publishedAt
+    FROM editorial_articles WHERE status='published' ORDER BY published_at DESC LIMIT 18`).all().map(item=>({...item,url:`/artigo/${encodeURIComponent(item.slug)}`}));
+  const books=db.prepare(`SELECT slug,title,category,summary,cover_url imageUrl,price_cents amountCents,published_at publishedAt
+    FROM digital_books WHERE status='published' ORDER BY published_at DESC LIMIT 10`).all().map(item=>({...item,url:`/livro/${encodeURIComponent(item.slug)}`}));
+  const courses=managedCourses(true).filter(course=>courseReady(course.slug)).slice(0,12).map(course=>({slug:course.slug,title:course.title,description:course.description,imageUrl:course.coverUrl,amountCents:course.priceCents,url:`/centro-educacional.html#${encodeURIComponent(course.slug)}`}));
+  const products=db.prepare(`SELECT p.id,p.name title,p.description,p.price_cents amountCents,p.image_url imageUrl,p.category,s.business_name storeName
+    FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0 AND s.review_status='published'
+    ORDER BY p.updated_at DESC,p.id DESC LIMIT 16`).all().map(item=>({...item,url:`/produto/${item.id}/${marketplaceSlug(item.title,'produto')}`}));
+  return res.json({articles,books,courses,products,updatedAt:new Date().toISOString()});
+});
 app.get(['/perfil', '/perfil-social.html'], enhancedPublicPage('perfil-social.html'));
 app.get('/chat-social.html', enhancedPublicPage('chat-social.html'));
 app.get('/admin-social-moderacao.html', enhancedPublicPage('admin-social-moderacao.html', ['/admin-moderation-enhanced.js']));
@@ -2118,15 +2629,23 @@ app.get('/admin-cursos.html',requireAdmin,publicPage('admin-cursos.html'));
 app.get('/admin-curso-preview.html',requireAdmin,publicPage('admin-curso-preview.html'));
 app.get('/afiliados.html', enhancedPublicPage('afiliados.html', ['/affiliate-creator.js']));
 app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
-app.get('/admin-sales-agents.html',requireAdmin,publicPage('admin-sales-agents.html'));
+
+app.get('/admin-crypto-matrix.html',requireAdmin,publicPage('admin-crypto-matrix.html'));
 app.get('/admin-quizzes.html',requireAdmin,publicPage('admin-quizzes.html'));
 app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
 app.get('/admin-tiktok.html',requireAdmin,publicPage('admin-tiktok.html'));
 setupSalesAgentEngine({app,db,requireAdmin});
+app.get(['/admin-live.html','/admin-live'],requireAdmin,publicPage('admin-live.html'));
+setupLiveStudio({app,requireAdmin,sameOriginOnly});
 app.get('/admin-lojas.html',requireAdmin,publicPage('admin-lojas.html'));
-app.get('/admin-servicos.html',requireAdmin,publicPage('admin-servicos.html'));
+app.get('/admin-entregas.html',requireAdmin,publicPage('admin-entregas.html'));
+app.get('/admin-mapa-real.html',requireAdmin,publicPage('admin-mapa-real.html'));
+app.get('/admin-servicos.html',requireAdmin,(_req,res)=>{const page=fs.readFileSync(path.join(dir,'public','admin-servicos.html'),'utf8');res.type('html').send(page.replace('</body>','<script src="/admin-services-catalog.js?v=2" defer></script></body>'))});
+app.get('/admin-conteudos.html',requireAdmin,publicPage('admin-conteudos.html'));
 app.get('/recursos-social.html', enhancedPublicPage('recursos-social.html'));
 app.get('/cidade', publicPage('cidade-exploravel.html'));
+app.get('/mapa-real', (_req,res)=>res.redirect(301,'/cidade-premium'));
+app.get('/cidade-premium', publicPage('mapa-real.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
 app.get('/cidade/praca-central', publicPage('praca-central.html'));
 app.get('/cidade/avenida-premium', publicPage('passeio-virtual.html'));
@@ -2148,6 +2667,7 @@ app.get('/sitemap.xml', (_req, res) => {
   const fixedPaths = [
     '/', '/cidade', '/cidade/bairro-premium', '/cidade/praca-central', '/cidade/avenida-premium',
     '/social', '/descobrir', '/loja', '/centro-educacional.html', '/afiliados.html', '/grupos-whatsapp.html',
+    '/conteudo', '/noticias', '/esportes', '/receitas', '/plantas-e-jardinagem', '/tecnologia', '/inteligencia-artificial', '/entretenimento', '/livros',
     '/para-empresas.html', '/solucoes.html', '/como-funciona.html', '/comprar-lote.html', '/sobre.html',
     '/contato.html', '/privacy.html', '/termos-predio-digital.html', '/termos-marketplace.html',
     '/politica-vendedor-marketplace.html', '/politica-comprador-marketplace.html',
@@ -2166,12 +2686,16 @@ app.get('/sitemap.xml', (_req, res) => {
       AND s.review_status='published' AND TRIM(p.category)<>'' ORDER BY p.category`).all();
   const cities = db.prepare(`SELECT DISTINCT city FROM social_posts
     WHERE status='ready' AND TRIM(city)<>'' ORDER BY city`).all();
+  const articles = db.prepare("SELECT slug FROM editorial_articles WHERE status='published' ORDER BY published_at DESC LIMIT 5000").all();
+  const books = db.prepare("SELECT slug FROM digital_books WHERE status='published' ORDER BY published_at DESC LIMIT 2000").all();
   const dynamicPaths = [
     ...affiliateCatalog.sitemapPaths(),
     ...stores.map(store => publicStorePath(store)),
     ...products.map(product => `/produto/${product.id}/${marketplaceSlug(product.name, 'produto')}`),
     ...categories.map(row => `/categoria/${marketplaceSlug(row.category, 'categoria')}`),
-    ...cities.map(row => `/cidade/${marketplaceSlug(row.city, 'cidade')}`)
+    ...cities.map(row => `/cidade/${marketplaceSlug(row.city, 'cidade')}`),
+    ...articles.map(row => `/artigo/${row.slug}`),
+    ...books.map(row => `/livro/${row.slug}`)
   ];
   const urls = [...new Set([...fixedPaths, ...dynamicPaths])];
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
@@ -2225,6 +2749,7 @@ app.get('/feeds/meta-catalog.csv', (_req, res) => {
   return res.type('text/csv').set('Content-Disposition', 'inline; filename="vitrinecity-meta-catalog.csv"')
     .set('Cache-Control', 'public,max-age=300').send(`\uFEFF${csv}\n`);
 });
+app.use((req,res,next)=>{if(req.method!=='GET'||req.path.startsWith('/admin'))return next();const relative=req.path==='/'?'index.html':decodeURIComponent(req.path).replace(/^\//,'');const candidates=relative.endsWith('.html')?[relative]:[`${relative}.html`];for(const candidate of candidates){if(candidate.includes('/')||candidate.includes('..'))continue;const file=path.join(dir,'public',candidate);if(!fs.existsSync(file))continue;const page=fs.readFileSync(file,'utf8');return res.type('html').send(page.replace('</body>','<script src="/global-market-banner.js?v=3" defer></script></body>'))}return next()});
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
 
 app.get('/r/:code', (req, res) => {
@@ -2491,6 +3016,18 @@ app.post('/api/auth/register', sameOriginOnly, (req, res) => {
   }
 });
 
+app.post('/api/customer/register', sameOriginOnly, (req, res) => {
+  const body=req.body||{},normalizedEmail=String(body.email||'').trim().toLowerCase(),cpf=String(body.cpf||'').replace(/\D/g,''),whatsapp=String(body.whatsapp||'').replace(/\D/g,'').slice(0,15),a=body.address||{};
+  if(!allowAttempt(authAttempts,`customer-register-ip:${req.ip}`,8,15*60*1000)||!allowAttempt(authAttempts,`customer-register-email:${normalizedEmail}`,4,60*60*1000))return res.set('Retry-After','900').status(429).json({error:'Muitas tentativas. Aguarde alguns minutos.'});
+  const name=String(body.name||'').trim().slice(0,100),password=String(body.password||''),address={postal:String(a.postalCode||'').replace(/\D/g,'').slice(0,8),street:String(a.street||'').trim().slice(0,120),number:String(a.number||'').trim().slice(0,20),complement:String(a.complement||'').trim().slice(0,80),neighborhood:String(a.neighborhood||'').trim().slice(0,80),city:String(a.city||'').trim().slice(0,80),state:String(a.state||'').trim().toUpperCase().slice(0,2)};
+  if(!body.adultConfirmed||!body.termsAccepted||name.length<2||!validCpf(cpf)||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)||whatsapp.length<10||password.length<10||address.postal.length!==8||!address.street||!address.number||!address.neighborhood||!address.city||address.state.length!==2)return res.status(400).json({error:'Preencha corretamente CPF, contato, senha e endereço completo.'});
+  const locationConsent=a.locationConsent===true,latitude=Number(a.latitude),longitude=Number(a.longitude),validLocation=Number.isFinite(latitude)&&latitude>=-90&&latitude<=90&&Number.isFinite(longitude)&&longitude>=-180&&longitude<=180;
+  if(locationConsent&&!validLocation)return res.status(400).json({error:'A localização autorizada é inválida.'});
+  const secret=managementSecret();if(secret.length<24)return res.status(503).json({error:'Cadastro seguro temporariamente indisponível.'});
+  const fingerprint=createHmac('sha256',secret).update(`customer-cpf:${cpf}`).digest('hex');
+  try{const userId=db.transaction(()=>{const result=db.prepare(`INSERT INTO users(name,email,whatsapp,password_hash,adult_confirmed,cpf_fingerprint,cpf_last4) VALUES (?,?,?,?,1,?,?)`).run(name,normalizedEmail.slice(0,160),whatsapp,hashPassword(password),fingerprint,cpf.slice(-4));const id=Number(result.lastInsertRowid);db.prepare('INSERT INTO wallets(user_id,balance_units) VALUES (?,0)').run(id);db.prepare(`INSERT INTO customer_addresses(user_id,label,recipient_name,postal_code,street,number,complement,neighborhood,city,state,is_default,latitude,longitude,location_consent) VALUES (?,'Casa',?,?,?,?,?,?,?,?,1,?,?,?)`).run(id,name,address.postal,address.street,address.number,address.complement,address.neighborhood,address.city,address.state,locationConsent?latitude:null,locationConsent?longitude:null,locationConsent?1:0);return id;})();recordConsent(req,{userId,email:normalizedEmail,purpose:'account_terms',version:'terms-2026-08-22',source:'customer_registration'});recordConsent(req,{userId,email:normalizedEmail,purpose:'adult_declaration',version:'adult-2026-08-22',source:'customer_registration'});if(locationConsent)recordConsent(req,{userId,email:normalizedEmail,purpose:'customer_location',version:'privacy-2026-08-22',source:'customer_registration'});setSession(res,userId);return res.status(201).json({ok:true});}catch(error){if(String(error?.message||'').includes('cpf_fingerprint'))return res.status(409).json({error:'Este CPF já possui uma conta.'});if(String(error?.message||'').includes('UNIQUE'))return res.status(409).json({error:'Este e-mail já possui uma conta.'});return res.status(500).json({error:'Não foi possível criar sua conta agora.'});}
+});
+
 app.post('/api/auth/login', sameOriginOnly, (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   if (!allowAttempt(authAttempts, `login-ip:${req.ip}`, 12, 15 * 60 * 1000) ||
@@ -2504,6 +3041,39 @@ app.post('/api/auth/login', sameOriginOnly, (req, res) => {
   }
   setSession(res, user.id);
   return res.json({ ok: true });
+});
+
+app.post('/api/auth/password-reset/request',sameOriginOnly,async(req,res)=>{
+  const email=String(req.body?.email||'').trim().toLowerCase().slice(0,160),generic={ok:true,message:'Se o e-mail estiver cadastrado, enviaremos as instruções de recuperação.'};
+  if(!allowAttempt(authAttempts,`password-reset-ip:${req.ip}`,6,60*60*1000)||!allowAttempt(authAttempts,`password-reset-email:${email}`,3,60*60*1000))return res.json(generic);
+  const user=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)?db.prepare('SELECT id,name,email FROM users WHERE email=?').get(email):null;
+  if(!user||!mailTransport)return res.json(generic);
+  const token=randomBytes(32).toString('base64url'),expiresAt=Date.now()+30*60*1000;
+  db.transaction(()=>{db.prepare('DELETE FROM password_reset_tokens WHERE user_id=? OR expires_at<=?').run(user.id,Date.now());db.prepare('INSERT INTO password_reset_tokens(user_id,token_hash,expires_at) VALUES (?,?,?)').run(user.id,sessionHash(token),expiresAt)})();
+  const url=`${SITE_URL}/recuperar-acesso.html?token=${encodeURIComponent(token)}`;
+  try{await mailTransport.sendMail({from:process.env.EMAIL_FROM||`VitrineCity <${SMTP_USER}>`,to:user.email,subject:'Recuperação de acesso — VitrineCity',text:`Olá, ${user.name}. Use este link em até 30 minutos para criar uma nova senha: ${url}\n\nSe você não solicitou, ignore esta mensagem.`,html:`<h2>Recuperação de acesso</h2><p>Olá, ${escapeHtml(user.name)}.</p><p>O link abaixo é válido por 30 minutos e pode ser usado somente uma vez.</p><p><a href="${escapeHtml(url)}">Criar nova senha</a></p><p>Se você não solicitou, ignore esta mensagem.</p>`})}catch(error){console.error('Password reset email failed',String(error?.message||'email_failed').slice(0,160));}
+  return res.json(generic);
+});
+
+app.post('/api/auth/password-reset/confirm',sameOriginOnly,(req,res)=>{
+  const token=String(req.body?.token||''),password=String(req.body?.password||'');
+  if(!allowAttempt(authAttempts,`password-reset-confirm:${req.ip}`,10,15*60*1000))return res.set('Retry-After','900').status(429).json({error:'Muitas tentativas. Aguarde alguns minutos.'});
+  if(token.length<32||password.length<10||password.length>200)return res.status(400).json({error:'Link ou nova senha inválidos. Use pelo menos 10 caracteres.'});
+  const reset=db.prepare('SELECT * FROM password_reset_tokens WHERE token_hash=? AND used_at IS NULL AND expires_at>?').get(sessionHash(token),Date.now());
+  if(!reset)return res.status(400).json({error:'Este link expirou ou já foi utilizado.'});
+  db.transaction(()=>{db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(hashPassword(password),reset.user_id);db.prepare('UPDATE password_reset_tokens SET used_at=CURRENT_TIMESTAMP WHERE id=?').run(reset.id);db.prepare('DELETE FROM sessions WHERE user_id=?').run(reset.user_id);db.prepare('DELETE FROM privileged_sessions WHERE user_id=?').run(reset.user_id)})();
+  return res.json({ok:true,message:'Senha atualizada. Entre novamente na sua conta.'});
+});
+
+app.post('/api/store-access/request',sameOriginOnly,async(req,res)=>{
+  const email=String(req.body?.email||'').trim().toLowerCase().slice(0,160),generic={ok:true,message:'Se houver uma loja aprovada nesse e-mail, enviaremos o acesso ao painel privado.'};
+  if(!allowAttempt(authAttempts,`store-access-ip:${req.ip}`,8,60*60*1000)||!allowAttempt(authAttempts,`store-access-email:${email}`,4,60*60*1000))return res.json(generic);
+  if(!mailTransport||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return res.json(generic);
+  const stores=db.prepare("SELECT reference,business_name FROM lot_orders WHERE lower(email)=? AND status='approved' ORDER BY id DESC LIMIT 10").all(email);
+  if(!stores.length)return res.json(generic);
+  const links=stores.map(store=>({name:store.business_name||'Minha loja',url:`${SITE_URL}/painel-lojista.html?ref=${encodeURIComponent(store.reference)}&token=${encodeURIComponent(storeManagementToken(store.reference))}`}));
+  try{await mailTransport.sendMail({from:process.env.EMAIL_FROM||`VitrineCity <${SMTP_USER}>`,to:email,subject:'Acesso às suas lojas — VitrineCity',text:`Acesse suas lojas:\n\n${links.map(item=>`${item.name}: ${item.url}`).join('\n')}`,html:`<h2>Acesso do lojista</h2><p>Escolha a loja:</p><ul>${links.map(item=>`<li><a href="${escapeHtml(item.url)}">${escapeHtml(item.name)}</a></li>`).join('')}</ul><p>Não encaminhe esses links para outras pessoas.</p>`})}catch(error){console.error('Store access email failed',String(error?.message||'email_failed').slice(0,160));}
+  return res.json(generic);
 });
 
 app.get('/api/admin/auth/status',(req,res)=>{
@@ -2667,7 +3237,8 @@ app.post('/api/identity/age-verification/webhook', (req, res) => {
 function publicAddress(row) {
   return { id: row.id, label: row.label, recipientName: row.recipient_name, postalCode: row.postal_code,
     street: row.street, number: row.number, complement: row.complement || '', neighborhood: row.neighborhood,
-    city: row.city, state: row.state, isDefault: Boolean(row.is_default) };
+    city: row.city, state: row.state, isDefault: Boolean(row.is_default),
+    hasLocation:Boolean(row.location_consent&&row.latitude!=null&&row.longitude!=null) };
 }
 
 const existingSearchContent = createSearchContentProvider(dataDir, () => managedCourses(true));
@@ -2686,15 +3257,18 @@ app.get('/api/search/suggestions', (req, res) => {
   const products = db.prepare(`SELECT DISTINCT name AS label,category FROM store_products
     WHERE active=1 AND (name LIKE ? OR description LIKE ? OR category LIKE ?) ORDER BY name LIMIT 6`)
     .all(like, like, like).map(row => ({ ...row, type: 'product' }));
+  const articles=db.prepare(`SELECT title label,portal category FROM editorial_articles WHERE status='published' AND (title LIKE ? OR summary LIKE ? OR portal LIKE ?) ORDER BY published_at DESC LIMIT 5`).all(like,like,like).map(row=>({...row,type:'content'}));
+  const books=db.prepare(`SELECT title label,category FROM digital_books WHERE status='published' AND (title LIKE ? OR summary LIKE ? OR category LIKE ?) ORDER BY published_at DESC LIMIT 4`).all(like,like,like).map(row=>({...row,type:'book'}));
+  const courses=managedCourses(true).filter(course=>courseReady(course.slug)&&`${course.title} ${course.description}`.toLocaleLowerCase('pt-BR').includes(query.toLocaleLowerCase('pt-BR'))).slice(0,4).map(course=>({label:course.title,category:'Curso',type:'course'}));
   const seen = new Set();
-  return res.json({ suggestions: [...stores, ...products].filter(item => {
+  return res.json({ suggestions: [...stores, ...products,...articles,...books,...courses].filter(item => {
     const key = item.label.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true;
   }).slice(0, 8) });
 });
 
 app.get('/api/search', (req, res) => {
   const query = String(req.query.q || '').trim().slice(0, 80);
-  if (query.length < 2) return res.json({ query, stores: [], products: [] });
+  if (query.length < 2) return res.json({ query, stores: [], products: [],contents:[],books:[],courses:[],services:[] });
   const like = `%${query}%`;
   const stores = db.prepare(`SELECT p.order_reference AS reference,p.business_name AS name,p.description,
     p.logo_url AS logoUrl,p.facade_url AS facadeUrl,p.whatsapp,p.website_url AS websiteUrl,
@@ -2710,7 +3284,11 @@ app.get('/api/search', (req, res) => {
       (sp.name LIKE ? OR sp.description LIKE ? OR sp.category LIKE ? OR p.business_name LIKE ?)
     ORDER BY CASE WHEN sp.name LIKE ? THEN 0 ELSE 1 END,sp.updated_at DESC LIMIT 60`)
     .all(like, like, like, like, `${query}%`);
-  return res.json({ query, stores, products });
+  const contents=db.prepare(`SELECT slug,title,summary,portal,image_url imageUrl FROM editorial_articles WHERE status='published' AND (title LIKE ? OR summary LIKE ? OR body LIKE ? OR portal LIKE ?) ORDER BY CASE WHEN title LIKE ? THEN 0 ELSE 1 END,published_at DESC LIMIT 40`).all(like,like,like,like,`${query}%`).map(item=>({...item,url:`/artigo/${encodeURIComponent(item.slug)}`}));
+  const books=db.prepare(`SELECT slug,title,summary,category,cover_url imageUrl,price_cents priceCents FROM digital_books WHERE status='published' AND (title LIKE ? OR summary LIKE ? OR category LIKE ?) ORDER BY CASE WHEN title LIKE ? THEN 0 ELSE 1 END,published_at DESC LIMIT 30`).all(like,like,like,`${query}%`).map(item=>({...item,url:`/livro/${encodeURIComponent(item.slug)}`}));
+  const normalized=query.toLocaleLowerCase('pt-BR'),courses=managedCourses(true).filter(course=>courseReady(course.slug)&&`${course.title} ${course.description}`.toLocaleLowerCase('pt-BR').includes(normalized)).slice(0,30).map(course=>({title:course.title,description:course.description,imageUrl:course.coverUrl,priceCents:course.priceCents,url:`/centro-educacional.html#${encodeURIComponent(course.slug)}`}));
+  const services=Object.entries(DIGITAL_SERVICE_PACKAGES).filter(([,item])=>`${item.title} ${item.description}`.toLocaleLowerCase('pt-BR').includes(normalized)).slice(0,20).map(([slug,item])=>({title:item.title,description:item.description,priceCents:item.amountCents,url:`/servicos-digitais.html?servico=${encodeURIComponent(slug)}`}));
+  return res.json({ query, stores, products,contents,books,courses,services });
 });
 
 function adVisitorKey(req) {
@@ -2757,8 +3335,10 @@ function adCampaignScore(campaign, query) {
 
 app.get('/api/ads/serve', (req, res) => {
   const query = String(req.query.q || '').trim().slice(0, 80);
+  const context = String(req.query.context || '').trim().slice(0, 300);
   const city = String(req.query.city || '').trim().slice(0, 80).toLowerCase();
-  if (query.length < 2||likelyAutomatedAdTraffic(req)) return res.json({ ads: [] });
+  const placement = ['search','map','banner'].includes(String(req.query.placement || '')) ? String(req.query.placement) : 'search';
+  if ((placement === 'search' && query.length < 2)||likelyAutomatedAdTraffic(req)) return res.json({ ads: [] });
   const today = new Date().toISOString().slice(0, 10);
   const visitorKey = adVisitorKey(req);
   const viewer=currentUser(req);
@@ -2770,19 +3350,22 @@ app.get('/api/ads/serve', (req, res) => {
       w.balance_units
     FROM ad_campaigns c LEFT JOIN ad_delivery_events e ON e.campaign_id=c.id
     LEFT JOIN wallets w ON w.user_id=c.user_id
-    WHERE c.status='active' AND c.placement IN ('search','all')
+    WHERE c.status='active' AND c.campaign_channel='internal' AND c.placement IN (?,'all')
+      AND (c.starts_on IS NULL OR c.starts_on='' OR c.starts_on<=?)
+      AND (c.starts_on IS NULL OR c.starts_on='' OR date(c.starts_on,'+' || c.duration_days || ' days')>?)
       AND (c.target_city='' OR ?='' OR LOWER(c.target_city)=?)
     GROUP BY c.id HAVING COALESCE(spent_units,0)<c.net_credits
       AND COALESCE(spent_today,0)<ROUND(c.daily_budget_cents*?)
       AND COALESCE(w.balance_units,0)>=?
-    LIMIT 80`).all(today, city, city, ADS_CREDITS_PER_REAL, ADS_INTERNAL_CLICK_COST_UNITS)
+    LIMIT 80`).all(today, placement, today, today, city, city, ADS_CREDITS_PER_REAL, ADS_INTERNAL_CLICK_COST_UNITS)
     .filter(campaign => {
       if(viewer&&Number(campaign.user_id)===Number(viewer.id))return false;
+      if(placement !== 'search'&&!context)return true;
       const targets = normalizedAdTerms(`${campaign.keywords} ${campaign.category} ${campaign.creative_title} ${campaign.creative_text}`);
-      const queryTerms = normalizedAdTerms(query);
+      const queryTerms = normalizedAdTerms(query||context);
       return queryTerms.some(term => targets.some(target => target.includes(term) || term.includes(target)));
     })
-    .sort((a, b) => adCampaignScore(b, query) - adCampaignScore(a, query)).slice(0, 3);
+    .sort((a, b) => adCampaignScore(b, query||context) - adCampaignScore(a, query||context)).slice(0, placement==='search'?3:8);
   const record = db.prepare(`INSERT OR IGNORE INTO ad_delivery_events
     (campaign_id,event_type,event_token,visitor_key,query_text,cost_units,event_day)
     VALUES (?,'impression',?,?,?,0,?)`);
@@ -2793,7 +3376,8 @@ app.get('/api/ads/serve', (req, res) => {
     if (!inserted.changes) continue;
     ads.push({ id: campaign.id, title: campaign.creative_title || 'Oferta em destaque',
       text: campaign.creative_text || 'Conheça esta empresa na VitrineCity.', imageUrl: campaign.image_url || '',
-      destinationType: campaign.destination_type, clickUrl: `/api/ads/${campaign.id}/click?token=${encodeURIComponent(token)}` });
+      destinationType: campaign.destination_type, targetCity:campaign.target_city,
+      clickUrl: `/api/ads/${campaign.id}/click?token=${encodeURIComponent(token)}` });
   }
   return res.json({ ads, sponsored: true });
 });
@@ -2834,7 +3418,8 @@ app.get('/api/ads/:id/click', (req, res) => {
 app.get('/api/customer/profile', requireUser, (req, res) => {
   const addresses = db.prepare('SELECT * FROM customer_addresses WHERE user_id=? ORDER BY is_default DESC,id DESC')
     .all(req.user.id).map(publicAddress);
-  return res.json({ customer: { name: req.user.name, email: req.user.email, whatsapp: req.user.whatsapp || '' }, addresses });
+  return res.json({ customer: { name: req.user.name, email: req.user.email, whatsapp: req.user.whatsapp || '',
+    cpfMasked:req.user.cpf_last4?`***.***.***-${req.user.cpf_last4.slice(-2)}`:'' }, addresses });
 });
 
 app.put('/api/customer/profile', requireUser, (req, res) => {
@@ -2957,17 +3542,54 @@ app.get('/api/checkout/customer', requireUser, (req, res) => {
 app.get('/api/marketplace/products', (req, res) => {
   const category = String(req.query.category || '').trim().slice(0, 80);
   const search = String(req.query.q || '').trim().slice(0, 80);
+  let delivery=String(req.query.delivery||'').trim().toLowerCase();
+  if(!delivery){try{delivery=new URL(String(req.get('referer')||''),SITE_URL).searchParams.get('delivery')||'';}catch{delivery='';}}
   const products = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,
-      p.image_url,p.sku,p.stock_quantity,p.variation_label,p.delivery_min_days,p.delivery_max_days,p.return_days,
-      s.business_name AS store_name,
+      p.image_url,p.product_url,p.sku,p.stock_quantity,p.variation_label,p.delivery_min_days,p.delivery_max_days,p.return_days,
+      p.product_type,p.menu_category_id,p.menu_sort_order,p.preparation_minutes,p.available,
+      s.business_name AS store_name,s.business_type AS store_business_type,s.preparation_min_minutes AS store_preparation_min_minutes,
+      s.preparation_max_minutes AS store_preparation_max_minutes,s.accepting_orders AS store_accepting_orders,s.fulfillment_mode AS store_fulfillment_mode,
       COALESCE((SELECT ROUND(AVG(r.rating),1) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published'),0) rating_average,
       (SELECT COUNT(*) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published') rating_count
     FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
-    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0
-      AND s.review_status='published' AND (?='' OR p.category=?)
+    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.available=1 AND p.price_cents>0 AND p.stock_quantity>0
+      AND s.review_status='published' AND (?!='local' OR p.product_type='digital' OR s.fulfillment_mode IN ('delivery','local','both')) AND (?='' OR p.category=?)
       AND (?='' OR p.name LIKE '%'||?||'%' OR p.description LIKE '%'||?||'%' OR s.business_name LIKE '%'||?||'%')
-    ORDER BY p.updated_at DESC,p.id DESC LIMIT 120`).all(category, category, search, search, search, search);
+    ORDER BY p.updated_at DESC,p.id DESC LIMIT 120`).all(delivery,category, category, search, search, search, search);
   return res.json({ products });
+});
+
+app.get('/api/customer/favorite-stores',requireUser,(req,res)=>{
+  const references=db.prepare('SELECT store_reference FROM customer_favorite_stores WHERE user_id=? ORDER BY created_at DESC').all(req.user.id).map(row=>row.store_reference);
+  return res.json({references});
+});
+app.put('/api/customer/favorite-stores/:reference',requireUser,sameOriginOnly,(req,res)=>{
+  const reference=String(req.params.reference||'').trim(),store=db.prepare("SELECT order_reference FROM store_profiles WHERE order_reference=? AND review_status='published'").get(reference);
+  if(!store)return res.status(404).json({error:'Loja não encontrada.'});
+  db.prepare('INSERT OR IGNORE INTO customer_favorite_stores(user_id,store_reference) VALUES (?,?)').run(req.user.id,reference);
+  return res.json({ok:true,favorite:true});
+});
+app.delete('/api/customer/favorite-stores/:reference',requireUser,sameOriginOnly,(req,res)=>{
+  db.prepare('DELETE FROM customer_favorite_stores WHERE user_id=? AND store_reference=?').run(req.user.id,String(req.params.reference||'').trim());
+  return res.json({ok:true,favorite:false});
+});
+
+app.get('/api/marketplace/stores', (req,res) => {
+  const city=String(req.query.city||'').trim().slice(0,80),search=String(req.query.q||'').trim().slice(0,80),delivery=String(req.query.delivery||'').trim().toLowerCase();
+  const stores=db.prepare(`SELECT s.order_reference,s.business_name,s.description,s.logo_url,s.facade_url,s.city,s.state,
+      s.business_type,s.preparation_min_minutes,s.preparation_max_minutes,s.accepting_orders,s.fulfillment_mode,
+      COUNT(p.id) product_count,MIN(p.price_cents) starting_price_cents,
+      COALESCE((SELECT ROUND(AVG(r.rating),1) FROM verified_delivery_reviews r WHERE r.target_type='store' AND r.target_reference=s.order_reference AND r.moderation_status='published'),0) rating_average,
+      (SELECT COUNT(*) FROM verified_delivery_reviews r WHERE r.target_type='store' AND r.target_reference=s.order_reference AND r.moderation_status='published') rating_count
+    FROM store_profiles s JOIN store_products p ON p.store_reference=s.order_reference
+    WHERE s.review_status='published' AND p.active=1 AND p.marketplace_enabled=1 AND p.available=1 AND p.price_cents>0 AND p.stock_quantity>0
+      AND (?!='local' OR p.product_type='digital' OR s.fulfillment_mode IN ('delivery','local','both'))
+      AND (?='' OR s.city=?) AND (?='' OR s.business_name LIKE '%'||?||'%' OR s.description LIKE '%'||?||'%')
+    GROUP BY s.order_reference ORDER BY s.accepting_orders DESC,rating_average DESC,s.business_name`).all(delivery,city,city,search,search,search);
+  const references=stores.map(store=>store.order_reference),hours=new Map();
+  if(references.length){for(const row of db.prepare(`SELECT store_reference,day_of_week,closed,opens_at,closes_at FROM store_business_hours WHERE store_reference IN (${references.map(()=>'?').join(',')})`).all(...references)){if(!hours.has(row.store_reference))hours.set(row.store_reference,[]);hours.get(row.store_reference).push(row)}}
+  const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date()).map(part=>[part.type,part.value])),dayIndex={Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6}[parts.weekday],time=`${parts.hour}:${parts.minute}`;
+  return res.json({stores:stores.map(store=>{const schedule=hours.get(store.order_reference)||[],today=schedule.find(item=>item.day_of_week===dayIndex),scheduledOpen=!schedule.length||Boolean(today&&!today.closed&&today.opens_at<=time&&time<today.closes_at),open=Boolean(store.accepting_orders&&scheduledOpen);return {...store,open,path:`/loja?q=${encodeURIComponent(store.business_name)}&delivery=local`,image_url:store.facade_url||store.logo_url||PRODUCT_FALLBACK_PATH};})});
 });
 
 function melhorEnvioOAuthConfig(){
@@ -3298,6 +3920,8 @@ app.put('/api/admin/omnichannel-automation/:channel',requireAdmin,sameOriginOnly
 app.post('/api/admin/omnichannel-automation/jobs/:id/approve',requireAdmin,sameOriginOnly,async(req,res)=>{
   const job=db.prepare(`SELECT j.*,s.enabled FROM omnichannel_automation_jobs j JOIN omnichannel_automation_settings s ON s.channel=j.channel WHERE j.id=?`).get(String(req.params.id||''));
   if(!job||job.status!=='awaiting_approval'||!job.enabled)return res.status(409).json({error:'Esta resposta não está aguardando aprovação.'});
+  const claimed=db.prepare("UPDATE omnichannel_automation_jobs SET status='processing' WHERE id=? AND status='awaiting_approval'").run(job.id);
+  if(!claimed.changes)return res.status(409).json({error:'Esta resposta já está em processamento.'});
   try{await sendOmnichannelReply(job,job.reply_text);db.prepare(`UPDATE omnichannel_automation_jobs SET status='sent',processed_at=CURRENT_TIMESTAMP,error=NULL WHERE id=?`).run(job.id);return res.json({ok:true})}
   catch(error){db.prepare(`UPDATE omnichannel_automation_jobs SET status='failed',error=?,processed_at=CURRENT_TIMESTAMP WHERE id=?`).run(String(error?.message||'send_failed').slice(0,300),job.id);return res.status(502).json({error:'Não foi possível enviar a resposta aprovada.'})}
 });
@@ -3348,9 +3972,9 @@ async function processWhatsAppQrSchedules(){
   try{const due=db.prepare(`SELECT * FROM whatsapp_qr_schedules WHERE status='pending' AND scheduled_at<=? ORDER BY scheduled_at LIMIT 3`).all(new Date().toISOString());for(const item of due){const claimed=db.prepare(`UPDATE whatsapp_qr_schedules SET status='processing',error=NULL WHERE id=? AND status='pending'`).run(item.id);if(!claimed.changes)continue;try{const body=`${item.message}\n\n${item.sitemap_url}`.slice(0,4000),payload=await whatsappQrRequest('/chat/send/text',{method:'POST',body:JSON.stringify({Phone:item.group_jid,Body:body,Id:randomUUID().replaceAll('-','').toUpperCase()})}),data=whatsappQrData(payload);db.prepare(`UPDATE whatsapp_qr_schedules SET status='sent',provider_message_id=?,sent_at=CURRENT_TIMESTAMP WHERE id=?`).run(String(data.Id||data.id||'').slice(0,160),item.id)}catch(error){db.prepare(`UPDATE whatsapp_qr_schedules SET status='failed',error=? WHERE id=?`).run(String(error?.message||'send_failed').slice(0,300),item.id)}}}finally{whatsappScheduleRunning=false}
 }
 
-function enqueueOmnichannelJob(channel,externalId,destination,sourceText,accountId=null){
+function enqueueOmnichannelJob(channel,externalId,destination,sourceText,accountId=null,sourceKind='',mediaId=''){
   if(!externalId||!destination||!sourceText)return;
-  db.prepare(`INSERT OR IGNORE INTO omnichannel_automation_jobs(id,channel,external_id,destination,source_text,account_id) VALUES (?,?,?,?,?,?)`).run(randomUUID(),channel,String(externalId).slice(0,200),String(destination).slice(0,200),String(sourceText).slice(0,4000),accountId);
+  db.prepare(`INSERT OR IGNORE INTO omnichannel_automation_jobs(id,channel,external_id,destination,source_text,account_id,source_kind,media_id) VALUES (?,?,?,?,?,?,?,?)`).run(randomUUID(),channel,String(externalId).slice(0,200),String(destination).slice(0,200),String(sourceText).slice(0,4000),accountId,String(sourceKind).slice(0,40),String(mediaId).slice(0,100));
 }
 let omnichannelAutomationRunning=false;
 async function generateServiceReply(channel,text,setting){
@@ -3360,7 +3984,13 @@ async function generateServiceReply(channel,text,setting){
 }
 async function sendOmnichannelReply(job,reply){
   if(job.channel==='whatsapp_qr')return whatsappQrRequest('/chat/send/text',{method:'POST',body:JSON.stringify({Phone:job.destination,Body:reply,Id:randomUUID().replaceAll('-','').toUpperCase()})});
-  const account=db.prepare(`SELECT token_encrypted FROM social_accounts WHERE id=? AND status='connected'`).get(job.account_id);if(!account)throw new Error('meta_account_missing');
+  const account=db.prepare(`SELECT token_encrypted,instagram_id FROM social_accounts WHERE id=? AND status='connected'`).get(job.account_id);if(!account)throw new Error('meta_account_missing');
+  if(job.channel==='instagram' && job.source_kind==='live_comments'){
+    const attempt=db.prepare('INSERT OR IGNORE INTO instagram_live_direct_attempts(comment_id,job_id) VALUES (?,?)').run(job.destination,job.id);
+    if(!attempt.changes)throw new Error('instagram_live_reply_already_attempted');
+    return sendInstagramLiveDirect({instagramId:account.instagram_id,commentId:job.destination,mediaId:job.media_id,
+      text:reply,token:decryptSocialToken(account.token_encrypted),apiVersion:socialApiVersion()});
+  }
   const response=await fetch(`https://graph.facebook.com/${socialApiVersion()}/${encodeURIComponent(job.destination)}/private_replies`,{method:'POST',headers:{Authorization:`Bearer ${decryptSocialToken(account.token_encrypted)}`,'Content-Type':'application/json'},body:JSON.stringify({message:reply}),signal:AbortSignal.timeout(30000)});
   if(!response.ok){const detail=await response.json().catch(()=>({}));throw new Error(String(detail?.error?.message||`meta_${response.status}`))}
 }
@@ -3432,6 +4062,189 @@ app.post('/api/admin/marketplace/shipping/disconnect',requireAdmin,sameOriginOnl
   db.prepare("UPDATE melhor_envio_oauth SET status='revoked',updated_at=CURRENT_TIMESTAMP WHERE id=1").run();
   return res.json({ok:true});
 });
+app.get('/api/marketplace/sponsored',(req,res)=>{const adSettings=db.prepare('SELECT * FROM store_ad_settings WHERE id=1').get();if(!adSettings?.enabled||likelyAutomatedAdTraffic(req))return res.json({ads:[]});const city=String(req.query.city||'').trim().toLowerCase().slice(0,100),category=String(req.query.category||'').trim().toLowerCase().slice(0,80),slot=String(req.query.slot||'marketplace_top'),placement={marketplace_top:'city_top',category_top:'category_top',premium_banner:'premium_banner'}[slot]||'city_top',now=new Date().toISOString(),day=now.slice(0,10);
+  const candidates=db.prepare(`SELECT c.*,s.business_name store_name,s.logo_url,
+    SUM(CASE WHEN e.event_type='impression' THEN 1 ELSE 0 END) impressions,SUM(CASE WHEN e.event_type='click' THEN 1 ELSE 0 END) clicks
+    FROM store_ad_campaigns c JOIN store_profiles s ON s.order_reference=c.store_reference LEFT JOIN store_ad_events e ON e.campaign_id=c.id
+    WHERE c.status='active' AND c.placement IN (?,'all') AND (c.starts_at IS NULL OR c.starts_at<=?) AND (c.ends_at IS NULL OR c.ends_at>?)
+      AND (c.target_city='' OR LOWER(c.target_city)=?) AND (c.target_category='' OR LOWER(c.target_category)=?) AND s.review_status='published'
+    GROUP BY c.id LIMIT 100`).all(placement,now,now,city,category).map(item=>({...item,qualityScore:Math.round(item.quality_score*.6+reviewReputation('store',item.store_reference).qualityScore*.4)})).filter(item=>item.qualityScore>=adSettings.quality_threshold);const ranked=rankSponsored(candidates,{rotationSeed:Number(day.replaceAll('-',''))+Math.floor(Date.now()/60000)}).slice(0,5),record=db.prepare("INSERT OR IGNORE INTO store_ad_events(campaign_id,event_type,event_token,visitor_key,event_day) VALUES (?,'impression',?,?,?)"),visitor=adVisitorKey(req),ads=[];
+  for(const item of ranked){const token=randomBytes(18).toString('base64url');if(!record.run(item.id,token,visitor,day).changes)continue;ads.push({id:item.id,storeReference:item.store_reference,title:item.creative_title,text:item.creative_text,imageUrl:item.image_url||item.logo_url||'',storeName:item.store_name,sponsored:true,clickUrl:`/api/marketplace/sponsored/${item.id}/click?token=${encodeURIComponent(token)}`});}return res.json({ads,sponsored:true});});
+app.get('/api/marketplace/platform-promotions',(req,res)=>{const slot=['platform_header','platform_footer'].includes(String(req.query.slot))?String(req.query.slot):'platform_header',now=new Date().toISOString(),items=db.prepare(`SELECT id,slot,title,text,image_url imageUrl,cta_label ctaLabel,cta_url ctaUrl,sort_order sortOrder FROM platform_promotion_slots WHERE slot=? AND active=1 AND (starts_at IS NULL OR starts_at<=?) AND (ends_at IS NULL OR ends_at>?) ORDER BY sort_order,id LIMIT 20`).all(slot,now,now);return res.json({items,institutional:true,paid:false});});
+app.get('/api/marketplace/sponsored/:id/click',(req,res)=>{const id=Number(req.params.id),token=String(req.query.token||'').slice(0,80),visitor=adVisitorKey(req),event=db.prepare(`SELECT e.id,c.destination_url FROM store_ad_events e JOIN store_ad_campaigns c ON c.id=e.campaign_id WHERE e.campaign_id=? AND e.event_token=? AND e.event_type='impression' AND e.visitor_key=? AND c.status='active'`).get(id,token,visitor);if(!event)return res.redirect(302,'/loja');db.prepare("INSERT OR IGNORE INTO store_ad_events(campaign_id,event_type,event_token,visitor_key,event_day) VALUES (?,'click',?,?,?)").run(id,token,visitor,new Date().toISOString().slice(0,10));res.cookie('vc_store_ad_attr',`${id}.${token}`,{httpOnly:true,sameSite:'lax',secure:SITE_URL.startsWith('https://'),maxAge:30*24*60*60*1000,path:'/'});return res.redirect(302,event.destination_url);});
+
+function localDeliverySettings(){
+  const row=db.prepare('SELECT * FROM local_delivery_settings WHERE id=1').get()||{};
+  return {enabled:Boolean(row.enabled),baseFeeCents:Number(row.base_fee_cents??LOCAL_DELIVERY_DEFAULTS.baseFeeCents),
+    baseDistanceMeters:Number(row.base_distance_meters??LOCAL_DELIVERY_DEFAULTS.baseDistanceMeters),
+    additionalKmCents:Number(row.additional_km_cents??LOCAL_DELIVERY_DEFAULTS.additionalKmCents),
+    platformCommissionBps:Number(row.platform_commission_bps??LOCAL_DELIVERY_DEFAULTS.platformCommissionBps),
+    maxDistanceMeters:Number(row.max_distance_meters??LOCAL_DELIVERY_DEFAULTS.maxDistanceMeters)};
+}
+function readStoreAdAttribution(req,storeReference){const [idText,token]=String(parseCookies(req).vc_store_ad_attr||'').split('.'),id=Number(idText);if(!Number.isInteger(id)||!token)return null;const row=db.prepare(`SELECT c.id FROM store_ad_campaigns c JOIN store_ad_events e ON e.campaign_id=c.id WHERE c.id=? AND c.store_reference=? AND e.event_token=? AND e.event_type='click' AND e.created_at>=datetime('now','-30 days')`).get(id,storeReference,token);return row?{campaignId:id,eventToken:token}:null;}
+function localDeliveryCityActive(city,state){
+  return Boolean(db.prepare('SELECT 1 FROM local_delivery_cities WHERE city=? AND state=? AND active=1').get(String(city||'').trim(),String(state||'').trim().toUpperCase()));
+}
+function localDeliveryPlaceKey(value){return String(value||'').trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();}
+function recordDeliveryEvent(jobId,eventType,actorType='system',actorId=null,metadata={}){db.prepare('INSERT INTO local_delivery_events(job_id,event_type,actor_type,actor_id,metadata_json) VALUES (?,?,?,?,?)').run(jobId,eventType,actorType,actorId,JSON.stringify(metadata).slice(0,2000));}
+function deliveryTracking(orderReference){const job=db.prepare('SELECT id,status,courier_id,picked_up_at,delivered_at FROM local_delivery_jobs WHERE order_reference=?').get(orderReference);if(!job)return {status:null,timeline:[],location:null};const timeline=db.prepare('SELECT event_type eventType,actor_type actorType,created_at createdAt FROM local_delivery_events WHERE job_id=? ORDER BY id').all(job.id);let location=null;if(job.picked_up_at&&job.courier_id&&!['cancelled'].includes(job.status)){location=db.prepare('SELECT latitude,longitude,accuracy,captured_at capturedAt FROM courier_location_history WHERE courier_id=? AND job_id=? ORDER BY id DESC LIMIT 1').get(job.courier_id,job.id)||null;}return {status:job.status,timeline,location};}
+function dispatchNextCourier(jobId){
+  const job=db.prepare(`SELECT j.*,s.latitude,s.longitude,s.city,s.state FROM local_delivery_jobs j JOIN marketplace_orders o ON o.reference=j.order_reference JOIN store_profiles s ON s.order_reference=o.store_reference WHERE j.id=?`).get(jobId);
+  if(!job||job.status!=='available'||!Number.isFinite(job.latitude)||!Number.isFinite(job.longitude))return null;
+  const active=db.prepare("SELECT * FROM local_delivery_offers WHERE job_id=? AND status='offered'").get(job.id);if(active&&Date.parse(active.expires_at)>Date.now())return active;
+  if(active){db.prepare("UPDATE local_delivery_offers SET status='expired',responded_at=CURRENT_TIMESTAMP WHERE id=? AND status='offered'").run(active.id);recordDeliveryEvent(job.id,'offer_expired','system',null,{courierId:active.courier_id});}
+  const excluded=db.prepare("SELECT courier_id FROM local_delivery_offers WHERE job_id=? AND status IN ('declined','expired')").all(job.id).map(row=>row.courier_id);
+  const couriers=db.prepare(`SELECT id,status,available,current_latitude latitude,current_longitude longitude,location_at locationAt,city,state FROM local_delivery_couriers WHERE status='active' AND available=1`).all();
+  const candidate=eligibleCouriers(couriers,job,{excludedIds:excluded})[0];if(!candidate)return null;
+  const expiresAt=new Date(Date.now()+45000).toISOString();let result;try{result=db.prepare(`INSERT INTO local_delivery_offers(job_id,courier_id,distance_to_store_meters,expires_at) VALUES (?,?,?,?)`).run(job.id,candidate.id,candidate.distanceMeters,expiresAt);}catch{return db.prepare("SELECT * FROM local_delivery_offers WHERE job_id=? AND status='offered'").get(job.id)||null;}
+  recordDeliveryEvent(job.id,'offer_created','system',null,{courierId:candidate.id,distanceMeters:candidate.distanceMeters,expiresAt});return db.prepare('SELECT * FROM local_delivery_offers WHERE id=?').get(Number(result.lastInsertRowid));
+}
+async function localDeliveryQuote(storeReference,address){
+  const settings=localDeliverySettings();
+  if(!settings.enabled)throw new Error('local_delivery_disabled');
+  const store=db.prepare('SELECT address,street,address_number number,neighborhood,city,state,postal_code,business_type,preparation_min_minutes,preparation_max_minutes,accepting_orders,fulfillment_mode FROM store_profiles WHERE order_reference=?').get(storeReference);
+  if(store&&(!store.accepting_orders||store.fulfillment_mode==='pickup'))throw new Error('store_not_accepting_delivery');
+  if(!store||!localDeliveryCityActive(store.city,store.state)||localDeliveryPlaceKey(store.city)!==localDeliveryPlaceKey(address.city)||
+      String(store.state).trim().toUpperCase()!==String(address.state).trim().toUpperCase())throw new Error('local_delivery_city_unavailable');
+  const route=await googleRouteDistance({origin:`Centro, ${store.city}, ${store.state}`,destination:formatDeliveryAddress(address),
+    apiKey:String(process.env.GOOGLE_MAPS_ROUTES_API_KEY||'').trim()});
+  const operationalDistanceMeters=2000,billableDistanceMeters=route.distanceMeters+operationalDistanceMeters,price=calculateLocalDelivery(billableDistanceMeters,settings);
+  const routeDurationSeconds=Math.max(0,Number.parseInt(route.duration)||0),eta=deliveryEta({preparationMinMinutes:store.preparation_min_minutes,preparationMaxMinutes:store.preparation_max_minutes,routeDurationSeconds});
+  return {...price,routeDistanceMeters:route.distanceMeters,operationalDistanceMeters,shippingCents:price.feeCents,duration:route.duration,routeDurationSeconds,preparationMinutes:{min:store.preparation_min_minutes,max:store.preparation_max_minutes},estimatedMinMinutes:eta.etaMinMinutes,estimatedMaxMinutes:eta.etaMaxMinutes,provider:'vitrinecity_local',service:'Entrega local VitrineCity'};
+}
+
+app.post('/api/marketplace/local-delivery/quote',requireUser,sameOriginOnly,async(req,res)=>{
+  const address=db.prepare('SELECT * FROM customer_addresses WHERE id=? AND user_id=?').get(Number(req.body?.addressId),req.user.id);
+  const ids=[...new Set((Array.isArray(req.body?.items)?req.body.items:[]).map(item=>Number(item?.productId)).filter(Number.isInteger))];
+  if(!address||!ids.length)return res.status(400).json({error:'Selecione produtos e um endereço válido.'});
+  const products=db.prepare(`SELECT id,store_reference FROM store_products WHERE id IN (${ids.map(()=>'?').join(',')}) AND active=1 AND marketplace_enabled=1`).all(...ids);
+  if(products.length!==ids.length||products.some(product=>product.store_reference!==products[0].store_reference))return res.status(400).json({error:'A entrega local aceita produtos disponíveis de uma única loja.'});
+  try{return res.json({quote:await localDeliveryQuote(products[0].store_reference,address)});}
+  catch(error){const messages={local_delivery_disabled:'A entrega local ainda não está ativa.',local_delivery_city_unavailable:'A entrega local não está disponível entre esses endereços.',store_not_accepting_delivery:'A loja não está aceitando entregas agora.',routes_not_configured:'Configure a API de rotas do Google no servidor.',distance_out_of_range:'O endereço está fora da distância máxima de entrega.'};return res.status(409).json({error:messages[error.message]||'Não foi possível calcular a rota de entrega local.'});}
+});
+
+app.post('/api/courier/applications',sameOriginOnly,(req,res)=>{
+  const name=String(req.body?.name||'').trim().replace(/\s+/g,' ').slice(0,120),whatsapp=String(req.body?.whatsapp||'').replace(/\D/g,'').slice(0,15),
+    cpf=String(req.body?.cpf||'').replace(/\D/g,''),city=String(req.body?.city||'').trim().replace(/\s+/g,' ').slice(0,100),state=String(req.body?.state||'').trim().toUpperCase().slice(0,2),
+    idempotencyKey=String(req.get('idempotency-key')||'').trim().slice(0,120);
+  if(name.length<3||whatsapp.length<10||!validCpf(cpf)||city.length<2||state.length!==2)return res.status(400).json({error:'Revise nome, WhatsApp, CPF, cidade e UF.'});
+  if(req.body?.termsAccepted!==true||req.body?.privacyAccepted!==true)return res.status(400).json({error:'Aceite os termos e a política de privacidade.'});
+  if(!/^[A-Za-z0-9._:-]{12,120}$/.test(idempotencyKey))return res.status(400).json({error:'Envie uma chave de idempotência válida.'});
+  let cpfHash;try{cpfHash=courierApplicationFingerprint(cpf);}catch{return res.status(503).json({error:'Proteção de dados temporariamente indisponível.'});}
+  const prior=db.prepare('SELECT id,status FROM courier_applications WHERE idempotency_key=? OR cpf_hash=?').get(idempotencyKey,cpfHash);
+  if(prior)return res.json({ok:true,id:prior.id,status:prior.status,replayed:true});
+  try{const now=new Date().toISOString(),result=db.prepare(`INSERT INTO courier_applications(name,whatsapp,cpf_hash,cpf_last4,city,state,terms_version,privacy_version,terms_accepted_at,privacy_accepted_at,idempotency_key,request_fingerprint) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(name,whatsapp,cpfHash,cpf.slice(-4),city,state,'2026-09-02','2026-09-02',now,now,idempotencyKey,createHmac('sha256',managementSecret()).update(`${req.ip}|${String(req.get('user-agent')||'').slice(0,160)}`).digest('hex'));
+    return res.status(201).json({ok:true,id:Number(result.lastInsertRowid),status:'pending'});
+  }catch{return res.status(409).json({error:'Já existe uma solicitação para este CPF.'});}
+});
+
+app.get('/api/admin/local-delivery',requireAdmin,(_req,res)=>{
+  const settings=localDeliverySettings();
+  const cities=db.prepare('SELECT id,city,state,active,created_at createdAt FROM local_delivery_cities ORDER BY state,city').all().map(row=>({...row,active:Boolean(row.active)}));
+  const couriers=db.prepare('SELECT id,name,whatsapp,city,state,status,available,current_latitude latitude,current_longitude longitude,location_accuracy accuracy,location_at locationAt,balance_cents balanceCents,created_at createdAt FROM local_delivery_couriers ORDER BY status,name').all().map(row=>({...row,available:Boolean(row.available)}));
+  const jobs=db.prepare(`SELECT j.*,o.total_cents order_total_cents,s.business_name store_name,c.name courier_name
+    FROM local_delivery_jobs j JOIN marketplace_orders o ON o.reference=j.order_reference
+    JOIN store_profiles s ON s.order_reference=o.store_reference LEFT JOIN local_delivery_couriers c ON c.id=j.courier_id
+    ORDER BY j.id DESC LIMIT 200`).all();
+  const withdrawals=db.prepare(`SELECT w.id,w.courier_id courierId,c.name courierName,w.amount_cents amountCents,w.status,w.pix_key_type pixKeyType,w.pix_key_last4 pixKeyLast4,w.proof_reference proofReference,w.admin_note adminNote,w.requested_at requestedAt,w.paid_at paidAt FROM local_delivery_withdrawals w JOIN local_delivery_couriers c ON c.id=w.courier_id ORDER BY w.id DESC LIMIT 200`).all();
+  const offers=db.prepare(`SELECT id,job_id jobId,courier_id courierId,status,distance_to_store_meters distanceToStoreMeters,expires_at expiresAt,created_at createdAt,responded_at respondedAt FROM local_delivery_offers ORDER BY id DESC LIMIT 300`).all();
+  const applications=db.prepare(`SELECT id,name,whatsapp,cpf_last4 cpfLast4,city,state,status,review_note reviewNote,created_at createdAt,reviewed_at reviewedAt FROM courier_applications ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,id DESC LIMIT 300`).all();
+  return res.json({settings,cities,couriers,applications,jobs:jobs.map(job=>({...job,timeline:deliveryTracking(job.order_reference).timeline})),offers,withdrawals,routesConfigured:Boolean(String(process.env.GOOGLE_MAPS_ROUTES_API_KEY||'').trim())});
+});
+app.get('/api/admin/local-delivery/orders/:reference/tracking',requireAdmin,(req,res)=>{const order=db.prepare('SELECT reference FROM marketplace_orders WHERE reference=?').get(req.params.reference);return order?res.json({tracking:deliveryTracking(order.reference)}):res.status(404).json({error:'Pedido não encontrado.'});});
+app.put('/api/admin/local-delivery/settings',requireAdmin,sameOriginOnly,(req,res)=>{
+  const value=(name,min,max)=>{const number=Math.round(Number(req.body?.[name]));if(!Number.isInteger(number)||number<min||number>max)throw new Error(name);return number;};
+  try{const baseFeeCents=value('baseFeeCents',0,100000),baseDistanceMeters=value('baseDistanceMeters',100,100000),
+    additionalKmCents=value('additionalKmCents',0,100000),platformCommissionBps=value('platformCommissionBps',0,10000),maxDistanceMeters=value('maxDistanceMeters',baseDistanceMeters,500000);
+    db.prepare(`UPDATE local_delivery_settings SET enabled=?,base_fee_cents=?,base_distance_meters=?,additional_km_cents=?,platform_commission_bps=?,max_distance_meters=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`)
+      .run(req.body?.enabled===true?1:0,baseFeeCents,baseDistanceMeters,additionalKmCents,platformCommissionBps,maxDistanceMeters);
+    return res.json({ok:true,settings:localDeliverySettings()});
+  }catch{return res.status(400).json({error:'Revise os valores da configuração de entrega.'});}
+});
+app.post('/api/admin/local-delivery/cities',requireAdmin,sameOriginOnly,(req,res)=>{
+  const city=String(req.body?.city||'').trim().slice(0,100),state=String(req.body?.state||'').trim().toUpperCase().slice(0,2);
+  if(city.length<2||state.length!==2)return res.status(400).json({error:'Informe cidade e UF.'});
+  db.prepare(`INSERT INTO local_delivery_cities(city,state,active) VALUES (?,?,1) ON CONFLICT(city,state) DO UPDATE SET active=1`).run(city,state);
+  return res.status(201).json({ok:true});
+});
+app.patch('/api/admin/local-delivery/cities/:id',requireAdmin,sameOriginOnly,(req,res)=>{
+  const result=db.prepare('UPDATE local_delivery_cities SET active=? WHERE id=?').run(req.body?.active===true?1:0,Number(req.params.id));
+  return result.changes?res.json({ok:true}):res.status(404).json({error:'Cidade não encontrada.'});
+});
+app.post('/api/admin/local-delivery/couriers',requireAdmin,sameOriginOnly,(req,res)=>{
+  const name=String(req.body?.name||'').trim().slice(0,120),whatsapp=String(req.body?.whatsapp||'').replace(/[^\d+]/g,'').slice(0,20),
+    city=String(req.body?.city||'').trim().slice(0,100),state=String(req.body?.state||'').trim().toUpperCase().slice(0,2);
+  if(name.length<2||whatsapp.replace(/\D/g,'').length<10||city.length<2||state.length!==2)return res.status(400).json({error:'Preencha corretamente os dados do entregador.'});
+  const temporaryPassword=String(req.body?.password||randomBytes(9).toString('base64url'));
+  if(temporaryPassword.length<10)return res.status(400).json({error:'A senha do entregador deve ter ao menos 10 caracteres.'});
+  const result=db.prepare('INSERT INTO local_delivery_couriers(name,whatsapp,city,state,password_hash) VALUES (?,?,?,?,?)').run(name,whatsapp,city,state,hashPassword(temporaryPassword));
+  return res.status(201).json({ok:true,id:Number(result.lastInsertRowid),...(req.body?.password?{}:{temporaryPassword})});
+});
+app.patch('/api/admin/local-delivery/applications/:id',requireAdmin,sameOriginOnly,(req,res)=>{
+  const action=String(req.body?.action||''),note=String(req.body?.note||'').trim().slice(0,500),application=db.prepare('SELECT * FROM courier_applications WHERE id=?').get(Number(req.params.id));
+  if(!application)return res.status(404).json({error:'Solicitação não encontrada.'});
+  if(!['approve','reject'].includes(action))return res.status(400).json({error:'Ação inválida.'});
+  if(application.status!=='pending')return res.json({ok:true,status:application.status,replayed:true,courierId:application.courier_id||null});
+  if(action==='reject'){db.prepare("UPDATE courier_applications SET status='rejected',review_note=?,reviewed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").run(note,application.id);return res.json({ok:true,status:'rejected'});}
+  const temporaryPassword=randomBytes(9).toString('base64url');
+  try{const courierId=db.transaction(()=>{const result=db.prepare("INSERT INTO local_delivery_couriers(name,whatsapp,city,state,status,password_hash,available) VALUES (?,?,?,?,'active',?,0)").run(application.name,application.whatsapp,application.city,application.state,hashPassword(temporaryPassword));const id=Number(result.lastInsertRowid);const changed=db.prepare("UPDATE courier_applications SET status='approved',courier_id=?,review_note=?,reviewed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").run(id,note,application.id);if(!changed.changes)throw new Error('already_reviewed');return id;})();return res.json({ok:true,status:'approved',courierId,temporaryPassword});}
+  catch{return res.status(409).json({error:'Não foi possível aprovar esta solicitação.'});}
+});
+app.patch('/api/admin/local-delivery/couriers/:id/access',requireAdmin,sameOriginOnly,(req,res)=>{const password=String(req.body?.password||randomBytes(9).toString('base64url'));if(password.length<10)return res.status(400).json({error:'A senha deve ter ao menos 10 caracteres.'});const result=db.prepare("UPDATE local_delivery_couriers SET password_hash=?,status=CASE WHEN status='blocked' THEN status ELSE 'active' END,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(hashPassword(password),Number(req.params.id));if(!result.changes)return res.status(404).json({error:'Entregador não encontrado.'});db.prepare('DELETE FROM local_delivery_courier_sessions WHERE courier_id=?').run(Number(req.params.id));return res.json({ok:true,...(req.body?.password?{}:{temporaryPassword:password})});});
+app.patch('/api/admin/local-delivery/jobs/:id',requireAdmin,sameOriginOnly,(req,res)=>{
+  const status=String(req.body?.status||''),allowed=new Set(['available','assigned','picked_up','delivered','cancelled']),courierId=req.body?.courierId?Number(req.body.courierId):null;
+  if(!allowed.has(status))return res.status(400).json({error:'Status de entrega inválido.'});
+  if(['assigned','picked_up','delivered'].includes(status)&&!db.prepare("SELECT 1 FROM local_delivery_couriers WHERE id=? AND status='active'").get(courierId))return res.status(400).json({error:'Selecione um entregador ativo.'});
+  const job=db.prepare('SELECT * FROM local_delivery_jobs WHERE id=?').get(Number(req.params.id));if(!job)return res.status(404).json({error:'Entrega não encontrada.'});
+  const transitions={awaiting_payment:new Set(),available:new Set(['assigned','cancelled']),assigned:new Set(['available','picked_up','cancelled']),picked_up:new Set(['delivered','cancelled']),delivered:new Set(),cancelled:new Set()};
+  if(!transitions[job.status]?.has(status))return res.status(409).json({error:'Essa mudança de status não é permitida para a etapa atual.'});
+  db.transaction(()=>{db.prepare(`UPDATE local_delivery_jobs SET courier_id=COALESCE(?,courier_id),status=?,assigned_at=CASE WHEN ?='assigned' THEN COALESCE(assigned_at,CURRENT_TIMESTAMP) ELSE assigned_at END,picked_up_at=CASE WHEN ?='picked_up' THEN COALESCE(picked_up_at,CURRENT_TIMESTAMP) ELSE picked_up_at END,delivered_at=CASE WHEN ?='delivered' THEN COALESCE(delivered_at,CURRENT_TIMESTAMP) ELSE delivered_at END,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(courierId,status,status,status,status,job.id);
+  })();return res.json({ok:true});
+});
+
+app.post('/api/courier/auth/login',sameOriginOnly,(req,res)=>{const whatsapp=String(req.body?.whatsapp||'').replace(/\D/g,''),password=String(req.body?.password||'');
+  if(!allowAttempt(authAttempts,`courier-login-ip:${req.ip}`,10,15*60*1000)||!allowAttempt(authAttempts,`courier-login-phone:${whatsapp}`,6,15*60*1000))return res.set('Retry-After','900').status(429).json({error:'Muitas tentativas. Aguarde 15 minutos.'});
+  const courier=db.prepare("SELECT * FROM local_delivery_couriers WHERE replace(replace(replace(replace(whatsapp,'+',''),' ',''),'-',''),'(', '') LIKE ? AND status='active' ORDER BY id DESC LIMIT 1").get(`%${whatsapp.slice(-11)}`);
+  if(!courier||!courier.password_hash||!verifyPassword(password,courier.password_hash))return res.status(401).json({error:'WhatsApp ou senha incorretos.'});grantCourierSession(res,courier.id);return res.json({ok:true,courier:{id:courier.id,name:courier.name,city:courier.city,state:courier.state}});});
+app.post('/api/courier/auth/logout',sameOriginOnly,(req,res)=>{const token=parseCookies(req)[COURIER_SESSION_COOKIE];if(token)db.prepare('DELETE FROM local_delivery_courier_sessions WHERE token_hash=?').run(sessionHash(token));res.append('Set-Cookie',`${COURIER_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);return res.json({ok:true});});
+app.get('/api/courier/me',requireCourier,(req,res)=>res.json({courier:{id:req.courier.id,name:req.courier.name,whatsapp:req.courier.whatsapp,city:req.courier.city,state:req.courier.state,available:Boolean(req.courier.available),balanceCents:req.courier.balance_cents,pixConfigured:Boolean(req.courier.pix_key_encrypted),pixKeyType:req.courier.pix_key_type,pixKeyLast4:req.courier.pix_key_last4}}));
+app.post('/api/courier/reviews/:id/response',requireCourier,sameOriginOnly,(req,res)=>{const text=sanitizeReviewComment(req.body?.text,800);if(text.length<2)return res.status(400).json({error:'Informe a resposta.'});const result=db.prepare("UPDATE verified_delivery_reviews SET response_text=?,responded_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND target_type='courier' AND target_reference=?").run(text,Number(req.params.id),String(req.courier.id));return result.changes?res.json({ok:true}):res.status(404).json({error:'Avaliação não encontrada.'});});
+app.post('/api/courier/reviews/:id/appeal',requireCourier,sameOriginOnly,(req,res)=>{const reason=sanitizeReviewComment(req.body?.reason,1000),review=db.prepare("SELECT id FROM verified_delivery_reviews WHERE id=? AND target_type='courier' AND target_reference=?").get(Number(req.params.id),String(req.courier.id));if(!review||reason.length<10)return res.status(400).json({error:'Informe uma avaliação e justificativa válidas.'});try{const result=db.prepare("INSERT INTO review_appeals(review_id,appellant_type,appellant_reference,reason) VALUES (?,'courier',?,?)").run(review.id,String(req.courier.id),reason);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});}catch{return res.status(409).json({error:'Recurso já registrado.'});}});
+app.patch('/api/courier/availability',requireCourier,sameOriginOnly,(req,res)=>{const available=req.body?.available===true?1:0;db.prepare('UPDATE local_delivery_couriers SET available=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(available,req.courier.id);if(!available)db.prepare("UPDATE local_delivery_offers SET status='cancelled',responded_at=CURRENT_TIMESTAMP WHERE courier_id=? AND status='offered'").run(req.courier.id);return res.json({ok:true,available:Boolean(available)});});
+app.post('/api/courier/location',requireCourier,sameOriginOnly,(req,res)=>{const latitude=Number(req.body?.latitude),longitude=Number(req.body?.longitude),accuracy=Number(req.body?.accuracy),heading=Number(req.body?.heading),speed=Number(req.body?.speed),capturedAt=new Date(req.body?.capturedAt||Date.now());
+  if(!Number.isFinite(latitude)||latitude < -90||latitude>90||!Number.isFinite(longitude)||longitude < -180||longitude>180||!Number.isFinite(accuracy)||accuracy<0||accuracy>5000||!Number.isFinite(capturedAt.getTime())||capturedAt.getTime()>Date.now()+60000||capturedAt.getTime()<Date.now()-10*60*1000)return res.status(400).json({error:'Localização inválida ou desatualizada.'});
+  const activeJob=db.prepare("SELECT id FROM local_delivery_jobs WHERE courier_id=? AND status IN ('assigned','picked_up') ORDER BY id DESC LIMIT 1").get(req.courier.id);
+  db.transaction(()=>{db.prepare('UPDATE local_delivery_couriers SET current_latitude=?,current_longitude=?,location_accuracy=?,location_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(latitude,longitude,accuracy,capturedAt.toISOString(),req.courier.id);
+    db.prepare('INSERT INTO courier_location_history(courier_id,job_id,latitude,longitude,accuracy,heading,speed,captured_at) VALUES (?,?,?,?,?,?,?,?)').run(req.courier.id,activeJob?.id||null,latitude,longitude,accuracy,Number.isFinite(heading)?heading:null,Number.isFinite(speed)?speed:null,capturedAt.toISOString());
+    db.prepare('DELETE FROM courier_location_history WHERE courier_id=? AND id NOT IN (SELECT id FROM courier_location_history WHERE courier_id=? ORDER BY id DESC LIMIT 300)').run(req.courier.id,req.courier.id);
+  })();return res.json({ok:true,trackingActive:Boolean(activeJob)});});
+app.get('/api/courier/dispatch',requireCourier,(req,res)=>{const expired=db.prepare("SELECT DISTINCT job_id FROM local_delivery_offers WHERE status='offered' AND expires_at<=?").all(new Date().toISOString());for(const row of expired)dispatchNextCourier(row.job_id);
+  const offer=db.prepare(`SELECT f.id,f.job_id jobId,f.distance_to_store_meters distanceToStoreMeters,f.expires_at expiresAt,
+    j.distance_meters deliveryDistanceMeters,j.fee_cents feeCents,j.courier_cents courierCents,s.business_name storeName,s.address storeAddress,s.city,s.state
+    FROM local_delivery_offers f JOIN local_delivery_jobs j ON j.id=f.job_id JOIN marketplace_orders o ON o.reference=j.order_reference JOIN store_profiles s ON s.order_reference=o.store_reference
+    WHERE f.courier_id=? AND f.status='offered' AND f.expires_at>? ORDER BY f.id DESC LIMIT 1`).get(req.courier.id,new Date().toISOString());return res.json({offer:offer?{...offer,distanceToPickupMeters:offer.distanceToStoreMeters}:null});});
+app.post('/api/courier/dispatch/:id/respond',requireCourier,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||'');if(!['accept','decline'].includes(action))return res.status(400).json({error:'Resposta inválida.'});const offer=db.prepare('SELECT * FROM local_delivery_offers WHERE id=? AND courier_id=?').get(Number(req.params.id),req.courier.id);if(!offer)return res.status(404).json({error:'Oferta não encontrada.'});
+  if(action==='decline'){const changed=db.prepare("UPDATE local_delivery_offers SET status='declined',responded_at=CURRENT_TIMESTAMP WHERE id=? AND courier_id=? AND status='offered'").run(offer.id,req.courier.id);if(!changed.changes)return res.status(409).json({error:'Oferta não está mais disponível.'});recordDeliveryEvent(offer.job_id,'offer_declined','courier',req.courier.id);dispatchNextCourier(offer.job_id);return res.json({ok:true,status:'declined'});}
+  try{db.transaction(()=>{const current=db.prepare("SELECT * FROM local_delivery_offers WHERE id=? AND courier_id=? AND status='offered' AND expires_at>?").get(offer.id,req.courier.id,new Date().toISOString());if(!current)throw new Error('unavailable');if(db.prepare("SELECT 1 FROM local_delivery_jobs WHERE courier_id=? AND status IN ('assigned','picked_up')").get(req.courier.id))throw new Error('busy');const job=db.prepare("UPDATE local_delivery_jobs SET courier_id=?,status='assigned',assigned_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='available' AND courier_id IS NULL").run(req.courier.id,current.job_id);if(!job.changes)throw new Error('unavailable');db.prepare("UPDATE local_delivery_offers SET status=CASE WHEN id=? THEN 'accepted' ELSE 'cancelled' END,responded_at=CURRENT_TIMESTAMP WHERE job_id=? AND status='offered'").run(current.id,current.job_id);recordDeliveryEvent(current.job_id,'offer_accepted','courier',req.courier.id);})();return res.json({ok:true,status:'accepted'});}catch{return res.status(409).json({error:'Oferta não está mais disponível ou o entregador já possui uma corrida.'});}});
+app.put('/api/courier/pix-key',requireCourier,sameOriginOnly,(req,res)=>{const type=String(req.body?.type||''),value=String(req.body?.value||'').trim();if(!['cpf','cnpj','email','phone','random'].includes(type)||value.length<4||value.length>160)return res.status(400).json({error:'Informe uma chave Pix válida.'});let encrypted;try{encrypted=encryptCourierValue(value);}catch{return res.status(503).json({error:'Proteção da chave Pix indisponível.'});}db.prepare('UPDATE local_delivery_couriers SET pix_key_type=?,pix_key_encrypted=?,pix_key_last4=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(type,encrypted,value.replace(/\s/g,'').slice(-4),req.courier.id);return res.json({ok:true,type,last4:value.replace(/\s/g,'').slice(-4)});});
+app.get('/api/courier/jobs',requireCourier,(req,res)=>{const rows=db.prepare(`SELECT j.id,j.order_reference,j.distance_meters,j.duration_seconds,j.fee_cents,j.courier_cents,j.status,j.assigned_at,j.picked_up_at,j.delivered_at,s.business_name store_name,s.address store_address,s.city,s.state,
+  CASE WHEN j.courier_id=? THEN a.recipient_name ELSE '' END recipient_name,CASE WHEN j.courier_id=? THEN a.street||', '||a.number||CASE WHEN a.complement!='' THEN ', '||a.complement ELSE '' END ELSE '' END delivery_address,
+  CASE WHEN j.courier_id=? THEN a.neighborhood ELSE '' END delivery_neighborhood,CASE WHEN j.courier_id=? THEN u.whatsapp ELSE '' END customer_whatsapp
+  FROM local_delivery_jobs j JOIN marketplace_orders o ON o.reference=j.order_reference JOIN store_profiles s ON s.order_reference=o.store_reference JOIN customer_addresses a ON a.id=o.address_id JOIN users u ON u.id=o.buyer_user_id
+  WHERE j.courier_id=? OR (j.status='available' AND lower(s.city)=lower(?) AND upper(s.state)=upper(?)) ORDER BY j.id DESC LIMIT 100`).all(req.courier.id,req.courier.id,req.courier.id,req.courier.id,req.courier.id,req.courier.city,req.courier.state);return res.json({jobs:rows});});
+app.patch('/api/courier/jobs/:id',requireCourier,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||''),job=db.prepare(`SELECT j.*,s.city store_city,s.state store_state FROM local_delivery_jobs j JOIN marketplace_orders o ON o.reference=j.order_reference JOIN store_profiles s ON s.order_reference=o.store_reference WHERE j.id=?`).get(Number(req.params.id));if(!job)return res.status(404).json({error:'Entrega não encontrada.'});
+  try{db.transaction(()=>{if(action==='accept'){if(job.courier_id===req.courier.id&&job.status==='assigned')return;if(req.courier.status!=='active'||String(job.store_city||'').toLowerCase()!==String(req.courier.city||'').toLowerCase()||String(job.store_state||'').toUpperCase()!==String(req.courier.state||'').toUpperCase())throw new Error('job_unavailable');if(db.prepare("SELECT 1 FROM local_delivery_jobs WHERE courier_id=? AND status IN ('assigned','picked_up')").get(req.courier.id))throw new Error('courier_busy');const claimed=db.prepare("UPDATE local_delivery_jobs SET courier_id=?,status='assigned',assigned_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='available' AND courier_id IS NULL").run(req.courier.id,job.id);if(!claimed.changes)throw new Error('job_unavailable');db.prepare("UPDATE local_delivery_offers SET status='cancelled',responded_at=CURRENT_TIMESTAMP WHERE job_id=? AND status='offered'").run(job.id);recordDeliveryEvent(job.id,'accepted_from_list','courier',req.courier.id);}
+    else if(action==='pickup'){const result=db.prepare("UPDATE local_delivery_jobs SET status='picked_up',picked_up_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND courier_id=? AND status='assigned'").run(job.id,req.courier.id);if(!result.changes)throw new Error('transition_invalid');db.prepare("UPDATE marketplace_orders SET fulfillment_status='food_handed_off',updated_at=CURRENT_TIMESTAMP WHERE reference=? AND fulfillment_status='food_ready'").run(job.order_reference);recordDeliveryEvent(job.id,'picked_up','courier',req.courier.id);}
+    else if(action==='deliver'){const result=db.prepare("UPDATE local_delivery_jobs SET status='delivered',delivered_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND courier_id=? AND status='picked_up'").run(job.id,req.courier.id);if(!result.changes)throw new Error('transition_invalid');recordDeliveryEvent(job.id,'delivered','courier',req.courier.id);}
+    else throw new Error('action_invalid');})();return res.json({ok:true});}catch(error){return res.status(409).json({error:error.message==='job_unavailable'?'Esta corrida não está mais disponível.':error.message==='courier_busy'?'Conclua a entrega atual antes de aceitar outra.':'Mudança de etapa não permitida.'});}});
+app.get('/api/courier/wallet',requireCourier,(req,res)=>{const ledger=db.prepare('SELECT id,order_reference orderReference,withdrawal_id withdrawalId,entry_type entryType,amount_cents amountCents,created_at createdAt FROM local_delivery_ledger WHERE courier_id=? ORDER BY id DESC LIMIT 200').all(req.courier.id),withdrawals=db.prepare('SELECT id,amount_cents amountCents,status,pix_key_type pixKeyType,pix_key_last4 pixKeyLast4,admin_note adminNote,requested_at requestedAt,paid_at paidAt FROM local_delivery_withdrawals WHERE courier_id=? ORDER BY id DESC LIMIT 100').all(req.courier.id),manualPayouts=db.prepare(`SELECT id,order_reference orderReference,gross_cents grossCents,deductions_cents deductionsCents,amount_cents amountCents,advance_fee_cents advanceFeeCents,payout_speed payoutSpeed,scheduled_for scheduledFor,status FROM marketplace_manual_payouts WHERE recipient_type='courier' AND recipient_reference=? ORDER BY id DESC LIMIT 100`).all(String(req.courier.id));return res.json({balanceCents:req.courier.balance_cents,ledger,withdrawals,manualPayouts,payoutPolicy:{weeklyDay:'tuesday',advanceFeePercent:3.5}});});
+app.post('/api/courier/payouts/:id/advance',requireCourier,sameOriginOnly,(req,res)=>{const payout=db.prepare("SELECT * FROM marketplace_manual_payouts WHERE id=? AND recipient_type='courier' AND recipient_reference=?").get(Number(req.params.id),String(req.courier.id));if(!payout)return res.status(404).json({error:'Repasse não encontrado.'});if(!requestPayoutAdvance(payout))return res.status(409).json({error:'Este repasse não pode mais ser antecipado.'});return res.json({ok:true,status:'pending_approval',scheduledFor:payoutDate(1),feePercent:3.5});});
+app.post('/api/courier/withdrawals',requireCourier,sameOriginOnly,(req,res)=>{const amount=Math.trunc(Number(req.body?.amountCents)),idempotencyKey=String(req.get('idempotency-key')||'').trim().slice(0,120);const current=db.prepare('SELECT * FROM local_delivery_couriers WHERE id=?').get(req.courier.id);if(!/^[A-Za-z0-9._:-]{12,120}$/.test(idempotencyKey))return res.status(400).json({error:'Envie uma chave de idempotência válida.'});if(!Number.isInteger(amount)||amount<100)return res.status(400).json({error:'O saque mínimo é R$ 1,00.'});if(!current.pix_key_encrypted)return res.status(409).json({error:'Cadastre uma chave Pix antes de solicitar saque.'});
+  const prior=db.prepare('SELECT id,status FROM local_delivery_withdrawals WHERE courier_id=? AND idempotency_key=?').get(current.id,idempotencyKey);if(prior)return res.json({ok:true,id:prior.id,status:prior.status,replayed:true});
+  try{const id=db.transaction(()=>{const result=db.prepare(`INSERT INTO local_delivery_withdrawals(courier_id,amount_cents,pix_key_type,pix_key_encrypted,pix_key_last4,idempotency_key) VALUES (?,?,?,?,?,?)`).run(current.id,amount,current.pix_key_type,current.pix_key_encrypted,current.pix_key_last4,idempotencyKey);applyCourierLedger({courierId:current.id,withdrawalId:Number(result.lastInsertRowid),entryType:'withdrawal_debit',amountCents:-amount,idempotencyKey:`withdrawal:${result.lastInsertRowid}:debit`});return Number(result.lastInsertRowid);})();return res.status(201).json({ok:true,id,status:'requested'});}catch(error){const replay=db.prepare('SELECT id,status FROM local_delivery_withdrawals WHERE courier_id=? AND idempotency_key=?').get(current.id,idempotencyKey);if(replay)return res.json({ok:true,id:replay.id,status:replay.status,replayed:true});return res.status(409).json({error:error.message==='courier_balance_insufficient'?'Saldo insuficiente.':'Não foi possível solicitar o saque.'});}});
+app.patch('/api/admin/local-delivery/withdrawals/:id',requireAdmin,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||''),next={approve:'approved',pay:'paid',reject:'rejected'}[action],item=db.prepare('SELECT * FROM local_delivery_withdrawals WHERE id=?').get(Number(req.params.id)),proofReference=String(req.body?.proofReference||'').trim().slice(0,160);if(!next||!item)return res.status(404).json({error:'Saque não encontrado.'});if(action==='pay'&&!/^[A-Za-z0-9._:/-]{8,160}$/.test(proofReference))return res.status(400).json({error:'Informe a referência própria do comprovante de pagamento.'});
+  try{db.transaction(()=>{const expected=action==='approve'?'requested':action==='pay'?'approved':'requested';const result=db.prepare(`UPDATE local_delivery_withdrawals SET status=?,proof_reference=CASE WHEN ?='paid' THEN ? ELSE proof_reference END,admin_note=?,reviewed_at=COALESCE(reviewed_at,CURRENT_TIMESTAMP),paid_at=CASE WHEN ?='paid' THEN CURRENT_TIMESTAMP ELSE paid_at END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status=?`).run(next,next,proofReference,String(req.body?.note||'').trim().slice(0,500),next,item.id,expected);if(!result.changes)throw new Error('transition_invalid');if(action==='reject')applyCourierLedger({courierId:item.courier_id,withdrawalId:item.id,entryType:'withdrawal_refund',amountCents:item.amount_cents,idempotencyKey:`withdrawal:${item.id}:refund`});db.prepare('INSERT INTO local_delivery_admin_audit(admin_user_id,action,withdrawal_id,proof_reference) VALUES (?,?,?,?)').run(req.user.id,`withdrawal_${action}`,item.id,proofReference);})();return res.json({ok:true,status:next});}catch(error){return res.status(error.message?.includes('UNIQUE')?409:409).json({error:error.message?.includes('UNIQUE')?'Esta referência de pagamento já foi usada.':'Mudança de status não permitida.'});}});
+app.get('/api/admin/local-delivery/withdrawals/:id/pix-key',requireAdmin,(req,res)=>{const item=db.prepare('SELECT pix_key_type,pix_key_encrypted,pix_key_last4 FROM local_delivery_withdrawals WHERE id=?').get(Number(req.params.id));if(!item)return res.status(404).json({error:'Saque não encontrado.'});try{return res.json({type:item.pix_key_type,value:decryptCourierValue(item.pix_key_encrypted),last4:item.pix_key_last4});}catch{return res.status(503).json({error:'Não foi possível abrir a chave Pix.'});}});
 
 app.post('/api/marketplace/shipping/quote', sameOriginOnly, async (req,res) => {
   const requested=Array.isArray(req.body?.items)?req.body.items.slice(0,30):[];
@@ -3453,8 +4266,17 @@ app.get('/api/marketplace/orders', requireUser, (req, res) => {
     WHERE o.buyer_user_id=? ORDER BY o.created_at DESC LIMIT 100`).all(req.user.id);
   const items = db.prepare('SELECT * FROM marketplace_order_items WHERE order_reference=? ORDER BY id');
   const returns=db.prepare('SELECT id,reason,status,seller_note,requested_at,reviewed_at FROM marketplace_returns WHERE order_reference=? AND buyer_user_id=? ORDER BY id DESC');
-  return res.json({ orders: orders.map(order => ({ ...order, items: items.all(order.reference),returns:returns.all(order.reference,req.user.id) })) });
+  const delivery=db.prepare('SELECT status,courier_id courierId,delivered_at deliveredAt FROM local_delivery_jobs WHERE order_reference=?');
+  const deliveryReviews=db.prepare("SELECT id,target_type targetType,rating,comment,moderation_status moderationStatus FROM verified_delivery_reviews WHERE order_reference=? ORDER BY target_type");
+  return res.json({ orders: orders.map(order => {const job=order.delivery_mode==='local'?delivery.get(order.reference):null;return {...order,customerConfirmedAt:order.customer_confirmed_at||null,
+    canConfirmDelivery:Boolean(job?.deliveredAt&&!order.customer_confirmed_at&&order.payment_status==='approved'),localDelivery:job,deliveryTracking:deliveryTracking(order.reference),deliveryReview:deliveryReviews.all(order.reference),alreadyReviewed:Boolean(deliveryReviews.all(order.reference).length),items:items.all(order.reference),returns:returns.all(order.reference,req.user.id)};}) });
 });
+app.get('/api/marketplace/orders/:reference/tracking',requireUser,(req,res)=>{const order=db.prepare('SELECT reference FROM marketplace_orders WHERE reference=? AND buyer_user_id=?').get(req.params.reference,req.user.id);return order?res.json({tracking:deliveryTracking(order.reference)}):res.status(404).json({error:'Pedido não encontrado.'});});
+function reviewReputation(targetType,targetReference){const aggregate=db.prepare(`SELECT COUNT(*) rating_count,COALESCE(SUM(rating),0) rating_sum,COALESCE(AVG(CASE WHEN created_at>=datetime('now','-90 days') THEN rating END),0) recent_average FROM verified_delivery_reviews WHERE target_type=? AND target_reference=? AND moderation_status='published'`).get(targetType,String(targetReference));let onTimeRate=.9,cancellationRate=.05;if(targetType==='courier'){const ops=db.prepare(`SELECT COUNT(*) total,SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) delivered,SUM(CASE WHEN status='cancelled' THEN 1 ELSE 0 END) cancelled FROM local_delivery_jobs WHERE courier_id=?`).get(Number(targetReference));onTimeRate=ops.total?Number(ops.delivered||0)/ops.total:.9;cancellationRate=ops.total?Number(ops.cancelled||0)/ops.total:.05;}else{const ops=db.prepare(`SELECT COUNT(*) total,SUM(CASE WHEN fulfillment_status IN ('delivered','food_handed_off') THEN 1 ELSE 0 END) delivered,SUM(CASE WHEN fulfillment_status='cancelled' THEN 1 ELSE 0 END) cancelled FROM marketplace_orders WHERE store_reference=?`).get(String(targetReference));onTimeRate=ops.total?Number(ops.delivered||0)/ops.total:.9;cancellationRate=ops.total?Number(ops.cancelled||0)/ops.total:.05;}return {ratingCount:Number(aggregate.rating_count),bayesianRating:bayesianRating({ratingSum:aggregate.rating_sum,ratingCount:aggregate.rating_count}),recentAverage:Number(aggregate.recent_average||0),onTimeRate,cancellationRate,qualityScore:reputationScore({ratingSum:aggregate.rating_sum,ratingCount:aggregate.rating_count,recentAverage:aggregate.recent_average,onTimeRate,cancellationRate})};}
+function grantReviewReward(userId,reviewId,idempotencyKey){const rewardOrder=db.prepare('SELECT order_reference FROM verified_delivery_reviews WHERE id=?').get(reviewId);idempotencyKey=rewardOrder?`delivery-review:${rewardOrder.order_reference}`:idempotencyKey;const exists=db.prepare('SELECT 1 FROM review_rewards WHERE review_id=? OR idempotency_key=?').get(reviewId,idempotencyKey);if(exists)return false;db.prepare('INSERT OR IGNORE INTO wallets(user_id,balance_units) VALUES (?,0)').run(userId);const current=Number(db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId)?.balance_units||0),after=current+500;db.prepare('UPDATE wallets SET balance_units=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(after,userId);db.prepare("INSERT INTO wallet_ledger(user_id,delta_units,balance_after_units,kind,description,order_reference) VALUES (?,?,?,'verified_review_reward','Recompensa por avaliação verificada',?)").run(userId,500,after,rewardOrder?.order_reference||`review:${reviewId}`);db.prepare('INSERT INTO review_rewards(review_id,user_id,reward_units,idempotency_key) VALUES (?,?,500,?)').run(reviewId,userId,idempotencyKey);return true;}
+app.post('/api/marketplace/orders/:reference/reviews',requireUser,sameOriginOnly,(req,res)=>{const order=db.prepare(`SELECT o.*,j.courier_id FROM marketplace_orders o LEFT JOIN local_delivery_jobs j ON j.order_reference=o.reference WHERE o.reference=? AND o.buyer_user_id=? AND o.payment_status='approved' AND o.customer_confirmed_at IS NOT NULL`).get(req.params.reference,req.user.id);if(!order)return res.status(409).json({error:'A avaliação é liberada após confirmar a entrega.'});const targetType=String(req.body?.targetType||''),targetReference=targetType==='store'?order.store_reference:targetType==='courier'&&order.courier_id?String(order.courier_id):'';const rating=Math.trunc(Number(req.body?.rating)),comment=sanitizeReviewComment(req.body?.comment),key=String(req.get('idempotency-key')||req.body?.idempotencyKey||'').trim().slice(0,120);if(!targetReference||rating<1||rating>5||!/^[A-Za-z0-9._:-]{12,120}$/.test(key))return res.status(400).json({error:'Informe alvo, nota e chave de idempotência válidos.'});const fingerprint=createHmac('sha256',managementSecret()||'reviews').update(`${req.user.id}|${req.ip}|${String(req.get('user-agent')||'').slice(0,100)}`).digest('hex'),stats=db.prepare("SELECT COUNT(*) daily,SUM(CASE WHEN comment=? AND comment<>'' THEN 1 ELSE 0 END) duplicates FROM verified_delivery_reviews WHERE reviewer_user_id=? AND created_at>=datetime('now','-1 day')").get(comment,req.user.id),age=db.prepare("SELECT (julianday('now')-julianday(created_at))*24 hours FROM users WHERE id=?").get(req.user.id)?.hours,flags=basicReviewFraud({reviewsLastDay:stats.daily,sameCommentCount:stats.duplicates,accountAgeHours:age,comment});try{const result=db.transaction(()=>{const inserted=db.prepare(`INSERT INTO verified_delivery_reviews(order_reference,reviewer_user_id,target_type,target_reference,rating,comment,moderation_status,fraud_flags,reviewer_fingerprint) VALUES (?,?,?,?,?,?,?, ?,?)`).run(order.reference,req.user.id,targetType,targetReference,rating,comment,flags.length?'pending':'published',JSON.stringify(flags),fingerprint);const id=Number(inserted.lastInsertRowid),rewarded=grantReviewReward(req.user.id,id,key);return {id,rewarded};})();return res.status(201).json({ok:true,...result,rewardCoins:result.rewarded?5:0,moderationStatus:flags.length?'pending':'published'});}catch{const prior=db.prepare('SELECT id,moderation_status FROM verified_delivery_reviews WHERE order_reference=? AND target_type=?').get(order.reference,targetType);return prior?res.json({ok:true,id:prior.id,replayed:true,rewardCoins:0,moderationStatus:prior.moderation_status}):res.status(409).json({error:'Não foi possível registrar a avaliação.'});}});
+app.get('/api/reputation/:type/:reference',(req,res)=>{const type=String(req.params.type);if(!['store','courier'].includes(type))return res.status(400).json({error:'Tipo inválido.'});const reviews=db.prepare(`SELECT id,rating,comment,response_text responseText,created_at createdAt,responded_at respondedAt FROM verified_delivery_reviews WHERE target_type=? AND target_reference=? AND moderation_status='published' ORDER BY id DESC LIMIT 100`).all(type,String(req.params.reference));return res.json({reputation:reviewReputation(type,req.params.reference),reviews});});
+app.post('/api/reviews/:id/reports',requireUser,sameOriginOnly,(req,res)=>{const reason=sanitizeReviewComment(req.body?.reason,500);if(reason.length<10)return res.status(400).json({error:'Explique a denúncia.'});try{const result=db.prepare('INSERT INTO review_reports(review_id,reporter_user_id,reason) VALUES (?,?,?)').run(Number(req.params.id),req.user.id,reason);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});}catch{return res.status(409).json({error:'Denúncia já registrada ou avaliação inválida.'});}});
 
 app.post('/api/marketplace/orders/:reference/returns', requireUser, sameOriginOnly, (req,res) => {
   const order=db.prepare(`SELECT * FROM marketplace_orders WHERE reference=? AND buyer_user_id=?
@@ -3476,12 +4298,16 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
   const address = db.prepare('SELECT * FROM customer_addresses WHERE id=? AND user_id=?').get(addressId, req.user.id);
   if (!address || !requested.length) return res.status(400).json({ error: 'Selecione os produtos e um endereço de entrega.' });
   const quantities = new Map();
+  const requestedOptions = new Map();
   for (const item of requested) {
     const id = Number(item?.productId), quantity = Math.floor(Number(item?.quantity));
     if (!Number.isInteger(id) || !Number.isInteger(quantity) || quantity < 1 || quantity > 50) {
       return res.status(400).json({ error: 'Quantidade inválida no carrinho.' });
     }
     quantities.set(id, Math.min(50, (quantities.get(id) || 0) + quantity));
+    const optionIds=Array.isArray(item?.optionIds)?[...new Set(item.optionIds.map(Number).filter(Number.isInteger))].slice(0,100):[];
+    if(requestedOptions.has(id)&&JSON.stringify(requestedOptions.get(id))!==JSON.stringify(optionIds))return res.status(400).json({error:'Separe itens com adicionais diferentes.'});
+    requestedOptions.set(id,optionIds);
   }
   const ids = [...quantities.keys()];
   const placeholders = ids.map(() => '?').join(',');
@@ -3497,23 +4323,28 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
   if (products.some(product => product.stock_quantity < quantities.get(product.id))) {
     return res.status(409).json({ error: 'Estoque insuficiente para um dos produtos.' });
   }
-  const productsCents = products.reduce((sum, product) => sum + product.price_cents * quantities.get(product.id), 0);
+  const optionSnapshots=new Map();
+  for(const product of products){const selected=requestedOptions.get(product.id)||[],groups=db.prepare('SELECT * FROM product_option_groups WHERE product_id=? ORDER BY id').all(product.id),chosen=[];
+    for(const group of groups){const options=db.prepare(`SELECT id,name,price_delta_cents FROM product_options WHERE group_id=? AND active=1 AND id IN (${selected.length?selected.map(()=>'?').join(','):'NULL'})`).all(group.id,...selected),count=options.length;
+      if(count<group.min_select||count>group.max_select)return res.status(400).json({error:`Revise as opções de ${product.name}.`});chosen.push(...options.map(option=>({id:option.id,groupId:group.id,group:group.name,name:option.name,priceDeltaCents:option.price_delta_cents})));
+    }
+    if(chosen.length!==selected.length)return res.status(400).json({error:`Um adicional de ${product.name} é inválido.`});optionSnapshots.set(product.id,chosen);
+  }
+  const productsCents = products.reduce((sum, product) => sum + (product.price_cents+(optionSnapshots.get(product.id)||[]).reduce((total,option)=>total+option.priceDeltaCents,0)) * quantities.get(product.id), 0);
   const platformPercentCents = Math.round(productsCents * MARKETPLACE_COMMISSION_BPS / 10000);
   const returnOperationCents = MARKETPLACE_RETURN_PROVISION_CENTS;
+  const deliveryMode=req.body?.deliveryMode==='local'?'local':'carrier';
   let shippingQuote;
-  try { shippingQuote=await officialMarketplaceShippingQuote(products,quantities,address.postal_code); }
-  catch { return res.status(400).json({ error:'O CEP do endereço de entrega é inválido.' }); }
+  try { shippingQuote=deliveryMode==='local'?await localDeliveryQuote(storeReference,address):await officialMarketplaceShippingQuote(products,quantities,address.postal_code); }
+  catch(error) { return res.status(400).json({ error:deliveryMode==='local'?(error.message==='distance_out_of_range'?'O endereço está fora da distância máxima de entrega.':'A entrega local não está disponível para este endereço.'):'O CEP do endereço de entrega é inválido.' }); }
   const shippingCents = shippingQuote.shippingCents;
-  const totalCents = productsCents + shippingCents;
+  if(deliveryMode==='local')shippingQuote.shippingCents=shippingQuote.feeCents;
+  const effectiveShippingCents=deliveryMode==='local'?shippingQuote.feeCents:shippingCents;
+  const totalCents = productsCents + effectiveShippingCents;
   let token=process.env.MERCADOPAGO_ACCESS_TOKEN,splitMode='central';
-  const marketplaceFeeCents=platformPercentCents+MARKETPLACE_FIXED_FEE_CENTS+returnOperationCents;
-  if(marketplaceOAuthConfigured()){
-    const sellerAccount=db.prepare("SELECT * FROM marketplace_seller_accounts WHERE store_reference=? AND status='connected'").get(storeReference);
-    if(!sellerAccount)return res.status(409).json({error:'A loja precisa conectar sua conta Mercado Pago antes de receber pedidos.'});
-    try{token=await marketplaceSellerAccessToken(sellerAccount);splitMode='marketplace';}
-    catch{db.prepare("UPDATE marketplace_seller_accounts SET status='expired',updated_at=CURRENT_TIMESTAMP WHERE store_reference=?").run(storeReference);
-      return res.status(503).json({error:'A autorização Mercado Pago da loja precisa ser renovada.'});}
-  }
+  const deliveryPlatformCents=deliveryMode==='local'?shippingQuote.platformCents:0;
+  const deliveryCourierCents=deliveryMode==='local'?shippingQuote.courierCents:0;
+  const marketplaceFeeCents=platformPercentCents+MARKETPLACE_FIXED_FEE_CENTS+returnOperationCents+(deliveryMode==='local'?effectiveShippingCents:0);
   if (!token || !process.env.MERCADOPAGO_WEBHOOK_SECRET) return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
   recordConsent(req, {
     userId: req.user.id, email: req.user.email, purpose: 'marketplace_buyer_terms',
@@ -3521,16 +4352,17 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
   });
   const reference = `shop_${randomUUID()}`;
   const adAttribution=readAdAttribution(req);
+  const storeAdAttribution=readStoreAdAttribution(req,storeReference);
   try {
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST', headers: { ...mpHeaders(token), 'X-Idempotency-Key': reference },
       body: JSON.stringify({
         items: [...products.map(product => ({ id: String(product.id), title: product.name.slice(0, 120),
-          quantity: quantities.get(product.id), currency_id: 'BRL', unit_price: product.price_cents / 100 })),
-          ...(shippingCents?[{id:'shipping',title:shippingQuote.service,quantity:1,currency_id:'BRL',unit_price:shippingCents/100}]:[])],
+          quantity: quantities.get(product.id), currency_id: 'BRL', unit_price: (product.price_cents+(optionSnapshots.get(product.id)||[]).reduce((total,option)=>total+option.priceDeltaCents,0)) / 100 })),
+          ...(effectiveShippingCents?[{id:'shipping',title:shippingQuote.service,quantity:1,currency_id:'BRL',unit_price:effectiveShippingCents/100}]:[])],
         payer: { name: req.user.name, email: req.user.email, address: { zip_code: address.postal_code,
           street_name: address.street, street_number: address.number } },
-        external_reference: reference, notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
+        external_reference: reference, notification_url: `${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,
         back_urls: { success: `${SITE_URL}/pedidos.html?resultado=sucesso`, pending: `${SITE_URL}/pedidos.html?resultado=pendente`,
           failure: `${SITE_URL}/loja?resultado=falha` }, auto_return: 'approved', statement_descriptor: 'VITRINYCITY',
         ...(splitMode==='marketplace'?{marketplace_fee:marketplaceFeeCents/100}:{}),
@@ -3543,23 +4375,30 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
     const insertOrder = db.transaction(() => {
       db.prepare(`INSERT INTO marketplace_orders
         (reference,buyer_user_id,store_reference,address_id,products_cents,shipping_cents,shipping_provider,shipping_service_id,
-         shipping_service_name,platform_percent_cents,platform_fixed_cents,return_operation_cents,total_cents,mp_preference_id,ad_campaign_id,ad_event_token)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(reference, req.user.id, storeReference, address.id, productsCents,
-        shippingCents, shippingQuote.provider, shippingQuote.providerServiceId||'',shippingQuote.service||'',platformPercentCents, MARKETPLACE_FIXED_FEE_CENTS, returnOperationCents, totalCents, payment.id,
-        adAttribution?.campaignId||null,adAttribution?.eventToken||null);
+         shipping_service_name,platform_percent_cents,platform_fixed_cents,return_operation_cents,total_cents,mp_preference_id,ad_campaign_id,ad_event_token,
+         delivery_mode,delivery_distance_meters,delivery_platform_cents,delivery_courier_cents,preparation_minutes_snapshot,
+         route_duration_seconds_snapshot,estimated_min_minutes_snapshot,estimated_max_minutes_snapshot)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(reference, req.user.id, storeReference, address.id, productsCents,
+        effectiveShippingCents, shippingQuote.provider, shippingQuote.providerServiceId||'',shippingQuote.service||'',platformPercentCents, MARKETPLACE_FIXED_FEE_CENTS, returnOperationCents, totalCents, payment.id,
+        adAttribution?.campaignId||null,adAttribution?.eventToken||null,deliveryMode,shippingQuote.distanceMeters||null,deliveryPlatformCents,deliveryCourierCents,
+        Number(shippingQuote.preparationMinutes?.max)||0,Number(shippingQuote.routeDurationSeconds)||0,Number(shippingQuote.estimatedMinMinutes)||0,Number(shippingQuote.estimatedMaxMinutes)||0);
       const insertItem = db.prepare(`INSERT INTO marketplace_order_items
-        (order_reference,product_id,product_name,sku,quantity,unit_price_cents,subtotal_cents,platform_percent_cents,return_operation_cents)
-        VALUES (?,?,?,?,?,?,?,?,?)`);
+        (order_reference,product_id,product_name,sku,quantity,unit_price_cents,subtotal_cents,platform_percent_cents,return_operation_cents,options_snapshot_json,options_total_cents)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
       let returnProvisionPending = MARKETPLACE_RETURN_PROVISION_CENTS;
       for (const product of products) {
-        const quantity = quantities.get(product.id), subtotal = product.price_cents * quantity;
-        insertItem.run(reference, product.id, product.name, product.sku || '', quantity, product.price_cents, subtotal,
-          Math.round(subtotal * MARKETPLACE_COMMISSION_BPS / 10000), returnProvisionPending);
+        const quantity = quantities.get(product.id),options=optionSnapshots.get(product.id)||[],optionsTotal=options.reduce((total,option)=>total+option.priceDeltaCents,0),unitPrice=product.price_cents+optionsTotal,subtotal = unitPrice * quantity;
+        insertItem.run(reference, product.id, product.name, product.sku || '', quantity, unitPrice, subtotal,
+          Math.round(subtotal * MARKETPLACE_COMMISSION_BPS / 10000), returnProvisionPending,JSON.stringify(options),optionsTotal);
         returnProvisionPending = 0;
       }
       db.prepare(`INSERT INTO marketplace_payment_reconciliation
         (order_reference,expected_gross_cents,expected_marketplace_fee_cents,expected_seller_net_cents,split_mode)
         VALUES (?,?,?,?,?)`).run(reference,totalCents,marketplaceFeeCents,totalCents-marketplaceFeeCents,splitMode);
+      if(storeAdAttribution)db.prepare(`INSERT OR IGNORE INTO store_ad_events(campaign_id,event_type,event_token,visitor_key,event_day,order_reference,value_cents) VALUES (?,'order',?,?,?, ?,?)`).run(storeAdAttribution.campaignId,storeAdAttribution.eventToken,`buyer:${req.user.id}`,new Date().toISOString().slice(0,10),reference,totalCents);
+      if(deliveryMode==='local')db.prepare(`INSERT INTO local_delivery_jobs
+        (order_reference,distance_meters,duration_seconds,fee_cents,platform_cents,courier_cents)
+        VALUES (?,?,?,?,?,?)`).run(reference,shippingQuote.distanceMeters,Math.max(0,Number.parseInt(shippingQuote.duration)||0),effectiveShippingCents,deliveryPlatformCents,deliveryCourierCents);
     });
     insertOrder();
     return res.status(201).json({ reference, checkoutUrl: payment.init_point, shipping:shippingQuote });
@@ -3568,6 +4407,19 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
     return res.status(502).json({ error: 'Não foi possível conectar ao Mercado Pago agora.' });
   }
 });
+
+app.post('/api/marketplace/orders/:reference/delivery-review',requireUser,sameOriginOnly,(req,res)=>{const order=db.prepare(`SELECT o.*,j.courier_id FROM marketplace_orders o LEFT JOIN local_delivery_jobs j ON j.order_reference=o.reference WHERE o.reference=? AND o.buyer_user_id=? AND o.payment_status='approved' AND o.customer_confirmed_at IS NOT NULL`).get(req.params.reference,req.user.id);if(!order)return res.status(409).json({error:'A avaliação é liberada após confirmar a entrega.'});const entries=[['store',order.store_reference,Math.trunc(Number(req.body?.storeRating))],['courier',order.courier_id?String(order.courier_id):'',Math.trunc(Number(req.body?.courierRating))]].filter(entry=>entry[1]&&entry[2]>=1&&entry[2]<=5),comment=sanitizeReviewComment(req.body?.comment);if(!entries.length)return res.status(400).json({error:'Informe ao menos uma nota válida.'});try{const result=db.transaction(()=>{let rewardGranted=false;const ids=[];for(const [type,target,rating] of entries){const prior=db.prepare('SELECT id FROM verified_delivery_reviews WHERE order_reference=? AND target_type=?').get(order.reference,type);if(prior){ids.push(prior.id);continue;}const inserted=db.prepare(`INSERT INTO verified_delivery_reviews(order_reference,reviewer_user_id,target_type,target_reference,rating,comment,reviewer_fingerprint) VALUES (?,?,?,?,?,?,?)`).run(order.reference,req.user.id,type,target,rating,comment,createHash('sha256').update(`${req.user.id}|${req.ip}`).digest('hex'));const id=Number(inserted.lastInsertRowid);ids.push(id);if(grantReviewReward(req.user.id,id,`delivery-review:${order.reference}`))rewardGranted=true;}return {ids,rewardGranted};})();return res.status(result.rewardGranted?201:200).json({ok:true,...result,rewardCoins:result.rewardGranted?5:0});}catch{return res.status(409).json({error:'Não foi possível registrar a avaliação.'});}});
+
+app.get('/api/store-portal/:reference/seller-reviews',(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const reviews=db.prepare("SELECT id,rating,comment,response_text response,created_at createdAt,moderation_status moderationStatus FROM verified_delivery_reviews WHERE target_type='store' AND target_reference=? AND moderation_status IN ('published','pending') ORDER BY id DESC LIMIT 200").all(access.order.reference),reputation=reviewReputation('store',access.order.reference),badge=reputation.ratingCount>=20&&reputation.bayesianRating>=4.5?'Excelente':reputation.ratingCount>=5&&reputation.bayesianRating>=4?'Muito bem avaliada':'Nova';return res.json({summary:{average:reputation.bayesianRating,badge,total:reputation.ratingCount,qualityScore:reputation.qualityScore},reviews});});
+app.post('/api/store-portal/:reference/seller-reviews/:id/review-response',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const response=sanitizeReviewComment(req.body?.response,800);if(response.length<2)return res.status(400).json({error:'Informe a resposta.'});const changed=db.prepare("UPDATE verified_delivery_reviews SET response_text=?,responded_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND target_type='store' AND target_reference=?").run(response,Number(req.params.id),access.order.reference);return changed.changes?res.json({ok:true}):res.status(404).json({error:'Avaliação não encontrada.'});});
+app.post('/api/store-portal/:reference/seller-reviews/:id/review-report',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const reason=sanitizeReviewComment(req.body?.reason,500),review=db.prepare("SELECT id FROM verified_delivery_reviews WHERE id=? AND target_type='store' AND target_reference=?").get(Number(req.params.id),access.order.reference);if(!review||reason.length<10)return res.status(400).json({error:'Informe uma denúncia válida.'});try{const adminUser=db.prepare('SELECT id FROM users WHERE is_admin=1 ORDER BY id LIMIT 1').get();if(!adminUser)return res.status(503).json({error:'Moderação indisponível.'});const result=db.prepare('INSERT INTO review_reports(review_id,reporter_user_id,reason) VALUES (?,?,?)').run(review.id,adminUser.id,`Denúncia da loja: ${reason}`);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});}catch{return res.status(409).json({error:'Denúncia já registrada.'});}});
+
+app.get('/api/profile/messages',requireUser,(req,res)=>res.json({messages:db.prepare("SELECT id,sender_type senderType,message,created_at createdAt,read_at readAt FROM profile_messages WHERE profile_type='customer' AND profile_reference=? ORDER BY id LIMIT 300").all(String(req.user.id))}));
+app.post('/api/profile/messages',requireUser,sameOriginOnly,(req,res)=>{const message=sanitizeReviewComment(req.body?.message,2000);if(!message)return res.status(400).json({error:'Mensagem inválida.'});const result=db.prepare("INSERT INTO profile_messages(profile_type,profile_reference,sender_type,sender_id,message) VALUES ('customer',?,'customer',?,?)").run(String(req.user.id),String(req.user.id),message);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});});
+app.get('/api/store-portal/:reference/messages',(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;return res.json({messages:db.prepare("SELECT id,sender_type senderType,message,created_at createdAt,read_at readAt FROM profile_messages WHERE profile_type='store' AND profile_reference=? ORDER BY id LIMIT 300").all(access.order.reference)});});
+app.post('/api/store-portal/:reference/messages',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const message=sanitizeReviewComment(req.body?.message,2000);if(!message)return res.status(400).json({error:'Mensagem inválida.'});const result=db.prepare("INSERT INTO profile_messages(profile_type,profile_reference,sender_type,sender_id,message) VALUES ('store',?,'store',?,?)").run(access.order.reference,access.order.reference,message);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});});
+app.get('/api/courier/messages',requireCourier,(req,res)=>res.json({messages:db.prepare("SELECT id,sender_type senderType,message,created_at createdAt,read_at readAt FROM profile_messages WHERE profile_type='courier' AND profile_reference=? ORDER BY id LIMIT 300").all(String(req.courier.id))}));
+app.post('/api/courier/messages',requireCourier,sameOriginOnly,(req,res)=>{const message=sanitizeReviewComment(req.body?.message,2000);if(!message)return res.status(400).json({error:'Mensagem inválida.'});const result=db.prepare("INSERT INTO profile_messages(profile_type,profile_reference,sender_type,sender_id,message) VALUES ('courier',?,'courier',?,?)").run(String(req.courier.id),String(req.courier.id),message);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});});
 
 function socialApiVersion() {
   return String(process.env.META_SOCIAL_API_VERSION || process.env.META_API_VERSION || 'v26.0').trim();
@@ -3638,12 +4490,12 @@ app.post('/api/webhooks/social', (req, res) => {
           const field = String(change?.field || (objectType === 'instagram' ? 'messaging' : 'event')).slice(0, 100);
           insert.run(objectType, objectId, field, JSON.stringify({ entry, change }).slice(0, 500000));
           const value=change?.value||{},isInstagram=objectType==='instagram',channel=isInstagram?'instagram':'facebook';
-          const isComment=isInstagram?Boolean(value.id&&value.text):Boolean(value.item==='comment'&&(value.comment_id||value.post_id));
+          const isComment=isInstagram?Boolean(['comments','live_comments'].includes(field)&&value.id&&value.text&&String(value.from?.id||'')!==objectId):Boolean(value.item==='comment'&&(value.comment_id||value.post_id));
           const commentId=String(value.comment_id||value.id||''),commentText=String(value.message||value.text||'').trim();
           const setting=db.prepare(`SELECT enabled FROM omnichannel_automation_settings WHERE channel=?`).get(channel);
           if(isComment&&commentId&&commentText&&setting?.enabled){
             const account=isInstagram?db.prepare(`SELECT id FROM social_accounts WHERE instagram_id=? AND status='connected' LIMIT 1`).get(objectId):db.prepare(`SELECT id FROM social_accounts WHERE page_id=? AND status='connected' LIMIT 1`).get(objectId);
-            if(account)enqueueOmnichannelJob(channel,`${channel}:${commentId}`,commentId,commentText,account.id);
+            if(account)enqueueOmnichannelJob(channel,`${channel}:${commentId}`,commentId,commentText,account.id,field,String(value.media?.id||''));
           }
         }
       }
@@ -3756,6 +4608,8 @@ app.post('/api/social/connect', requireUser, async (req, res) => {
       !(process.env.META_SOCIAL_TOKEN_ENCRYPTION_KEY || process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY)) {
     return res.status(503).json({ error: 'A integração Facebook/Instagram ainda precisa das credenciais na VPS.' });
   }
+
+
   if (accessToken.length < 20 || accessToken.length > 3000) return res.status(400).json({ error: 'Autorização da Meta inválida.' });
   try {
     const version = socialApiVersion();
@@ -3795,6 +4649,186 @@ app.post('/api/social/connect', requireUser, async (req, res) => {
     return res.status(502).json({ error: String(error?.message || 'Não foi possível concluir a conexão.').slice(0,250) });
   }
 });
+
+const VIRAL_QUIZ_VOICES = new Set(['br-feminina-energica','br-masculina-amigavel','br-feminina-calma']);
+function viralQuizQuestions(theme, category) {
+  const subject = theme.replace(/[?!.,;:]+$/g, '').trim();
+  if (category === 'curiosities') return [
+    { question: `Qual fato sobre ${subject} surpreende mais gente?`, options: ['O mais conhecido','O menos óbvio','Nenhum deles'], answer: 1 },
+    { question: `Em que situação ${subject} chama mais atenção?`, options: ['No cotidiano','Só em laboratório','Nunca acontece'], answer: 0 },
+    { question: `Você compartilharia esta curiosidade sobre ${subject}?`, options: ['Sim','Talvez','Já conhecia'], answer: 0 }
+  ];
+  return [
+    { question: `Qual é o primeiro sinal de que ${subject} precisa de atenção?`, options: ['Folhas e crescimento mudam','O vaso fica mais bonito','Nada muda'], answer: 0 },
+    { question: `Antes de cuidar de ${subject}, o que deve ser conferido?`, options: ['Luz, água e solo','Só a cor do vaso','Apenas o tamanho'], answer: 0 },
+    { question: `Qual prática é mais segura para ${subject}?`, options: ['Seguir a dose indicada','Dobrar a dose','Aplicar sem observar'], answer: 0 }
+  ];
+}
+function viralQuizPackage({ theme, category, voice, destinationUrl, destinationLabel }) {
+  const questions = viralQuizQuestions(theme, category);
+  const timeline = [
+    ['00–04s', `DESAFIO: você acerta 3 perguntas sobre ${theme}?`],
+    ['04–19s', `PERGUNTA 1: ${questions[0].question} Opções: A) ${questions[0].options[0]}; B) ${questions[0].options[1]}; C) ${questions[0].options[2]}. Resposta: ${'ABC'[questions[0].answer]}.`],
+    ['19–34s', `PERGUNTA 2: ${questions[1].question} Opções: A) ${questions[1].options[0]}; B) ${questions[1].options[1]}; C) ${questions[1].options[2]}. Resposta: ${'ABC'[questions[1].answer]}.`],
+    ['34–49s', `PERGUNTA 3: ${questions[2].question} Opções: A) ${questions[2].options[0]}; B) ${questions[2].options[1]}; C) ${questions[2].options[2]}. Resposta: ${'ABC'[questions[2].answer]}.`],
+    ['49–57s', 'RESULTADO: 3 acertos, especialista; 2, mandou bem; 0 ou 1, vale tentar outra vez.'],
+    ['57–65s', `CTA: descubra mais em ${destinationLabel}. Acesse ${destinationUrl}.`]
+  ];
+  return { questions, script: timeline.map(([time,text]) => `${time} — ${text}`).join('\n'),
+    captions: timeline.map(([time,text]) => `[${time}] ${text}`).join('\n'), voice };
+}
+function viralQuizRow(id) {
+  const row = db.prepare('SELECT * FROM admin_viral_quizzes WHERE id=?').get(id);
+  if (!row) return null;
+  const scenes=db.prepare('SELECT id,scene_number,duration_seconds,status,output_url,error_message FROM viral_quiz_scenes WHERE quiz_id=? ORDER BY scene_number').all(id);
+  const distribution=db.prepare('SELECT provider,status,publication_id,error_message,updated_at FROM viral_distribution_jobs WHERE quiz_id=? ORDER BY provider').all(id);
+  const media=row.media_project_id?db.prepare('SELECT output_url,production_status,progress,duration_seconds FROM admin_media_projects WHERE id=?').get(row.media_project_id):null;
+  return { ...row, questions: JSON.parse(row.questions_json || '[]'), scenes, distribution, media };
+}
+app.get('/api/admin/viral-quizzes', requireAdmin, (_req,res) => {
+  const quizzes = db.prepare('SELECT * FROM admin_viral_quizzes ORDER BY id DESC LIMIT 40').all()
+    .map(row => viralQuizRow(row.id));
+  return res.json({ mode:'supervised', durationSeconds:65, dailyRule:{ plants:2, curiosities:1 }, quizzes });
+});
+app.post('/api/admin/viral-quizzes', requireAdmin, (req,res) => {
+  const theme=String(req.body?.theme||'').trim().slice(0,160);
+  const category=['plants','curiosities'].includes(String(req.body?.category))?String(req.body.category):'plants';
+  const difficulty=['easy','medium','hard'].includes(String(req.body?.difficulty))?String(req.body.difficulty):'medium';
+  const voice=VIRAL_QUIZ_VOICES.has(String(req.body?.voice))?String(req.body.voice):'br-feminina-energica';
+  const destinationUrl=String(req.body?.destinationUrl||'').trim().slice(0,1000);
+  const destinationLabel=String(req.body?.destinationLabel||'').trim().slice(0,100)||'Vitrine City';
+  const channels=String(req.body?.channels||'Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai, Bilibili').trim().slice(0,300);
+  if(theme.length<5)return res.status(400).json({error:'Descreva o tema em pelo menos 5 caracteres.'});
+  let parsed; try{parsed=new URL(destinationUrl);}catch{return res.status(400).json({error:'Informe um link de destino válido.'});}
+  if(parsed.protocol!=='https:')return res.status(400).json({error:'O link de destino precisa usar HTTPS.'});
+  const pack=viralQuizPackage({theme,category,voice,destinationUrl,destinationLabel});
+  const result=db.prepare(`INSERT INTO admin_viral_quizzes
+    (created_by_user_id,theme,category,difficulty,voice,destination_url,destination_label,questions_json,script,captions,channels)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(req.user.id,theme,category,difficulty,voice,destinationUrl,destinationLabel,
+      JSON.stringify(pack.questions),pack.script,pack.captions,channels);
+  return res.status(201).json({quiz:viralQuizRow(Number(result.lastInsertRowid)),message:'Pacote criado e enviado para aprovação da Gestora.'});
+});
+function approveViralQuiz(id,userId){
+  const quiz=viralQuizRow(id);if(!quiz)throw Object.assign(new Error('Quiz não encontrado.'),{status:404});
+  if(quiz.status!=='awaiting_approval')throw Object.assign(new Error('Este quiz não está aguardando aprovação.'),{status:409});
+  const media=db.prepare("SELECT id,status FROM admin_specialist_agents WHERE code='midia'").get();
+  if(!media||media.status!=='active')throw Object.assign(new Error('Ative o Estúdio Audiovisual antes de aprovar.'),{status:409});
+  const tx=db.transaction(()=>{
+    const task=db.prepare(`INSERT INTO admin_agent_tasks (agent_id,created_by_user_id,title,instructions,priority,status)
+      VALUES (?,?,?,?,?,'queued')`).run(media.id,userId,`Quiz viral: ${quiz.theme}`,quiz.script,'high');
+    const project=db.prepare(`INSERT INTO admin_media_projects
+      (task_id,format,channels,source_notes,prompt,aspect_ratio,duration_seconds,caption,production_status,progress,script)
+      VALUES (?,'short_video',?,?,?,?,65,?,'script',15,?)`).run(Number(task.lastInsertRowid),quiz.channels,quiz.script,
+        `Vídeo vertical de quiz, ritmo rápido, imagens próprias ou geradas, narração ${quiz.voice}, legendas grandes e CTA final. ${quiz.script}`,
+        '9:16',`Quiz: ${quiz.theme}. ${quiz.destination_label}: ${quiz.destination_url}`,quiz.script);
+    const questions=quiz.questions||[],sceneTexts=[`Gancho visual: desafio sobre ${quiz.theme}`,
+      `Pergunta 1: ${questions[0]?.question||quiz.theme}`,`Revelação 1: resposta ${'ABC'[questions[0]?.answer||0]} — ${questions[0]?.options?.[questions[0]?.answer||0]||''}`,
+      `Pergunta 2: ${questions[1]?.question||quiz.theme}`,`Revelação 2: resposta ${'ABC'[questions[1]?.answer||0]} — ${questions[1]?.options?.[questions[1]?.answer||0]||''}`,
+      `Pergunta 3: ${questions[2]?.question||quiz.theme}`,`Revelação 3: resposta ${'ABC'[questions[2]?.answer||0]} — ${questions[2]?.options?.[questions[2]?.answer||0]||''}`,
+      'Tela de resultado: especialista, mandou bem ou tente novamente',`Chamada final para ${quiz.destination_label}: ${quiz.destination_url}`];
+    const insertScene=db.prepare(`INSERT INTO viral_quiz_scenes(quiz_id,scene_number,duration_seconds,prompt) VALUES (?,?,?,?)`);
+    sceneTexts.forEach((text,index)=>insertScene.run(id,index+1,index===8?4:8,`Vídeo vertical 9:16, cena ${index+1} de 9 de um quiz brasileiro, ritmo rápido, visual consistente, sem marcas de terceiros. ${text}. Narração ${quiz.voice}, texto grande em português e transição limpa para a próxima cena.`));
+    db.prepare("UPDATE admin_viral_quizzes SET status='in_production',task_id=?,media_project_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
+      .run(Number(task.lastInsertRowid),Number(project.lastInsertRowid),id);
+  }); tx();
+  return viralQuizRow(id);
+}
+app.post('/api/admin/viral-quizzes/:id/approve', requireAdmin, (req,res) => {
+  try{return res.json({quiz:approveViralQuiz(Number(req.params.id),req.user.id),message:'Quiz aprovado. Nove cenas foram enviadas à produção automática.'});}
+  catch(error){return res.status(error.status||500).json({error:error.message});}
+});
+function decodeXmlText(value='') { return String(value).replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim(); }
+async function viralTrendTopics() {
+  const collected=[];
+  try {
+    const response=await fetch('https://trends.google.com/trending/rss?geo=BR',{headers:{'User-Agent':'VitrineCity/1.0'},signal:AbortSignal.timeout(12000)});
+    if(response.ok){const xml=await response.text();for(const match of xml.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<ht:approx_traffic>([\s\S]*?)<\/ht:approx_traffic>[\s\S]*?<\/item>/gi)){
+      const topic=decodeXmlText(match[1]).slice(0,160),traffic=Number(decodeXmlText(match[2]).replace(/\D/g,''))||0;
+      if(topic)collected.push({source:'google_trends_br',topic,category:'curiosities',score:traffic});
+    }}
+  } catch {}
+  const internal=db.prepare(`SELECT category topic,ROUND(SUM(views+clicks*5+conversions*20),2) score
+    FROM social_external_insights GROUP BY category HAVING score>0 ORDER BY score DESC LIMIT 12`).all();
+  for(const item of internal)collected.push({source:'vitrine_social',topic:String(item.topic||'').slice(0,160),category:'plants',score:Number(item.score||0)});
+  const defaults=['adubação correta para plantas em vasos','sinais de falta de nutrientes nas folhas','como cuidar de plantas no calor','curiosidades sobre plantas brasileiras'];
+  for(const topic of defaults)collected.push({source:'editorial',topic,category:topic.startsWith('curiosidades')?'curiosities':'plants',score:1});
+  const seen=new Set();return collected.filter(item=>item.topic&&!seen.has(item.topic.toLowerCase())&&seen.add(item.topic.toLowerCase())).slice(0,30);
+}
+async function chooseViralThemes(trends,counts) {
+  const fallback=[...trends.filter(x=>x.category==='plants').slice(0,counts.plants),...trends.filter(x=>x.category==='curiosities').slice(0,counts.curiosities)];
+  if(!aiConfigured())return fallback;
+  try{
+    const data=await requestOpenAI({model:OPENAI_MODEL,store:false,max_output_tokens:700,
+      instructions:'Você seleciona pautas seguras para quizzes verticais da VitrineCity. Responda somente JSON válido, sem markdown: uma lista de objetos com theme e category. category deve ser plants ou curiosities. Evite política, tragédias, saúde, apostas, conteúdo adulto e alegações sem fonte. Priorize jardinagem para plants e curiosidades leves para curiosities.',
+      input:`Escolha exatamente ${counts.plants} pautas plants e ${counts.curiosities} curiosities. Tendências disponíveis: ${JSON.stringify(trends.slice(0,20))}`});
+    const parsed=JSON.parse(responseOutputText(data).trim());
+    if(!Array.isArray(parsed))return fallback;
+    const safe=parsed.filter(x=>x&&['plants','curiosities'].includes(x.category)&&String(x.theme||'').trim().length>=5)
+      .map(x=>({source:'openrouter_curator',topic:String(x.theme).trim().slice(0,160),category:x.category,score:100}));
+    if(safe.filter(x=>x.category==='plants').length===counts.plants&&safe.filter(x=>x.category==='curiosities').length===counts.curiosities)return safe;
+  }catch(error){console.error('Curadoria viral via IA falhou:',String(error?.message||'ai_failure').slice(0,200));}
+  return fallback;
+}
+let viralFactoryRunning=false;
+async function runViralFactory({force=false,userId=null}={}) {
+  if(viralFactoryRunning)return {skipped:true,reason:'running'};viralFactoryRunning=true;
+  const settings=db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get();
+  const day=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo'}).format(new Date());
+  if(!settings.enabled&&!force){viralFactoryRunning=false;return {skipped:true,reason:'disabled'};}
+  if(settings.last_run_day===day&&!force){viralFactoryRunning=false;return {skipped:true,reason:'already_ran'};}
+  try{
+    const trends=await viralTrendTopics(),insertTrend=db.prepare('INSERT INTO viral_factory_trends(source,topic,category,score) VALUES (?,?,?,?)');
+    db.transaction(()=>trends.slice(0,20).forEach(x=>insertTrend.run(x.source,x.topic,x.category,x.score)))();
+    const themes=await chooseViralThemes(trends,{plants:settings.plants_per_day,curiosities:settings.curiosities_per_day});
+    const insert=db.prepare(`INSERT INTO admin_viral_quizzes
+      (created_by_user_id,theme,category,difficulty,voice,destination_url,destination_label,questions_json,script,captions,channels,status)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,'awaiting_approval')`),created=[];
+    db.transaction(()=>{for(const item of themes){const pack=viralQuizPackage({theme:item.topic,category:item.category,voice:'br-feminina-energica',destinationUrl:settings.destination_url,destinationLabel:settings.destination_label});
+      const result=insert.run(userId,item.topic,item.category,'medium','br-feminina-energica',settings.destination_url,settings.destination_label,JSON.stringify(pack.questions),pack.script,pack.captions,'Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai, Bilibili');created.push(Number(result.lastInsertRowid));}
+      db.prepare("UPDATE viral_factory_settings SET last_run_day=?,last_run_at=CURRENT_TIMESTAMP,last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=1").run(day);})();
+    if(!settings.approval_required)for(const id of created)approveViralQuiz(id,userId);
+    return {ok:true,created:created.map(viralQuizRow),trends:trends.slice(0,10)};
+  }catch(error){db.prepare('UPDATE viral_factory_settings SET last_error=?,last_run_at=CURRENT_TIMESTAMP WHERE id=1').run(String(error?.message||'automation_failed').slice(0,500));throw error;}
+  finally{viralFactoryRunning=false;}
+}
+function runFfmpeg(args){return new Promise((resolve,reject)=>{const child=spawn('ffmpeg',args,{stdio:['ignore','ignore','pipe']});let error='';child.stderr.on('data',chunk=>error+=chunk);child.once('error',reject);child.once('close',code=>code===0?resolve():reject(new Error(`FFmpeg encerrou com código ${code}: ${error.slice(-500)}`)));});}
+async function finishViralQuizVideo(quizId){
+  const quiz=viralQuizRow(quizId),scenes=db.prepare("SELECT * FROM viral_quiz_scenes WHERE quiz_id=? AND status='downloaded' ORDER BY scene_number").all(quizId);
+  if(!quiz||scenes.length!==9)return false;
+  const listPath=path.join(generatedMediaDir,`viral-${quizId}-concat.txt`),outputName=`viral-quiz-${quizId}-${Date.now()}.mp4`,outputPath=path.join(generatedMediaDir,outputName);
+  fs.writeFileSync(listPath,scenes.map(scene=>`file '${scene.local_path.replaceAll("'","'\\''")}'`).join('\n'));
+  try{
+    await runFfmpeg(['-y','-f','concat','-safe','0','-i',listPath,'-t','65','-vf','scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p','-c:v','libx264','-preset','veryfast','-c:a','aac','-ar','48000','-movflags','+faststart',outputPath]);
+    const url=`/uploads/generated-videos/${outputName}`;
+    db.transaction(()=>{db.prepare("UPDATE admin_viral_quizzes SET status='approved',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(quizId);db.prepare("UPDATE admin_media_projects SET output_url=?,production_status='approved',progress=100,duration_seconds=65,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(url,quiz.media_project_id);db.prepare("UPDATE admin_agent_tasks SET status='completed',result_summary=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").run('Vídeo final de 65 segundos montado com 9 cenas e aprovado pelo time.',quiz.task_id);
+      const add=db.prepare('INSERT OR IGNORE INTO viral_distribution_jobs(quiz_id,provider,status) VALUES (?,?,?)');for(const provider of ['vitrine_social','instagram','facebook','tiktok','youtube','kwai','bilibili'])add.run(quizId,provider,provider==='vitrine_social'?'pending':'awaiting_connection');})();
+    await publishViralToVitrine(quizId).catch(error=>db.prepare("UPDATE viral_distribution_jobs SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE quiz_id=? AND provider='vitrine_social'").run(String(error?.message||'publish_failed').slice(0,500),quizId));return true;
+  }finally{try{fs.unlinkSync(listPath)}catch{}}
+}
+async function publishViralToVitrine(quizId){const quiz=viralQuizRow(quizId),project=mediaFactoryProject(quiz?.media_project_id);if(!quiz||!project?.output_url)throw new Error('Vídeo final ainda não está disponível.');const administrativeUser=db.prepare('SELECT id,email,is_admin FROM users ORDER BY id').all().find(isAdministrativeUser);const userId=quiz.created_by_user_id||administrativeUser?.id;if(!userId)throw new Error('Nenhum administrador disponível para assinar a publicação.');
+  const accountId=String(process.env.CLOUDFLARE_ACCOUNT_ID||'').trim(),token=String(process.env.CLOUDFLARE_STREAM_API_TOKEN||'').trim();if(!accountId||!token)throw new Error('Cloudflare Stream não está configurado.');const copy=await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/copy`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({url:new URL(project.output_url,SITE_URL).toString(),meta:{name:project.title}}),signal:AbortSignal.timeout(30000)});const payload=await copy.json().catch(()=>({}));if(!copy.ok||!payload?.result?.uid)throw new Error(payload?.errors?.[0]?.message||'Cloudflare Stream recusou o vídeo.');const postId=randomUUID();db.transaction(()=>{db.prepare(`INSERT INTO social_posts (id,user_id,video_uid,caption,category,status,moderation_status,moderated_by,moderated_at) VALUES (?,?,?,?,?,'uploading','approved',?,CURRENT_TIMESTAMP)`).run(postId,userId,payload.result.uid,project.caption||project.title,'quiz',userId);db.prepare("UPDATE viral_distribution_jobs SET status='published',publication_id=?,updated_at=CURRENT_TIMESTAMP WHERE quiz_id=? AND provider='vitrine_social'").run(postId,quizId);db.prepare("UPDATE admin_viral_quizzes SET status='published',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(quizId);db.prepare("UPDATE admin_media_projects SET production_status='published',published_post_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(postId,project.id);})();return postId;}
+let viralVideoFactoryRunning=false;
+async function processViralVideoFactory(){
+  if(viralVideoFactoryRunning||!aiConfigured()||AI_PROVIDER!=='openrouter')return;viralVideoFactoryRunning=true;
+  try{
+    const pending=db.prepare(`SELECT s.* FROM viral_quiz_scenes s JOIN admin_viral_quizzes q ON q.id=s.quiz_id WHERE s.status='pending' AND q.status='in_production' ORDER BY s.quiz_id,s.scene_number LIMIT 1`).get();
+    if(pending){const claimed=db.prepare("UPDATE viral_quiz_scenes SET status='submitting',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").run(pending.id);if(claimed.changes)try{
+      const models=[...new Set([OPENROUTER_VIDEO_MODEL,...MEDIA_VIDEO_MODELS])],model=models[Math.min(Number(pending.attempt_count||0),models.length-1)];
+      const result=await openRouterRequest('https://openrouter.ai/api/v1/videos',{method:'POST',body:JSON.stringify({model,prompt:pending.prompt,duration:pending.duration_seconds,aspect_ratio:'9:16',resolution:'720p',generate_audio:true})},60000);
+      const jobId=String(result.data?.id||''),pollingUrl=String(result.data?.polling_url||'');if(!jobId||!/^https:\/\/openrouter\.ai\//i.test(pollingUrl))throw new Error('O provedor não devolveu uma tarefa de vídeo válida.');
+      db.prepare("UPDATE viral_quiz_scenes SET status='generating',remote_job_id=?,polling_url=?,model=?,attempt_count=attempt_count+1,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(jobId,pollingUrl,model,pending.id);
+    }catch(error){const message=String(error?.message||'submit_failed').slice(0,500);db.prepare("UPDATE viral_quiz_scenes SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(message,pending.id);}}
+    const generating=db.prepare("SELECT * FROM viral_quiz_scenes WHERE status='generating' ORDER BY id LIMIT 3").all();
+    for(const scene of generating)try{const result=await openRouterRequest(scene.polling_url,{method:'GET'},30000),status=String(result.data?.status||'').toLowerCase();if(['failed','cancelled'].includes(status))throw new Error(String(result.data?.error?.message||result.data?.error||result.data?.message||status));if(!['completed','succeeded'].includes(status))continue;
+      const mediaUrl=String(result.data?.unsigned_urls?.[0]||result.data?.data?.[0]?.url||result.data?.content_url||'');if(!/^https:\/\//i.test(mediaUrl))throw new Error('Cena concluída sem arquivo disponível.');const download=await fetch(mediaUrl,{headers:{Authorization:`Bearer ${AI_API_KEY}`},signal:AbortSignal.timeout(120000)});if(!download.ok)throw new Error(`Download da cena falhou (${download.status}).`);const buffer=Buffer.from(await download.arrayBuffer());if(!buffer.length||buffer.length>250*1024*1024)throw new Error('Cena inválida ou maior que 250 MB.');const name=`viral-${scene.quiz_id}-scene-${scene.scene_number}.mp4`,local=path.join(generatedMediaDir,name);fs.writeFileSync(local,buffer);db.prepare("UPDATE viral_quiz_scenes SET status='downloaded',local_path=?,output_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(local,`/uploads/generated-videos/${name}`,scene.id);await finishViralQuizVideo(scene.quiz_id);
+    }catch(error){const message=String(error?.message||'scene_failed').slice(0,500),retry=Number(scene.attempt_count||0)<3&&!/insufficient credits|key limit exceeded/i.test(message);db.prepare("UPDATE viral_quiz_scenes SET status=?,error_message=?,remote_job_id='',polling_url='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(retry?'pending':'failed',message,scene.id);}
+  }finally{viralVideoFactoryRunning=false;}
+}
+app.get('/api/admin/viral-factory/automation',requireAdmin,(_req,res)=>res.json({settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get(),trends:db.prepare('SELECT * FROM viral_factory_trends ORDER BY id DESC LIMIT 20').all(),openrouterConfigured:aiConfigured()}));
+app.put('/api/admin/viral-factory/automation',requireAdmin,(req,res)=>{const enabled=Boolean(req.body?.enabled),approvalRequired=req.body?.approvalRequired!==false;
+  const destinationUrl=String(req.body?.destinationUrl||'').trim();let parsed;try{parsed=new URL(destinationUrl)}catch{return res.status(400).json({error:'Informe um destino válido.'})}if(parsed.protocol!=='https:')return res.status(400).json({error:'O destino precisa usar HTTPS.'});
+  db.prepare(`UPDATE viral_factory_settings SET enabled=?,approval_required=?,destination_url=?,destination_label=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(enabled?1:0,approvalRequired?1:0,destinationUrl,String(req.body?.destinationLabel||'Vitrine City').trim().slice(0,100));return res.json({ok:true,settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get()});});
+app.post('/api/admin/viral-factory/run',requireAdmin,async(req,res)=>{try{return res.status(201).json(await runViralFactory({force:true,userId:req.user.id}))}catch(error){return res.status(502).json({error:String(error?.message||'Falha na fábrica automática.').slice(0,400)})}});
 
 app.patch('/api/manual-assistant/profile', requireUser, (req, res) => {
   const whatsapp = String(req.body?.whatsapp || '').replace(/\D/g, '').slice(0, 15);
@@ -3939,9 +4973,15 @@ function aiOperationalSnapshot() {
 }
 
 function responseOutputText(payload) {
-  return (payload?.output || []).flatMap(item => item?.content || [])
+  const responseText=(payload?.output || []).flatMap(item => item?.content || [])
     .filter(item => item?.type === 'output_text' && typeof item.text === 'string')
     .map(item => item.text).join('\n').trim();
+  if(responseText)return responseText;
+  if(typeof payload?.output_text==='string')return payload.output_text.trim();
+  const choice=payload?.choices?.[0]?.message?.content;
+  if(typeof choice==='string')return choice.trim();
+  if(Array.isArray(choice))return choice.map(item=>item?.text||item?.content||'').join('\n').trim();
+  return '';
 }
 
 function decodeHtmlText(value = '') {
@@ -4136,6 +5176,81 @@ async function performOpenRouterRequest(url, options = {}, timeout = 60000) {
   }
   return { data, headers: response.headers };
 }
+
+function parseEditorialJson(value) {
+  const clean = String(value || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  const start = clean.indexOf('{'), end = clean.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('O agente devolveu um texto editorial inválido.');
+  return JSON.parse(clean.slice(start, end + 1));
+}
+
+async function requestEditorialText(system,user,maxTokens=2200){
+  if(AI_PROVIDER==='openrouter'){
+    try{const result=await openRouterRequest('https://openrouter.ai/api/v1/chat/completions',{method:'POST',body:JSON.stringify({model:OPENAI_MODEL,messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:maxTokens,temperature:0.5})},45000);const text=result.data?.choices?.[0]?.message?.content;if(typeof text==='string'&&text.trim())return text.trim();}catch(error){console.error('OpenRouter editorial fallback',String(error.message||error));}
+    const directKey=String(process.env.OPENAI_API_KEY||'').trim();
+    if(directKey){const response=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{Authorization:`Bearer ${directKey}`,'Content-Type':'application/json'},body:JSON.stringify({model:String(process.env.OPENAI_DIRECT_MODEL||'gpt-4o-mini'),messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:maxTokens,temperature:0.5}),signal:AbortSignal.timeout(60000)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(String(data?.error?.message||`OpenAI ${response.status}`).slice(0,300));const text=data?.choices?.[0]?.message?.content;if(typeof text==='string'&&text.trim())return text.trim();}
+    throw new Error('Nenhum provedor devolveu conteúdo editorial.');
+  }
+  const result=await requestOpenAI({model:OPENAI_MODEL,max_output_tokens:maxTokens,input:[{role:'system',content:[{type:'input_text',text:system}]},{role:'user',content:[{type:'input_text',text:user}]}]});
+  const text=responseOutputText(result);if(!text)throw new Error('O modelo não devolveu conteúdo editorial.');return text;
+}
+
+async function generateEditorialDraft({ title, portal, traffic, sourceUrl }) {
+  if (!aiConfigured()) { const error = new Error('Configure a chave da IA no painel antes de gerar o artigo.'); error.status = 503; throw error; }
+  const raw = await requestEditorialText('Você é o agente editorial da VitrineCity. Crie um rascunho em português do Brasil, claro e útil, com 900 a 1.500 caracteres no corpo. Não invente acontecimentos, números, declarações ou fontes. Quando houver apenas uma tendência de busca, explique o assunto e sinalize o que precisa de confirmação editorial. Em entretenimento, não publique boatos, acusações, diagnóstico, localização ou informação privada. Em tecnologia e IA, priorize fontes oficiais. Retorne somente JSON válido com title, summary, body e imagePrompt. O corpo deve ter no mínimo 600 caracteres. A capa não pode imitar pessoa real.',`Tema: ${title}\nEditoria: ${portal}\nVolume: ${traffic||'não informado'}\nFonte: ${sourceUrl||'Google Trends Brasil'}`,2200);
+  const article = parseEditorialJson(raw);
+  const body = String(article.body || '').trim();
+  if (body.length < 600) throw new Error('O agente não produziu o mínimo de 600 caracteres. Tente novamente.');
+  let imageUrl = '/assets/vitriny-city-master.jpg';
+  if (AI_PROVIDER === 'openrouter' && article.imagePrompt) {
+    try {
+      const imageResult = await openRouterRequest('https://openrouter.ai/api/v1/images', { method: 'POST', body: JSON.stringify({ model: OPENROUTER_IMAGE_MODEL, prompt: String(article.imagePrompt).slice(0, 1200), n: 1, aspect_ratio: '16:9' }) }, 120000);
+      const item = imageResult.data?.data?.[0] || imageResult.data?.images?.[0];
+      const encoded = String(item?.b64_json || item?.image_url?.url || '').replace(/^data:[^;]+;base64,/, '');
+      const buffer = Buffer.from(encoded, 'base64');
+      if (buffer.length && buffer.length <= 25 * 1024 * 1024) {
+        const file = `editorial-${Date.now()}-${randomBytes(4).toString('hex')}.png`;
+        fs.writeFileSync(path.join(generatedMediaDir, file), buffer, { flag: 'wx' });
+        imageUrl = `/uploads/generated-videos/${file}`;
+      }
+    } catch (error) { console.error('Editorial cover generation failed', String(error.message || error)); }
+  }
+  return { title: article.title, summary: article.summary, body, imageUrl };
+}
+
+async function reviewEditorialDraft({ title, summary, body, portal, imageUrl, sources }) {
+  const raw = await requestEditorialText(
+    'Você é a Diretoria Editorial da VitrineCity e decide se um conteúdo pode ser publicado automaticamente. Analise utilidade, clareza, coerência, segurança, risco jurídico, alegações factuais, qualidade da imagem e necessidade de fontes. Notícias, acontecimentos atuais, números, saúde, finanças e alegações sobre pessoas exigem fontes confiáveis; Google Trends sozinho não comprova fatos. Receitas devem conter ingredientes, preparo e cuidados de segurança. Conteúdo evergreen pode ser aprovado sem fontes externas quando não fizer alegações controversas. Retorne somente JSON válido com approved (boolean), requiresSources (boolean), risk (low, medium ou high) e notes. Reprove conteúdo genérico, enganoso, inseguro, duplicado ou incompleto.',
+    `Editoria: ${portal}\nTítulo: ${title}\nResumo: ${summary}\nImagem: ${imageUrl}\nFontes declaradas: ${JSON.stringify(sources || [])}\n\nTexto:\n${String(body).slice(0, 16000)}`,
+    900,
+  );
+  const review = parseEditorialJson(raw);
+  return {
+    approved: review.approved === true && String(review.risk || '').toLowerCase() === 'low',
+    requiresSources: review.requiresSources !== false,
+    risk: ['low','medium','high'].includes(String(review.risk).toLowerCase()) ? String(review.risk).toLowerCase() : 'high',
+    notes: String(review.notes || 'A Diretoria não apresentou justificativa.').slice(0, 1000),
+  };
+}
+
+async function generateBookPlan(trend) {
+  const raw=await requestEditorialText('Você coordena a Editora Digital VitrineCity. Transforme a tendência em livro útil e duradouro, sem copiar terceiros nem prometer riqueza, cura ou resultado garantido. Retorne somente JSON válido: title, category, summary, audience, keywords e chapters, exatamente 10 capítulos com title e brief.',`Tendência: ${trend.title}\nVolume: ${trend.traffic||'não informado'}\nFonte: ${trend.source_url||'Google Trends Brasil'}`,2200);
+  const plan=parseEditorialJson(raw);
+  if(!plan.title||!Array.isArray(plan.chapters)||plan.chapters.length<10)throw new Error('O coordenador não produziu um plano completo.');
+  return plan;
+}
+
+async function generateBookChapter(chapter) {
+  const text=await requestEditorialText('Você é redator da Editora Digital VitrineCity. Escreva capítulo original em português do Brasil com 900 a 1.300 palavras, bem estruturado. Não copie obras, invente fontes ou faça promessas financeiras, médicas ou jurídicas. Entregue somente o capítulo.',`Livro: ${chapter.book_title}\nCategoria: ${chapter.category}\nResumo: ${chapter.summary}\nCapítulo ${chapter.position}: ${chapter.title}\nOrientação: ${chapter.brief}`,3000);if(text.split(/\s+/).length<700)throw new Error('Capítulo abaixo do tamanho editorial mínimo.');return text;
+}
+
+async function generateBookCover(book) {
+  if(AI_PROVIDER!=='openrouter')return '/assets/vitriny-city-master.jpg';
+  const result=await openRouterRequest('https://openrouter.ai/api/v1/images',{method:'POST',body:JSON.stringify({model:OPENROUTER_IMAGE_MODEL,prompt:`Capa de livro digital profissional, proporção vertical 2:3, categoria ${book.category}, tema ${book.title}, composição editorial elegante, sem texto, sem logotipos, sem marcas, sem rosto de pessoa real`,n:1,aspect_ratio:'2:3'})},120000);
+  const item=result.data?.data?.[0]||result.data?.images?.[0],encoded=String(item?.b64_json||item?.image_url?.url||'').replace(/^data:[^;]+;base64,/,'');const buffer=Buffer.from(encoded,'base64');
+  if(!buffer.length||buffer.length>25*1024*1024)throw new Error('A capa gerada é inválida.');const file=`book-${Date.now()}-${randomBytes(4).toString('hex')}.png`;fs.writeFileSync(path.join(generatedMediaDir,file),buffer,{flag:'wx'});return `/uploads/generated-videos/${file}`;
+}
+async function generateBookIllustration(chapter){if(AI_PROVIDER!=='openrouter')return '/assets/vitriny-city-master.jpg';const result=await openRouterRequest('https://openrouter.ai/api/v1/images',{method:'POST',body:JSON.stringify({model:OPENROUTER_IMAGE_MODEL,prompt:`Ilustração editorial profissional para livro, formato horizontal 16:9, livro ${chapter.book_title}, categoria ${chapter.category}, capítulo ${chapter.position}: ${chapter.title}. Sem texto escrito, logotipos, marcas ou rosto de pessoa real. Visual educativo e elegante.`,n:1,aspect_ratio:'16:9'})},120000);const item=result.data?.data?.[0]||result.data?.images?.[0],encoded=String(item?.b64_json||item?.image_url?.url||'').replace(/^data:[^;]+;base64,/,'');const buffer=Buffer.from(encoded,'base64');if(!buffer.length||buffer.length>25*1024*1024)throw new Error('Ilustração inválida.');const file=`book-chapter-${chapter.id}-${Date.now()}.png`;fs.writeFileSync(path.join(generatedMediaDir,file),buffer,{flag:'wx'});return `/uploads/generated-videos/${file}`}
 
 const WHATSAPP_MESSAGE_CREDIT_UNITS = 100;
 const whatsappVersion = () => String(process.env.META_API_VERSION || 'v24.0').trim();
@@ -4479,186 +5594,6 @@ app.get('/api/admin/agents', requireAdmin, (_req, res) => {
     ORDER BY CASE t.status WHEN 'awaiting_approval' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END,t.id DESC LIMIT 80`).all();
   return res.json({ mode: 'supervised', agents, tasks });
 });
-
-const VIRAL_QUIZ_VOICES = new Set(['br-feminina-energica','br-masculina-amigavel','br-feminina-calma']);
-function viralQuizQuestions(theme, category) {
-  const subject = theme.replace(/[?!.,;:]+$/g, '').trim();
-  if (category === 'curiosities') return [
-    { question: `Qual fato sobre ${subject} surpreende mais gente?`, options: ['O mais conhecido','O menos óbvio','Nenhum deles'], answer: 1 },
-    { question: `Em que situação ${subject} chama mais atenção?`, options: ['No cotidiano','Só em laboratório','Nunca acontece'], answer: 0 },
-    { question: `Você compartilharia esta curiosidade sobre ${subject}?`, options: ['Sim','Talvez','Já conhecia'], answer: 0 }
-  ];
-  return [
-    { question: `Qual é o primeiro sinal de que ${subject} precisa de atenção?`, options: ['Folhas e crescimento mudam','O vaso fica mais bonito','Nada muda'], answer: 0 },
-    { question: `Antes de cuidar de ${subject}, o que deve ser conferido?`, options: ['Luz, água e solo','Só a cor do vaso','Apenas o tamanho'], answer: 0 },
-    { question: `Qual prática é mais segura para ${subject}?`, options: ['Seguir a dose indicada','Dobrar a dose','Aplicar sem observar'], answer: 0 }
-  ];
-}
-function viralQuizPackage({ theme, category, voice, destinationUrl, destinationLabel }) {
-  const questions = viralQuizQuestions(theme, category);
-  const timeline = [
-    ['00–04s', `DESAFIO: você acerta 3 perguntas sobre ${theme}?`],
-    ['04–19s', `PERGUNTA 1: ${questions[0].question} Opções: A) ${questions[0].options[0]}; B) ${questions[0].options[1]}; C) ${questions[0].options[2]}. Resposta: ${'ABC'[questions[0].answer]}.`],
-    ['19–34s', `PERGUNTA 2: ${questions[1].question} Opções: A) ${questions[1].options[0]}; B) ${questions[1].options[1]}; C) ${questions[1].options[2]}. Resposta: ${'ABC'[questions[1].answer]}.`],
-    ['34–49s', `PERGUNTA 3: ${questions[2].question} Opções: A) ${questions[2].options[0]}; B) ${questions[2].options[1]}; C) ${questions[2].options[2]}. Resposta: ${'ABC'[questions[2].answer]}.`],
-    ['49–57s', 'RESULTADO: 3 acertos, especialista; 2, mandou bem; 0 ou 1, vale tentar outra vez.'],
-    ['57–65s', `CTA: descubra mais em ${destinationLabel}. Acesse ${destinationUrl}.`]
-  ];
-  return { questions, script: timeline.map(([time,text]) => `${time} — ${text}`).join('\n'),
-    captions: timeline.map(([time,text]) => `[${time}] ${text}`).join('\n'), voice };
-}
-function viralQuizRow(id) {
-  const row = db.prepare('SELECT * FROM admin_viral_quizzes WHERE id=?').get(id);
-  if (!row) return null;
-  const scenes=db.prepare('SELECT id,scene_number,duration_seconds,status,output_url,error_message FROM viral_quiz_scenes WHERE quiz_id=? ORDER BY scene_number').all(id);
-  const distribution=db.prepare('SELECT provider,status,publication_id,error_message,updated_at FROM viral_distribution_jobs WHERE quiz_id=? ORDER BY provider').all(id);
-  const media=row.media_project_id?db.prepare('SELECT output_url,production_status,progress,duration_seconds FROM admin_media_projects WHERE id=?').get(row.media_project_id):null;
-  return { ...row, questions: JSON.parse(row.questions_json || '[]'), scenes, distribution, media };
-}
-app.get('/api/admin/viral-quizzes', requireAdmin, (_req,res) => {
-  const quizzes = db.prepare('SELECT * FROM admin_viral_quizzes ORDER BY id DESC LIMIT 40').all()
-    .map(row => viralQuizRow(row.id));
-  return res.json({ mode:'supervised', durationSeconds:65, dailyRule:{ plants:2, curiosities:1 }, quizzes });
-});
-app.post('/api/admin/viral-quizzes', requireAdmin, (req,res) => {
-  const theme=String(req.body?.theme||'').trim().slice(0,160);
-  const category=['plants','curiosities'].includes(String(req.body?.category))?String(req.body.category):'plants';
-  const difficulty=['easy','medium','hard'].includes(String(req.body?.difficulty))?String(req.body.difficulty):'medium';
-  const voice=VIRAL_QUIZ_VOICES.has(String(req.body?.voice))?String(req.body.voice):'br-feminina-energica';
-  const destinationUrl=String(req.body?.destinationUrl||'').trim().slice(0,1000);
-  const destinationLabel=String(req.body?.destinationLabel||'').trim().slice(0,100)||'Vitrine City';
-  const channels=String(req.body?.channels||'Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai, Bilibili').trim().slice(0,300);
-  if(theme.length<5)return res.status(400).json({error:'Descreva o tema em pelo menos 5 caracteres.'});
-  let parsed; try{parsed=new URL(destinationUrl);}catch{return res.status(400).json({error:'Informe um link de destino válido.'});}
-  if(parsed.protocol!=='https:')return res.status(400).json({error:'O link de destino precisa usar HTTPS.'});
-  const pack=viralQuizPackage({theme,category,voice,destinationUrl,destinationLabel});
-  const result=db.prepare(`INSERT INTO admin_viral_quizzes
-    (created_by_user_id,theme,category,difficulty,voice,destination_url,destination_label,questions_json,script,captions,channels)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(req.user.id,theme,category,difficulty,voice,destinationUrl,destinationLabel,
-      JSON.stringify(pack.questions),pack.script,pack.captions,channels);
-  return res.status(201).json({quiz:viralQuizRow(Number(result.lastInsertRowid)),message:'Pacote criado e enviado para aprovação da Gestora.'});
-});
-function approveViralQuiz(id,userId){
-  const quiz=viralQuizRow(id);if(!quiz)throw Object.assign(new Error('Quiz não encontrado.'),{status:404});
-  if(quiz.status!=='awaiting_approval')throw Object.assign(new Error('Este quiz não está aguardando aprovação.'),{status:409});
-  const media=db.prepare("SELECT id,status FROM admin_specialist_agents WHERE code='midia'").get();
-  if(!media||media.status!=='active')throw Object.assign(new Error('Ative o Estúdio Audiovisual antes de aprovar.'),{status:409});
-  const tx=db.transaction(()=>{
-    const task=db.prepare(`INSERT INTO admin_agent_tasks (agent_id,created_by_user_id,title,instructions,priority,status)
-      VALUES (?,?,?,?,?,'queued')`).run(media.id,userId,`Quiz viral: ${quiz.theme}`,quiz.script,'high');
-    const project=db.prepare(`INSERT INTO admin_media_projects
-      (task_id,format,channels,source_notes,prompt,aspect_ratio,duration_seconds,caption,production_status,progress,script)
-      VALUES (?,'short_video',?,?,?,?,65,?,'script',15,?)`).run(Number(task.lastInsertRowid),quiz.channels,quiz.script,
-        `Vídeo vertical de quiz, ritmo rápido, imagens próprias ou geradas, narração ${quiz.voice}, legendas grandes e CTA final. ${quiz.script}`,
-        '9:16',`Quiz: ${quiz.theme}. ${quiz.destination_label}: ${quiz.destination_url}`,quiz.script);
-    const questions=quiz.questions||[],sceneTexts=[`Gancho visual: desafio sobre ${quiz.theme}`,
-      `Pergunta 1: ${questions[0]?.question||quiz.theme}`,`Revelação 1: resposta ${'ABC'[questions[0]?.answer||0]} — ${questions[0]?.options?.[questions[0]?.answer||0]||''}`,
-      `Pergunta 2: ${questions[1]?.question||quiz.theme}`,`Revelação 2: resposta ${'ABC'[questions[1]?.answer||0]} — ${questions[1]?.options?.[questions[1]?.answer||0]||''}`,
-      `Pergunta 3: ${questions[2]?.question||quiz.theme}`,`Revelação 3: resposta ${'ABC'[questions[2]?.answer||0]} — ${questions[2]?.options?.[questions[2]?.answer||0]||''}`,
-      'Tela de resultado: especialista, mandou bem ou tente novamente',`Chamada final para ${quiz.destination_label}: ${quiz.destination_url}`];
-    const insertScene=db.prepare(`INSERT INTO viral_quiz_scenes(quiz_id,scene_number,duration_seconds,prompt) VALUES (?,?,?,?)`);
-    sceneTexts.forEach((text,index)=>insertScene.run(id,index+1,index===8?4:8,`Vídeo vertical 9:16, cena ${index+1} de 9 de um quiz brasileiro, ritmo rápido, visual consistente, sem marcas de terceiros. ${text}. Narração ${quiz.voice}, texto grande em português e transição limpa para a próxima cena.`));
-    db.prepare("UPDATE admin_viral_quizzes SET status='in_production',task_id=?,media_project_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
-      .run(Number(task.lastInsertRowid),Number(project.lastInsertRowid),id);
-  }); tx();
-  return viralQuizRow(id);
-}
-app.post('/api/admin/viral-quizzes/:id/approve', requireAdmin, (req,res) => {
-  try{return res.json({quiz:approveViralQuiz(Number(req.params.id),req.user.id),message:'Quiz aprovado. Nove cenas foram enviadas à produção automática.'});}
-  catch(error){return res.status(error.status||500).json({error:error.message});}
-});
-function decodeXmlText(value='') { return String(value).replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim(); }
-async function viralTrendTopics() {
-  const collected=[];
-  try {
-    const response=await fetch('https://trends.google.com/trending/rss?geo=BR',{headers:{'User-Agent':'VitrineCity/1.0'},signal:AbortSignal.timeout(12000)});
-    if(response.ok){const xml=await response.text();for(const match of xml.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<ht:approx_traffic>([\s\S]*?)<\/ht:approx_traffic>[\s\S]*?<\/item>/gi)){
-      const topic=decodeXmlText(match[1]).slice(0,160),traffic=Number(decodeXmlText(match[2]).replace(/\D/g,''))||0;
-      if(topic)collected.push({source:'google_trends_br',topic,category:'curiosities',score:traffic});
-    }}
-  } catch {}
-  const internal=db.prepare(`SELECT category topic,ROUND(SUM(views+clicks*5+conversions*20),2) score
-    FROM social_external_insights GROUP BY category HAVING score>0 ORDER BY score DESC LIMIT 12`).all();
-  for(const item of internal)collected.push({source:'vitrine_social',topic:String(item.topic||'').slice(0,160),category:'plants',score:Number(item.score||0)});
-  const defaults=['adubação correta para plantas em vasos','sinais de falta de nutrientes nas folhas','como cuidar de plantas no calor','curiosidades sobre plantas brasileiras'];
-  for(const topic of defaults)collected.push({source:'editorial',topic,category:topic.startsWith('curiosidades')?'curiosities':'plants',score:1});
-  const seen=new Set();return collected.filter(item=>item.topic&&!seen.has(item.topic.toLowerCase())&&seen.add(item.topic.toLowerCase())).slice(0,30);
-}
-async function chooseViralThemes(trends,counts) {
-  const fallback=[...trends.filter(x=>x.category==='plants').slice(0,counts.plants),...trends.filter(x=>x.category==='curiosities').slice(0,counts.curiosities)];
-  if(!aiConfigured())return fallback;
-  try{
-    const data=await requestOpenAI({model:OPENAI_MODEL,store:false,max_output_tokens:700,
-      instructions:'Você seleciona pautas seguras para quizzes verticais da VitrineCity. Responda somente JSON válido, sem markdown: uma lista de objetos com theme e category. category deve ser plants ou curiosities. Evite política, tragédias, saúde, apostas, conteúdo adulto e alegações sem fonte. Priorize jardinagem para plants e curiosidades leves para curiosities.',
-      input:`Escolha exatamente ${counts.plants} pautas plants e ${counts.curiosities} curiosities. Tendências disponíveis: ${JSON.stringify(trends.slice(0,20))}`});
-    const parsed=JSON.parse(responseOutputText(data).trim());
-    if(!Array.isArray(parsed))return fallback;
-    const safe=parsed.filter(x=>x&&['plants','curiosities'].includes(x.category)&&String(x.theme||'').trim().length>=5)
-      .map(x=>({source:'openrouter_curator',topic:String(x.theme).trim().slice(0,160),category:x.category,score:100}));
-    if(safe.filter(x=>x.category==='plants').length===counts.plants&&safe.filter(x=>x.category==='curiosities').length===counts.curiosities)return safe;
-  }catch(error){console.error('Curadoria viral via IA falhou:',String(error?.message||'ai_failure').slice(0,200));}
-  return fallback;
-}
-let viralFactoryRunning=false;
-async function runViralFactory({force=false,userId=null}={}) {
-  if(viralFactoryRunning)return {skipped:true,reason:'running'};viralFactoryRunning=true;
-  const settings=db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get();
-  const day=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo'}).format(new Date());
-  if(!settings.enabled&&!force){viralFactoryRunning=false;return {skipped:true,reason:'disabled'};}
-  if(settings.last_run_day===day&&!force){viralFactoryRunning=false;return {skipped:true,reason:'already_ran'};}
-  try{
-    const trends=await viralTrendTopics(),insertTrend=db.prepare('INSERT INTO viral_factory_trends(source,topic,category,score) VALUES (?,?,?,?)');
-    db.transaction(()=>trends.slice(0,20).forEach(x=>insertTrend.run(x.source,x.topic,x.category,x.score)))();
-    const themes=await chooseViralThemes(trends,{plants:settings.plants_per_day,curiosities:settings.curiosities_per_day});
-    const insert=db.prepare(`INSERT INTO admin_viral_quizzes
-      (created_by_user_id,theme,category,difficulty,voice,destination_url,destination_label,questions_json,script,captions,channels,status)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,'awaiting_approval')`),created=[];
-    db.transaction(()=>{for(const item of themes){const pack=viralQuizPackage({theme:item.topic,category:item.category,voice:'br-feminina-energica',destinationUrl:settings.destination_url,destinationLabel:settings.destination_label});
-      const result=insert.run(userId,item.topic,item.category,'medium','br-feminina-energica',settings.destination_url,settings.destination_label,JSON.stringify(pack.questions),pack.script,pack.captions,'Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai, Bilibili');created.push(Number(result.lastInsertRowid));}
-      db.prepare("UPDATE viral_factory_settings SET last_run_day=?,last_run_at=CURRENT_TIMESTAMP,last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=1").run(day);})();
-    if(!settings.approval_required)for(const id of created)approveViralQuiz(id,userId);
-    return {ok:true,created:created.map(viralQuizRow),trends:trends.slice(0,10)};
-  }catch(error){db.prepare('UPDATE viral_factory_settings SET last_error=?,last_run_at=CURRENT_TIMESTAMP WHERE id=1').run(String(error?.message||'automation_failed').slice(0,500));throw error;}
-  finally{viralFactoryRunning=false;}
-}
-function runFfmpeg(args){return new Promise((resolve,reject)=>{const child=spawn('ffmpeg',args,{stdio:['ignore','ignore','pipe']});let error='';child.stderr.on('data',chunk=>error+=chunk);child.once('error',reject);child.once('close',code=>code===0?resolve():reject(new Error(`FFmpeg encerrou com código ${code}: ${error.slice(-500)}`)));});}
-async function finishViralQuizVideo(quizId){
-  const quiz=viralQuizRow(quizId),scenes=db.prepare("SELECT * FROM viral_quiz_scenes WHERE quiz_id=? AND status='downloaded' ORDER BY scene_number").all(quizId);
-  if(!quiz||scenes.length!==9)return false;
-  const listPath=path.join(generatedMediaDir,`viral-${quizId}-concat.txt`),outputName=`viral-quiz-${quizId}-${Date.now()}.mp4`,outputPath=path.join(generatedMediaDir,outputName);
-  fs.writeFileSync(listPath,scenes.map(scene=>`file '${scene.local_path.replaceAll("'","'\\''")}'`).join('\n'));
-  try{
-    await runFfmpeg(['-y','-f','concat','-safe','0','-i',listPath,'-t','65','-vf','scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p','-c:v','libx264','-preset','veryfast','-c:a','aac','-ar','48000','-movflags','+faststart',outputPath]);
-    const url=`/uploads/generated-videos/${outputName}`;
-    db.transaction(()=>{db.prepare("UPDATE admin_viral_quizzes SET status='approved',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(quizId);db.prepare("UPDATE admin_media_projects SET output_url=?,production_status='approved',progress=100,duration_seconds=65,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(url,quiz.media_project_id);db.prepare("UPDATE admin_agent_tasks SET status='completed',result_summary=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").run('Vídeo final de 65 segundos montado com 9 cenas e aprovado pelo time.',quiz.task_id);
-      const add=db.prepare('INSERT OR IGNORE INTO viral_distribution_jobs(quiz_id,provider,status) VALUES (?,?,?)');for(const provider of ['vitrine_social','instagram','facebook','tiktok','youtube','kwai','bilibili'])add.run(quizId,provider,provider==='vitrine_social'?'pending':'awaiting_connection');})();
-    await publishViralToVitrine(quizId).catch(error=>db.prepare("UPDATE viral_distribution_jobs SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE quiz_id=? AND provider='vitrine_social'").run(String(error?.message||'publish_failed').slice(0,500),quizId));return true;
-  }finally{try{fs.unlinkSync(listPath)}catch{}}
-}
-async function publishViralToVitrine(quizId){const quiz=viralQuizRow(quizId),project=mediaFactoryProject(quiz?.media_project_id);if(!quiz||!project?.output_url)throw new Error('Vídeo final ainda não está disponível.');const administrativeUser=db.prepare('SELECT id,email,is_admin FROM users ORDER BY id').all().find(isAdministrativeUser);const userId=quiz.created_by_user_id||administrativeUser?.id;if(!userId)throw new Error('Nenhum administrador disponível para assinar a publicação.');
-  const accountId=String(process.env.CLOUDFLARE_ACCOUNT_ID||'').trim(),token=String(process.env.CLOUDFLARE_STREAM_API_TOKEN||'').trim();if(!accountId||!token)throw new Error('Cloudflare Stream não está configurado.');const copy=await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/copy`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({url:new URL(project.output_url,SITE_URL).toString(),meta:{name:project.title}}),signal:AbortSignal.timeout(30000)});const payload=await copy.json().catch(()=>({}));if(!copy.ok||!payload?.result?.uid)throw new Error(payload?.errors?.[0]?.message||'Cloudflare Stream recusou o vídeo.');const postId=randomUUID();db.transaction(()=>{db.prepare(`INSERT INTO social_posts (id,user_id,video_uid,caption,category,status,moderation_status,moderated_by,moderated_at) VALUES (?,?,?,?,?,'uploading','approved',?,CURRENT_TIMESTAMP)`).run(postId,userId,payload.result.uid,project.caption||project.title,'quiz',userId);db.prepare("UPDATE viral_distribution_jobs SET status='published',publication_id=?,updated_at=CURRENT_TIMESTAMP WHERE quiz_id=? AND provider='vitrine_social'").run(postId,quizId);db.prepare("UPDATE admin_viral_quizzes SET status='published',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(quizId);db.prepare("UPDATE admin_media_projects SET production_status='published',published_post_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(postId,project.id);})();return postId;}
-let viralVideoFactoryRunning=false;
-async function processViralVideoFactory(){
-  if(viralVideoFactoryRunning||!aiConfigured()||AI_PROVIDER!=='openrouter')return;viralVideoFactoryRunning=true;
-  try{
-    const pending=db.prepare(`SELECT s.* FROM viral_quiz_scenes s JOIN admin_viral_quizzes q ON q.id=s.quiz_id WHERE s.status='pending' AND q.status='in_production' ORDER BY s.quiz_id,s.scene_number LIMIT 1`).get();
-    if(pending){const claimed=db.prepare("UPDATE viral_quiz_scenes SET status='submitting',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").run(pending.id);if(claimed.changes)try{
-      const models=[...new Set([OPENROUTER_VIDEO_MODEL,...MEDIA_VIDEO_MODELS])],model=models[Math.min(Number(pending.attempt_count||0),models.length-1)];
-      const result=await openRouterRequest('https://openrouter.ai/api/v1/videos',{method:'POST',body:JSON.stringify({model,prompt:pending.prompt,duration:pending.duration_seconds,aspect_ratio:'9:16',resolution:'720p',generate_audio:true})},60000);
-      const jobId=String(result.data?.id||''),pollingUrl=String(result.data?.polling_url||'');if(!jobId||!/^https:\/\/openrouter\.ai\//i.test(pollingUrl))throw new Error('O provedor não devolveu uma tarefa de vídeo válida.');
-      db.prepare("UPDATE viral_quiz_scenes SET status='generating',remote_job_id=?,polling_url=?,model=?,attempt_count=attempt_count+1,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(jobId,pollingUrl,model,pending.id);
-    }catch(error){const message=String(error?.message||'submit_failed').slice(0,500);db.prepare("UPDATE viral_quiz_scenes SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(message,pending.id);}}
-    const generating=db.prepare("SELECT * FROM viral_quiz_scenes WHERE status='generating' ORDER BY id LIMIT 3").all();
-    for(const scene of generating)try{const result=await openRouterRequest(scene.polling_url,{method:'GET'},30000),status=String(result.data?.status||'').toLowerCase();if(['failed','cancelled'].includes(status))throw new Error(String(result.data?.error?.message||result.data?.error||result.data?.message||status));if(!['completed','succeeded'].includes(status))continue;
-      const mediaUrl=String(result.data?.unsigned_urls?.[0]||result.data?.data?.[0]?.url||result.data?.content_url||'');if(!/^https:\/\//i.test(mediaUrl))throw new Error('Cena concluída sem arquivo disponível.');const download=await fetch(mediaUrl,{headers:{Authorization:`Bearer ${AI_API_KEY}`},signal:AbortSignal.timeout(120000)});if(!download.ok)throw new Error(`Download da cena falhou (${download.status}).`);const buffer=Buffer.from(await download.arrayBuffer());if(!buffer.length||buffer.length>250*1024*1024)throw new Error('Cena inválida ou maior que 250 MB.');const name=`viral-${scene.quiz_id}-scene-${scene.scene_number}.mp4`,local=path.join(generatedMediaDir,name);fs.writeFileSync(local,buffer);db.prepare("UPDATE viral_quiz_scenes SET status='downloaded',local_path=?,output_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(local,`/uploads/generated-videos/${name}`,scene.id);await finishViralQuizVideo(scene.quiz_id);
-    }catch(error){const message=String(error?.message||'scene_failed').slice(0,500),retry=Number(scene.attempt_count||0)<3&&!/insufficient credits|key limit exceeded/i.test(message);db.prepare("UPDATE viral_quiz_scenes SET status=?,error_message=?,remote_job_id='',polling_url='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(retry?'pending':'failed',message,scene.id);}
-  }finally{viralVideoFactoryRunning=false;}
-}
-app.get('/api/admin/viral-factory/automation',requireAdmin,(_req,res)=>res.json({settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get(),trends:db.prepare('SELECT * FROM viral_factory_trends ORDER BY id DESC LIMIT 20').all(),openrouterConfigured:aiConfigured()}));
-app.put('/api/admin/viral-factory/automation',requireAdmin,(req,res)=>{const enabled=Boolean(req.body?.enabled),approvalRequired=req.body?.approvalRequired!==false;
-  const destinationUrl=String(req.body?.destinationUrl||'').trim();let parsed;try{parsed=new URL(destinationUrl)}catch{return res.status(400).json({error:'Informe um destino válido.'})}if(parsed.protocol!=='https:')return res.status(400).json({error:'O destino precisa usar HTTPS.'});
-  db.prepare(`UPDATE viral_factory_settings SET enabled=?,approval_required=?,destination_url=?,destination_label=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(enabled?1:0,approvalRequired?1:0,destinationUrl,String(req.body?.destinationLabel||'Vitrine City').trim().slice(0,100));return res.json({ok:true,settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get()});});
-app.post('/api/admin/viral-factory/run',requireAdmin,async(req,res)=>{try{return res.status(201).json(await runViralFactory({force:true,userId:req.user.id}))}catch(error){return res.status(502).json({error:String(error?.message||'Falha na fábrica automática.').slice(0,400)})}});
 
 function mediaFactoryProject(id) {
   return db.prepare(`SELECT m.*,t.title,t.instructions,t.priority,t.status AS task_status,a.name AS agent_name
@@ -5092,6 +6027,11 @@ Seja objetiva e informe quais páginas consultou quando fizer uma auditoria. Qua
   }
 });
 
+app.patch('/api/admin/profiles/:type/:reference',requireAdmin,sameOriginOnly,(req,res)=>{const type=String(req.params.type),reference=String(req.params.reference),action=String(req.body?.action||''),allowedActions=new Set(['edit','authorize','restrict','deactivate','activate','confirm_payment']);if(!['customer','store','courier'].includes(type)||!allowedActions.has(action))return res.status(400).json({error:'Perfil ou ação inválida.'});const key=String(req.get('idempotency-key')||'').trim().slice(0,120);if(action==='confirm_payment'&&!/^[A-Za-z0-9._:-]{12,120}$/.test(key))return res.status(400).json({error:'Informe chave de idempotência.'});const proof=String(req.body?.proofReference||'').trim().slice(0,160);if(action==='confirm_payment'&&proof.length<8)return res.status(400).json({error:'Informe a referência do comprovante.'});let changes={};try{db.transaction(()=>{if(type==='customer'){const user=db.prepare('SELECT id FROM users WHERE id=?').get(Number(reference));if(!user)throw new Error('missing');if(action==='edit'){changes={name:String(req.body?.name||'').trim().slice(0,120),whatsapp:String(req.body?.whatsapp||'').trim().slice(0,30)};db.prepare('UPDATE users SET name=COALESCE(NULLIF(?,\'\'),name),whatsapp=? WHERE id=?').run(changes.name,changes.whatsapp,user.id);}else if(action!=='confirm_payment')db.prepare('UPDATE users SET account_status=? WHERE id=?').run(action==='activate'||action==='authorize'?'active':action,user.id);}else if(type==='store'){const store=db.prepare('SELECT order_reference FROM store_profiles WHERE order_reference=?').get(reference);if(!store)throw new Error('missing');if(action==='edit'){changes={businessName:String(req.body?.businessName||'').trim().slice(0,100),whatsapp:String(req.body?.whatsapp||'').trim().slice(0,30)};db.prepare('UPDATE store_profiles SET business_name=COALESCE(NULLIF(?,\'\'),business_name),whatsapp=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?').run(changes.businessName,changes.whatsapp,reference);}else if(action!=='confirm_payment')db.prepare('UPDATE store_profiles SET operational_status=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?').run(action==='activate'||action==='authorize'?'active':action,reference);}else{const courier=db.prepare('SELECT id FROM local_delivery_couriers WHERE id=?').get(Number(reference));if(!courier)throw new Error('missing');if(action==='edit'){changes={name:String(req.body?.name||'').trim().slice(0,120),whatsapp:String(req.body?.whatsapp||'').trim().slice(0,30)};db.prepare('UPDATE local_delivery_couriers SET name=COALESCE(NULLIF(?,\'\'),name),whatsapp=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(changes.name,changes.whatsapp,courier.id);}else if(action!=='confirm_payment')db.prepare('UPDATE local_delivery_couriers SET status=?,available=CASE WHEN ?=\'active\' THEN available ELSE 0 END,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(action==='activate'||action==='authorize'?'active':'blocked',action==='activate'||action==='authorize'?'active':'blocked',courier.id);}db.prepare('INSERT INTO admin_profile_audit(admin_user_id,profile_type,profile_reference,action,changes_json,proof_reference,idempotency_key) VALUES (?,?,?,?,?,?,?)').run(req.user.id,type,reference,action,JSON.stringify(changes),proof||null,key||null);})();return res.json({ok:true,action});}catch(error){if(String(error.message).includes('UNIQUE'))return res.json({ok:true,action,replayed:true});return res.status(error.message==='missing'?404:409).json({error:error.message==='missing'?'Perfil não encontrado.':'Não foi possível concluir a ação.'});}});
+app.get('/api/admin/profiles/:type/:reference/messages',requireAdmin,(req,res)=>res.json({messages:db.prepare('SELECT id,sender_type senderType,sender_id senderId,message,created_at createdAt,read_at readAt FROM profile_messages WHERE profile_type=? AND profile_reference=? ORDER BY id LIMIT 300').all(req.params.type,req.params.reference)}));
+app.post('/api/admin/profiles/:type/:reference/messages',requireAdmin,sameOriginOnly,(req,res)=>{const message=sanitizeReviewComment(req.body?.message,2000);if(!['customer','store','courier'].includes(req.params.type)||message.length<1)return res.status(400).json({error:'Mensagem inválida.'});const result=db.prepare("INSERT INTO profile_messages(profile_type,profile_reference,sender_type,sender_id,message) VALUES (?,?,'admin',?,?)").run(req.params.type,req.params.reference,String(req.user.id),message);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});});
+app.patch('/api/admin/profiles/:type/:reference/messages/read',requireAdmin,sameOriginOnly,(req,res)=>{db.prepare("UPDATE profile_messages SET read_at=COALESCE(read_at,CURRENT_TIMESTAMP) WHERE profile_type=? AND profile_reference=? AND sender_type!='admin'").run(req.params.type,req.params.reference);return res.json({ok:true});});
+
 app.get('/api/admin/ad-campaigns', requireAdmin, (req, res) => {
   const status = String(req.query.status || '').trim();
   const allowedStatuses = new Set(Object.keys(AD_CAMPAIGN_STATUS_LABELS));
@@ -5334,7 +6274,7 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
           description: 'Espaço digital para divulgar sua loja na VitrineCity', category_id: 'services',
           quantity: 1, currency_id: 'BRL', unit_price: plan.amountCents / 100 }],
         payer, external_reference: reference,
-        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
+        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,
         back_urls: {
           success: `${SITE_URL}/pagamento.html?resultado=sucesso`,
           pending: `${SITE_URL}/pagamento.html?resultado=pendente`,
@@ -5527,6 +6467,7 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   const reachKm = Math.round(Number(req.body?.reachKm));
   const startsOn = String(req.body?.startsOn || '').trim();
   const campaignChannel=String(req.body?.campaignChannel||'internal').trim();
+  const requestedPlacement=String(req.body?.placement||'search').trim();
   if (!Number.isInteger(amountCents) || amountCents < ADS_MIN_TOPUP_CENTS || amountCents > ADS_MAX_TOPUP_CENTS) {
     return res.status(400).json({ error: 'A recarga deve ficar entre R$ 30,00 e R$ 5.000,00.' });
   }
@@ -5544,10 +6485,11 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   if (!['messages','visits','sales','followers'].includes(objective)) {
     return res.status(400).json({ error: 'Escolha um objetivo válido.' });
   }
-  if (!['site','whatsapp','instagram'].includes(destinationType)) {
-    return res.status(400).json({ error: 'Escolha site, WhatsApp ou Instagram como destino.' });
+  if (!['vitrinecity','site','whatsapp','instagram'].includes(destinationType)) {
+    return res.status(400).json({ error: 'Escolha página VitrineCity, site, WhatsApp ou Instagram como destino.' });
   }
   if(!['internal','meta','tiktok','google'].includes(campaignChannel))return res.status(400).json({error:'Escolha VitrineCity, Meta Ads, TikTok Ads ou Google Ads como canal.'});
+  if(campaignChannel==='internal'&&!['search','map','banner','all'].includes(requestedPlacement))return res.status(400).json({error:'Escolha um local válido para exibir o anúncio.'});
   if (creativeTitle.length < 4 || creativeText.length < 10 || normalizedAdTerms(keywords).length < 1) {
     return res.status(400).json({ error: 'Informe título, texto e palavras-chave do anúncio.' });
   }
@@ -5591,7 +6533,7 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
       .run(req.user.id, reference, objective, destinationType, destinationUrl, dailyBudgetCents, durationDays,
         grossCredits, managementCredits, netCredits, creativeTitle, creativeText, imageUrl, keywords, category, targetCity,
         targetAudience,reachKm,startsOn,campaignChannel,campaignChannel==='internal'?'not_applicable':'pending_setup',
-        campaignChannel==='internal'?'search':'external');
+        campaignChannel==='internal'?requestedPlacement:'external');
   });
   createOrder();
   adminAnalytics.recordOrderAttribution(req, reference, 'credits');
@@ -5605,7 +6547,7 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
           category_id: 'services', quantity: 1, currency_id: 'BRL', unit_price: amountCents / 100 }],
         payer: { name: req.user.name, email: req.user.email },
         external_reference: reference,
-        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
+        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,
         back_urls: {
           success: `${SITE_URL}/carteira.html?resultado=sucesso&ref=${encodeURIComponent(reference)}`,
           pending: `${SITE_URL}/carteira.html?resultado=pendente&ref=${encodeURIComponent(reference)}`,
@@ -5662,7 +6604,7 @@ app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
           description: 'Curso digital com acesso individual na área do aluno', category_id: 'services',
           quantity: 1, currency_id: 'BRL', unit_price: course.priceCents / 100 }],
         payer: { name: req.user.name, email: req.user.email }, external_reference: reference,
-        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
+        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,
         back_urls: {
           success: `${SITE_URL}/meus-cursos.html?resultado=sucesso&ref=${encodeURIComponent(reference)}`,
           pending: `${SITE_URL}/meus-cursos.html?resultado=pendente&ref=${encodeURIComponent(reference)}`,
@@ -5743,7 +6685,7 @@ app.post('/api/services/videos/checkout', async (req, res) => {
           description: 'Criação e divulgação de 10 vídeos curtos para uma loja VitrineCity', category_id: 'services',
           quantity: 1, currency_id: 'BRL', unit_price: VIDEO_PACKAGE.amountCents / 100 }],
         payer: { name: name.trim().slice(0, 100), email: normalizedEmail }, external_reference: reference,
-        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook`,
+        notification_url: `${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,
         back_urls: {
           success: `${SITE_URL}/pagamento.html?resultado=sucesso&servico=videos`,
           pending: `${SITE_URL}/pagamento.html?resultado=pendente&servico=videos`,
@@ -5778,14 +6720,32 @@ app.post('/api/services/digital/:slug/checkout', sameOriginOnly, async (req,res)
     .run(reference,req.params.slug,String(name).trim().slice(0,100),normalizedEmail.slice(0,160),String(whatsapp).trim().slice(0,30),service.amountCents);
   adminAnalytics.recordCheckout(req,reference,'digital_service',service.amountCents);
   try{
-    const response=await fetch('https://api.mercadopago.com/checkout/preferences',{method:'POST',headers:{...mpHeaders(),'X-Idempotency-Key':reference},body:JSON.stringify({items:[{id:`vitrinecity-${req.params.slug}`,title:service.title,description:service.description,category_id:'services',quantity:1,currency_id:'BRL',unit_price:service.amountCents/100}],payer:{name:String(name).trim().slice(0,100),email:normalizedEmail},external_reference:reference,notification_url:`${SITE_URL}/api/payments/mercadopago/webhook`,back_urls:{success:`${SITE_URL}/pagamento.html?resultado=sucesso&servico=${encodeURIComponent(req.params.slug)}`,pending:`${SITE_URL}/pagamento.html?resultado=pendente&servico=${encodeURIComponent(req.params.slug)}`,failure:`${SITE_URL}/centro-educacional.html?resultado=falha#consultoria`},auto_return:'approved',statement_descriptor:'VITRINECITY',metadata:{product:'digital_service',service_slug:req.params.slug}}),signal:AbortSignal.timeout(12000)});
+    const response=await fetch('https://api.mercadopago.com/checkout/preferences',{method:'POST',headers:{...mpHeaders(),'X-Idempotency-Key':reference},body:JSON.stringify({items:[{id:`vitrinecity-${req.params.slug}`,title:service.title,description:service.description,category_id:'services',quantity:1,currency_id:'BRL',unit_price:service.amountCents/100}],payer:{name:String(name).trim().slice(0,100),email:normalizedEmail},external_reference:reference,notification_url:`${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,back_urls:{success:`${SITE_URL}/pagamento.html?resultado=sucesso&servico=${encodeURIComponent(req.params.slug)}`,pending:`${SITE_URL}/pagamento.html?resultado=pendente&servico=${encodeURIComponent(req.params.slug)}`,failure:`${SITE_URL}/centro-educacional.html?resultado=falha#consultoria`},auto_return:'approved',statement_descriptor:'VITRINECITY',metadata:{product:'digital_service',service_slug:req.params.slug}}),signal:AbortSignal.timeout(12000)});
     const data=await response.json();if(!response.ok||!data.id||!data.init_point)throw new Error(data?.message||'preference_failed');
     db.prepare("UPDATE service_orders SET status='pending',mp_preference_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(data.id,reference);
     return res.status(201).json({checkoutUrl:data.init_point,reference});
   }catch(error){db.prepare("UPDATE service_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);console.error('Mercado Pago digital service error',error?.message||'unknown');return res.status(502).json({error:'Não foi possível iniciar o pagamento agora.'});}
 });
 
-app.get('/api/admin/service-orders',requireAdmin,(_req,res)=>res.json({orders:db.prepare('SELECT * FROM service_orders ORDER BY id DESC LIMIT 300').all()}));
+const publicServiceCatalog=()=>Object.entries(DIGITAL_SERVICE_PACKAGES).map(([slug,item])=>({slug,...item,checkoutUrl:`/servicos-digitais.html?servico=${encodeURIComponent(slug)}`}));
+app.get('/api/services/digital',(_req,res)=>res.json({items:publicServiceCatalog()}));
+app.get('/api/promotions',(_req,res)=>{
+  const services=publicServiceCatalog().map(item=>({kind:'service',label:'SERVIÇO DIGITAL',title:item.title,description:item.description,amountCents:item.amountCents,url:item.checkoutUrl}));
+  const courses=managedCourses(true).filter(course=>courseReady(course.slug)).map(course=>({kind:'course',label:'CURSO',title:course.title,description:course.description,amountCents:course.priceCents,url:`/centro-educacional.html#${encodeURIComponent(course.slug)}`,imageUrl:course.coverUrl}));
+  const products=db.prepare(`SELECT p.id,p.name,p.description,p.price_cents,p.image_url,p.product_url,p.store_reference,s.business_name store_name
+    FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0 AND s.review_status='published'
+    ORDER BY p.updated_at DESC,p.id DESC LIMIT 40`).all().map(item=>({kind:'product',label:`PRODUTO • ${item.store_name}`,title:item.name,description:item.description,amountCents:item.price_cents,url:item.product_url||`/loja/${encodeURIComponent(item.store_reference)}`,imageUrl:item.image_url}));
+  const stores=[
+    {kind:'store',label:'LOJA DA CIDADE',title:'Agrotécnica',description:'Adubos, substratos e produtos para suas plantas.',url:'/loja/official_agrotecnica/agrotecnica',imageUrl:'/assets/agrotecnica-premium-v2.webp'},
+    {kind:'store',label:'LOJA DA CIDADE',title:'Sertaneja Moda Country',description:'Moda country, roupas e acessórios em destaque na VitrineCity.',url:'/cidade/avenida-premium',imageUrl:'/assets/sertaneja-moda-country-premium.jpg'}
+  ];
+  const groups=[stores,products,courses,services],items=[];let index=0;
+  while(groups.some(group=>index<group.length)){for(const group of groups)if(group[index])items.push(group[index]);index+=1;}
+  return res.set('Cache-Control','public,max-age=60').json({items});
+});
+app.get('/servicos-digitais.html',(_req,res)=>res.type('html').send(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Serviços digitais — VitrineCity</title><meta name="description" content="Serviços digitais da VitrineCity para lojas, profissionais e empresas."><style>:root{--navy:#071f4b;--blue:#1768e6;--bg:#f1f7ff;--line:#d6e5f7}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--navy);font-family:Inter,Arial,sans-serif}header{height:70px;padding:0 5vw;display:flex;align-items:center;justify-content:space-between;background:#fff}header a{text-decoration:none;font-weight:950}.hero{text-align:center;padding:65px 20px;background:linear-gradient(135deg,#071f4b,#1768e6);color:#fff}.hero h1{font-size:clamp(40px,7vw,68px);margin:8px}.hero p{max-width:720px;margin:auto;color:#d7e6ff}.grid{max-width:1180px;margin:35px auto;padding:0 20px;display:grid;grid-template-columns:repeat(3,1fr);gap:15px}.card{background:#fff;border:1px solid var(--line);border-radius:20px;padding:21px}.card h2{font-size:21px}.price{font-size:30px;font-weight:950;margin:15px 0}.card p{color:#607493;line-height:1.5;min-height:70px}.card button,.form button{width:100%;padding:13px;border:0;border-radius:11px;background:var(--blue);color:#fff;font-weight:950;cursor:pointer}.form{display:none;max-width:650px;margin:25px auto 60px;padding:25px;background:#fff;border:1px solid var(--line);border-radius:20px}.form.open{display:block}.form label{display:block;margin:11px 0 5px;font-weight:850}.form input{width:100%;padding:12px;border:1px solid #bdd2eb;border-radius:9px}.check{display:flex;gap:8px;margin:12px 0;color:#526a8b}.check input{width:auto}.message{min-height:22px;color:#9a4300}@media(max-width:850px){.grid{grid-template-columns:1fr}.card p{min-height:0}}</style></head><body><header><a href="/">VitrineCity</a><a href="/centro-educacional.html">Centro Educacional</a></header><section class="hero"><small>SERVIÇOS DIGITAIS PARA CRESCER</small><h1>Escolha, contrate e acompanhe</h1><p>Pacotes com preço claro, pagamento protegido pelo Mercado Pago e produção acompanhada pela equipe VitrineCity.</p></section><main><section class="grid" id="catalog"></section><form class="form" id="checkout"><h2 id="selectedTitle">Contratar serviço</h2><input type="hidden" name="slug"><label>Seu nome<input name="name" required minlength="2"></label><label>E-mail<input name="email" type="email" required></label><label>WhatsApp<input name="whatsapp"></label><label class="check"><input name="consent" type="checkbox" required> Autorizo o uso dos dados para atendimento deste pedido.</label><label class="check"><input name="termsAccepted" type="checkbox" required> Aceito os termos do serviço e entendo que não há garantia de resultados em buscas ou vendas.</label><button>Continuar para pagamento</button><p class="message" id="message"></p></form></main><script>const money=c=>(c/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let items=[];function choose(slug){const item=items.find(x=>x.slug===slug);if(!item)return;checkout.classList.add('open');checkout.elements.slug.value=slug;selectedTitle.textContent=item.title+' · '+money(item.amountCents);checkout.scrollIntoView({behavior:'smooth',block:'center'})}fetch('/api/services/digital').then(r=>r.json()).then(d=>{items=d.items||[];catalog.innerHTML=items.map(i=>'<article class="card"><small>DISPONÍVEL</small><h2>'+esc(i.title)+'</h2><div class="price">'+money(i.amountCents)+'</div><p>'+esc(i.description)+'</p><button data-slug="'+esc(i.slug)+'">Contratar</button></article>').join('');catalog.onclick=e=>{const b=e.target.closest('button');if(b)choose(b.dataset.slug)};const requested=new URLSearchParams(location.search).get('servico');if(requested)choose(requested)});checkout.onsubmit=async e=>{e.preventDefault();message.textContent='Preparando pagamento…';const data=Object.fromEntries(new FormData(checkout));data.consent=checkout.elements.consent.checked;data.termsAccepted=checkout.elements.termsAccepted.checked;const r=await fetch('/api/services/digital/'+encodeURIComponent(data.slug)+'/checkout',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(data)}),d=await r.json();if(r.ok&&d.checkoutUrl)return location.href=d.checkoutUrl;message.textContent=d.error||'Não foi possível iniciar o pagamento.'}</script><script src="/global-market-banner.js" defer></script></body></html>`));
+app.get('/api/admin/service-orders',requireAdmin,(_req,res)=>res.json({catalog:publicServiceCatalog(),orders:db.prepare('SELECT * FROM service_orders ORDER BY id DESC LIMIT 300').all()}));
 app.patch('/api/admin/service-orders/:reference',requireAdmin,sameOriginOnly,(req,res)=>{const status=String(req.body?.deliveryStatus||''),allowed=new Set(['awaiting_payment','awaiting_brief','brief_received','in_production','awaiting_approval','delivered','cancelled']);if(!allowed.has(status))return res.status(400).json({error:'Etapa inválida.'});const result=db.prepare('UPDATE service_orders SET delivery_status=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?').run(status,req.params.reference);if(!result.changes)return res.status(404).json({error:'Pedido não encontrado.'});return res.json({ok:true});});
 
 function validMercadoPagoSignature(req, dataId, secret = process.env.MERCADOPAGO_WEBHOOK_SECRET) {
@@ -5896,24 +6856,33 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
     if (eventType !== 'payment') return res.sendStatus(200);
+    const routeReference=String(req.query.order||''),routeSignature=String(req.query.route_sig||'');
+    if(routeReference&&!validMarketplaceWebhookRoute(routeReference,routeSignature))return res.sendStatus(400);
+    const hintedReference=routeReference&&validMarketplaceWebhookRoute(routeReference,routeSignature)?routeReference:'';let paymentToken;
+    if(hintedReference.startsWith('shop_')){const hintedOrder=db.prepare('SELECT store_reference FROM marketplace_orders WHERE reference=?').get(hintedReference),hintedReconciliation=db.prepare('SELECT split_mode FROM marketplace_payment_reconciliation WHERE order_reference=?').get(hintedReference);if(!hintedOrder)return res.sendStatus(202);if(hintedReconciliation?.split_mode==='marketplace'){const account=db.prepare("SELECT * FROM marketplace_seller_accounts WHERE store_reference=? AND status='connected'").get(hintedOrder.store_reference);if(!account)return res.sendStatus(503);try{paymentToken=await marketplaceSellerAccessToken(account);}catch{return res.sendStatus(503);}}}
+    if(!paymentToken)paymentToken=process.env.MERCADOPAGO_ACCESS_TOKEN;
+    if(!paymentToken)return res.sendStatus(503);
     const response = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(dataId)}`, {
-      headers: mpHeaders(), signal: AbortSignal.timeout(10000)
+      headers: mpHeaders(paymentToken), signal: AbortSignal.timeout(10000)
     });
     if (!response.ok) return res.sendStatus(502);
     const payment = await response.json();
     const reference = String(payment.external_reference || '');
+    if(hintedReference&&reference!==hintedReference)return res.sendStatus(400);
     const amountCents = Math.round(Number(payment.transaction_amount) * 100);
     if (reference.startsWith('shop_')) {
       const order = db.prepare('SELECT * FROM marketplace_orders WHERE reference=?').get(reference);
       if (!order) return res.sendStatus(200);
       const reconciliation=db.prepare('SELECT * FROM marketplace_payment_reconciliation WHERE order_reference=?').get(reference);
+      if(!hintedReference&&reconciliation?.split_mode==='marketplace')return res.sendStatus(202);
       const sellerAccount=reconciliation?.split_mode==='marketplace'?
         db.prepare('SELECT provider_user_id FROM marketplace_seller_accounts WHERE store_reference=?').get(order.store_reference):null;
       const collectorId=String(payment.collector_id||payment.collector?.id||'');
       const collectorMatches=!sellerAccount||collectorId===String(sellerAccount.provider_user_id);
       const amountMatches=amountCents===order.total_cents&&payment.currency_id==='BRL';
       const reportedMarketplaceFee=Number(payment.marketplace_fee);
-      const feeMatches=payment.marketplace_fee==null||!Number.isFinite(reportedMarketplaceFee)||!reconciliation||Math.round(reportedMarketplaceFee*100)===reconciliation.expected_marketplace_fee_cents;
+      const feeMatches=reconciliation?.split_mode==='marketplace'?Number.isFinite(reportedMarketplaceFee)&&Math.round(reportedMarketplaceFee*100)===reconciliation.expected_marketplace_fee_cents:
+        payment.marketplace_fee==null||!Number.isFinite(reportedMarketplaceFee)||Math.round(reportedMarketplaceFee*100)===Number(reconciliation?.expected_marketplace_fee_cents||0);
       if(!amountMatches||!collectorMatches||!feeMatches){
         db.prepare(`UPDATE marketplace_payment_reconciliation SET payment_id=?,actual_gross_cents=?,payment_status=?,
           reconciliation_status='mismatch',last_event_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
@@ -5922,11 +6891,16 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       }
       const status = String(payment.status || 'unknown');
       const reversed = ['refunded', 'charged_back', 'cancelled', 'rejected'].includes(status);
-      const fulfillment = status === 'approved' ? 'fiscal_pending' : reversed ? 'cancelled' : order.fulfillment_status;
+      const paymentRank=value=>['refunded','charged_back','cancelled','rejected'].includes(value)?2:value==='approved'?1:0;
+      const eventKey=`${payment.id}:${status}`;if(db.prepare('SELECT 1 FROM marketplace_payment_events WHERE event_key=?').get(eventKey))return res.sendStatus(200);
+      if(paymentRank(status)<paymentRank(order.payment_status))return res.sendStatus(200);
+      const foodStore=db.prepare("SELECT business_type FROM store_profiles WHERE order_reference=?").get(order.store_reference);
+      const fulfillment = status === 'approved' ? (['food','hybrid'].includes(foodStore?.business_type)?'food_awaiting_acceptance':'fiscal_pending') : reversed ? 'cancelled' : order.fulfillment_status;
       const fiscal = status === 'approved' ? 'pending' : reversed ? 'cancelled' : order.fiscal_status;
       const reserveStock = status === 'approved' && order.payment_status !== 'approved';
       const releaseStock = reversed && order.payment_status === 'approved';
       db.transaction(() => {
+        db.prepare('INSERT INTO marketplace_payment_events(event_key,order_reference,payment_id,payment_status) VALUES (?,?,?,?)').run(eventKey,reference,String(payment.id),status);
         db.prepare(`UPDATE marketplace_orders SET payment_status=?,fulfillment_status=?,fiscal_status=?,
           mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?`)
           .run(status, fulfillment, fiscal, String(payment.id), reference);
@@ -5938,13 +6912,25 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
         db.prepare(`UPDATE marketplace_payment_reconciliation SET payment_id=?,actual_gross_cents=?,payment_status=?,
           reconciliation_status=?,last_event_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
           .run(String(payment.id),amountCents,status,reversed?'reversed':status==='approved'?'matched':'pending',reference);
+        if(status==='approved'&&!['food','hybrid'].includes(foodStore?.business_type))db.prepare("UPDATE local_delivery_jobs SET status='available',updated_at=CURRENT_TIMESTAMP WHERE order_reference=? AND status='awaiting_payment'").run(reference);
+        else if(reversed){
+          const delivery=db.prepare('SELECT * FROM local_delivery_jobs WHERE order_reference=?').get(reference);
+          db.prepare("UPDATE local_delivery_jobs SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE order_reference=? AND status!='delivered'").run(reference);
+          if(delivery?.courier_id&&db.prepare("SELECT 1 FROM local_delivery_ledger WHERE idempotency_key=?").get(`delivery:${reference}:credit`))applyCourierLedger({courierId:delivery.courier_id,orderReference:reference,entryType:'delivery_reversal',amountCents:-delivery.courier_cents,idempotencyKey:`delivery:${reference}:reversal`});
+        }
       })();
+      if(status==='approved'&&!['food','hybrid'].includes(foodStore?.business_type)){const readyJob=db.prepare("SELECT id FROM local_delivery_jobs WHERE order_reference=? AND status='available'").get(reference);if(readyJob)dispatchNextCourier(readyJob.id);}
       if(order.ad_campaign_id){
         if(status==='approved')db.prepare(`INSERT INTO ad_campaign_conversions
           (campaign_id,order_reference,event_token,conversion_type,value_cents,status) VALUES (?,?,?,'purchase',?,'approved')
           ON CONFLICT(order_reference) DO UPDATE SET value_cents=excluded.value_cents,status='approved',updated_at=CURRENT_TIMESTAMP`)
           .run(order.ad_campaign_id,reference,order.ad_event_token||'',order.products_cents);
         else if(reversed)db.prepare("UPDATE ad_campaign_conversions SET status='reversed',updated_at=CURRENT_TIMESTAMP WHERE order_reference=?").run(reference);
+      }
+      const storeAdOrder=db.prepare("SELECT campaign_id,event_token,visitor_key FROM store_ad_events WHERE order_reference=? AND event_type='order' LIMIT 1").get(reference);
+      if(storeAdOrder){
+        if(status==='approved')db.prepare("INSERT OR IGNORE INTO store_ad_events(campaign_id,event_type,event_token,visitor_key,event_day,order_reference,value_cents) VALUES (?,'conversion',?,?,?,?,?)").run(storeAdOrder.campaign_id,storeAdOrder.event_token,storeAdOrder.visitor_key,new Date().toISOString().slice(0,10),reference,order.total_cents);
+        else if(reversed)db.prepare("DELETE FROM store_ad_events WHERE order_reference=? AND event_type='conversion'").run(reference);
       }
       if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'marketplace', order.total_cents);
       return res.sendStatus(200);
@@ -6124,15 +7110,27 @@ app.get('/api/store-portal/:reference/marketplace', (req, res) => {
   const returns=db.prepare(`SELECT r.*,o.total_cents FROM marketplace_returns r JOIN marketplace_orders o ON o.reference=r.order_reference
     WHERE o.store_reference=? ORDER BY r.id DESC LIMIT 100`).all(access.order.reference);
   const decorated=orders.map(order=>({...order,payoutCents:Math.max(0,order.products_cents-order.platform_percent_cents-order.platform_fixed_cents-order.return_operation_cents),
-    payoutStatus:['cancelled','cancel_requested'].includes(order.fulfillment_status)?'blocked':order.payment_status==='approved'?'scheduled':'not_eligible'}));
+    payoutStatus:['cancelled','cancel_requested'].includes(order.fulfillment_status)?'blocked':order.payment_status==='approved'?'scheduled':'not_eligible',deliveryTracking:deliveryTracking(order.reference)}));
   const sellerAccount=db.prepare(`SELECT provider_user_id,status,expires_at,connected_at,updated_at
     FROM marketplace_seller_accounts WHERE store_reference=?`).get(access.order.reference)||null;
   const sellerProfile=publicSellerProfile(db.prepare('SELECT * FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference));
-  return res.json({ products, orders:decorated, returns, sellerProfile,paymentSplit:{configured:marketplaceOAuthConfigured(),account:sellerAccount}, fees: {
+  const menuCategories=db.prepare('SELECT id,name,sort_order sortOrder,active FROM menu_categories WHERE store_reference=? ORDER BY sort_order,id').all(access.order.reference).map(row=>({...row,active:Boolean(row.active)}));
+  const optionRows=db.prepare(`SELECT g.id group_id,g.product_id,g.name group_name,g.min_select,g.max_select,g.required,g.sort_order group_sort,
+    o.id option_id,o.name option_name,o.price_delta_cents,o.active,o.sort_order option_sort FROM product_option_groups g
+    LEFT JOIN product_options o ON o.group_id=g.id JOIN store_products p ON p.id=g.product_id WHERE p.store_reference=? ORDER BY g.sort_order,g.id,o.sort_order,o.id`).all(access.order.reference);
+  const optionGroups=[];for(const row of optionRows){let group=optionGroups.find(item=>item.id===row.group_id);if(!group){group={id:row.group_id,productId:row.product_id,name:row.group_name,minSelect:row.min_select,maxSelect:row.max_select,required:Boolean(row.required),options:[]};optionGroups.push(group);}if(row.option_id)group.options.push({id:row.option_id,name:row.option_name,priceDeltaCents:row.price_delta_cents,active:Boolean(row.active)});}
+  const manualPayouts=db.prepare(`SELECT id,order_reference orderReference,gross_cents grossCents,deductions_cents deductionsCents,
+    amount_cents amountCents,advance_fee_cents advanceFeeCents,payout_speed payoutSpeed,scheduled_for scheduledFor,status,approval_status approvalStatus,
+    advance_requested_at advanceRequestedAt,paid_at paidAt FROM marketplace_manual_payouts
+    WHERE recipient_type='store' AND recipient_reference=? ORDER BY id DESC LIMIT 100`).all(access.order.reference);
+  const maskedAccount=sellerAccount?{status:sellerAccount.status,providerUserIdMasked:String(sellerAccount.provider_user_id||'').replace(/.(?=.{4})/g,'•'),expiresAt:sellerAccount.expires_at,connectedAt:sellerAccount.connected_at}:null;
+  return res.json({ products, orders:decorated, returns, manualPayouts, payoutPolicy:{weeklyDay:'tuesday',advanceFeePercent:3.5},sellerProfile,operations:publicStoreOperations(access.order.reference),menuCategories,optionGroups,paymentSplit:{mode:'central_manual',configured:true,account:maskedAccount}, fees: {
     percent: MARKETPLACE_COMMISSION_BPS / 100, fixedCents: MARKETPLACE_FIXED_FEE_CENTS,
     returnProvisionPerOrderCents: MARKETPLACE_RETURN_PROVISION_CENTS
   } });
 });
+
+app.post('/api/store-portal/:reference/payouts/:id/advance',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const payout=db.prepare("SELECT * FROM marketplace_manual_payouts WHERE id=? AND recipient_type='store' AND recipient_reference=?").get(Number(req.params.id),access.order.reference);if(!payout)return res.status(404).json({error:'Repasse não encontrado.'});if(!requestPayoutAdvance(payout))return res.status(409).json({error:'Este repasse não pode mais ser antecipado.'});return res.json({ok:true,status:'pending_approval',scheduledFor:payoutDate(1),feePercent:3.5});});
 
 app.put('/api/store-portal/:reference/seller-profile', sameOriginOnly, (req,res) => {
   const access=storePortalAccess(req,res);if(!access)return;
@@ -6166,15 +7164,18 @@ app.post('/api/store-portal/:reference/products', sameOriginOnly, (req, res) => 
     return res.status(400).json({ error: 'Informe nome, preço e estoque válidos.' });
   }
   let imageUrl = safeExternalUrl(body.imageUrl);
+  const productUrl = safeExternalUrl(body.productUrl);
   try { if (body.imageData) imageUrl = saveStoreImage(access.order.reference, `product-${randomUUID()}`, body.imageData, imageUrl); }
   catch (error) { return res.status(400).json({ error: error.message }); }
+  const productType=(body.productType||body.itemType)==='food'?'food':'retail',menuCategoryId=body.menuCategoryId?Number(body.menuCategoryId):null;
+  if(menuCategoryId&&!db.prepare('SELECT 1 FROM menu_categories WHERE id=? AND store_reference=? AND active=1').get(menuCategoryId,access.order.reference))return res.status(400).json({error:'Categoria de cardápio inválida.'});
   const info = db.prepare(`INSERT INTO store_products
-    (store_reference,name,description,category,price_cents,image_url,sku,stock_quantity,weight_grams,fiscal_ncm,marketplace_enabled,active)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,1)`).run(access.order.reference, name,
+    (store_reference,name,description,category,price_cents,image_url,product_url,sku,stock_quantity,weight_grams,fiscal_ncm,marketplace_enabled,active,product_type,menu_category_id,menu_sort_order,preparation_minutes,available,dietary_tags,allergens,featured)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?)`).run(access.order.reference, name,
     String(body.description || '').trim().slice(0, 2000), String(body.category || '').trim().slice(0, 80), priceCents,
-    imageUrl, String(body.sku || '').trim().slice(0, 80), stock,
+    imageUrl, productUrl, String(body.sku || '').trim().slice(0, 80), stock,
     Math.max(0, Math.floor(Number(body.weightGrams) || 0)), String(body.fiscalNcm || '').replace(/\D/g, '').slice(0, 8),
-    body.marketplaceEnabled ? 1 : 0);
+    body.marketplaceEnabled ? 1 : 0,productType,menuCategoryId,Math.trunc(Number(body.menuSortOrder)||0),Math.max(0,Math.min(1440,Math.trunc(Number(body.preparationMinutes)||0))),body.available===false?0:1,String(body.dietaryTags||'').trim().slice(0,500),String(body.allergens||'').trim().slice(0,500),body.featured===true?1:0);
   return res.status(201).json({ ok: true, id: Number(info.lastInsertRowid) });
 });
 
@@ -6191,18 +7192,21 @@ app.patch('/api/store-portal/:reference/products/:productId', sameOriginOnly, (r
     return res.status(400).json({ error: 'Informe nome, preço e estoque válidos.' });
   }
   let imageUrl = body.imageUrl === undefined ? current.image_url : safeExternalUrl(body.imageUrl);
+  const productUrl = body.productUrl === undefined ? current.product_url : safeExternalUrl(body.productUrl);
   try { if (body.imageData) imageUrl = saveStoreImage(access.order.reference, `product-${current.id}`, body.imageData, imageUrl); }
   catch (error) { return res.status(400).json({ error: error.message }); }
-  db.prepare(`UPDATE store_products SET name=?,description=?,category=?,price_cents=?,image_url=?,sku=?,
-    stock_quantity=?,weight_grams=?,fiscal_ncm=?,marketplace_enabled=?,active=?,updated_at=CURRENT_TIMESTAMP
+  const itemType=body.productType??body.itemType,productType=itemType===undefined?current.product_type:itemType==='food'?'food':'retail',menuCategoryId=body.menuCategoryId===undefined?current.menu_category_id:(body.menuCategoryId?Number(body.menuCategoryId):null);
+  if(menuCategoryId&&!db.prepare('SELECT 1 FROM menu_categories WHERE id=? AND store_reference=? AND active=1').get(menuCategoryId,access.order.reference))return res.status(400).json({error:'Categoria de cardápio inválida.'});
+  db.prepare(`UPDATE store_products SET name=?,description=?,category=?,price_cents=?,image_url=?,product_url=?,sku=?,
+    stock_quantity=?,weight_grams=?,fiscal_ncm=?,marketplace_enabled=?,active=?,product_type=?,menu_category_id=?,menu_sort_order=?,preparation_minutes=?,available=?,dietary_tags=?,allergens=?,featured=?,updated_at=CURRENT_TIMESTAMP
     WHERE id=? AND store_reference=?`).run(name, String(body.description ?? current.description ?? '').trim().slice(0, 2000),
     String(body.category ?? current.category ?? '').trim().slice(0, 80), priceCents,
-    imageUrl,
+    imageUrl, productUrl,
     String(body.sku ?? current.sku ?? '').trim().slice(0, 80), stock,
     Math.max(0, Math.floor(Number(body.weightGrams ?? current.weight_grams) || 0)),
     String(body.fiscalNcm ?? current.fiscal_ncm ?? '').replace(/\D/g, '').slice(0, 8),
     body.marketplaceEnabled === undefined ? current.marketplace_enabled : body.marketplaceEnabled ? 1 : 0,
-    body.active === undefined ? current.active : body.active ? 1 : 0, current.id, access.order.reference);
+    body.active === undefined ? current.active : body.active ? 1 : 0,productType,menuCategoryId,Math.trunc(Number(body.menuSortOrder??current.menu_sort_order)||0),Math.max(0,Math.min(1440,Math.trunc(Number(body.preparationMinutes??current.preparation_minutes)||0))),body.available===undefined?current.available:body.available?1:0,String(body.dietaryTags??current.dietary_tags??'').trim().slice(0,500),String(body.allergens??current.allergens??'').trim().slice(0,500),body.featured===undefined?current.featured:body.featured?1:0,current.id, access.order.reference);
   return res.json({ ok: true, message: 'Produto atualizado.' });
 });
 
@@ -6331,6 +7335,7 @@ app.put('/api/store-portal/:reference', async (req, res) => {
     wantsWebsite: body.wantsWebsite ? 1 : 0, wantsBrandArt: body.wantsBrandArt ? 1 : 0,
     wantsGoogleProfile: body.wantsGoogleProfile ? 1 : 0
   };
+  const mapLocation = storeMapLocation(body, current || {});
   db.prepare(`INSERT INTO store_profiles
     (order_reference,business_name,description,logo_url,facade_url,whatsapp,website_url,instagram_url,
      tiktok_url,google_maps_url,promotion_text,wants_website,wants_brand_art,address,city,state,postal_code,
@@ -6350,6 +7355,10 @@ app.put('/api/store-portal/:reference', async (req, res) => {
       values.websiteUrl, values.instagramUrl, values.tiktokUrl, values.googleMapsUrl, values.promotionText,
       values.wantsWebsite, values.wantsBrandArt, values.address, values.city, values.state, values.postalCode,
       values.locationNotes, values.videoUrl, gallery1Url, gallery2Url, gallery3Url, values.wantsGoogleProfile);
+  db.prepare(`UPDATE store_profiles SET latitude=?,longitude=?,google_place_id=?,show_on_real_map=?,
+    location_precision=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
+    .run(mapLocation.latitude,mapLocation.longitude,mapLocation.googlePlaceId,mapLocation.showOnRealMap?1:0,
+      mapLocation.locationPrecision,access.order.reference);
   db.prepare(`UPDATE lot_orders SET business_name=?,whatsapp=?,fulfillment_status='pending_review',
     updated_at=CURRENT_TIMESTAMP WHERE reference=?`).run(businessName, values.whatsapp, access.order.reference);
   if (mailTransport) {
@@ -6406,8 +7415,11 @@ app.put('/api/admin/store-submissions/:reference/content', requireAdmin, sameOri
     gallery3Url=body.removeGallery3?'':saveStoreImage(reference,'gallery-3-admin',body.gallery3,gallery3Url);
   }catch(error){return res.status(400).json({error:error.message});}
   const values={whatsapp:String(body.whatsapp||'').trim().slice(0,30),websiteUrl:safeExternalUrl(body.websiteUrl),instagramUrl:safeExternalUrl(body.instagramUrl),tiktokUrl:safeExternalUrl(body.tiktokUrl),googleMapsUrl:safeExternalUrl(body.googleMapsUrl),videoUrl:safeExternalUrl(body.videoUrl),promotionText:String(body.promotionText||'').trim().slice(0,120),address:String(body.address||'').trim().slice(0,240),city:String(body.city||'').trim().slice(0,100),state:String(body.state||'').trim().slice(0,2).toUpperCase(),postalCode:String(body.postalCode||'').replace(/\D/g,'').slice(0,8),locationNotes:String(body.locationNotes||'').trim().slice(0,500)};
+  const mapLocation=storeMapLocation(body,current);
   db.prepare(`UPDATE store_profiles SET business_name=?,description=?,logo_url=?,facade_url=?,gallery_1_url=?,gallery_2_url=?,gallery_3_url=?,video_url=?,whatsapp=?,website_url=?,instagram_url=?,tiktok_url=?,google_maps_url=?,promotion_text=?,address=?,city=?,state=?,postal_code=?,location_notes=?,wants_website=?,wants_brand_art=?,wants_google_profile=?,admin_notes=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
     .run(businessName,description,logoUrl,facadeUrl,gallery1Url,gallery2Url,gallery3Url,values.videoUrl,values.whatsapp,values.websiteUrl,values.instagramUrl,values.tiktokUrl,values.googleMapsUrl,values.promotionText,values.address,values.city,values.state,values.postalCode,values.locationNotes,body.wantsWebsite?1:0,body.wantsBrandArt?1:0,body.wantsGoogleProfile?1:0,String(body.adminNotes||'').trim().slice(0,1200),reference);
+  db.prepare(`UPDATE store_profiles SET latitude=?,longitude=?,google_place_id=?,show_on_real_map=?,location_precision=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
+    .run(mapLocation.latitude,mapLocation.longitude,mapLocation.googlePlaceId,mapLocation.showOnRealMap?1:0,mapLocation.locationPrecision,reference);
   db.prepare('UPDATE lot_orders SET business_name=?,whatsapp=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?').run(businessName,values.whatsapp,reference);
   return res.json({ok:true,submission:db.prepare(`SELECT p.*,o.email,o.name customer_name,o.lot_code,o.segment,o.plan_code,o.billing_type FROM store_profiles p JOIN lot_orders o ON o.reference=p.order_reference WHERE p.order_reference=?`).get(reference)});
 });
@@ -6422,6 +7434,12 @@ app.get('/api/admin/marketplace/reconciliation', requireAdmin, (req,res) => {
     WHERE (?='' OR r.reconciliation_status=?) ORDER BY r.updated_at DESC LIMIT 300`).all(status,status);
   return res.json({reconciliation:rows});
 });
+
+app.get('/api/admin/marketplace/manual-payouts',requireAdmin,(req,res)=>{const status=String(req.query.status||'').trim(),allowed=new Set(['','pending','paid','blocked']);if(!allowed.has(status))return res.status(400).json({error:'Status de repasse inválido.'});const payouts=db.prepare(`SELECT p.*,o.total_cents,o.products_cents,o.shipping_cents,o.delivery_platform_cents,o.delivery_courier_cents
+  FROM marketplace_manual_payouts p JOIN marketplace_orders o ON o.reference=p.order_reference
+  WHERE (?='' OR p.status=?) ORDER BY CASE WHEN p.approval_status='pending' THEN 0 ELSE 1 END,p.scheduled_for,p.id`).all(status,status);const totals=payouts.reduce((sum,payout)=>{sum.grossCents+=payout.gross_cents;sum.deductionsCents+=payout.deductions_cents;sum.amountCents+=payout.amount_cents;if(payout.status==='pending')sum.pendingCents+=payout.amount_cents;if(payout.status==='paid')sum.paidCents+=payout.amount_cents;return sum;},{grossCents:0,deductionsCents:0,amountCents:0,pendingCents:0,paidCents:0});return res.json({payouts,totals,policy:{weeklyDay:'tuesday',advanceFeePercent:3.5}});});
+
+app.post('/api/admin/marketplace/manual-payouts/:id/action',requireAdmin,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||''),id=Number(req.params.id);if(!Number.isInteger(id))return res.status(400).json({error:'Repasse inválido.'});if(action==='approve'){const changed=db.prepare("UPDATE marketplace_manual_payouts SET approval_status='approved',approved_at=CURRENT_TIMESTAMP,approved_by_user_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND approval_status='pending'").run(req.user.id,id);return changed.changes?res.json({ok:true,approvalStatus:'approved',status:'pending_payment'}):res.status(409).json({error:'Antecipação não está pendente de aprovação.'});}if(action==='reject'){const note=String(req.body?.note||'Antecipação recusada').trim().slice(0,500),changed=db.transaction(()=>{const payout=db.prepare("SELECT * FROM marketplace_manual_payouts WHERE id=? AND status='pending' AND approval_status='pending'").get(id);if(!payout)return 0;return db.prepare("UPDATE marketplace_manual_payouts SET payout_speed='weekly',advance_fee_cents=0,deductions_cents=deductions_cents-?,amount_cents=?,scheduled_for=?,approval_status='rejected',note=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND approval_status='pending'").run(payout.advance_fee_cents,payout.amount_cents+payout.advance_fee_cents,nextTuesdayPayoutDate(),note,id).changes;})();return changed?res.json({ok:true,approvalStatus:'rejected',status:'pending'}):res.status(409).json({error:'Antecipação não está pendente de aprovação.'});}if(action==='pay'){const proof=String(req.body?.proofReference||'').trim().slice(0,160),note=String(req.body?.note||'').trim().slice(0,500);if(proof.length<3)return res.status(400).json({error:'Informe a referência do comprovante.'});try{const changed=db.prepare("UPDATE marketplace_manual_payouts SET status='paid',paid_at=CURRENT_TIMESTAMP,proof_reference=?,note=?,paid_by_user_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND approval_status='approved'").run(proof,note,req.user.id,id);if(changed.changes)return res.json({ok:true,status:'paid'});const current=db.prepare('SELECT status,proof_reference FROM marketplace_manual_payouts WHERE id=?').get(id);if(current?.status==='paid'&&current.proof_reference===proof)return res.json({ok:true,status:'paid',replayed:true});return res.status(409).json({error:'O repasse precisa estar pendente e aprovado.'});}catch{return res.status(409).json({error:'Esta referência de comprovante já foi utilizada.'});}}return res.status(400).json({error:'Ação de repasse inválida.'});});
 
 app.get('/api/admin/marketplace/sellers', requireAdmin, (req,res) => {
   const status=String(req.query.status||'').trim(),allowed=new Set(['pending','verified','rejected']);
@@ -6471,7 +7489,164 @@ app.patch('/api/admin/store-submissions/:reference', requireAdmin, async (req, r
 app.get('/api/public/stores/:reference', (req, res) => {
   const data = publicStoreProfile(req.params.reference);
   if (!data?.profile || data.profile.reviewStatus !== 'published') return res.status(404).json({ error: 'Loja não publicada.' });
+  if (!data.profile.showOnRealMap) {
+    data.profile.latitude = null;
+    data.profile.longitude = null;
+    data.profile.googlePlaceId = '';
+  } else if (data.profile.locationPrecision === 'area' &&
+      Number.isFinite(data.profile.latitude) && Number.isFinite(data.profile.longitude)) {
+    data.profile.latitude = Math.round(data.profile.latitude * 100) / 100;
+    data.profile.longitude = Math.round(data.profile.longitude * 100) / 100;
+  }
   return res.json(data);
+});
+app.get('/api/admin/vitrine-ads',requireAdmin,(_req,res)=>{const settings=db.prepare('SELECT * FROM store_ad_settings WHERE id=1').get(),campaigns=db.prepare(`SELECT c.*,s.business_name store_name,(SELECT COUNT(*) FROM store_ad_events e WHERE e.campaign_id=c.id AND e.event_type='impression') impressions,(SELECT COUNT(*) FROM store_ad_events e WHERE e.campaign_id=c.id AND e.event_type='click') clicks,(SELECT COUNT(*) FROM store_ad_events e WHERE e.campaign_id=c.id AND e.event_type='conversion') conversions FROM store_ad_campaigns c JOIN store_profiles s ON s.order_reference=c.store_reference ORDER BY c.id DESC LIMIT 300`).all(),metrics=db.prepare(`SELECT COUNT(*) campaigns,SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) active,COALESCE(SUM(media_budget_cents),0) mediaBudgetCents,COALESCE(SUM(management_fee_cents),0) managementFeesCents FROM store_ad_campaigns`).get(),audit=db.prepare('SELECT id,admin_user_id adminUserId,settings_json settingsJson,reason,created_at createdAt FROM store_ad_weight_audit ORDER BY id DESC LIMIT 100').all();return res.json({settings,campaigns,metrics,audit});});
+app.get('/api/admin/reviews',requireAdmin,(req,res)=>{const status=String(req.query.status||''),reviews=db.prepare(`SELECT r.*, (SELECT COUNT(*) FROM review_reports p WHERE p.review_id=r.id AND p.status='pending') reports FROM verified_delivery_reviews r WHERE (?='' OR r.moderation_status=?) ORDER BY reports DESC,r.id DESC LIMIT 300`).all(status,status),appeals=db.prepare("SELECT * FROM review_appeals WHERE status='pending' ORDER BY id").all(),audit=db.prepare('SELECT * FROM review_moderation_audit ORDER BY id DESC LIMIT 200').all();return res.json({reviews,appeals,audit});});
+app.patch('/api/admin/reviews/:id',requireAdmin,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||''),next={publish:'published',hide:'hidden',reject:'rejected'}[action],note=sanitizeReviewComment(req.body?.note,1000);if(!next)return res.status(400).json({error:'Ação inválida.'});const result=db.transaction(()=>{const changed=db.prepare('UPDATE verified_delivery_reviews SET moderation_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(next,Number(req.params.id));if(!changed.changes)return false;db.prepare('INSERT INTO review_moderation_audit(review_id,admin_user_id,action,note) VALUES (?,?,?,?)').run(Number(req.params.id),req.user.id,action,note);db.prepare("UPDATE review_reports SET status='reviewed' WHERE review_id=? AND status='pending'").run(Number(req.params.id));return true;})();return result?res.json({ok:true,status:next}):res.status(404).json({error:'Avaliação não encontrada.'});});
+app.patch('/api/admin/review-appeals/:id',requireAdmin,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||''),status={approve:'approved',reject:'rejected'}[action],note=sanitizeReviewComment(req.body?.note,1000),appeal=db.prepare("SELECT * FROM review_appeals WHERE id=? AND status='pending'").get(Number(req.params.id));if(!appeal||!status)return res.status(404).json({error:'Recurso pendente não encontrado.'});db.transaction(()=>{db.prepare('UPDATE review_appeals SET status=?,admin_note=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?').run(status,note,appeal.id);if(status==='approved')db.prepare("UPDATE verified_delivery_reviews SET moderation_status='hidden',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(appeal.review_id);db.prepare('INSERT INTO review_moderation_audit(review_id,admin_user_id,action,note) VALUES (?,?,?,?)').run(appeal.review_id,req.user.id,`appeal_${action}`,note);})();return res.json({ok:true,status});});
+app.get('/api/admin/vitrine-ads/platform-promotions',requireAdmin,(_req,res)=>res.json({items:db.prepare('SELECT * FROM platform_promotion_slots ORDER BY slot,sort_order,id').all(),audit:db.prepare('SELECT * FROM platform_promotion_audit ORDER BY id DESC LIMIT 100').all()}));
+app.post('/api/admin/vitrine-ads/platform-promotions',requireAdmin,sameOriginOnly,(req,res)=>{const slot=String(req.body?.slot||''),title=String(req.body?.title||'').trim().slice(0,120),ctaLabel=String(req.body?.ctaLabel||'').trim().slice(0,60),ctaUrl=safeExternalUrl(req.body?.ctaUrl);if(!['platform_header','platform_footer'].includes(slot)||title.length<3||!ctaLabel||!ctaUrl)return res.status(400).json({error:'Revise o slot, título e CTA institucional.'});const values=[slot,title,String(req.body?.text||'').trim().slice(0,300),safeExternalUrl(req.body?.imageUrl),ctaLabel,ctaUrl,req.body?.active===false?0:1,Math.trunc(Number(req.body?.sortOrder)||0),req.body?.startsAt||null,req.body?.endsAt||null],result=db.prepare('INSERT INTO platform_promotion_slots(slot,title,text,image_url,cta_label,cta_url,active,sort_order,starts_at,ends_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run(...values);db.prepare("INSERT INTO platform_promotion_audit(promotion_id,admin_user_id,action,snapshot_json) VALUES (?,?,'create',?)").run(Number(result.lastInsertRowid),req.user.id,JSON.stringify({slot,title,ctaLabel,ctaUrl}));return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});});
+app.put('/api/admin/vitrine-ads/settings',requireAdmin,sameOriginOnly,(req,res)=>{const number=(name,min,max)=>{const value=Number(req.body?.[name]);if(!Number.isFinite(value)||value<min||value>max)throw new Error(name);return value;};try{const settings={enabled:req.body?.enabled===true?1:0,qualityThreshold:Math.round(number('qualityThreshold',0,100)),cityWeight:number('cityWeight',0,100),categoryWeight:number('categoryWeight',0,100),qualityWeight:number('qualityWeight',0,100),fairnessWeight:number('fairnessWeight',0,100)},reason=String(req.body?.reason||'').trim().slice(0,500);if(reason.length<5)return res.status(400).json({error:'Informe o motivo da alteração dos pesos.'});db.transaction(()=>{db.prepare(`UPDATE store_ad_settings SET enabled=?,quality_threshold=?,city_weight=?,category_weight=?,quality_weight=?,fairness_weight=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(settings.enabled,settings.qualityThreshold,settings.cityWeight,settings.categoryWeight,settings.qualityWeight,settings.fairnessWeight);db.prepare('INSERT INTO store_ad_weight_audit(admin_user_id,settings_json,reason) VALUES (?,?,?)').run(req.user.id,JSON.stringify(settings),reason);})();return res.json({ok:true,settings});}catch{return res.status(400).json({error:'Revise os pesos do ranking.'});}});
+app.patch('/api/admin/vitrine-ads/campaigns/:id',requireAdmin,sameOriginOnly,(req,res)=>{const action=String(req.body?.action||''),campaign=db.prepare('SELECT * FROM store_ad_campaigns WHERE id=?').get(Number(req.params.id));if(!campaign)return res.status(404).json({error:'Campanha não encontrada.'});const next={approve:'approved',activate:'active',pause:'paused',reject:'rejected',complete:'completed'}[action],allowed={pending_review:['approved','rejected'],approved:['active','rejected'],active:['paused','completed'],paused:['active','completed']}[campaign.status]||[];if(!next||!allowed.includes(next))return res.status(409).json({error:'Mudança de status inválida.'});if(next==='active'&&campaign.quality_score<(db.prepare('SELECT quality_threshold FROM store_ad_settings WHERE id=1').get()?.quality_threshold||40))return res.status(409).json({error:'A qualidade do anúncio está abaixo do mínimo.'});const starts=next==='active'?(campaign.starts_at||new Date().toISOString()):campaign.starts_at,ends=next==='active'?new Date(Date.parse(starts)+campaign.duration_days*86400000).toISOString():campaign.ends_at;db.prepare('UPDATE store_ad_campaigns SET status=?,starts_at=?,ends_at=?,admin_notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(next,starts,ends,String(req.body?.notes||'').trim().slice(0,1000),campaign.id);return res.json({ok:true,status:next});});
+function storeAdMetrics(reference){return db.prepare(`SELECT c.id,c.plan_code planCode,c.placement,c.target_city targetCity,c.target_category targetCategory,c.creative_title creativeTitle,c.status,c.daily_budget_cents dailyBudgetCents,c.duration_days durationDays,c.media_budget_cents mediaBudgetCents,c.management_fee_cents managementFeeCents,c.quality_score qualityScore,c.starts_at startsAt,c.ends_at endsAt,c.admin_notes adminNotes,
+  SUM(CASE WHEN e.event_type='impression' THEN 1 ELSE 0 END) impressions,SUM(CASE WHEN e.event_type='click' THEN 1 ELSE 0 END) clicks,SUM(CASE WHEN e.event_type='order' THEN 1 ELSE 0 END) orders,SUM(CASE WHEN e.event_type='conversion' THEN 1 ELSE 0 END) conversions,COALESCE(SUM(CASE WHEN e.event_type='conversion' THEN e.value_cents ELSE 0 END),0) salesCents
+  FROM store_ad_campaigns c LEFT JOIN store_ad_events e ON e.campaign_id=c.id WHERE c.store_reference=? GROUP BY c.id ORDER BY c.id DESC`).all(reference).map(row=>({...row,ctrPercent:row.impressions?Math.round(row.clicks/row.impressions*10000)/100:0,conversionRatePercent:row.clicks?Math.round(row.conversions/row.clicks*10000)/100:0}));}
+app.get('/api/store-portal/:reference/vitrine-ads',(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;return res.json({plans:STORE_AD_PLANS,campaigns:storeAdMetrics(access.order.reference)});});
+app.post('/api/store-portal/:reference/reviews/:id/response',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const text=sanitizeReviewComment(req.body?.text,800);if(text.length<2)return res.status(400).json({error:'Informe a resposta.'});const result=db.prepare("UPDATE verified_delivery_reviews SET response_text=?,responded_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND target_type='store' AND target_reference=?").run(text,Number(req.params.id),access.order.reference);return result.changes?res.json({ok:true}):res.status(404).json({error:'Avaliação não encontrada.'});});
+app.post('/api/store-portal/:reference/reviews/:id/appeal',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const reason=sanitizeReviewComment(req.body?.reason,1000),review=db.prepare("SELECT id FROM verified_delivery_reviews WHERE id=? AND target_type='store' AND target_reference=?").get(Number(req.params.id),access.order.reference);if(!review||reason.length<10)return res.status(400).json({error:'Informe uma avaliação e justificativa válidas.'});try{const result=db.prepare("INSERT INTO review_appeals(review_id,appellant_type,appellant_reference,reason) VALUES (?,'store',?,?)").run(review.id,access.order.reference,reason);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});}catch{return res.status(409).json({error:'Recurso já registrado.'});}});
+app.post('/api/store-portal/:reference/vitrine-ads/campaigns',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;let quote;try{quote=storeAdQuote(String(req.body?.planCode||''),req.body?.dailyBudgetCents,req.body?.durationDays);}catch{return res.status(400).json({error:'Revise o plano, orçamento e duração.'});}
+  if(req.body?.termsAccepted!==true)return res.status(400).json({error:'Aceite os termos de publicidade para continuar.'});
+  const store=db.prepare('SELECT * FROM store_profiles WHERE order_reference=?').get(access.order.reference),title=String(req.body?.creativeTitle||'').trim().slice(0,120),text=String(req.body?.creativeText||'').trim().slice(0,300),city=String(req.body?.targetCity||store?.city||'').trim().slice(0,100),category=String(req.body?.targetCategory||'').trim().slice(0,80),destination=safeExternalUrl(req.body?.destinationUrl)||`${SITE_URL}${publicStorePath({order_reference:store.order_reference,business_name:store.business_name})}`;
+  if(title.length<4||!store)return res.status(400).json({error:'Informe um título válido.'});if(['city_top','premium_banner'].includes(quote.planCode)&&city.length<2)return res.status(400).json({error:'Informe a cidade da campanha.'});if(quote.planCode==='category_top'&&category.length<2)return res.status(400).json({error:'Informe a categoria.'});
+  const startsOn=String(req.body?.startsOn||'').trim(),startsAt=startsOn?new Date(`${startsOn}T00:00:00.000Z`):null;if(startsOn&&(!/^\d{4}-\d{2}-\d{2}$/.test(startsOn)||!Number.isFinite(startsAt.getTime())||startsAt.getTime()<Date.now()-86400000||startsAt.getTime()>Date.now()+365*86400000))return res.status(400).json({error:'Informe uma data de início válida.'});let imageUrl=safeExternalUrl(req.body?.imageUrl)||store.logo_url||'';try{if(req.body?.imageData)imageUrl=saveStoreImage(store.order_reference,`ad-${randomUUID()}`,req.body.imageData,imageUrl);}catch(error){return res.status(400).json({error:error.message});}
+  const quality=Math.min(100,30+(title.length>=10?20:0)+(text.length>=30?20:0)+(imageUrl?20:0)+(destination?10:0));const result=db.prepare(`INSERT INTO store_ad_campaigns(store_reference,plan_code,placement,target_city,target_category,creative_title,creative_text,image_url,destination_url,daily_budget_cents,duration_days,media_budget_cents,management_fee_cents,management_fee_bps,quality_score,starts_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(store.order_reference,quote.planCode,quote.placement,city,category,title,text,imageUrl,destination,quote.dailyBudgetCents,quote.durationDays,quote.mediaBudgetCents,quote.managementFeeCents,quote.managementFeeBps,quality,startsAt?.toISOString()||null);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid),status:'pending_review',quote,qualityScore:quality});});
+app.get('/api/store-portal/:reference/orders/:orderReference/tracking',(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const order=db.prepare('SELECT reference FROM marketplace_orders WHERE reference=? AND store_reference=?').get(req.params.orderReference,access.order.reference);return order?res.json({tracking:deliveryTracking(order.reference)}):res.status(404).json({error:'Pedido não encontrado.'});});
+
+app.patch('/api/store-portal/:reference/orders/:orderReference/food-status',sameOriginOnly,(req,res)=>{
+  const access=storePortalAccess(req,res);if(!access)return;
+  const order=db.prepare(`SELECT o.*,s.business_type FROM marketplace_orders o JOIN store_profiles s ON s.order_reference=o.store_reference
+    WHERE o.reference=? AND o.store_reference=?`).get(req.params.orderReference,access.order.reference);
+  if(!order)return res.status(404).json({error:'Pedido não encontrado.'});if(!['food','hybrid'].includes(order.business_type)||order.payment_status!=='approved')return res.status(409).json({error:'Este pedido não pertence ao fluxo alimentício pago.'});
+  const next={accept:'food_accepted',prepare:'food_preparing',ready:'food_ready',handoff:'food_handed_off'}[String(req.body?.action||'')];
+  if(!next||!canTransitionFoodOrder(order.fulfillment_status,next))return res.status(409).json({error:'Mudança de etapa não permitida.'});
+  db.transaction(()=>{db.prepare('UPDATE marketplace_orders SET fulfillment_status=?,updated_at=CURRENT_TIMESTAMP WHERE reference=? AND store_reference=?').run(next,order.reference,access.order.reference);
+    if(next==='food_ready'&&order.delivery_mode==='local')db.prepare("UPDATE local_delivery_jobs SET status='available',updated_at=CURRENT_TIMESTAMP WHERE order_reference=? AND status='awaiting_payment'").run(order.reference);
+  })();if(next==='food_ready'&&order.delivery_mode==='local'){const job=db.prepare('SELECT id FROM local_delivery_jobs WHERE order_reference=?').get(order.reference);if(job)dispatchNextCourier(job.id);}return res.json({ok:true,status:next});
+});
+
+app.put('/api/admin/store-submissions/:reference/food-profile',requireAdmin,sameOriginOnly,(req,res)=>{
+  const current=db.prepare('SELECT * FROM store_profiles WHERE order_reference=?').get(req.params.reference);if(!current)return res.status(404).json({error:'Loja não encontrada.'});
+  let value;try{value=normalizeStoreOperations({...req.body,acceptingOrders:req.body?.acceptingOrders??req.body?.acceptsOrders},current);}catch{return res.status(400).json({error:'Revise os horários e tempos de preparo.'});}
+  db.transaction(()=>{db.prepare(`UPDATE store_profiles SET business_type=?,preparation_min_minutes=?,preparation_max_minutes=?,pickup_instructions=?,accepting_orders=?,fulfillment_mode=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`).run(value.businessType,value.preparationMinMinutes,value.preparationMaxMinutes,value.pickupInstructions,value.acceptingOrders?1:0,value.fulfillmentMode,req.params.reference);
+    if(req.body?.weeklyHours){db.prepare('DELETE FROM store_business_hours WHERE store_reference=?').run(req.params.reference);const insert=db.prepare('INSERT INTO store_business_hours(store_reference,day_of_week,closed,opens_at,closes_at) VALUES (?,?,?,?,?)');value.weeklyHours.forEach((hour,index)=>insert.run(req.params.reference,index,hour.closed?1:0,hour.opens,hour.closes));}})();
+  return res.json({ok:true,operations:publicStoreOperations(req.params.reference)});
+});
+
+app.get('/api/admin/store-submissions/:reference/food-profile',requireAdmin,(req,res)=>{
+  const store=db.prepare('SELECT order_reference,business_name FROM store_profiles WHERE order_reference=?').get(req.params.reference);if(!store)return res.status(404).json({error:'Loja não encontrada.'});
+  const menuCategories=db.prepare('SELECT id,name,sort_order sortOrder,active FROM menu_categories WHERE store_reference=? ORDER BY sort_order,id').all(store.order_reference).map(row=>({...row,active:Boolean(row.active)}));
+  const menuItems=db.prepare(`SELECT id,name,description,category,price_cents priceCents,image_url imageUrl,stock_quantity stockQuantity,
+    product_type productType,menu_category_id menuCategoryId,menu_sort_order menuSortOrder,preparation_minutes preparationMinutes,
+    available,dietary_tags dietaryTags,allergens,featured,active FROM store_products WHERE store_reference=? ORDER BY menu_sort_order,id`).all(store.order_reference).map(row=>({...row,available:Boolean(row.available),featured:Boolean(row.featured),active:Boolean(row.active)}));
+  const account=db.prepare('SELECT status,expires_at expiresAt,connected_at connectedAt FROM marketplace_seller_accounts WHERE store_reference=?').get(store.order_reference)||null;
+  return res.json({store,operations:publicStoreOperations(store.order_reference),weeklyHours:publicStoreOperations(store.order_reference)?.weeklyHours||[],menuCategories,menuItems,paymentSplit:{configured:marketplaceOAuthConfigured(),account}});
+});
+
+function publicStoreOperations(reference){
+  const store=db.prepare(`SELECT business_type,street,address_number,address_complement,neighborhood,
+    preparation_min_minutes,preparation_max_minutes,pickup_instructions,accepting_orders,fulfillment_mode
+    FROM store_profiles WHERE order_reference=?`).get(reference);
+  if(!store)return null;
+  const hours=db.prepare('SELECT day_of_week,closed,opens_at,closes_at FROM store_business_hours WHERE store_reference=? ORDER BY day_of_week').all(reference);
+  return {businessType:store.business_type,street:store.street,addressNumber:store.address_number,addressComplement:store.address_complement,
+    neighborhood:store.neighborhood,preparationMinMinutes:store.preparation_min_minutes,preparationMaxMinutes:store.preparation_max_minutes,
+    pickupInstructions:store.pickup_instructions,acceptingOrders:Boolean(store.accepting_orders),acceptsOrders:Boolean(store.accepting_orders),
+    fulfillmentMode:store.fulfillment_mode,weeklyHours:hours.map(row=>({dayOfWeek:row.day_of_week,closed:Boolean(row.closed),opens:row.opens_at,closes:row.closes_at}))};
+}
+
+app.put('/api/store-portal/:reference/operations',sameOriginOnly,(req,res)=>{
+  const access=storePortalAccess(req,res);if(!access)return;
+  const current=db.prepare('SELECT * FROM store_profiles WHERE order_reference=?').get(access.order.reference);
+  if(!current)return res.status(409).json({error:'Conclua primeiro o cadastro da loja.'});
+  let value;try{value=normalizeStoreOperations({...req.body,acceptingOrders:req.body?.acceptingOrders??req.body?.acceptsOrders},current);}catch{return res.status(400).json({error:'Revise os horários e tempos de preparo.'});}
+  const address={street:String(req.body?.street??current.street??'').trim().slice(0,160),number:String(req.body?.addressNumber??current.address_number??'').trim().slice(0,30),
+    complement:String(req.body?.addressComplement??current.address_complement??'').trim().slice(0,100),neighborhood:String(req.body?.neighborhood??current.neighborhood??'').trim().slice(0,100)};
+  db.transaction(()=>{db.prepare(`UPDATE store_profiles SET business_type=?,street=?,address_number=?,address_complement=?,neighborhood=?,
+    preparation_min_minutes=?,preparation_max_minutes=?,pickup_instructions=?,accepting_orders=?,fulfillment_mode=?,updated_at=CURRENT_TIMESTAMP WHERE order_reference=?`)
+    .run(value.businessType,address.street,address.number,address.complement,address.neighborhood,value.preparationMinMinutes,value.preparationMaxMinutes,value.pickupInstructions,value.acceptingOrders?1:0,value.fulfillmentMode,access.order.reference);
+    db.prepare('DELETE FROM store_business_hours WHERE store_reference=?').run(access.order.reference);
+    const insert=db.prepare('INSERT INTO store_business_hours(store_reference,day_of_week,closed,opens_at,closes_at) VALUES (?,?,?,?,?)');
+    value.weeklyHours.forEach((hour,index)=>insert.run(access.order.reference,index,hour.closed?1:0,hour.opens,hour.closes));
+  })();return res.json({ok:true,operations:publicStoreOperations(access.order.reference)});
+});
+
+app.post('/api/store-portal/:reference/menu-categories',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;
+  const name=String(req.body?.name||'').trim().slice(0,80),sort=Math.trunc(Number(req.body?.sortOrder)||0);if(name.length<2)return res.status(400).json({error:'Informe o nome da categoria.'});
+  try{const result=db.prepare('INSERT INTO menu_categories(store_reference,name,sort_order) VALUES (?,?,?)').run(access.order.reference,name,sort);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});}catch{return res.status(409).json({error:'Essa categoria já existe.'});}});
+app.patch('/api/store-portal/:reference/menu-categories/:id',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const name=String(req.body?.name||'').trim().slice(0,80);
+  if(name.length<2)return res.status(400).json({error:'Informe o nome da categoria.'});const result=db.prepare('UPDATE menu_categories SET name=?,sort_order=?,active=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND store_reference=?').run(name,Math.trunc(Number(req.body?.sortOrder)||0),req.body?.active===false?0:1,Number(req.params.id),access.order.reference);return result.changes?res.json({ok:true}):res.status(404).json({error:'Categoria não encontrada.'});});
+app.delete('/api/store-portal/:reference/menu-categories/:id',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const result=db.prepare('UPDATE menu_categories SET active=0,updated_at=CURRENT_TIMESTAMP WHERE id=? AND store_reference=?').run(Number(req.params.id),access.order.reference);return result.changes?res.json({ok:true}):res.status(404).json({error:'Categoria não encontrada.'});});
+
+app.put('/api/store-portal/:reference/products/:productId/options',sameOriginOnly,(req,res)=>{const access=storePortalAccess(req,res);if(!access)return;
+  const product=db.prepare('SELECT id FROM store_products WHERE id=? AND store_reference=?').get(Number(req.params.productId),access.order.reference);if(!product)return res.status(404).json({error:'Produto não encontrado.'});
+  const groups=Array.isArray(req.body?.groups)?req.body.groups.slice(0,20):[];try{db.transaction(()=>{db.prepare('DELETE FROM product_option_groups WHERE product_id=?').run(product.id);
+    const addGroup=db.prepare('INSERT INTO product_option_groups(product_id,name,min_select,max_select,required,sort_order) VALUES (?,?,?,?,?,?)'),addOption=db.prepare('INSERT INTO product_options(group_id,name,price_delta_cents,active,sort_order) VALUES (?,?,?,?,?)');
+    groups.forEach((group,index)=>{const name=String(group?.name||'').trim().slice(0,80),min=Math.trunc(Number(group?.minSelect)||0),max=Math.trunc(Number(group?.maxSelect)||1);if(name.length<2||min<0||max<1||max>20||min>max)throw new Error('invalid');const result=addGroup.run(product.id,name,min,max,group.required===true?1:0,index);const options=Array.isArray(group.options)?group.options.slice(0,50):[];if(!options.length)throw new Error('invalid');options.forEach((option,position)=>{const optionName=String(option?.name||'').trim().slice(0,100),price=Math.trunc(Number(option?.priceDeltaCents)||0);if(optionName.length<1||price<0||price>1000000)throw new Error('invalid');addOption.run(Number(result.lastInsertRowid),optionName,price,option.active===false?0:1,position);});});})();return res.json({ok:true});}catch{return res.status(400).json({error:'Revise os grupos e adicionais.'});}});
+
+app.post('/api/marketplace/orders/:reference/confirm-delivery',requireUser,sameOriginOnly,(req,res)=>{const order=db.prepare(`SELECT o.*,j.id job_id,j.courier_id,j.courier_cents,j.status job_status FROM marketplace_orders o JOIN local_delivery_jobs j ON j.order_reference=o.reference WHERE o.reference=? AND o.buyer_user_id=? AND o.delivery_mode='local' AND o.payment_status='approved'`).get(req.params.reference,req.user.id);if(!order)return res.status(404).json({error:'Pedido local pago não encontrado.'});if(order.job_status!=='delivered')return res.status(409).json({error:'O entregador ainda não marcou a entrega como concluída.'});if(!order.courier_id)return res.status(409).json({error:'Esta entrega não possui entregador atribuído.'});
+  try{const confirmed=db.transaction(()=>{const result=db.prepare("UPDATE marketplace_orders SET customer_confirmed_at=CURRENT_TIMESTAMP,fulfillment_status='delivered',updated_at=CURRENT_TIMESTAMP WHERE reference=? AND customer_confirmed_at IS NULL AND payment_status='approved'").run(order.reference);if(result.changes)createManualPayoutsForOrder(order.reference);return Boolean(result.changes);})();return res.json({ok:true,confirmed,replayed:!confirmed});}catch(error){console.error('Delivery confirmation error',error?.message||'unknown');return res.status(409).json({error:'Não foi possível confirmar esta entrega.'});}});
+
+app.get('/api/store-portal/:reference/paid-orders', (req,res)=>{const access=storePortalAccess(req,res);if(!access)return;const afterId=Math.max(0,Math.trunc(Number(req.query.afterId)||0));
+  const orders=db.prepare(`SELECT id,reference,total_cents totalCents,delivery_mode deliveryMode,updated_at updatedAt FROM marketplace_orders WHERE store_reference=? AND payment_status='approved' AND id>? ORDER BY id LIMIT 50`).all(access.order.reference,afterId);
+  const cursor=db.prepare("SELECT COALESCE(MAX(id),0) id FROM marketplace_orders WHERE store_reference=? AND payment_status='approved'").get(access.order.reference).id;
+  return res.json({cursor:Number(cursor),orders});});
+
+app.get('/api/maps/config', (_req, res) => {
+  const apiKey = String(process.env.GOOGLE_MAPS_BROWSER_API_KEY || '').trim();
+  return res.json({ enabled: Boolean(apiKey), apiKey });
+});
+
+db.exec(`CREATE TABLE IF NOT EXISTS navigation_geocode_cache(query_hash TEXT PRIMARY KEY,latitude REAL NOT NULL,longitude REAL NOT NULL,display_name TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);`);
+let navigationGeocodeQueue=Promise.resolve(),lastNavigationGeocodeAt=0;
+function publicGeocode(query){const normalized=String(query||'').trim().replace(/\s+/g,' ').slice(0,240),hash=createHmac('sha256',managementSecret()||'vitrinecity-navigation').update(normalized.toLocaleLowerCase('pt-BR')).digest('hex'),cached=db.prepare("SELECT latitude,longitude,display_name displayName FROM navigation_geocode_cache WHERE query_hash=? AND created_at>=datetime('now','-30 days')").get(hash);if(cached)return Promise.resolve({...cached,cached:true});const task=navigationGeocodeQueue.then(async()=>{const wait=Math.max(0,1050-(Date.now()-lastNavigationGeocodeAt));if(wait)await new Promise(resolve=>setTimeout(resolve,wait));lastNavigationGeocodeAt=Date.now();const url=new URL(String(process.env.NOMINATIM_URL||'https://nominatim.openstreetmap.org/search'));url.searchParams.set('q',`${normalized}, Brasil`);url.searchParams.set('format','jsonv2');url.searchParams.set('limit','1');url.searchParams.set('countrycodes','br');const response=await fetch(url,{headers:{'user-agent':'VitrineCity-Navigation/1.0 (+https://vitrinecity.com/contato.html)','accept-language':'pt-BR,pt;q=0.9'},signal:AbortSignal.timeout(12000)}),items=await response.json().catch(()=>[]);if(!response.ok||!items[0])throw new Error('geocode_not_found');const result={latitude:Number(items[0].lat),longitude:Number(items[0].lon),displayName:String(items[0].display_name||normalized).slice(0,300)};db.prepare('INSERT INTO navigation_geocode_cache(query_hash,latitude,longitude,display_name,created_at) VALUES (?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(query_hash) DO UPDATE SET latitude=excluded.latitude,longitude=excluded.longitude,display_name=excluded.display_name,created_at=CURRENT_TIMESTAMP').run(hash,result.latitude,result.longitude,result.displayName);return result;});navigationGeocodeQueue=task.catch(()=>{});return task;}
+app.post('/api/navigation/geocode',sameOriginOnly,async(req,res)=>{if(!allowAttempt(authAttempts,`navigation-geocode:${req.ip}`,30,10*60*1000))return res.set('Retry-After','600').status(429).json({error:'Muitas buscas de endereço. Aguarde alguns minutos.'});const query=String(req.body?.query||'').trim();if(query.length<3)return res.status(400).json({error:'Informe cidade, estado ou endereço.'});try{return res.json(await publicGeocode(query))}catch{return res.status(404).json({error:'Não encontrei esse endereço. Inclua cidade e estado.'})}});
+
+app.post('/api/navigation/route',sameOriginOnly,async(req,res)=>{
+  if(!allowAttempt(authAttempts,`navigation:${req.ip}`,120,10*60*1000))return res.set('Retry-After','600').status(429).json({error:'Muitas rotas em pouco tempo. Aguarde alguns minutos.'});
+  const origin=req.body?.origin||{},destination=req.body?.destination||{},mode=String(req.body?.mode||'car'),numbers=[Number(origin.lat),Number(origin.lng),Number(destination.lat),Number(destination.lng)];
+  if(!numbers.every(Number.isFinite)||numbers[0]<-35||numbers[0]>6||numbers[2]<-35||numbers[2]>6||numbers[1]<-75||numbers[1]>-32||numbers[3]<-75||numbers[3]>-32)return res.status(400).json({error:'Origem ou destino fora da área atendida no Brasil.'});
+  const costing={car:'auto',motorcycle:'motorcycle',bicycle:'bicycle'}[mode];if(!costing)return res.status(400).json({error:'Modo de transporte inválido.'});
+  const payload={locations:[{lat:numbers[0],lon:numbers[1],type:'break'},{lat:numbers[2],lon:numbers[3],type:'break'}],costing,units:'kilometers',language:'pt-BR',directions_type:'instructions'};
+  try{const response=await fetch(`${String(process.env.VALHALLA_URL||'http://vitrinecity-valhalla:8002').replace(/\/$/,'')}/route`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(15000)}),data=await response.json().catch(()=>({}));if(!response.ok||!data.trip?.legs?.length)return res.status(response.status===400?422:503).json({error:data.error||data.error_message||'Não foi possível calcular esta rota agora.'});const leg=data.trip.legs[0];return res.json({engine:'vitrinecity-valhalla',summary:{distanceKm:Number(data.trip.summary?.length||leg.summary?.length||0),durationSeconds:Number(data.trip.summary?.time||leg.summary?.time||0)},shape:leg.shape,maneuvers:(leg.maneuvers||[]).map(item=>({instruction:String(item.instruction||''),verbalTransitionAlertInstruction:String(item.verbal_transition_alert_instruction||''),lengthKm:Number(item.length||0),timeSeconds:Number(item.time||0),beginShapeIndex:Number(item.begin_shape_index||0),endShapeIndex:Number(item.end_shape_index||0)}))});}catch(error){console.error('Navigation route failed',String(error?.message||error));return res.status(503).json({error:'Motor de rotas iniciando ou temporariamente indisponível.'});}
+});
+
+app.get('/api/maps/stores', (req, res) => {
+  const city = String(req.query.city || '').trim().slice(0, 100);
+  const state = String(req.query.state || '').trim().slice(0, 2).toUpperCase();
+  const category = String(req.query.category || '').trim().slice(0, 100);
+  const stores = db.prepare(`SELECT p.order_reference reference,p.business_name name,p.description,
+      p.logo_url logoUrl,p.facade_url facadeUrl,p.whatsapp,p.website_url websiteUrl,
+      p.google_maps_url googleMapsUrl,p.city,p.state,p.latitude,p.longitude,
+      p.location_precision locationPrecision,o.segment category
+    FROM store_profiles p JOIN lot_orders o ON o.reference=p.order_reference
+    WHERE p.review_status='published' AND p.show_on_real_map=1
+      AND p.latitude BETWEEN -90 AND 90 AND p.longitude BETWEEN -180 AND 180
+      AND (?='' OR p.city=?) AND (?='' OR p.state=?) AND (?='' OR o.segment=?)
+    ORDER BY p.published_at DESC,p.business_name LIMIT 1000`)
+    .all(city, city, state, state, category, category)
+    .map(store => ({
+      ...store,
+      latitude: store.locationPrecision === 'area' ? Math.round(Number(store.latitude) * 100) / 100 : Number(store.latitude),
+      longitude: store.locationPrecision === 'area' ? Math.round(Number(store.longitude) * 100) / 100 : Number(store.longitude),
+      addressVisible: store.locationPrecision === 'exact',
+      storeUrl: store.reference === 'official_centro_educacional'
+        ? '/centro-educacional.html'
+        : publicStorePath({ order_reference: store.reference, business_name: store.name })
+    }));
+  const filters = db.prepare(`SELECT DISTINCT city,state FROM store_profiles
+    WHERE review_status='published' AND show_on_real_map=1 AND latitude IS NOT NULL AND longitude IS NOT NULL
+    ORDER BY state,city`).all();
+  return res.json({ stores, filters });
 });
 
 app.post('/api/admin/lot-orders/:reference/resend-confirmation', requireAdmin, (req, res) => {
@@ -6918,10 +8093,28 @@ app.get('/api/social/profile/me', requireUser, (req, res) => {
   const counts = db.prepare(`SELECT
     (SELECT COUNT(*) FROM social_follows WHERE followed_id=?) followers,
     (SELECT COUNT(*) FROM social_follows WHERE follower_id=?) following,
-    (SELECT COUNT(*) FROM social_posts WHERE user_id=? AND status!='deleted') posts`)
+    (SELECT COUNT(*) FROM social_posts WHERE user_id=? AND status='ready') posts`)
     .get(req.user.id, req.user.id, req.user.id);
+  const rows = db.prepare(`SELECT p.*,? author_name,? handle,? avatar_url,
+      (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) likes_count,
+      (SELECT COUNT(*) FROM social_comments c WHERE c.post_id=p.id AND c.status='published') comments_count,
+      (SELECT COUNT(*) FROM social_post_views v WHERE v.post_id=p.id) views_count,
+      MAX((SELECT COUNT(DISTINCT e.actor_key) FROM social_engagement_events e WHERE e.post_id=p.id),
+        (SELECT COUNT(DISTINCT v.visitor_key) FROM social_post_views v WHERE v.post_id=p.id)) reach_count,
+      COALESCE((SELECT SUM(e.impressions) FROM social_engagement_events e WHERE e.post_id=p.id),0) intelligence_impressions,
+      (SELECT COUNT(*) FROM social_saves s WHERE s.post_id=p.id) saves_count,
+      (SELECT COUNT(*) FROM social_reposts r WHERE r.post_id=p.id) reposts_count,
+      (SELECT COUNT(*) FROM social_shares h WHERE h.post_id=p.id) shares_count,
+      EXISTS(SELECT 1 FROM social_saves s WHERE s.post_id=p.id AND s.user_id=?) viewer_saved,
+      EXISTS(SELECT 1 FROM social_reposts r WHERE r.post_id=p.id AND r.user_id=?) viewer_reposted,
+      EXISTS(SELECT 1 FROM social_likes l WHERE l.post_id=p.id AND l.user_id=?) viewer_liked,
+      0 viewer_following
+    FROM social_posts p WHERE p.user_id=? AND p.status='ready'
+    ORDER BY p.created_at DESC LIMIT 100`).all(
+      req.user.name, profile.handle, profile.avatar_url || '', req.user.id, req.user.id, req.user.id, req.user.id);
   return res.json({ profile: { id: req.user.id, name: req.user.name, handle: profile.handle, bio: profile.bio,
-    city: profile.city, avatarUrl: profile.avatar_url, mine: true, ...counts } });
+    city: profile.city, avatarUrl: profile.avatar_url, mine: true, ...counts },
+    items: rows.map(row => socialPost(row, req.user.id)) });
 });
 
 app.get('/api/social/profile/:handle', (req, res) => {
@@ -7252,13 +8445,40 @@ app.post('/api/social/posts/:id/comments', requireActiveSocialUser, sameOriginOn
   }
   const body = String(req.body?.body || '').trim().slice(0, 500);
   if (!body) return res.status(400).json({ error: 'Escreva um comentário.' });
-  const post=db.prepare("SELECT user_id FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
+  const post=db.prepare("SELECT user_id,caption,cta_label,cta_url FROM social_posts WHERE id=? AND status='ready'").get(req.params.id);
   if (!post) {
     return res.status(404).json({ error: 'Publicação não encontrada.' });
   }
   const result = db.prepare('INSERT INTO social_comments (post_id,user_id,body) VALUES (?,?,?)')
     .run(req.params.id, req.user.id, body);
   createSocialNotification(post.user_id,req.user.id,'comment','comentou na sua publicação',`comment:${result.lastInsertRowid}`,req.params.id);
+  const normalizedTrigger=body.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+  const requestedGuide=/(^|\b)(eu quero|quero o guia|quero aprender|como cuidar|manda para mim|me envia)(\b|$)/.test(normalizedTrigger);
+  if(requestedGuide&&post.user_id!==req.user.id&&post.cta_url){
+    try{
+      const destination=new URL(post.cta_url,SITE_URL);
+      const allowedDestination=destination.origin===new URL(SITE_URL).origin&&/^\/(livro|artigo)\//.test(destination.pathname);
+      const blocked=db.prepare('SELECT 1 FROM social_blocks WHERE (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?)').get(post.user_id,req.user.id,req.user.id,post.user_id);
+      if(allowedDestination&&!blocked){
+        const automation=db.transaction(()=>{
+          const registered=db.prepare(`INSERT OR IGNORE INTO social_comment_automations
+            (post_id,comment_id,sender_id,recipient_id,trigger_text,destination_url) VALUES (?,?,?,?,?,?)`)
+            .run(req.params.id,Number(result.lastInsertRowid),post.user_id,req.user.id,body,destination.href);
+          if(!registered.changes)return false;
+          const low=Math.min(post.user_id,req.user.id),high=Math.max(post.user_id,req.user.id);
+          let conversation=db.prepare('SELECT id FROM social_conversations WHERE user_low=? AND user_high=?').get(low,high);
+          if(!conversation){const id=randomUUID();db.prepare('INSERT INTO social_conversations (id,user_low,user_high) VALUES (?,?,?)').run(id,low,high);conversation={id};}
+          const messageId=randomUUID();
+          const guideName=post.cta_label||'Conhecer o guia';
+          const message=`Mensagem automática: você pediu o conteúdo no vídeo. ${guideName}: ${destination.href}\n\nOferta de lançamento: de R$ 19,99 por R$ 9,99. Se não quiser receber novas mensagens automáticas, responda PARAR.`;
+          db.prepare(`INSERT INTO social_messages (id,conversation_id,sender_id,kind,body) VALUES (?,?,?,'text',?)`).run(messageId,conversation.id,post.user_id,message);
+          db.prepare('UPDATE social_conversations SET last_message_at=CURRENT_TIMESTAMP WHERE id=?').run(conversation.id);
+          return {conversationId:conversation.id,messageId};
+        })();
+        if(automation)sendSocialLive(req.user.id,'chat-message',automation);
+      }
+    }catch(error){console.error('Social comment automation error',String(error?.message||error).slice(0,180));}
+  }
   return res.status(201).json({ id: Number(result.lastInsertRowid), body, name: req.user.name });
 });
 
@@ -7347,6 +8567,10 @@ app.post('/api/social/posts/:id/intelligence', sameOriginOnly, (req,res) => {
     .run(post.id,actorKey,day,...values);
   return res.json({ok:true});
 });
+  const viralInitial=setTimeout(()=>runViralFactory().catch(error=>console.error('Fábrica Viral:',String(error?.message||'automation_failed').slice(0,200))),45000);viralInitial.unref();
+  const viralTimer=setInterval(()=>runViralFactory().catch(error=>console.error('Fábrica Viral:',String(error?.message||'automation_failed').slice(0,200))),30*60*1000);viralTimer.unref();
+  const viralVideoInitial=setTimeout(()=>processViralVideoFactory().catch(()=>{}),60000);viralVideoInitial.unref();
+  const viralVideoTimer=setInterval(()=>processViralVideoFactory().catch(()=>{}),60000);viralVideoTimer.unref();
 
 const EXTERNAL_METRIC_PROVIDERS = new Set(['instagram','facebook','tiktok','youtube','google','kwai']);
 const externalInsightUpsert=db.prepare(`INSERT INTO social_external_insights
@@ -8246,7 +9470,7 @@ app.get(['/loja/:reference', '/loja/:reference/:slug'], (req, res) => {
   if (!store) return publicErrorPage(res, 404);
   const canonicalSlug = marketplaceSlug(store.business_name);
   if (req.params.slug !== canonicalSlug) return res.redirect(301, publicStorePath(store));
-  const products = db.prepare(`SELECT id,name,description,category,price_cents,image_url,sku,stock_quantity
+  const products = db.prepare(`SELECT id,name,description,category,price_cents,image_url,product_url,sku,stock_quantity
     FROM store_products WHERE store_reference=? AND active=1 AND marketplace_enabled=1
       AND price_cents>0 AND stock_quantity>0 ORDER BY updated_at DESC,id DESC LIMIT 120`).all(reference);
   return res.set('Cache-Control', 'public,max-age=60').send(renderPublicStorePage({
@@ -8257,7 +9481,7 @@ app.get(['/loja/:reference', '/loja/:reference/:slug'], (req, res) => {
 app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id < 1) return publicErrorPage(res, 404);
-  const product = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,p.image_url,
+  const product = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,p.image_url,p.product_url,p.product_type,
       p.sku,p.stock_quantity,p.weight_grams,p.variation_label,p.delivery_min_days,p.delivery_max_days,p.return_days,
       s.business_name AS store_name,
       COALESCE((SELECT ROUND(AVG(r.rating),1) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published'),0) rating_average,
@@ -8266,6 +9490,7 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     WHERE p.id=? AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0
       AND p.stock_quantity>0 AND s.review_status='published'`).get(id);
   if (!product) return publicErrorPage(res, 404);
+  const isDigital = product.product_type === 'digital';
   const slug = marketplaceProductSlug(product.name);
   if (req.params.slug !== slug) return res.redirect(301, `/produto/${product.id}/${slug}`);
   const origin = new URL(SITE_URL).origin;
@@ -8317,12 +9542,12 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     <section><div class="badge">${escapeHtml(product.category || 'Produto')}</div><a class="seller" href="${escapeHtml(storePath)}">Vendido por ${escapeHtml(product.store_name)}</a>
     <h1>${escapeHtml(product.name)}</h1><p class="description">${escapeHtml(description)}</p>
     <div class="price">${(product.price_cents / 100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</div>
-    <div class="stock">${product.stock_quantity} unidades disponíveis</div><div class="rating">${product.rating_count?`★ ${Number(product.rating_average).toFixed(1)} · ${product.rating_count} avaliação${product.rating_count===1?'':'ões'}`:'☆ Ainda sem avaliações'}</div>
-    <div class="purchase-details"><div class="detail"><small>Variação</small><b>${escapeHtml(product.variation_label||'Única')}</b></div><div class="detail"><small>Prazo estimado</small><b>${product.delivery_min_days} a ${product.delivery_max_days} dias úteis</b></div><div class="detail"><small>Frete</small><b>Calculado no checkout</b></div><div class="detail"><small>Devolução</small><b>Até ${product.return_days} dias após o recebimento</b></div></div>
-    <div class="actions"><button id="add">Adicionar ao carrinho</button><a class="button alt" href="/loja?q=${encodeURIComponent(product.name)}">Ver na loja</a></div><div class="status" id="status"></div></section>
+    <div class="stock">${isDigital?'Acesso digital disponível':`${product.stock_quantity} unidades disponíveis`}</div><div class="rating">${product.rating_count?`★ ${Number(product.rating_average).toFixed(1)} · ${product.rating_count} avaliação${product.rating_count===1?'':'ões'}`:'☆ Ainda sem avaliações'}</div>
+    <div class="purchase-details">${isDigital?'<div class="detail"><small>Formato</small><b>Acesso digital individual</b></div><div class="detail"><small>Entrega</small><b>Liberada na área do aluno após o pagamento</b></div>':`<div class="detail"><small>Variação</small><b>${escapeHtml(product.variation_label||'Única')}</b></div><div class="detail"><small>Prazo estimado</small><b>${product.delivery_min_days} a ${product.delivery_max_days} dias úteis</b></div><div class="detail"><small>Frete</small><b>Calculado no checkout</b></div><div class="detail"><small>Devolução</small><b>Até ${product.return_days} dias após o recebimento</b></div>`}</div>
+    <div class="actions">${product.product_url?`<a class="button" href="${escapeHtml(product.product_url)}"${isDigital?'':` target="_blank" rel="noopener sponsored"`}>${isDigital?'Comprar acesso':'Comprar'}</a>`:'<button id="add">Adicionar ao carrinho</button>'}<a class="button alt" href="${escapeHtml(storePath)}">Ver a vitrine da loja</a></div><div class="status" id="status"></div></section>
     <section class="reviews"><h2>Avaliações de clientes</h2>${reviews.length?`<div class="review-grid">${reviews.map(review=>`<article class="review"><div class="rating">${'★'.repeat(review.rating)}${'☆'.repeat(5-review.rating)}</div><h3>${escapeHtml(review.title||'Avaliação do produto')}</h3><p>${escapeHtml(review.body)}</p><small>${escapeHtml(review.author_name)} · ${new Date(`${review.created_at}Z`).toLocaleDateString('pt-BR')}</small>${review.verified_purchase?'<div class="verified">✓ Compra verificada</div>':''}</article>`).join('')}</div>`:'<p class="description">Este produto ainda não recebeu avaliações. As avaliações publicadas aparecerão aqui.</p>'}</section>
     </main>
-    <script>const product=${publicProduct};document.getElementById('add').onclick=()=>{let cart=[];try{cart=JSON.parse(localStorage.getItem('vc_shop_cart')||'[]')}catch{}if(cart.length&&cart[0].store_reference!==product.store_reference){document.getElementById('status').textContent='Finalize primeiro os produtos da outra loja.';return}const old=cart.find(item=>item.id===product.id);if(old)old.quantity=Math.min(product.stock_quantity,old.quantity+1);else cart.push({...product,quantity:1});localStorage.setItem('vc_shop_cart',JSON.stringify(cart));location.href='/loja?carrinho=1'};</script>
+    <script>const product=${publicProduct},add=document.getElementById('add');if(add)add.onclick=()=>{let cart=[];try{cart=JSON.parse(localStorage.getItem('vc_shop_cart')||'[]')}catch{}if(cart.length&&cart[0].store_reference!==product.store_reference){document.getElementById('status').textContent='Finalize primeiro os produtos da outra loja.';return}const old=cart.find(item=>item.id===product.id);if(old)old.quantity=Math.min(product.stock_quantity,old.quantity+1);else cart.push({...product,quantity:1});localStorage.setItem('vc_shop_cart',JSON.stringify(cart));location.href='/loja?carrinho=1'};</script>
     </body></html>`);
 });
 
@@ -8420,8 +9645,4 @@ app.listen(process.env.PORT || 3000, () => {
   const whatsappScheduleTimer=setInterval(()=>processWhatsAppQrSchedules().catch(()=>{}),30000);whatsappScheduleTimer.unref();
   const automationInitial=setTimeout(()=>processOmnichannelAutomation().catch(()=>{}),20000);automationInitial.unref();
   const automationTimer=setInterval(()=>processOmnichannelAutomation().catch(()=>{}),60000);automationTimer.unref();
-  const viralInitial=setTimeout(()=>runViralFactory().catch(error=>console.error('Fábrica Viral:',String(error?.message||'automation_failed').slice(0,200))),45000);viralInitial.unref();
-  const viralTimer=setInterval(()=>runViralFactory().catch(error=>console.error('Fábrica Viral:',String(error?.message||'automation_failed').slice(0,200))),30*60*1000);viralTimer.unref();
-  const viralVideoInitial=setTimeout(()=>processViralVideoFactory().catch(()=>{}),60000);viralVideoInitial.unref();
-  const viralVideoTimer=setInterval(()=>processViralVideoFactory().catch(()=>{}),60000);viralVideoTimer.unref();
 });

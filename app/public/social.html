@@ -1,115 +1,2824 @@
 <!doctype html>
 <html lang="pt-BR">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="description" content="Vitriny Social: vídeos, produtos, serviços, estudos e oportunidades perto de você.">
-  <link rel="canonical" href="https://vitrinecity.com/social">
-  <meta property="og:title" content="Vitriny Social — sua cidade em movimento">
-  <meta property="og:description" content="Descubra, publique e conecte-se com pessoas e negócios da sua cidade.">
-  <meta property="og:image" content="https://vitrinecity.com/assets/vitriny-city-master.jpg">
-  <meta property="og:image:alt" content="Vitriny City — cidade digital de pessoas e negócios">
-  <title>Vitriny Social — sua cidade em movimento</title>
-  <style>
-    :root{--blue:#1768e6;--navy:#071f4b;--yellow:#ffc628;--ink:#f7faff;--muted:#aebbd0;--panel:#101a2d;--line:#26334a}*{box-sizing:border-box}html,body{margin:0;height:100%;font-family:Inter,Arial,sans-serif;background:#050a13;color:var(--ink)}button,input,select,textarea{font:inherit}button{cursor:pointer}.top{height:68px;position:fixed;inset:0 0 auto;z-index:30;display:flex;align-items:center;justify-content:space-between;padding:0 max(16px,4vw);background:#07101dee;border-bottom:1px solid #ffffff18;backdrop-filter:blur(16px)}.brand{font-size:24px;font-weight:950;text-decoration:none;color:#fff;letter-spacing:-1px}.brand span{color:var(--yellow)}.top-actions{display:flex;gap:9px}.btn{border:0;border-radius:12px;padding:11px 15px;font-weight:900;background:var(--blue);color:#fff}.btn.alt{background:#162238;border:1px solid #ffffff24}.layout{min-height:100%;padding:84px 20px 92px;display:grid;grid-template-columns:220px minmax(300px,440px) 260px;justify-content:center;gap:24px}.side{position:sticky;top:88px;height:max-content}.navlink{display:flex;gap:12px;align-items:center;color:#dce8ff;text-decoration:none;padding:13px;border-radius:13px;font-weight:800;margin-bottom:5px}.navlink.active,.navlink:hover{background:#132039}.navlink b{font-size:21px}.side-card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:17px}.side-card h2{font-size:17px;margin:0 0 8px}.side-card p{color:var(--muted);font-size:13px;line-height:1.5;margin:0 0 13px}.feed-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.feed-head h1{font-size:23px;margin:0}.filters{display:flex;gap:7px;overflow:auto;padding:2px 0 12px;scrollbar-width:none}.chip{border:1px solid var(--line);background:#101a2d;color:#c7d3e7;border-radius:99px;padding:8px 11px;white-space:nowrap;font-size:12px;font-weight:850}.chip.active{background:#fff;color:#081329}.post{height:min(74vh,720px);min-height:540px;border:1px solid #ffffff22;border-radius:24px;overflow:hidden;position:relative;background:#111827;margin-bottom:18px;box-shadow:0 24px 60px #0008}.video{position:absolute;inset:0}.video iframe{width:100%;height:100%;border:0}.shade{position:absolute;inset:auto 0 0;height:48%;background:linear-gradient(transparent,#02050bdd);pointer-events:none}.post-copy{position:absolute;z-index:4;left:18px;right:75px;bottom:20px}.author{display:flex;align-items:center;gap:9px;margin-bottom:10px}.avatar{width:39px;height:39px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(145deg,var(--blue),#7b4cff);font-weight:950;border:2px solid #fff}.author strong{display:block}.author small{color:#d0daea}.follow{border:1px solid #ffffff80;background:#ffffff15;color:#fff;border-radius:8px;padding:6px 9px;font-weight:850}.caption{line-height:1.45;margin:0 0 8px;text-shadow:0 2px 5px #000}.meta{color:#d6e2f5;font-size:12px}.cta{display:inline-block;margin-top:10px;padding:10px 13px;background:var(--yellow);color:#102449;text-decoration:none;border-radius:10px;font-weight:950}.rail{position:absolute;right:13px;bottom:20px;z-index:5;display:grid;gap:13px}.action{width:50px;border:0;background:none;color:#fff;text-align:center;font-weight:850;text-shadow:0 2px 5px #000}.action i{display:grid;place-items:center;width:48px;height:48px;border-radius:50%;background:#10182dcc;font-size:21px;font-style:normal;margin-bottom:3px;border:1px solid #ffffff22}.action.liked i{background:#d9345b}.expand-control{position:absolute;z-index:7;right:14px;top:14px;width:46px;height:46px;border-radius:50%;border:1px solid #ffffff55;background:#07101dcc;color:#fff;font-size:22px;font-weight:900;display:grid;place-items:center;box-shadow:0 7px 22px #0008}.expand-control:hover,.expand-control:focus-visible{background:var(--blue);outline:3px solid #ffffff88}.post:fullscreen{width:100vw;height:100vh;max-height:none;min-height:100vh;border:0;border-radius:0;margin:0}.post.expanded{position:fixed;z-index:90;inset:8px;width:auto;height:auto;max-height:none;min-height:0;margin:0;border-radius:18px;box-shadow:0 0 0 9999px #02050bf2}body.video-expanded{overflow:hidden}.empty{background:var(--panel);border:1px dashed #40516f;border-radius:22px;padding:50px 25px;text-align:center}.empty h2{margin:0 0 9px}.empty p{color:var(--muted);line-height:1.5}.modal{position:fixed;inset:0;z-index:50;background:#02050bd9;display:none;place-items:center;padding:20px}.modal.open{display:grid}.dialog{width:min(560px,100%);max-height:92vh;overflow:auto;background:#101a2d;border:1px solid #ffffff25;border-radius:22px;padding:23px}.dialog-head{display:flex;justify-content:space-between;align-items:center}.dialog h2{margin:0}.close{background:none;border:0;color:#fff;font-size:27px}.field{display:block;margin:15px 0}.field span{display:block;font-size:13px;font-weight:850;margin-bottom:6px}.field input,.field select,.field textarea{width:100%;border:1px solid #33425e;background:#08111f;color:#fff;border-radius:11px;padding:12px}.field textarea{min-height:90px;resize:vertical}.hint,.status{color:var(--muted);font-size:12px;line-height:1.4}.status{min-height:18px;margin-top:10px}.comments{position:fixed;z-index:55;inset:68px 0 0 auto;width:min(420px,100%);background:#0c1525;border-left:1px solid var(--line);padding:20px;transform:translateX(105%);transition:.25s;overflow:auto}.comments.open{transform:none}.comment{border-bottom:1px solid var(--line);padding:12px 0}.comment b{font-size:13px}.comment p{margin:5px 0;color:#d8e2f2;line-height:1.4}.comment-form{display:flex;gap:8px;position:sticky;bottom:0;background:#0c1525;padding:12px 0}.comment-form input{flex:1;border:1px solid #33425e;background:#08111f;color:#fff;border-radius:11px;padding:11px}.mobile-nav{display:none}.skeleton{height:65vh;border-radius:24px;background:linear-gradient(90deg,#0f192a,#18253a,#0f192a);background-size:200%;animation:load 1.2s infinite}@keyframes load{to{background-position:-200%}}@media(max-width:960px){.layout{grid-template-columns:minmax(300px,440px)}.side{display:none}.right{display:none}.mobile-nav{display:flex;position:fixed;z-index:30;inset:auto 0 0;height:66px;background:#07101df2;border-top:1px solid #ffffff18;justify-content:space-around;align-items:center}.mobile-nav button,.mobile-nav a{border:0;background:none;color:#fff;text-decoration:none;font-size:11px;font-weight:850;text-align:center}.mobile-nav b{display:block;font-size:20px}.layout{padding:78px 8px 78px}.post{border-radius:17px;height:calc(100vh - 164px);min-height:500px}.top-actions .alt{display:none}}@media(max-width:480px){.top{height:60px}.layout{padding-top:68px}.post{height:calc(100vh - 142px)}.comments{inset:60px 0 0}.brand{font-size:21px}}
-  .tabs{display:flex;gap:8px;margin:0 0 12px}.tab{flex:1;border:1px solid var(--line);background:#101a2d;color:#c7d3e7;border-radius:12px;padding:10px;font-weight:900}.tab.active{background:var(--blue);color:#fff}.my-videos{display:grid;gap:12px}.my-video{display:grid;grid-template-columns:96px 1fr;gap:13px;background:var(--panel);border:1px solid var(--line);border-radius:17px;padding:12px}.my-thumb{position:relative;aspect-ratio:9/16;border-radius:10px;background:#07101d;overflow:hidden}.my-thumb iframe{width:100%;height:100%;border:0}.my-expand{position:absolute;z-index:2;right:6px;top:6px;width:36px;height:36px;border:1px solid #ffffff66;border-radius:50%;background:#07101ddd;color:#fff;font-size:19px;font-weight:900;display:grid;place-items:center;box-shadow:0 5px 16px #0009}.my-expand:hover,.my-expand:focus-visible{background:var(--blue);outline:2px solid #fff}.media-viewer{position:fixed;z-index:120;inset:0;display:none;place-items:center;background:#02050bf2;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}.media-viewer.open{display:grid}.media-viewer-stage{position:relative;width:min(100%,1100px);height:min(92dvh,820px);background:#000;border-radius:18px;overflow:hidden;box-shadow:0 30px 90px #000}.media-viewer iframe{width:100%;height:100%;border:0}.media-viewer-close{position:absolute;z-index:3;right:12px;top:12px;width:44px;height:44px;border:1px solid #ffffff77;border-radius:50%;background:#07101de8;color:#fff;font-size:27px;line-height:1}.my-video h3{margin:2px 0 7px;font-size:15px}.stats{display:flex;flex-wrap:wrap;gap:7px;color:var(--muted);font-size:12px}.badge{display:inline-flex;border-radius:99px;padding:5px 8px;font-size:11px;font-weight:900;background:#283550;color:#dbe8ff}.badge.ready{background:#123f2a;color:#9ff0bc}.badge.rejected,.badge.error{background:#531e2b;color:#ffb3c1}.badge.pending_review,.badge.processing,.badge.uploading{background:#554315;color:#ffe28a}.price-note{border:1px solid #604f1b;background:#2a2410;color:#ffe69b;border-radius:12px;padding:11px;font-size:12px;line-height:1.45}.wallet-pill{display:inline-flex;align-items:center;border:1px solid #ffffff24;border-radius:99px;padding:8px 11px;color:#ffe37a;font-weight:900;font-size:12px}.report i{font-size:18px!important}@media(max-width:600px){.media-viewer{padding:0}.media-viewer-stage{width:100%;height:100dvh;border-radius:0}.media-viewer-close{top:max(10px,env(safe-area-inset-top));right:max(10px,env(safe-area-inset-right))}}
-.stories{display:flex;gap:12px;overflow-x:auto;padding:5px 2px 14px}.story-add,.story-bubble{flex:0 0 72px;border:0;background:none;color:#fff;text-align:center;cursor:pointer}.story-ring{width:62px;height:62px;border-radius:50%;padding:3px;background:linear-gradient(135deg,#ff2d8d,#ffb02e,#2f7cff);display:grid;place-items:center;margin:auto}.story-ring img,.story-ring span{width:100%;height:100%;border-radius:50%;object-fit:cover;background:#14213a;display:grid;place-items:center;font-size:23px}.story-bubble small,.story-add small{display:block;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.photo-media{width:100%;height:100%;object-fit:contain;background:#05080e}.video-gesture{position:absolute;z-index:3;inset:68px 72px 118px 0;border:0;background:transparent;touch-action:manipulation}.post.expanded .video-gesture{inset:72px 82px 125px 0}.quick-publish{display:flex;gap:8px;margin-bottom:12px}.notification-button{position:relative}.notification-count{position:absolute;right:-5px;top:-7px;background:#ff315d;border-radius:99px;min-width:18px;padding:2px 5px;font-size:10px}.drawer{position:fixed;z-index:70;right:12px;top:70px;width:min(390px,calc(100% - 24px));max-height:70vh;overflow:auto;background:#101a2d;border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:0 18px 60px #0009;display:none}.drawer.open{display:block}.notice{padding:11px;border-bottom:1px solid var(--line);font-size:13px}.story-viewer{position:fixed;z-index:90;inset:0;background:#02050bed;display:none;place-items:center}.story-viewer.open{display:grid}.story-stage{position:relative;width:min(430px,100%);height:min(780px,100vh);background:#000}.story-stage img{width:100%;height:100%;object-fit:contain}.story-close{position:absolute;right:12px;top:12px;z-index:2}.story-copy{position:absolute;inset:auto 18px 25px;color:#fff;text-shadow:0 2px 8px #000}.seo-box{border:1px solid #2c5aa7;background:#101d35;border-radius:12px;padding:11px;margin:8px 0;font-size:12px}.seo-box button{margin-top:8px}
-.stories{display:flex;gap:12px;overflow-x:auto;padding:5px 2px 14px}.story-add,.story-bubble{flex:0 0 72px;border:0;background:none;color:#fff;text-align:center;cursor:pointer}.story-ring{width:62px;height:62px;border-radius:50%;padding:3px;background:linear-gradient(135deg,#ff2d8d,#ffb02e,#2f7cff);display:grid;place-items:center;margin:auto}.story-ring img,.story-ring span{width:100%;height:100%;border-radius:50%;object-fit:cover;background:#14213a;display:grid;place-items:center;font-size:23px}.story-bubble small,.story-add small{display:block;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.photo-media{width:100%;height:100%;object-fit:contain;background:#05080e}.video-gesture{position:absolute;z-index:3;inset:68px 72px 118px 0;border:0;background:transparent;touch-action:manipulation}.post.expanded .video-gesture{inset:72px 82px 125px 0}.quick-publish{display:flex;gap:8px;margin-bottom:12px}.notification-button{position:relative}.notification-count{position:absolute;right:-5px;top:-7px;background:#ff315d;border-radius:99px;min-width:18px;padding:2px 5px;font-size:10px}.drawer{position:fixed;z-index:70;right:12px;top:70px;width:min(390px,calc(100% - 24px));max-height:70vh;overflow:auto;background:#101a2d;border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:0 18px 60px #0009;display:none}.drawer.open{display:block}.notice{padding:11px;border-bottom:1px solid var(--line);font-size:13px}.story-viewer{position:fixed;z-index:90;inset:0;background:#02050bed;display:none;place-items:center}.story-viewer.open{display:grid}.story-stage{position:relative;width:min(430px,100%);height:min(780px,100vh);background:#000}.story-stage img{width:100%;height:100%;object-fit:contain}.story-close{position:absolute;right:12px;top:12px;z-index:2}.story-copy{position:absolute;inset:auto 18px 25px;color:#fff;text-shadow:0 2px 8px #000}.seo-box{border:1px solid #2c5aa7;background:#101d35;border-radius:12px;padding:11px;margin:8px 0;font-size:12px}.seo-box button{margin-top:8px}
-/* Feed vertical no estilo Reels/TikTok: um vídeo por tela. */.profile-author{display:flex;align-items:center;gap:9px;color:#fff;text-decoration:none}.profile-author:hover strong{text-decoration:underline}#feed,.my-videos{height:min(74vh,720px);overflow-y:auto;overflow-x:hidden;scroll-snap-type:y mandatory;overscroll-behavior-y:contain;scrollbar-width:none;border-radius:24px;background:#05080e}#feed::-webkit-scrollbar,.my-videos::-webkit-scrollbar{display:none}#feed>.post,.my-videos>.my-video{height:100%;min-height:100%;margin:0;scroll-snap-align:start;scroll-snap-stop:always}.my-video{position:relative;display:block;padding:0;overflow:hidden;border-radius:24px;background:#000}.my-thumb{position:absolute;inset:0;aspect-ratio:auto;border-radius:0}.my-video>div:last-child{position:absolute;z-index:3;inset:auto 0 0;padding:90px 72px 22px 18px;background:linear-gradient(transparent,#02050be8);pointer-events:none}.my-video>div:last-child .badge,.my-video>div:last-child h3,.my-video>div:last-child .stats,.my-video>div:last-child .hint{pointer-events:auto}.my-expand{right:14px;top:14px;width:46px;height:46px}
-@media(max-width:960px){.layout{display:block;padding:60px 0 66px;height:100dvh;min-height:0}.layout>section{height:calc(100dvh - 126px);display:flex;flex-direction:column;overflow:hidden}.feed-head,.stories,.quick-publish{display:none}.tabs{flex:0 0 auto;margin:6px 8px}.tab{padding:8px 5px;font-size:11px}.filters{flex:0 0 auto;padding:2px 8px 7px}.chip{padding:7px 10px}#feed,.my-videos{flex:1;height:auto;min-height:0;border-radius:0}#feed>.post,.my-videos>.my-video{border-radius:0;border-left:0;border-right:0;min-height:100%;height:100%}.post{box-shadow:none}.post-copy{left:14px;bottom:18px}.rail{right:8px;bottom:17px}.my-video>div:last-child{padding-bottom:20px}.my-videos{display:block}.my-videos[hidden]{display:none}.skeleton,.empty{height:100%;min-height:100%;border-radius:0;display:grid;place-content:center}#more{display:none!important}}
-    .tabs{overflow-x:auto;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tab{min-width:max-content;padding-inline:13px}
-  
-.product-recommendation{background:#0b172a}.product-recommendation .product-media{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.product-recommendation .product-badge{display:inline-flex;background:var(--yellow);color:#102449;border-radius:99px;padding:6px 10px;font-size:11px;font-weight:950;margin-bottom:10px}.product-recommendation .product-price{font-size:30px;font-weight:950;margin:8px 0 2px}.product-recommendation .product-stock{color:#dce8f8;font-size:12px}.product-recommendation .product-cta{display:inline-block;margin-top:13px;padding:12px 16px;border-radius:11px;background:var(--yellow);color:#102449;text-decoration:none;font-weight:950}.product-recommendation .post-copy{right:18px}.product-recommendation .shade{height:65%}
-.post-menu{position:absolute;z-index:12;right:68px;top:14px}.post-menu summary{list-style:none;width:46px;height:46px;border:1px solid #ffffff55;border-radius:50%;background:#07101dcc;color:#fff;font-size:25px;font-weight:900;display:grid;place-items:center;cursor:pointer;box-shadow:0 7px 22px #0008}.post-menu summary::-webkit-details-marker{display:none}.post-menu[open] summary{background:var(--blue)}.post-menu-list{position:absolute;right:0;top:52px;width:210px;padding:7px;border:1px solid #ffffff2b;border-radius:14px;background:#0c1628f5;box-shadow:0 18px 45px #000b;backdrop-filter:blur(14px)}.post-menu-list button{display:block;width:100%;padding:11px;border:0;border-radius:9px;background:none;color:#eaf2ff;text-align:left;font-weight:800}.post-menu-list button:hover,.post-menu-list button:focus-visible{background:#ffffff13;outline:none}.post-menu-list .danger{color:#ff9cac}
-.visitor-intro{margin:0 0 14px;padding:18px;border:1px solid #2c4f83;border-radius:20px;background:linear-gradient(135deg,#10274a,#101a2d 64%);box-shadow:0 18px 45px #0004}.visitor-intro[hidden]{display:none}.visitor-intro .eyebrow{display:block;color:var(--yellow);font-size:11px;font-weight:950;text-transform:uppercase;letter-spacing:.08em}.visitor-intro h2{font-size:23px;line-height:1.08;margin:7px 0}.visitor-intro>p{color:#c7d5e9;font-size:13px;line-height:1.5;margin:0}.visitor-benefits{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:14px 0}.visitor-benefits span{padding:9px;border-radius:10px;background:#ffffff0d;color:#dce8f8;font-size:11px;line-height:1.35}.visitor-actions{display:flex;gap:8px;align-items:center}.visitor-actions a{text-decoration:none}.visitor-note{color:#9fb0c9;font-size:11px}.visitor-login{display:inline-flex;text-decoration:none;align-items:center}@media(max-width:960px){.visitor-intro{flex:0 0 auto;margin:6px 8px 7px;padding:11px 12px;border-radius:14px}.visitor-intro h2{font-size:17px;margin:4px 0}.visitor-intro>p{font-size:11px}.visitor-benefits{display:none}.visitor-actions{margin-top:8px}.visitor-actions .btn{padding:8px 10px;font-size:11px}.visitor-note{display:none}.top-actions .visitor-login{display:inline-flex}.top-actions #publish-top{display:none}}
-/* Legenda do feed: a publicação nunca pode encobrir o vídeo no celular. */
-.caption{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden;max-height:5.8em}
-.caption-toggle{display:none;border:0;background:none;color:#fff;padding:0 0 4px;font-size:12px;font-weight:900;text-decoration:underline;text-underline-offset:2px}
-@media(max-width:600px){
-  .post-copy{left:12px;right:74px;bottom:12px;max-height:28dvh;overflow:hidden}
-  .author{gap:7px;margin-bottom:5px}.avatar{width:32px;height:32px}.author small{display:none}.follow{padding:4px 7px;font-size:11px}
-  .caption{-webkit-line-clamp:2;max-height:2.7em;margin-bottom:4px;font-size:13px;line-height:1.35}
-  .caption-toggle.visible{display:inline-block}.post-copy.caption-open{max-height:48dvh;overflow:auto;padding:9px;border-radius:10px;background:#02050bcc}.post-copy.caption-open .caption{display:block;max-height:none;overflow:visible}.post-copy.caption-open+.rail{opacity:.35}
-  .meta{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px}
-  .cta{margin-top:6px;padding:7px 10px;font-size:11px}
-  .shade{height:34%}
-}
-</style>
-  <script src="/analytics.js" defer></script>
-</head>
-<body>
-  <header class="top"><a class="brand" href="/">Vitriny <span>Social</span></a><div class="top-actions"><button class="btn alt notification-button" id="notifications-button">🔔<span class="notification-count" id="notification-count" hidden>0</span></button><a class="btn alt" href="/loja">Loja</a><a class="btn alt" href="/">Cidade digital</a><a class="btn visitor-login" id="visitor-login" href="/entrar.html?returnTo=%2Fsocial" hidden>Entrar</a><button class="btn" id="publish-top">＋ Publicar</button></div></header>
-  <main class="layout">
-    <aside class="side"><a class="navlink active" href="/social"><b>⌂</b> Para você</a><a class="navlink" href="/descobrir"><b>⌕</b> Descobrir</a><a class="navlink" href="/loja"><b>▣</b> Loja</a><a class="navlink" href="/chat-social.html"><b>✉</b> Mensagens</a><a class="navlink" href="/perfil-social.html"><b>♙</b> Meu perfil</a><a class="navlink" href="/minha-conta.html"><b>◉</b> Minha conta</a><a class="navlink" href="/centro-educacional.html"><b>▤</b> Estudar</a><a class="navlink" href="/para-empresas.html"><b>＋</b> Vender</a></aside>
-    <section>
-      <div class="feed-head"><h1>Sua cidade em movimento</h1><span class="wallet-pill" id="wallet-balance">Entrar para ver saldo</span></div>
-      <section class="visitor-intro" id="visitor-intro" aria-labelledby="visitor-title" hidden><span class="eyebrow">Feed público e gratuito</span><h2 id="visitor-title">Descubra pessoas, ofertas e oportunidades perto de você</h2><p>Você já pode assistir ao feed sem entrar. Crie sua conta gratuita quando quiser participar e personalizar sua experiência.</p><div class="visitor-benefits"><span>✓ Siga pessoas e negócios da sua cidade</span><span>✓ Publique fotos, vídeos e Stories</span><span>✓ Comente, salve e converse pelo chat</span></div><div class="visitor-actions"><a class="btn" href="/entrar.html?returnTo=%2Fsocial#register">Criar conta gratuita</a><a class="btn alt" href="/entrar.html?returnTo=%2Fsocial">Já tenho conta</a><span class="visitor-note">Continue rolando para conhecer a comunidade.</span></div></section>
-      <div class="stories" id="stories"><button class="story-add" id="story-add"><span class="story-ring"><span>＋</span></span><small>Seu Story</small></button></div><div class="quick-publish"><button class="btn" id="publish-photo">＋ Foto</button><button class="btn alt" id="publish-story">◉ Story</button></div><div class="tabs"><button class="tab active" data-tab="feed">Para você</button><button class="tab" data-tab="following">Seguindo</button><button class="tab" data-tab="friends">Amigos</button><button class="tab" data-tab="latest">Recentes</button><button class="tab" data-tab="mine">Meus vídeos</button><button class="tab" data-tab="saved">Favoritos</button></div>
-      <div class="filters" id="filters"><button class="chip active" data-category="">Todos</button><button class="chip" data-category="produtos">Produtos</button><button class="chip" data-category="servicos">Serviços</button><button class="chip" data-category="estudos">Estudos</button><button class="chip" data-category="trabalho">Trabalho</button><button class="chip" data-category="ofertas">Ofertas</button></div>
-      <div id="feed"><div class="skeleton"></div></div><div id="my-videos" class="my-videos" hidden></div>
-      <button class="btn alt" id="more" hidden style="width:100%">Carregar mais</button>
-    </section>
-    <aside class="side right"><div class="side-card"><h2>Publique o que movimenta sua cidade</h2><p>Mostre produtos, serviços, aulas, vagas e oportunidades em vídeos de até 60 segundos.</p><button class="btn" id="publish-side" style="width:100%">Publicar vídeo</button></div></aside>
-  </main>
-  <nav class="mobile-nav"><a href="/social"><b>⌂</b>Início</a><a href="/loja"><b>▣</b>Loja</a><button id="publish-mobile"><b>⊕</b>Publicar</button><a href="/chat-social.html"><b>✉</b>Chat</a><a href="/perfil-social.html"><b>♙</b>Perfil</a></nav>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta
+      name="description"
+      content="Vitriny Social: vídeos, produtos, serviços, estudos e oportunidades perto de você."
+    />
+    <link rel="canonical" href="https://vitrinecity.com/social" />
+    <meta
+      property="og:title"
+      content="Vitriny Social — sua cidade em movimento"
+    />
+    <meta
+      property="og:description"
+      content="Descubra, publique e conecte-se com pessoas e negócios da sua cidade."
+    />
+    <meta
+      property="og:image"
+      content="https://vitrinecity.com/assets/vitriny-city-master.jpg"
+    />
+    <meta
+      property="og:image:alt"
+      content="Vitriny City — cidade digital de pessoas e negócios"
+    />
+    <title>Vitriny Social — sua cidade em movimento</title>
+    <style>
+      :root {
+        --blue: #1768e6;
+        --navy: #071f4b;
+        --yellow: #ffc628;
+        --ink: #f7faff;
+        --muted: #aebbd0;
+        --panel: #101a2d;
+        --line: #26334a;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font-family: Inter, Arial, sans-serif;
+        background: #050a13;
+        color: var(--ink);
+      }
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      .top {
+        height: 68px;
+        position: fixed;
+        inset: 0 0 auto;
+        z-index: 30;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 max(16px, 4vw);
+        background: #07101dee;
+        border-bottom: 1px solid #ffffff18;
+        backdrop-filter: blur(16px);
+      }
+      .brand {
+        font-size: 24px;
+        font-weight: 950;
+        text-decoration: none;
+        color: #fff;
+        letter-spacing: -1px;
+      }
+      .brand span {
+        color: var(--yellow);
+      }
+      .top-actions {
+        display: flex;
+        gap: 9px;
+      }
+      .btn {
+        border: 0;
+        border-radius: 12px;
+        padding: 11px 15px;
+        font-weight: 900;
+        background: var(--blue);
+        color: #fff;
+      }
+      .btn.alt {
+        background: #162238;
+        border: 1px solid #ffffff24;
+      }
+      .layout {
+        min-height: 100%;
+        padding: 84px 20px 92px;
+        display: grid;
+        grid-template-columns: 220px minmax(300px, 440px) 260px;
+        justify-content: center;
+        gap: 24px;
+      }
+      .side {
+        position: sticky;
+        top: 88px;
+        height: max-content;
+      }
+      .navlink {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        color: #dce8ff;
+        text-decoration: none;
+        padding: 13px;
+        border-radius: 13px;
+        font-weight: 800;
+        margin-bottom: 5px;
+      }
+      .navlink.active,
+      .navlink:hover {
+        background: #132039;
+      }
+      .navlink b {
+        font-size: 21px;
+      }
+      .side-card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 17px;
+      }
+      .side-card h2 {
+        font-size: 17px;
+        margin: 0 0 8px;
+      }
+      .side-card p {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+        margin: 0 0 13px;
+      }
+      .feed-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+      .feed-head h1 {
+        font-size: 23px;
+        margin: 0;
+      }
+      .filters {
+        display: flex;
+        gap: 7px;
+        overflow: auto;
+        padding: 2px 0 12px;
+        scrollbar-width: none;
+      }
+      .chip {
+        border: 1px solid var(--line);
+        background: #101a2d;
+        color: #c7d3e7;
+        border-radius: 99px;
+        padding: 8px 11px;
+        white-space: nowrap;
+        font-size: 12px;
+        font-weight: 850;
+      }
+      .chip.active {
+        background: #fff;
+        color: #081329;
+      }
+      .post {
+        height: min(74vh, 720px);
+        min-height: 540px;
+        border: 1px solid #ffffff22;
+        border-radius: 24px;
+        overflow: hidden;
+        position: relative;
+        background: #111827;
+        margin-bottom: 18px;
+        box-shadow: 0 24px 60px #0008;
+      }
+      .video {
+        position: absolute;
+        inset: 0;
+      }
+      .video iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+      .shade {
+        position: absolute;
+        inset: auto 0 0;
+        height: 48%;
+        background: linear-gradient(transparent, #02050bdd);
+        pointer-events: none;
+      }
+      .post-copy {
+        position: absolute;
+        z-index: 4;
+        left: 18px;
+        right: 75px;
+        bottom: 20px;
+      }
+      .author {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        margin-bottom: 10px;
+      }
+      .avatar {
+        width: 39px;
+        height: 39px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(145deg, var(--blue), #7b4cff);
+        font-weight: 950;
+        border: 2px solid #fff;
+      }
+      .author strong {
+        display: block;
+      }
+      .author small {
+        color: #d0daea;
+      }
+      .follow {
+        border: 1px solid #ffffff80;
+        background: #ffffff15;
+        color: #fff;
+        border-radius: 8px;
+        padding: 6px 9px;
+        font-weight: 850;
+      }
+      .caption {
+        line-height: 1.45;
+        margin: 0 0 8px;
+        text-shadow: 0 2px 5px #000;
+      }
+      .meta {
+        color: #d6e2f5;
+        font-size: 12px;
+      }
+      .cta {
+        display: inline-block;
+        margin-top: 10px;
+        padding: 10px 13px;
+        background: var(--yellow);
+        color: #102449;
+        text-decoration: none;
+        border-radius: 10px;
+        font-weight: 950;
+      }
+      .rail {
+        position: absolute;
+        right: 13px;
+        bottom: 20px;
+        z-index: 5;
+        display: grid;
+        gap: 13px;
+      }
+      .action {
+        width: 50px;
+        border: 0;
+        background: none;
+        color: #fff;
+        text-align: center;
+        font-weight: 850;
+        text-shadow: 0 2px 5px #000;
+      }
+      .action i {
+        display: grid;
+        place-items: center;
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: #10182dcc;
+        font-size: 21px;
+        font-style: normal;
+        margin-bottom: 3px;
+        border: 1px solid #ffffff22;
+      }
+      .action.liked i {
+        background: #d9345b;
+      }
+      .expand-control {
+        position: absolute;
+        z-index: 7;
+        right: 14px;
+        top: 14px;
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        border: 1px solid #ffffff55;
+        background: #07101dcc;
+        color: #fff;
+        font-size: 22px;
+        font-weight: 900;
+        display: grid;
+        place-items: center;
+        box-shadow: 0 7px 22px #0008;
+      }
+      .expand-control:hover,
+      .expand-control:focus-visible {
+        background: var(--blue);
+        outline: 3px solid #ffffff88;
+      }
+      .post:fullscreen {
+        width: 100vw;
+        height: 100vh;
+        max-height: none;
+        min-height: 100vh;
+        border: 0;
+        border-radius: 0;
+        margin: 0;
+      }
+      .post.expanded {
+        position: fixed;
+        z-index: 90;
+        inset: 8px;
+        width: auto;
+        height: auto;
+        max-height: none;
+        min-height: 0;
+        margin: 0;
+        border-radius: 18px;
+        box-shadow: 0 0 0 9999px #02050bf2;
+      }
+      body.video-expanded {
+        overflow: hidden;
+      }
+      .empty {
+        background: var(--panel);
+        border: 1px dashed #40516f;
+        border-radius: 22px;
+        padding: 50px 25px;
+        text-align: center;
+      }
+      .empty h2 {
+        margin: 0 0 9px;
+      }
+      .empty p {
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .modal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        background: #02050bd9;
+        display: none;
+        place-items: center;
+        padding: 20px;
+      }
+      .modal.open {
+        display: grid;
+      }
+      .dialog {
+        width: min(560px, 100%);
+        max-height: 92vh;
+        overflow: auto;
+        background: #101a2d;
+        border: 1px solid #ffffff25;
+        border-radius: 22px;
+        padding: 23px;
+      }
+      .dialog-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .dialog h2 {
+        margin: 0;
+      }
+      .close {
+        background: none;
+        border: 0;
+        color: #fff;
+        font-size: 27px;
+      }
+      .field {
+        display: block;
+        margin: 15px 0;
+      }
+      .field span {
+        display: block;
+        font-size: 13px;
+        font-weight: 850;
+        margin-bottom: 6px;
+      }
+      .field input,
+      .field select,
+      .field textarea {
+        width: 100%;
+        border: 1px solid #33425e;
+        background: #08111f;
+        color: #fff;
+        border-radius: 11px;
+        padding: 12px;
+      }
+      .field textarea {
+        min-height: 90px;
+        resize: vertical;
+      }
+      .hint,
+      .status {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .status {
+        min-height: 18px;
+        margin-top: 10px;
+      }
+      .comments {
+        position: fixed;
+        z-index: 55;
+        inset: 68px 0 0 auto;
+        width: min(420px, 100%);
+        background: #0c1525;
+        border-left: 1px solid var(--line);
+        padding: 20px;
+        transform: translateX(105%);
+        transition: 0.25s;
+        overflow: auto;
+      }
+      .comments.open {
+        transform: none;
+      }
+      .comment {
+        border-bottom: 1px solid var(--line);
+        padding: 12px 0;
+      }
+      .comment b {
+        font-size: 13px;
+      }
+      .comment p {
+        margin: 5px 0;
+        color: #d8e2f2;
+        line-height: 1.4;
+      }
+      .comment-form {
+        display: flex;
+        gap: 8px;
+        position: sticky;
+        bottom: 0;
+        background: #0c1525;
+        padding: 12px 0;
+      }
+      .comment-form input {
+        flex: 1;
+        border: 1px solid #33425e;
+        background: #08111f;
+        color: #fff;
+        border-radius: 11px;
+        padding: 11px;
+      }
+      .mobile-nav {
+        display: none;
+      }
+      .skeleton {
+        height: 65vh;
+        border-radius: 24px;
+        background: linear-gradient(90deg, #0f192a, #18253a, #0f192a);
+        background-size: 200%;
+        animation: load 1.2s infinite;
+      }
+      @keyframes load {
+        to {
+          background-position: -200%;
+        }
+      }
+      @media (max-width: 960px) {
+        .layout {
+          grid-template-columns: minmax(300px, 440px);
+        }
+        .side {
+          display: none;
+        }
+        .right {
+          display: none;
+        }
+        .mobile-nav {
+          display: flex;
+          position: fixed;
+          z-index: 30;
+          inset: auto 0 0;
+          height: 66px;
+          background: #07101df2;
+          border-top: 1px solid #ffffff18;
+          justify-content: space-around;
+          align-items: center;
+        }
+        .mobile-nav button,
+        .mobile-nav a {
+          border: 0;
+          background: none;
+          color: #fff;
+          text-decoration: none;
+          font-size: 11px;
+          font-weight: 850;
+          text-align: center;
+        }
+        .mobile-nav b {
+          display: block;
+          font-size: 20px;
+        }
+        .layout {
+          padding: 78px 8px 78px;
+        }
+        .post {
+          border-radius: 17px;
+          height: calc(100vh - 164px);
+          min-height: 500px;
+        }
+        .top-actions .alt {
+          display: none;
+        }
+      }
+      @media (max-width: 480px) {
+        .top {
+          height: 60px;
+        }
+        .layout {
+          padding-top: 68px;
+        }
+        .post {
+          height: calc(100vh - 142px);
+        }
+        .comments {
+          inset: 60px 0 0;
+        }
+        .brand {
+          font-size: 21px;
+        }
+      }
+      .tabs {
+        display: flex;
+        gap: 8px;
+        margin: 0 0 12px;
+      }
+      .tab {
+        flex: 1;
+        border: 1px solid var(--line);
+        background: #101a2d;
+        color: #c7d3e7;
+        border-radius: 12px;
+        padding: 10px;
+        font-weight: 900;
+      }
+      .tab.active {
+        background: var(--blue);
+        color: #fff;
+      }
+      .my-videos {
+        display: grid;
+        gap: 12px;
+      }
+      .my-video {
+        display: grid;
+        grid-template-columns: 96px 1fr;
+        gap: 13px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 17px;
+        padding: 12px;
+      }
+      .my-thumb {
+        position: relative;
+        aspect-ratio: 9/16;
+        border-radius: 10px;
+        background: #07101d;
+        overflow: hidden;
+      }
+      .my-thumb iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+      .my-expand {
+        position: absolute;
+        z-index: 2;
+        right: 6px;
+        top: 6px;
+        width: 36px;
+        height: 36px;
+        border: 1px solid #ffffff66;
+        border-radius: 50%;
+        background: #07101ddd;
+        color: #fff;
+        font-size: 19px;
+        font-weight: 900;
+        display: grid;
+        place-items: center;
+        box-shadow: 0 5px 16px #0009;
+      }
+      .my-expand:hover,
+      .my-expand:focus-visible {
+        background: var(--blue);
+        outline: 2px solid #fff;
+      }
+      .media-viewer {
+        position: fixed;
+        z-index: 120;
+        inset: 0;
+        display: none;
+        place-items: center;
+        background: #02050bf2;
+        padding: max(12px, env(safe-area-inset-top))
+          max(12px, env(safe-area-inset-right))
+          max(12px, env(safe-area-inset-bottom))
+          max(12px, env(safe-area-inset-left));
+      }
+      .media-viewer.open {
+        display: grid;
+      }
+      .media-viewer-stage {
+        position: relative;
+        width: min(100%, 1100px);
+        height: min(92dvh, 820px);
+        background: #000;
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 30px 90px #000;
+      }
+      .media-viewer iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+      .media-viewer-close {
+        position: absolute;
+        z-index: 3;
+        right: 12px;
+        top: 12px;
+        width: 44px;
+        height: 44px;
+        border: 1px solid #ffffff77;
+        border-radius: 50%;
+        background: #07101de8;
+        color: #fff;
+        font-size: 27px;
+        line-height: 1;
+      }
+      .my-video h3 {
+        margin: 2px 0 7px;
+        font-size: 15px;
+      }
+      .stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .badge {
+        display: inline-flex;
+        border-radius: 99px;
+        padding: 5px 8px;
+        font-size: 11px;
+        font-weight: 900;
+        background: #283550;
+        color: #dbe8ff;
+      }
+      .badge.ready {
+        background: #123f2a;
+        color: #9ff0bc;
+      }
+      .badge.rejected,
+      .badge.error {
+        background: #531e2b;
+        color: #ffb3c1;
+      }
+      .badge.pending_review,
+      .badge.processing,
+      .badge.uploading {
+        background: #554315;
+        color: #ffe28a;
+      }
+      .price-note {
+        border: 1px solid #604f1b;
+        background: #2a2410;
+        color: #ffe69b;
+        border-radius: 12px;
+        padding: 11px;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .wallet-pill {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid #ffffff24;
+        border-radius: 99px;
+        padding: 8px 11px;
+        color: #ffe37a;
+        font-weight: 900;
+        font-size: 12px;
+      }
+      .report i {
+        font-size: 18px !important;
+      }
+      @media (max-width: 600px) {
+        .media-viewer {
+          padding: 0;
+        }
+        .media-viewer-stage {
+          width: 100%;
+          height: 100dvh;
+          border-radius: 0;
+        }
+        .media-viewer-close {
+          top: max(10px, env(safe-area-inset-top));
+          right: max(10px, env(safe-area-inset-right));
+        }
+      }
+      .stories {
+        display: flex;
+        gap: 12px;
+        overflow-x: auto;
+        padding: 5px 2px 14px;
+      }
+      .story-add,
+      .story-bubble {
+        flex: 0 0 72px;
+        border: 0;
+        background: none;
+        color: #fff;
+        text-align: center;
+        cursor: pointer;
+      }
+      .story-ring {
+        width: 62px;
+        height: 62px;
+        border-radius: 50%;
+        padding: 3px;
+        background: linear-gradient(135deg, #ff2d8d, #ffb02e, #2f7cff);
+        display: grid;
+        place-items: center;
+        margin: auto;
+      }
+      .story-ring img,
+      .story-ring span {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        object-fit: cover;
+        background: #14213a;
+        display: grid;
+        place-items: center;
+        font-size: 23px;
+      }
+      .story-bubble small,
+      .story-add small {
+        display: block;
+        margin-top: 5px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .photo-media {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        background: #05080e;
+      }
+      .video-gesture {
+        position: absolute;
+        z-index: 3;
+        inset: 68px 72px 118px 0;
+        border: 0;
+        background: transparent;
+        touch-action: manipulation;
+      }
+      .post.expanded .video-gesture {
+        inset: 72px 82px 125px 0;
+      }
+      .quick-publish {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .notification-button {
+        position: relative;
+      }
+      .notification-count {
+        position: absolute;
+        right: -5px;
+        top: -7px;
+        background: #ff315d;
+        border-radius: 99px;
+        min-width: 18px;
+        padding: 2px 5px;
+        font-size: 10px;
+      }
+      .drawer {
+        position: fixed;
+        z-index: 70;
+        right: 12px;
+        top: 70px;
+        width: min(390px, calc(100% - 24px));
+        max-height: 70vh;
+        overflow: auto;
+        background: #101a2d;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 16px;
+        box-shadow: 0 18px 60px #0009;
+        display: none;
+      }
+      .drawer.open {
+        display: block;
+      }
+      .notice {
+        padding: 11px;
+        border-bottom: 1px solid var(--line);
+        font-size: 13px;
+      }
+      .story-viewer {
+        position: fixed;
+        z-index: 90;
+        inset: 0;
+        background: #02050bed;
+        display: none;
+        place-items: center;
+      }
+      .story-viewer.open {
+        display: grid;
+      }
+      .story-stage {
+        position: relative;
+        width: min(430px, 100%);
+        height: min(780px, 100vh);
+        background: #000;
+      }
+      .story-stage img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+      .story-close {
+        position: absolute;
+        right: 12px;
+        top: 12px;
+        z-index: 2;
+      }
+      .story-copy {
+        position: absolute;
+        inset: auto 18px 25px;
+        color: #fff;
+        text-shadow: 0 2px 8px #000;
+      }
+      .seo-box {
+        border: 1px solid #2c5aa7;
+        background: #101d35;
+        border-radius: 12px;
+        padding: 11px;
+        margin: 8px 0;
+        font-size: 12px;
+      }
+      .seo-box button {
+        margin-top: 8px;
+      }
+      .stories {
+        display: flex;
+        gap: 12px;
+        overflow-x: auto;
+        padding: 5px 2px 14px;
+      }
+      .story-add,
+      .story-bubble {
+        flex: 0 0 72px;
+        border: 0;
+        background: none;
+        color: #fff;
+        text-align: center;
+        cursor: pointer;
+      }
+      .story-ring {
+        width: 62px;
+        height: 62px;
+        border-radius: 50%;
+        padding: 3px;
+        background: linear-gradient(135deg, #ff2d8d, #ffb02e, #2f7cff);
+        display: grid;
+        place-items: center;
+        margin: auto;
+      }
+      .story-ring img,
+      .story-ring span {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        object-fit: cover;
+        background: #14213a;
+        display: grid;
+        place-items: center;
+        font-size: 23px;
+      }
+      .story-bubble small,
+      .story-add small {
+        display: block;
+        margin-top: 5px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .photo-media {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        background: #05080e;
+      }
+      .video-gesture {
+        position: absolute;
+        z-index: 3;
+        inset: 68px 72px 118px 0;
+        border: 0;
+        background: transparent;
+        touch-action: manipulation;
+      }
+      .post.expanded .video-gesture {
+        inset: 72px 82px 125px 0;
+      }
+      .quick-publish {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .notification-button {
+        position: relative;
+      }
+      .notification-count {
+        position: absolute;
+        right: -5px;
+        top: -7px;
+        background: #ff315d;
+        border-radius: 99px;
+        min-width: 18px;
+        padding: 2px 5px;
+        font-size: 10px;
+      }
+      .drawer {
+        position: fixed;
+        z-index: 70;
+        right: 12px;
+        top: 70px;
+        width: min(390px, calc(100% - 24px));
+        max-height: 70vh;
+        overflow: auto;
+        background: #101a2d;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 16px;
+        box-shadow: 0 18px 60px #0009;
+        display: none;
+      }
+      .drawer.open {
+        display: block;
+      }
+      .notice {
+        padding: 11px;
+        border-bottom: 1px solid var(--line);
+        font-size: 13px;
+      }
+      .story-viewer {
+        position: fixed;
+        z-index: 90;
+        inset: 0;
+        background: #02050bed;
+        display: none;
+        place-items: center;
+      }
+      .story-viewer.open {
+        display: grid;
+      }
+      .story-stage {
+        position: relative;
+        width: min(430px, 100%);
+        height: min(780px, 100vh);
+        background: #000;
+      }
+      .story-stage img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+      .story-close {
+        position: absolute;
+        right: 12px;
+        top: 12px;
+        z-index: 2;
+      }
+      .story-copy {
+        position: absolute;
+        inset: auto 18px 25px;
+        color: #fff;
+        text-shadow: 0 2px 8px #000;
+      }
+      .seo-box {
+        border: 1px solid #2c5aa7;
+        background: #101d35;
+        border-radius: 12px;
+        padding: 11px;
+        margin: 8px 0;
+        font-size: 12px;
+      }
+      .seo-box button {
+        margin-top: 8px;
+      }
+      /* Feed vertical no estilo Reels/TikTok: um vídeo por tela. */
+      .profile-author {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        color: #fff;
+        text-decoration: none;
+      }
+      .profile-author:hover strong {
+        text-decoration: underline;
+      }
+      #feed,
+      .my-videos {
+        height: min(74vh, 720px);
+        overflow-y: auto;
+        overflow-x: hidden;
+        scroll-snap-type: y mandatory;
+        overscroll-behavior-y: contain;
+        scrollbar-width: none;
+        border-radius: 24px;
+        background: #05080e;
+      }
+      #feed::-webkit-scrollbar,
+      .my-videos::-webkit-scrollbar {
+        display: none;
+      }
+      #feed > .post,
+      .my-videos > .my-video {
+        height: 100%;
+        min-height: 100%;
+        margin: 0;
+        scroll-snap-align: start;
+        scroll-snap-stop: always;
+      }
+      .my-video {
+        position: relative;
+        display: block;
+        padding: 0;
+        overflow: hidden;
+        border-radius: 24px;
+        background: #000;
+      }
+      .my-thumb {
+        position: absolute;
+        inset: 0;
+        aspect-ratio: auto;
+        border-radius: 0;
+      }
+      .my-video > div:last-child {
+        position: absolute;
+        z-index: 3;
+        inset: auto 0 0;
+        padding: 90px 72px 22px 18px;
+        background: linear-gradient(transparent, #02050be8);
+        pointer-events: none;
+      }
+      .my-video > div:last-child .badge,
+      .my-video > div:last-child h3,
+      .my-video > div:last-child .stats,
+      .my-video > div:last-child .hint {
+        pointer-events: auto;
+      }
+      .my-expand {
+        right: 14px;
+        top: 14px;
+        width: 46px;
+        height: 46px;
+      }
+      @media (max-width: 960px) {
+        .layout {
+          display: block;
+          padding: 60px 0 66px;
+          height: 100dvh;
+          min-height: 0;
+        }
+        .layout > section {
+          height: calc(100dvh - 126px);
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+        .feed-head,
+        .stories,
+        .quick-publish {
+          display: none;
+        }
+        .tabs {
+          flex: 0 0 auto;
+          margin: 6px 8px;
+        }
+        .tab {
+          padding: 8px 5px;
+          font-size: 11px;
+        }
+        .filters {
+          flex: 0 0 auto;
+          padding: 2px 8px 7px;
+        }
+        .chip {
+          padding: 7px 10px;
+        }
+        #feed,
+        .my-videos {
+          flex: 1;
+          height: auto;
+          min-height: 0;
+          border-radius: 0;
+        }
+        #feed > .post,
+        .my-videos > .my-video {
+          border-radius: 0;
+          border-left: 0;
+          border-right: 0;
+          min-height: 100%;
+          height: 100%;
+        }
+        .post {
+          box-shadow: none;
+        }
+        .post-copy {
+          left: 14px;
+          bottom: 18px;
+        }
+        .rail {
+          right: 8px;
+          bottom: 17px;
+        }
+        .my-video > div:last-child {
+          padding-bottom: 20px;
+        }
+        .my-videos {
+          display: block;
+        }
+        .my-videos[hidden] {
+          display: none;
+        }
+        .skeleton,
+        .empty {
+          height: 100%;
+          min-height: 100%;
+          border-radius: 0;
+          display: grid;
+          place-content: center;
+        }
+        #more {
+          display: none !important;
+        }
+      }
+      .tabs {
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .tabs::-webkit-scrollbar {
+        display: none;
+      }
+      .tab {
+        min-width: max-content;
+        padding-inline: 13px;
+      }
 
-  <div class="media-viewer" id="media-viewer" role="dialog" aria-modal="true" aria-label="Vídeo ampliado" aria-hidden="true"><div class="media-viewer-stage"><button class="media-viewer-close" id="media-viewer-close" type="button" aria-label="Fechar vídeo ampliado">×</button><iframe id="media-viewer-frame" title="Vídeo ampliado" allow="accelerometer; autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div></div>
+      .product-recommendation {
+        background: #0b172a;
+      }
+      .product-recommendation .product-media {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .product-recommendation .product-badge {
+        display: inline-flex;
+        background: var(--yellow);
+        color: #102449;
+        border-radius: 99px;
+        padding: 6px 10px;
+        font-size: 11px;
+        font-weight: 950;
+        margin-bottom: 10px;
+      }
+      .product-recommendation .product-price {
+        font-size: 30px;
+        font-weight: 950;
+        margin: 8px 0 2px;
+      }
+      .product-recommendation .product-stock {
+        color: #dce8f8;
+        font-size: 12px;
+      }
+      .product-recommendation .product-cta {
+        display: inline-block;
+        margin-top: 13px;
+        padding: 12px 16px;
+        border-radius: 11px;
+        background: var(--yellow);
+        color: #102449;
+        text-decoration: none;
+        font-weight: 950;
+      }
+      .product-recommendation .post-copy {
+        right: 18px;
+      }
+      .product-recommendation .shade {
+        height: 65%;
+      }
+      .post-menu {
+        position: absolute;
+        z-index: 12;
+        right: 68px;
+        top: 14px;
+      }
+      .post-menu summary {
+        list-style: none;
+        width: 46px;
+        height: 46px;
+        border: 1px solid #ffffff55;
+        border-radius: 50%;
+        background: #07101dcc;
+        color: #fff;
+        font-size: 25px;
+        font-weight: 900;
+        display: grid;
+        place-items: center;
+        cursor: pointer;
+        box-shadow: 0 7px 22px #0008;
+      }
+      .post-menu summary::-webkit-details-marker {
+        display: none;
+      }
+      .post-menu[open] summary {
+        background: var(--blue);
+      }
+      .post-menu-list {
+        position: absolute;
+        right: 0;
+        top: 52px;
+        width: 210px;
+        padding: 7px;
+        border: 1px solid #ffffff2b;
+        border-radius: 14px;
+        background: #0c1628f5;
+        box-shadow: 0 18px 45px #000b;
+        backdrop-filter: blur(14px);
+      }
+      .post-menu-list button {
+        display: block;
+        width: 100%;
+        padding: 11px;
+        border: 0;
+        border-radius: 9px;
+        background: none;
+        color: #eaf2ff;
+        text-align: left;
+        font-weight: 800;
+      }
+      .post-menu-list button:hover,
+      .post-menu-list button:focus-visible {
+        background: #ffffff13;
+        outline: none;
+      }
+      .post-menu-list .danger {
+        color: #ff9cac;
+      }
+      .visitor-intro {
+        margin: 0 0 14px;
+        padding: 18px;
+        border: 1px solid #2c4f83;
+        border-radius: 20px;
+        background: linear-gradient(135deg, #10274a, #101a2d 64%);
+        box-shadow: 0 18px 45px #0004;
+      }
+      .visitor-intro[hidden] {
+        display: none;
+      }
+      .visitor-intro .eyebrow {
+        display: block;
+        color: var(--yellow);
+        font-size: 11px;
+        font-weight: 950;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .visitor-intro h2 {
+        font-size: 23px;
+        line-height: 1.08;
+        margin: 7px 0;
+      }
+      .visitor-intro > p {
+        color: #c7d5e9;
+        font-size: 13px;
+        line-height: 1.5;
+        margin: 0;
+      }
+      .visitor-benefits {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 7px;
+        margin: 14px 0;
+      }
+      .visitor-benefits span {
+        padding: 9px;
+        border-radius: 10px;
+        background: #ffffff0d;
+        color: #dce8f8;
+        font-size: 11px;
+        line-height: 1.35;
+      }
+      .visitor-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .visitor-actions a {
+        text-decoration: none;
+      }
+      .visitor-note {
+        color: #9fb0c9;
+        font-size: 11px;
+      }
+      .visitor-login {
+        display: inline-flex;
+        text-decoration: none;
+        align-items: center;
+      }
+      @media (max-width: 960px) {
+        .visitor-intro {
+          flex: 0 0 auto;
+          margin: 6px 8px 7px;
+          padding: 11px 12px;
+          border-radius: 14px;
+        }
+        .visitor-intro h2 {
+          font-size: 17px;
+          margin: 4px 0;
+        }
+        .visitor-intro > p {
+          font-size: 11px;
+        }
+        .visitor-benefits {
+          display: none;
+        }
+        .visitor-actions {
+          margin-top: 8px;
+        }
+        .visitor-actions .btn {
+          padding: 8px 10px;
+          font-size: 11px;
+        }
+        .visitor-note {
+          display: none;
+        }
+        .top-actions .visitor-login {
+          display: inline-flex;
+        }
+        .top-actions #publish-top {
+          display: none;
+        }
+      }
+      /* Legenda do feed: a publicação nunca pode encobrir o vídeo no celular. */
+      .caption {
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 4;
+        overflow: hidden;
+        max-height: 5.8em;
+      }
+      .caption-toggle {
+        display: none;
+        border: 0;
+        background: none;
+        color: #fff;
+        padding: 0 0 4px;
+        font-size: 12px;
+        font-weight: 900;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      @media (max-width: 600px) {
+        .post-copy {
+          left: 12px;
+          right: 74px;
+          bottom: 12px;
+          max-height: 18dvh;
+          overflow: hidden;
+        }
+        .author {
+          gap: 7px;
+          margin-bottom: 5px;
+        }
+        .avatar {
+          width: 32px;
+          height: 32px;
+        }
+        .author small {
+          display: none;
+        }
+        .follow {
+          padding: 4px 7px;
+          font-size: 11px;
+        }
+        .caption {
+          -webkit-line-clamp: 2;
+          max-height: 2.7em;
+          margin-bottom: 4px;
+          font-size: 13px;
+          line-height: 1.35;
+        }
+        .caption-toggle.visible {
+          display: inline-block;
+        }
+        .post-copy.caption-open {
+          position: fixed;
+          z-index: 95;
+          left: 10px;
+          right: 10px;
+          bottom: 76px;
+          max-height: 32dvh;
+          overflow: auto;
+          padding: 12px;
+          border: 1px solid #ffffff33;
+          border-radius: 12px;
+          background: #07101df2;
+          box-shadow: 0 12px 35px #000c;
+        }
+        .post-copy.caption-open .caption {
+          display: block;
+          max-height: none;
+          overflow: visible;
+        }
+        .post-copy.caption-open + .rail {
+          opacity: 0.35;
+        }
+        .meta {
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          font-size: 10px;
+        }
+        .cta {
+          margin-top: 6px;
+          padding: 7px 10px;
+          font-size: 11px;
+        }
+        .shade {
+          height: 34%;
+        }
+      }
+      .social-market-ticker {
+        position: fixed;
+        z-index: 29;
+        left: 0;
+        right: 0;
+        top: 68px;
+        height: 44px;
+        display: none;
+        align-items: center;
+        overflow: hidden;
+        background: linear-gradient(90deg, #061c44, #0d397b);
+        border-bottom: 3px solid var(--yellow);
+      }
+      .social-market-ticker.ready {
+        display: flex;
+      }
+      .social-ticker-label {
+        align-self: stretch;
+        display: flex;
+        align-items: center;
+        flex: none;
+        padding: 0 14px;
+        background: var(--yellow);
+        color: #071f4b;
+        font-size: 10px;
+        font-weight: 950;
+        text-transform: uppercase;
+      }
+      .social-ticker-window {
+        flex: 1;
+        overflow: hidden;
+      }
+      .social-ticker-track {
+        display: flex;
+        width: max-content;
+        animation: socialTicker var(--social-ticker-duration, 80s) linear
+          infinite;
+      }
+      .social-ticker-item {
+        height: 41px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 18px;
+        border-right: 1px solid #ffffff28;
+        color: #fff;
+        text-decoration: none;
+        white-space: nowrap;
+        font-size: 12px;
+        font-weight: 850;
+      }
+      .social-ticker-item b {
+        color: #ffd95c;
+        text-transform: uppercase;
+        font-size: 10px;
+      }
+      @keyframes socialTicker {
+        to {
+          transform: translateX(-50%);
+        }
+      }
+      @media (max-width: 960px) {
+        .layout {
+          padding-top: 104px;
+        }
+        .layout > section {
+          height: calc(100dvh - 170px);
+        }
+      }
+      @media (max-width: 480px) {
+        .social-market-ticker {
+          top: 60px;
+        }
+        .layout {
+          padding-top: 96px;
+        }
+        .layout > section {
+          height: calc(100dvh - 162px);
+        }
+      }
+    </style>
+    <script src="/analytics.js" defer></script>
+  <script src="/openai-ads.js" defer></script></head>
+  <body>
+    <header class="top">
+      <a class="brand" href="/">Vitriny <span>Social</span></a>
+      <div class="top-actions">
+        <button class="btn alt notification-button" id="notifications-button">
+          🔔<span class="notification-count" id="notification-count" hidden
+            >0</span
+          ></button
+        ><a class="btn alt" href="/loja">Loja</a
+        ><a class="btn alt" href="/">Cidade digital</a
+        ><a
+          class="btn visitor-login"
+          id="visitor-login"
+          href="/entrar.html?returnTo=%2Fsocial"
+          hidden
+          >Entrar</a
+        ><button class="btn" id="publish-top">＋ Publicar</button>
+      </div>
+    </header>
+    <aside
+      class="social-market-ticker"
+      id="socialMarketTicker"
+      aria-label="Lojas, cursos e produtos em destaque"
+    >
+      <strong class="social-ticker-label">Agora na cidade</strong>
+      <div class="social-ticker-window">
+        <div class="social-ticker-track" id="socialTickerTrack"></div>
+      </div>
+    </aside>
+    <main class="layout">
+      <aside class="side">
+        <a class="navlink active" href="/social"><b>⌂</b> Para você</a
+        ><a class="navlink" href="/descobrir"><b>⌕</b> Descobrir</a
+        ><a class="navlink" href="/loja"><b>▣</b> Loja</a
+        ><a class="navlink" href="/chat-social.html"><b>✉</b> Mensagens</a
+        ><a class="navlink" href="/perfil-social.html"><b>♙</b> Meu perfil</a
+        ><a class="navlink" href="/minha-conta.html"><b>◉</b> Minha conta</a
+        ><a class="navlink" href="/centro-educacional.html"><b>▤</b> Estudar</a
+        ><a class="navlink" href="/para-empresas.html"><b>＋</b> Vender</a>
+      </aside>
+      <section>
+        <div class="feed-head">
+          <h1>Sua cidade em movimento</h1>
+          <span class="wallet-pill" id="wallet-balance"
+            >Entrar para ver saldo</span
+          >
+        </div>
+        <section
+          class="visitor-intro"
+          id="visitor-intro"
+          aria-labelledby="visitor-title"
+          hidden
+        >
+          <span class="eyebrow">Feed público e gratuito</span>
+          <h2 id="visitor-title">
+            Descubra pessoas, ofertas e oportunidades perto de você
+          </h2>
+          <p>
+            Você já pode assistir ao feed sem entrar. Crie sua conta gratuita
+            quando quiser participar e personalizar sua experiência.
+          </p>
+          <div class="visitor-benefits">
+            <span>✓ Siga pessoas e negócios da sua cidade</span
+            ><span>✓ Publique fotos, vídeos e Stories</span
+            ><span>✓ Comente, salve e converse pelo chat</span>
+          </div>
+          <div class="visitor-actions">
+            <a class="btn" href="/entrar.html?returnTo=%2Fsocial#register"
+              >Criar conta gratuita</a
+            ><a class="btn alt" href="/entrar.html?returnTo=%2Fsocial"
+              >Já tenho conta</a
+            ><span class="visitor-note"
+              >Continue rolando para conhecer a comunidade.</span
+            >
+          </div>
+        </section>
+        <div class="stories" id="stories">
+          <button class="story-add" id="story-add">
+            <span class="story-ring"><span>＋</span></span
+            ><small>Seu Story</small>
+          </button>
+        </div>
+        <div class="quick-publish">
+          <button class="btn" id="publish-photo">＋ Foto</button
+          ><button class="btn alt" id="publish-story">◉ Story</button>
+        </div>
+        <div class="tabs">
+          <button class="tab active" data-tab="feed">Para você</button
+          ><button class="tab" data-tab="following">Seguindo</button
+          ><button class="tab" data-tab="friends">Amigos</button
+          ><button class="tab" data-tab="latest">Recentes</button
+          ><button class="tab" data-tab="mine">Meus vídeos</button
+          ><button class="tab" data-tab="saved">Favoritos</button>
+        </div>
+        <div class="filters" id="filters">
+          <button class="chip active" data-category="">Todos</button
+          ><button class="chip" data-category="produtos">Produtos</button
+          ><button class="chip" data-category="servicos">Serviços</button
+          ><button class="chip" data-category="estudos">Estudos</button
+          ><button class="chip" data-category="trabalho">Trabalho</button
+          ><button class="chip" data-category="ofertas">Ofertas</button>
+        </div>
+        <div id="feed"><div class="skeleton"></div></div>
+        <div id="my-videos" class="my-videos" hidden></div>
+        <button class="btn alt" id="more" hidden style="width: 100%">
+          Carregar mais
+        </button>
+      </section>
+      <aside class="side right">
+        <div class="side-card">
+          <h2>Publique o que movimenta sua cidade</h2>
+          <p>
+            Mostre produtos, serviços, aulas, vagas e oportunidades em vídeos de
+            até 60 segundos.
+          </p>
+          <button class="btn" id="publish-side" style="width: 100%">
+            Publicar vídeo
+          </button>
+        </div>
+      </aside>
+    </main>
+    <nav class="mobile-nav">
+      <a href="/social"><b>⌂</b>Início</a><a href="/loja"><b>▣</b>Loja</a
+      ><button id="publish-mobile"><b>⊕</b>Publicar</button
+      ><a href="/chat-social.html"><b>✉</b>Chat</a
+      ><a href="/perfil-social.html"><b>♙</b>Perfil</a>
+    </nav>
 
-  <div class="modal" id="publish-modal" role="dialog" aria-modal="true" aria-labelledby="publish-title"><form class="dialog" id="upload-form"><div class="dialog-head"><h2 id="publish-title">Novo vídeo</h2><button type="button" class="close" aria-label="Fechar">×</button></div><label class="field"><span>Vídeo vertical</span><input type="file" name="video" accept="video/mp4,video/webm,video/quicktime" required><small class="hint">Até 60 segundos e 200 MB. Use conteúdo próprio ou autorizado.</small></label><label class="field"><span>Legenda</span><textarea name="caption" maxlength="500" placeholder="Conte o que está acontecendo..."></textarea></label><label class="field"><span>Categoria</span><select name="category"><option value="geral">Geral</option><option value="produtos">Produtos</option><option value="servicos">Serviços</option><option value="estudos">Estudos</option><option value="trabalho">Trabalho</option><option value="ofertas">Ofertas</option></select></label><label class="field"><span>Cidade</span><input name="city" maxlength="80" placeholder="Ex.: Goiânia, GO"></label><div class="seo-box"><b>Sugestão inteligente de SEO</b><p id="video-seo-preview">Melhore a legenda e o ranqueamento antes de publicar.</p><button class="btn alt" id="suggest-video-seo" type="button">✨ Otimizar com IA</button><input type="hidden" name="seoTitle"><input type="hidden" name="seoDescription"><input type="hidden" name="seoKeywords"></div><div class="price-note"><b>Publicação gratuita:</b> vídeo sem link não custa nada.<br><b>Link comercial:</b> custa 5 moedas, debitadas após o envio. O valor é devolvido se o vídeo for rejeitado.</div><label class="field"><span>Botão de ação (opcional)</span><input name="ctaLabel" maxlength="40" placeholder="Ex.: Comprar, pedir orçamento"></label><label class="field"><span>Link do botão (opcional)</span><input name="ctaUrl" type="url" placeholder="https://..."></label><button class="btn" type="submit" style="width:100%">Enviar para análise</button><div class="status" id="upload-status"></div></form></div>
-  <div class="modal" id="media-modal" role="dialog" aria-modal="true"><form class="dialog" id="media-form"><div class="dialog-head"><h2 id="media-title">Nova foto</h2><button type="button" class="close" id="media-close">×</button></div><input type="hidden" name="kind" value="photo"><label class="field"><span>Foto</span><input type="file" name="photo" accept="image/jpeg,image/png,image/webp" required><small class="hint">JPG, PNG ou WebP, até 10 MB. Todo conteúdo passa por análise.</small></label><label class="field"><span>Legenda</span><textarea name="caption" maxlength="500"></textarea></label><label class="field"><span>Categoria</span><select name="category"><option value="geral">Geral</option><option value="produtos">Produtos</option><option value="servicos">Serviços</option><option value="estudos">Estudos</option><option value="trabalho">Trabalho</option><option value="ofertas">Ofertas</option></select></label><label class="field photo-only"><span>Cidade</span><input name="city" maxlength="80"></label><div class="story-only" hidden><div class="price-note">Story sem link é gratuito. Link para produto custa 5 moedas e é devolvido se o Story for rejeitado.</div><label class="field"><span>Texto do botão</span><input name="ctaLabel" maxlength="40" placeholder="Ver produto"></label><label class="field"><span>Link do produto</span><input name="ctaUrl" type="url" placeholder="https://..."></label></div><input type="hidden" name="seoTitle"><input type="hidden" name="seoDescription"><input type="hidden" name="seoKeywords"><div class="seo-box"><b>Sugestão inteligente de SEO</b><p id="seo-preview">A IA pode melhorar a legenda, o título e as palavras-chave.</p><button class="btn alt" id="suggest-seo" type="button">✨ Otimizar com IA</button></div><button class="btn" style="width:100%">Enviar para análise</button><div class="status" id="media-status"></div></form></div><aside class="drawer" id="notifications"><div class="dialog-head"><h2>Notificações</h2><button class="close" id="notifications-close">×</button></div><div id="notification-list"></div></aside><div class="story-viewer" id="story-viewer"><div class="story-stage"><button class="btn story-close" id="story-close">×</button><img id="story-image" alt="Story" hidden><div class="story-copy"><b id="story-author"></b><p id="story-caption"></p><a class="cta" id="story-link" target="_blank" rel="noopener sponsored"></a></div></div></div><aside class="comments" id="comments"><div class="dialog-head"><h2>Comentários</h2><button class="close" id="close-comments">×</button></div><div id="comment-list"></div><form class="comment-form" id="comment-form"><input name="body" maxlength="500" placeholder="Escreva um comentário..." required><button class="btn">Enviar</button></form></aside>
+    <div
+      class="media-viewer"
+      id="media-viewer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Vídeo ampliado"
+      aria-hidden="true"
+    >
+      <div class="media-viewer-stage">
+        <button
+          class="media-viewer-close"
+          id="media-viewer-close"
+          type="button"
+          aria-label="Fechar vídeo ampliado"
+        >
+          ×</button
+        ><iframe
+          id="media-viewer-frame"
+          title="Vídeo ampliado"
+          allow="accelerometer; autoplay; encrypted-media; picture-in-picture; fullscreen"
+          allowfullscreen
+        ></iframe>
+      </div>
+    </div>
 
-  <script>
-    const feed=document.getElementById('feed'),more=document.getElementById('more'),modal=document.getElementById('publish-modal'),statusBox=document.getElementById('upload-status');
-    let cursor=null,category='',activePost=null,authenticated=null,currentTab='feed';
-    const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    async function auth(){if(authenticated!==null)return authenticated;const r=await fetch('/api/auth/me');authenticated=r.ok;document.getElementById('visitor-intro').hidden=authenticated;document.getElementById('visitor-login').hidden=authenticated;document.getElementById('notifications-button').hidden=!authenticated;if(r.ok){const d=await r.json();document.getElementById('wallet-balance').textContent=((d.wallet?.balanceUnits||0)/100).toLocaleString('pt-BR',{maximumFractionDigits:2})+' moedas'}return authenticated}
-    async function requireAuth(){if(await auth())return true;location.href='/entrar.html?returnTo='+encodeURIComponent('/social');return false}
-    const SOCIAL_FALLBACK='/assets/social-seed/geral.svg',PRODUCT_FALLBACK='/assets/store-seed/utilidades.svg';
-    document.addEventListener('error',event=>{const image=event.target;if(!(image instanceof HTMLImageElement)||!image.dataset.fallback||image.dataset.fallbackApplied)return;image.dataset.fallbackApplied='1';image.src=image.dataset.fallback},true);
-    function card(p){const cta=p.ctaUrl&&p.ctaLabel?`<a class="cta" href="${escapeHtml(p.ctaUrl)}" target="_blank" rel="noopener sponsored">${escapeHtml(p.ctaLabel)}</a>`:'';return `<article class="post" data-id="${p.id}" data-author-id="${p.author.id}"><div class="video">${p.mediaType==='image'?`<img class="photo-media" loading="lazy" src="${escapeHtml(p.imageUrl||SOCIAL_FALLBACK)}" data-fallback="${SOCIAL_FALLBACK}" alt="Publicação de ${escapeHtml(p.author.name)}">`:`<iframe loading="lazy" src="${p.playerUrl}" allow="accelerometer; autoplay; encrypted-media; picture-in-picture" allowfullscreen title="Vídeo de ${escapeHtml(p.author.name)}"></iframe>`}</div>${p.mediaType==='video'?`<button class="video-gesture" type="button" aria-label="Toque duas vezes para expandir o vídeo"></button>`:''}<button class="expand-control" type="button" aria-label="Expandir vídeo" title="Expandir vídeo">⛶</button>${!p.mine?`<details class="post-menu"><summary aria-label="Abrir menu da publicação" title="Mais opções">⋯</summary><div class="post-menu-list"><button class="copy-link" type="button">Copiar link</button><button class="not-interested" type="button">Não tenho interesse</button><button class="mute-user" type="button">Silenciar este perfil</button><button class="block-user danger" type="button">Bloquear este perfil</button><button class="report danger" type="button">Denunciar publicação</button></div></details>`:''}<div class="shade"></div><div class="post-copy"><div class="author"><a class="profile-author" href="/perfil/${encodeURIComponent(p.author.handle)}"><span class="avatar">${escapeHtml(p.author.name.slice(0,1).toUpperCase())}</span><span><strong>${escapeHtml(p.author.name)}</strong><small>@${escapeHtml(p.author.handle)}</small></span></a>${!p.mine?`<button class="follow" data-user="${p.author.id}">${p.following?'Seguindo':'Seguir'}</button>`:''}</div><p class="caption">${escapeHtml(p.caption)}</p><button class="caption-toggle" type="button" aria-expanded="false">mais</button><div class="meta">${escapeHtml(p.city||'Vitriny City')} · #${escapeHtml(p.category)}</div>${cta}</div><div class="rail"><button class="action like ${p.liked?'liked':''}"><i>♥</i><span>${p.likes}</span></button><button class="action comment"><i>●</i><span>${p.comments}</span></button><button class="action repost ${p.reposted?'liked':''}" title="Republicar"><i>↻</i><span>${p.reposts}</span></button><button class="action save ${p.saved?'liked':''}" title="Salvar nos favoritos"><i>★</i><span>${p.saves}</span></button><button class="action share"><i>↗</i><span>${p.shares}</span></button>${!p.mine?`<button class="action not-interested" title="Não tenho interesse"><i>⊘</i><span>Não quero</span></button><button class="action report"><i>⚑</i><span>Denunciar</span></button>`:``}</div></article>`}
-    function productCard(p){const link='/produto/'+p.id+'/'+String(p.name||'produto').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'')+'?utm_source=vitriny_social&utm_medium=recommendation&utm_campaign=feed_commerce';return `<article class="post product-recommendation" data-product-id="${p.id}"><div class="video"><img class="product-media" loading="lazy" src="${escapeHtml(p.image_url||PRODUCT_FALLBACK)}" data-fallback="${PRODUCT_FALLBACK}" alt="${escapeHtml(p.name)}"></div><div class="shade"></div><div class="post-copy"><span class="product-badge">Produto recomendado</span><div class="author"><span class="avatar">A</span><span><strong>${escapeHtml(p.store_name)}</strong><small>Vitriny Loja</small></span></div><p class="caption">${escapeHtml(p.name)}</p><div class="meta">${escapeHtml(p.category||'Produtos')}</div><div class="product-price">${(p.price_cents/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</div><div class="product-stock">${p.stock_quantity} unidades disponíveis</div><a class="product-cta" data-asset-type="product" data-asset-id="${p.id}" href="${escapeHtml(link)}">Ver produto na loja</a></div></article>`}
-    function refreshCaptionToggles(){feed.querySelectorAll('.caption-toggle').forEach(button=>{const caption=button.previousElementSibling;if(caption&&caption.scrollHeight>caption.clientHeight+1)button.classList.add('visible')})}
+    <div
+      class="modal"
+      id="publish-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="publish-title"
+    >
+      <form class="dialog" id="upload-form">
+        <div class="dialog-head">
+          <h2 id="publish-title">Novo vídeo</h2>
+          <button type="button" class="close" aria-label="Fechar">×</button>
+        </div>
+        <label class="field"
+          ><span>Vídeo vertical</span
+          ><input
+            type="file"
+            name="video"
+            accept="video/mp4,video/webm,video/quicktime"
+            required
+          /><small class="hint"
+            >Até 60 segundos e 200 MB. Use conteúdo próprio ou
+            autorizado.</small
+          ></label
+        ><label class="field"
+          ><span>Legenda</span
+          ><textarea
+            name="caption"
+            maxlength="500"
+            placeholder="Conte o que está acontecendo..."
+          ></textarea></label
+        ><label class="field"
+          ><span>Categoria</span
+          ><select name="category">
+            <option value="geral">Geral</option>
+            <option value="produtos">Produtos</option>
+            <option value="servicos">Serviços</option>
+            <option value="estudos">Estudos</option>
+            <option value="trabalho">Trabalho</option>
+            <option value="ofertas">Ofertas</option>
+          </select></label
+        ><label class="field"
+          ><span>Cidade</span
+          ><input name="city" maxlength="80" placeholder="Ex.: Goiânia, GO"
+        /></label>
+        <div class="seo-box">
+          <b>Sugestão inteligente de SEO</b>
+          <p id="video-seo-preview">
+            Melhore a legenda e o ranqueamento antes de publicar.
+          </p>
+          <button class="btn alt" id="suggest-video-seo" type="button">
+            ✨ Otimizar com IA</button
+          ><input type="hidden" name="seoTitle" /><input
+            type="hidden"
+            name="seoDescription"
+          /><input type="hidden" name="seoKeywords" />
+        </div>
+        <div class="price-note">
+          <b>Publicação gratuita:</b> vídeo sem link não custa nada.<br /><b
+            >Link comercial:</b
+          >
+          custa 5 moedas, debitadas após o envio. O valor é devolvido se o vídeo
+          for rejeitado.
+        </div>
+        <label class="field"
+          ><span>Botão de ação (opcional)</span
+          ><input
+            name="ctaLabel"
+            maxlength="40"
+            placeholder="Ex.: Comprar, pedir orçamento" /></label
+        ><label class="field"
+          ><span>Link do botão (opcional)</span
+          ><input name="ctaUrl" type="url" placeholder="https://..." /></label
+        ><button class="btn" type="submit" style="width: 100%">
+          Enviar para análise
+        </button>
+        <div class="status" id="upload-status"></div>
+      </form>
+    </div>
+    <div class="modal" id="media-modal" role="dialog" aria-modal="true">
+      <form class="dialog" id="media-form">
+        <div class="dialog-head">
+          <h2 id="media-title">Nova foto</h2>
+          <button type="button" class="close" id="media-close">×</button>
+        </div>
+        <input type="hidden" name="kind" value="photo" /><label class="field"
+          ><span>Foto</span
+          ><input
+            type="file"
+            name="photo"
+            accept="image/jpeg,image/png,image/webp"
+            required
+          /><small class="hint"
+            >JPG, PNG ou WebP, até 10 MB. Todo conteúdo passa por
+            análise.</small
+          ></label
+        ><label class="field"
+          ><span>Legenda</span
+          ><textarea name="caption" maxlength="500"></textarea></label
+        ><label class="field"
+          ><span>Categoria</span
+          ><select name="category">
+            <option value="geral">Geral</option>
+            <option value="produtos">Produtos</option>
+            <option value="servicos">Serviços</option>
+            <option value="estudos">Estudos</option>
+            <option value="trabalho">Trabalho</option>
+            <option value="ofertas">Ofertas</option>
+          </select></label
+        ><label class="field photo-only"
+          ><span>Cidade</span><input name="city" maxlength="80"
+        /></label>
+        <div class="story-only" hidden>
+          <div class="price-note">
+            Story sem link é gratuito. Link para produto custa 5 moedas e é
+            devolvido se o Story for rejeitado.
+          </div>
+          <label class="field"
+            ><span>Texto do botão</span
+            ><input
+              name="ctaLabel"
+              maxlength="40"
+              placeholder="Ver produto" /></label
+          ><label class="field"
+            ><span>Link do produto</span
+            ><input name="ctaUrl" type="url" placeholder="https://..."
+          /></label>
+        </div>
+        <input type="hidden" name="seoTitle" /><input
+          type="hidden"
+          name="seoDescription"
+        /><input type="hidden" name="seoKeywords" />
+        <div class="seo-box">
+          <b>Sugestão inteligente de SEO</b>
+          <p id="seo-preview">
+            A IA pode melhorar a legenda, o título e as palavras-chave.
+          </p>
+          <button class="btn alt" id="suggest-seo" type="button">
+            ✨ Otimizar com IA
+          </button>
+        </div>
+        <button class="btn" style="width: 100%">Enviar para análise</button>
+        <div class="status" id="media-status"></div>
+      </form>
+    </div>
+    <aside class="drawer" id="notifications">
+      <div class="dialog-head">
+        <h2>Notificações</h2>
+        <button class="close" id="notifications-close">×</button>
+      </div>
+      <div id="notification-list"></div>
+    </aside>
+    <div class="story-viewer" id="story-viewer">
+      <div class="story-stage">
+        <button class="btn story-close" id="story-close">×</button
+        ><img id="story-image" alt="Story" hidden />
+        <div class="story-copy">
+          <b id="story-author"></b>
+          <p id="story-caption"></p>
+          <a
+            class="cta"
+            id="story-link"
+            target="_blank"
+            rel="noopener sponsored"
+          ></a>
+        </div>
+      </div>
+    </div>
+    <aside class="comments" id="comments">
+      <div class="dialog-head">
+        <h2>Comentários</h2>
+        <button class="close" id="close-comments">×</button>
+      </div>
+      <div id="comment-list"></div>
+      <form class="comment-form" id="comment-form">
+        <input
+          name="body"
+          maxlength="500"
+          placeholder="Escreva um comentário..."
+          required
+        /><button class="btn">Enviar</button>
+      </form>
+    </aside>
 
-    const intelligenceState=new Map(),intelligenceObserved=new WeakSet();
-    function intelligenceEvent(id,type,watchMs=0){return fetch('/api/social/posts/'+id+'/intelligence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type,watchMs}),keepalive:true}).catch(()=>{})}
-    function closeIntelligenceSession(post){const state=intelligenceState.get(post.dataset.id);if(!state?.started)return;const watched=Math.min(60000,Date.now()-state.started);state.total+=watched;state.started=0;const type=watched<1800?'skip':watched>=15000?'complete':'watch';intelligenceEvent(post.dataset.id,type,watched)}
-    const intelligenceObserver=new IntersectionObserver(entries=>entries.forEach(entry=>{const post=entry.target,id=post.dataset.id;let state=intelligenceState.get(id);if(!state){state={started:0,total:0,sessions:0};intelligenceState.set(id,state)}if(entry.isIntersecting&&entry.intersectionRatio>=.6){if(!state.started){state.started=Date.now();state.sessions++;if(state.sessions===1){fetch('/api/social/posts/'+id+'/view',{method:'POST'}).catch(()=>{});intelligenceEvent(id,'impression')}else intelligenceEvent(id,'replay')}}else closeIntelligenceSession(post)}),{threshold:[0,.6,1]});
-    function observeIntelligence(){feed.querySelectorAll('.post:not(.product-recommendation)').forEach(post=>{if(!intelligenceObserved.has(post)){intelligenceObserved.add(post);intelligenceObserver.observe(post)}})}
-    addEventListener('pagehide',()=>feed.querySelectorAll('.post').forEach(closeIntelligenceSession));
-    async function load(reset=false){if(reset){cursor=null;feed.innerHTML='<div class="skeleton"></div>'}const q=new URLSearchParams({limit:'8'});if(cursor)q.set('before',cursor);if(category)q.set('category',category);if(currentTab==='following')q.set('following','1');if(['friends','latest'].includes(currentTab))q.set('mode',currentTab);const r=await fetch('/api/social/feed?'+q);const data=await r.json();if(reset)feed.innerHTML='';if(!data.items?.length&&!cursor)feed.innerHTML='<div class="empty"><h2>Nenhuma publicação neste feed</h2><p>Siga pessoas, faça novas conexões ou volte ao feed Para você.</p><button class="btn open-publish">Publicar agora</button></div>';else{const cards=data.items.map(card);if(reset&&['feed','latest'].includes(currentTab)&&['','produtos','ofertas'].includes(category)&&cards.length>=3){try{const shopResponse=await fetch('/api/marketplace/products'),shopData=await shopResponse.json();if(shopResponse.ok&&shopData.products?.length)cards.splice(3,0,productCard(shopData.products[0]))}catch{}}feed.insertAdjacentHTML('beforeend',cards.join(''))}cursor=data.nextCursor;more.hidden=!cursor;observeIntelligence();requestAnimationFrame(refreshCaptionToggles)}
-    const statusName={uploading:'Enviando',processing:'Processando',pending_review:'Em análise',ready:'Publicado',rejected:'Rejeitado',error:'Erro'};
-    async function loadSaved(){if(!await requireAuth())return;const box=document.getElementById('my-videos');box.hidden=false;box.innerHTML='<div class="skeleton"></div>';const r=await fetch('/api/social/saved'),d=await r.json();if(!r.ok){box.innerHTML='<div class="empty"><p>'+escapeHtml(d.error||'Não foi possível carregar favoritos.')+'</p></div>';return}box.innerHTML=d.items?.map(card).join('')||'<div class="empty"><h2>Nenhum favorito salvo</h2><p>Use a estrela nos vídeos para guardar e assistir depois.</p></div>'}
-    async function loadMine(){if(!await requireAuth())return;const box=document.getElementById('my-videos');box.hidden=false;box.innerHTML='<div class="skeleton"></div>';const r=await fetch('/api/social/posts/me'),d=await r.json();if(!r.ok){box.innerHTML='<div class="empty"><p>'+escapeHtml(d.error||'Não foi possível carregar seus vídeos.')+'</p></div>';return}box.innerHTML=d.items?.map(p=>{const player=p.videoUid?`https://iframe.videodelivery.net/${encodeURIComponent(p.videoUid)}?muted=true&controls=true`:'';return `<article class="my-video"><div class="my-thumb">${player?`<iframe src="${player}" title="Seu vídeo" allow="accelerometer; autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe><button class="my-expand" type="button" data-player="${player}" aria-label="Ampliar vídeo" title="Ampliar vídeo">⛶</button>`:''}</div><div><span class="badge ${escapeHtml(p.status)}">${escapeHtml(statusName[p.status]||p.status)}</span><h3>${escapeHtml(p.caption||'Vídeo sem legenda')}</h3><div class="stats"><span>▶ ${p.views} visualizações qualificadas</span><span>◎ ${p.reach} pessoas alcançadas</span><span>⚡ ${p.interactions} interações · ${p.engagementRate}%</span><span>◷ ${p.avgWatchSeconds}s de média · ${p.completionRate}% concluíram</span><span>♥ ${p.likes}</span><span>● ${p.comments}</span><span>⚑ ${p.reports}</span>${p.chargeCoins?`<span>◉ ${p.chargeCoins} moedas · ${p.chargeStatus==='refunded'?'devolvidas':'link comercial'}</span>`:''}</div>${p.moderationReason?`<p class="hint">Análise: ${escapeHtml(p.moderationReason)}</p>`:''}</div></article>`}).join('')||'<div class="empty"><h2>Você ainda não publicou vídeos</h2><p>O vídeo comum é gratuito. Links comerciais custam 5 moedas.</p><button class="btn open-publish">Publicar vídeo</button></div>'}
-    function setExpandState(post,expanded){const button=post?.querySelector('.expand-control');if(!button)return;button.textContent=expanded?'✕':'⛶';button.setAttribute('aria-label',expanded?'Minimizar vídeo':'Expandir vídeo');button.title=expanded?'Minimizar vídeo':'Expandir vídeo'}
-    function fallbackExpand(post){const willExpand=!post.classList.contains('expanded');document.querySelectorAll('.post.expanded').forEach(item=>{item.classList.remove('expanded');setExpandState(item,false)});post.classList.toggle('expanded',willExpand);document.body.classList.toggle('video-expanded',willExpand);setExpandState(post,willExpand);if(willExpand)post.scrollIntoView({block:'center'})}
-    function toggleExpand(post){fallbackExpand(post)}
-    const mediaViewer=document.getElementById('media-viewer'),mediaViewerFrame=document.getElementById('media-viewer-frame');function closeMediaViewer(){mediaViewer.classList.remove('open');mediaViewer.setAttribute('aria-hidden','true');mediaViewerFrame.src='';document.body.classList.remove('video-expanded')}function openMediaViewer(src){if(!src)return;mediaViewerFrame.src=src+(src.includes('?')?'&':'?')+'autoplay=true';mediaViewer.classList.add('open');mediaViewer.setAttribute('aria-hidden','false');document.body.classList.add('video-expanded');document.getElementById('media-viewer-close').focus()}
-    document.getElementById('media-viewer-close').onclick=closeMediaViewer;mediaViewer.addEventListener('click',e=>{if(e.target===mediaViewer)closeMediaViewer()});
-    feed.addEventListener('click',e=>{const button=e.target.closest('.caption-toggle');if(!button)return;e.preventDefault();e.stopImmediatePropagation();const copy=button.closest('.post-copy'),open=copy.classList.toggle('caption-open');button.textContent=open?'menos':'mais';button.setAttribute('aria-expanded',String(open))},true);
-    document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(mediaViewer.classList.contains('open'))return closeMediaViewer();const post=document.querySelector('.post.expanded');if(post)fallbackExpand(post)}});
-    document.addEventListener('click',e=>{const button=e.target.closest('.expand-control');if(!button)return;e.preventDefault();e.stopPropagation();const post=button.closest('.post');if(post)toggleExpand(post)},true);
-    document.addEventListener('dblclick',e=>{const zone=e.target.closest('.video-gesture');if(!zone)return;e.preventDefault();const post=zone.closest('.post');if(post)toggleExpand(post)});
-    let lastVideoTapAt=0,lastVideoTapPost=null;document.addEventListener('pointerup',e=>{if(e.pointerType!=='touch')return;const zone=e.target.closest('.video-gesture');if(!zone)return;const post=zone.closest('.post'),now=Date.now();if(post===lastVideoTapPost&&now-lastVideoTapAt<360){e.preventDefault();toggleExpand(post);lastVideoTapAt=0;lastVideoTapPost=null}else{lastVideoTapAt=now;lastVideoTapPost=post}});
-    function openModal(){requireAuth().then(ok=>{if(ok)modal.classList.add('open')})}['publish-top','publish-side','publish-mobile'].forEach(id=>document.getElementById(id)?.addEventListener('click',openModal));modal.querySelector('.close').onclick=()=>modal.classList.remove('open');modal.addEventListener('click',e=>{if(e.target===modal)modal.classList.remove('open')});feed.addEventListener('click',async e=>{if(e.target.closest('.open-publish'))return openModal();if(e.target.closest('.product-recommendation'))return;const post=e.target.closest('.post');if(!post)return;if(e.target.closest('.copy-link')){const url=location.origin+'/social/post/'+post.dataset.id;try{await navigator.clipboard.writeText(url);alert('Link copiado!')}catch{prompt('Copie o link da publicação:',url)}return}if(e.target.closest('.mute-user')){if(!await requireAuth())return;const r=await fetch('/api/social/users/'+post.dataset.authorId+'/mute',{method:'POST'}),d=await r.json();if(r.ok&&d.muted){post.remove();alert('Perfil silenciado. As publicações dele não aparecerão no seu feed.')}else alert(d.error||'Não foi possível silenciar este perfil.');return}if(e.target.closest('.block-user')){if(!await requireAuth()||!confirm('Bloquear este perfil? Vocês deixarão de se seguir e não verão conteúdos um do outro.'))return;const r=await fetch('/api/social/users/'+post.dataset.authorId+'/block',{method:'POST'}),d=await r.json();if(r.ok&&d.blocked){feed.querySelectorAll('[data-author-id="'+post.dataset.authorId+'"]').forEach(item=>item.remove());alert('Perfil bloqueado.')}else alert(d.error||'Não foi possível bloquear este perfil.');return}if(e.target.closest('.profile-author'))intelligenceEvent(post.dataset.id,'profile_click');if(e.target.closest('.cta'))intelligenceEvent(post.dataset.id,'cta_click');if(e.target.closest('.not-interested')){const r=await fetch('/api/social/posts/'+post.dataset.id+'/not-interested',{method:'POST'});if(r.ok){closeIntelligenceSession(post);intelligenceObserver.unobserve(post);post.remove();if(feed.querySelectorAll('.post').length<4&&cursor)load()}return}if(e.target.closest('.like')){if(!await requireAuth())return;const r=await fetch('/api/social/posts/'+post.dataset.id+'/like',{method:'POST'}),d=await r.json();if(r.ok){const b=e.target.closest('.like');b.classList.toggle('liked',d.liked);b.querySelector('span').textContent=d.likes}}if(e.target.closest('.comment'))openComments(post.dataset.id);if(e.target.closest('.save')){if(!await requireAuth())return;const b=e.target.closest('.save'),r=await fetch('/api/social/posts/'+post.dataset.id+'/save',{method:'POST'}),d=await r.json();if(r.ok){b.classList.toggle('liked',d.saved);b.querySelector('span').textContent=d.saves}}
-      if(e.target.closest('.repost')){if(!await requireAuth())return;const b=e.target.closest('.repost'),r=await fetch('/api/social/posts/'+post.dataset.id+'/repost',{method:'POST'}),d=await r.json();if(r.ok){b.classList.toggle('liked',d.reposted);b.querySelector('span').textContent=d.reposts}else alert(d.error||'Não foi possível republicar.')}
-      if(e.target.closest('.report')){if(!await requireAuth())return;const reason=prompt('Motivo: pornografia, nudez, violencia, odio, golpe, direitos_autorais ou outro','outro');if(reason){const r=await fetch('/api/social/posts/'+post.dataset.id+'/report',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason.toLowerCase().replace(/[^a-z_]/g,'')})});const d=await r.json();alert(r.ok?'Denúncia enviada para análise.':(d.error||'Não foi possível denunciar.'));if(d.hiddenForReview)load(true)}}if(e.target.closest('.share')){fetch('/api/social/posts/'+post.dataset.id+'/share',{method:'POST'}).catch(()=>{});const url=location.origin+'/social/post/'+post.dataset.id;if(navigator.share)navigator.share({title:'Vitriny Social',url});else{await navigator.clipboard.writeText(url);alert('Link copiado!')}}if(e.target.closest('.follow')){if(!await requireAuth())return;const b=e.target.closest('.follow'),r=await fetch('/api/social/users/'+b.dataset.user+'/follow',{method:'POST'}),d=await r.json();if(r.ok)b.textContent=d.following?'Seguindo':'Seguir'}})
-    document.getElementById('suggest-video-seo').onclick=async()=>{if(!await requireAuth())return;const form=document.getElementById('upload-form'),r=await fetch('/api/social/seo-suggestion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:form.caption.value,category:form.category.value,city:form.city.value})}),d=await r.json();if(r.ok){form.caption.value=d.optimizedCaption;form.seoTitle.value=d.title;form.seoDescription.value=d.description;form.seoKeywords.value=d.keywords.join(', ');document.getElementById('video-seo-preview').innerHTML='<b>'+escapeHtml(d.title)+'</b><br>'+escapeHtml(d.description)}};
-    document.getElementById('upload-form').addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget,file=form.video.files[0];if(!file)return;if(file.size>200*1024*1024){statusBox.textContent='O arquivo ultrapassa 200 MB.';return}statusBox.textContent='Preparando envio seguro...';const body=Object.fromEntries(new FormData(form));delete body.video;const r=await fetch('/api/social/uploads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),d=await r.json();if(!r.ok){statusBox.textContent=d.error||'Não foi possível enviar.';return}const upload=new FormData();upload.append('file',file);statusBox.textContent='Enviando vídeo... não feche esta página.';const sent=await fetch(d.uploadUrl,{method:'POST',body:upload});if(!sent.ok){statusBox.textContent='O envio falhou. Tente novamente.';return}statusBox.textContent='Vídeo recebido! Ele aparecerá somente depois da análise de segurança.';form.reset();setTimeout(()=>{modal.classList.remove('open');load(true)},1800)})
-    async function openComments(id){activePost=id;document.getElementById('comments').classList.add('open');const r=await fetch('/api/social/posts/'+id+'/comments'),d=await r.json();document.getElementById('comment-list').innerHTML=d.items?.map(c=>`<div class="comment"><b>${escapeHtml(c.name)} · @${escapeHtml(c.handle)}</b><p>${escapeHtml(c.body)}</p></div>`).join('')||'<p class="hint">Ainda não há comentários.</p>'}document.getElementById('close-comments').onclick=()=>document.getElementById('comments').classList.remove('open');document.getElementById('comment-form').addEventListener('submit',async e=>{e.preventDefault();if(!await requireAuth())return;const input=e.currentTarget.body,r=await fetch('/api/social/posts/'+activePost+'/comments',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body:input.value})});if(r.ok){input.value='';openComments(activePost)}})
-    document.querySelector('.tabs').addEventListener('click',e=>{const b=e.target.closest('.tab');if(!b)return;currentTab=b.dataset.tab;document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===b));const mine=document.getElementById('my-videos'),feeds=['feed','following','friends','latest'];feed.hidden=!feeds.includes(currentTab);document.getElementById('filters').hidden=!feeds.includes(currentTab);more.hidden=!feeds.includes(currentTab)||!cursor;mine.hidden=!['mine','saved'].includes(currentTab);if(feeds.includes(currentTab))load(true);if(currentTab==='mine')loadMine();if(currentTab==='saved')loadSaved()});
-    const mediaModal=document.getElementById('media-modal'),mediaForm=document.getElementById('media-form'),mediaStatus=document.getElementById('media-status');
-    function openMedia(kind){requireAuth().then(ok=>{if(!ok)return;mediaForm.kind.value=kind;document.getElementById('media-title').textContent=kind==='story'?'Novo Story':'Nova foto';document.querySelector('.story-only').hidden=kind!=='story';document.querySelector('.photo-only').hidden=kind==='story';mediaModal.classList.add('open')})}
-    document.getElementById('publish-photo').onclick=()=>openMedia('photo');document.getElementById('publish-story').onclick=()=>openMedia('story');document.getElementById('story-add').onclick=()=>openMedia('story');document.getElementById('media-close').onclick=()=>mediaModal.classList.remove('open');
-    document.getElementById('suggest-seo').onclick=async()=>{if(!await requireAuth())return;const body={caption:mediaForm.caption.value,category:mediaForm.category.value,city:mediaForm.city.value};const r=await fetch('/api/social/seo-suggestion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),d=await r.json();if(r.ok){mediaForm.caption.value=d.optimizedCaption;mediaForm.seoTitle.value=d.title;mediaForm.seoDescription.value=d.description;mediaForm.seoKeywords.value=d.keywords.join(', ');document.getElementById('seo-preview').innerHTML='<b>'+escapeHtml(d.title)+'</b><br>'+escapeHtml(d.description)+'<br><small>'+escapeHtml(d.keywords.join(', '))+'</small>'}};
-    mediaForm.onsubmit=async e=>{e.preventDefault();if(!await requireAuth())return;const file=mediaForm.photo.files[0];if(!file)return;if(file.size>10*1024*1024){mediaStatus.textContent='A foto ultrapassa 10 MB.';return}mediaStatus.textContent='Enviando foto...';const up=await fetch('/api/social/media/photo',{method:'POST',headers:{'Content-Type':file.type},body:file}),ud=await up.json();if(!up.ok){mediaStatus.textContent=ud.error||'Falha ao enviar a foto.';return}const kind=mediaForm.kind.value,payload={mediaUrl:ud.url,caption:mediaForm.caption.value,category:mediaForm.category.value,city:mediaForm.city.value,ctaLabel:mediaForm.ctaLabel.value,ctaUrl:mediaForm.ctaUrl.value,seoTitle:mediaForm.seoTitle.value,seoDescription:mediaForm.seoDescription.value,seoKeywords:mediaForm.seoKeywords.value};const r=await fetch(kind==='story'?'/api/social/stories':'/api/social/photo-posts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),d=await r.json();mediaStatus.textContent=r.ok?'Recebido! O conteúdo aparecerá depois da análise de segurança.':(d.error||'Não foi possível publicar.');if(r.ok){mediaForm.reset();setTimeout(()=>{mediaModal.classList.remove('open');loadStories();load(true)},1600)}};
-    let storyItems=[];async function loadStories(){const r=await fetch('/api/social/stories'),d=await r.json();storyItems=d.items||[];document.getElementById('stories').querySelectorAll('.story-bubble').forEach(x=>x.remove());document.getElementById('stories').insertAdjacentHTML('beforeend',storyItems.map((s,i)=>`<button class="story-bubble" data-story="${i}"><span class="story-ring">${s.author.avatarUrl?`<img src="${escapeHtml(s.author.avatarUrl)}" alt="">`:`<span>${escapeHtml(s.author.name.slice(0,1))}</span>`}</span><small>${escapeHtml(s.author.handle)}</small></button>`).join(''))}
-    document.getElementById('stories').addEventListener('click',e=>{const b=e.target.closest('.story-bubble');if(!b)return;const s=storyItems[Number(b.dataset.story)];document.getElementById('story-image').src=s.mediaUrl;document.getElementById('story-image').hidden=false;document.getElementById('story-author').textContent=s.author.name+' · @'+s.author.handle;document.getElementById('story-caption').textContent=s.caption;const a=document.getElementById('story-link');a.hidden=!s.ctaUrl;a.href=s.ctaUrl||'#';a.textContent=s.ctaLabel||'Saiba mais';document.getElementById('story-viewer').classList.add('open');fetch('/api/social/stories/'+s.id+'/view',{method:'POST'}).catch(()=>{})});document.getElementById('story-close').onclick=()=>{document.getElementById('story-viewer').classList.remove('open');const image=document.getElementById('story-image');image.hidden=true;image.removeAttribute('src')};
-    async function loadNotifications(open=false){if(!await auth())return;const r=await fetch('/api/social/notifications'),d=await r.json();if(!r.ok)return;const badge=document.getElementById('notification-count');badge.hidden=!d.unread;badge.textContent=d.unread;document.getElementById('notification-list').innerHTML=d.items?.map(n=>`<div class="notice"><b>${escapeHtml(n.actor_name||'Vitriny Social')}</b> ${escapeHtml(n.message)}<br><small>${new Date(n.created_at+'Z').toLocaleString('pt-BR')}</small></div>`).join('')||'<p class="hint">Nenhuma notificação ainda.</p>';if(open){document.getElementById('notifications').classList.add('open');await fetch('/api/social/notifications/read',{method:'POST'});badge.hidden=true}}
-    function connectSocialLive(){const stream=new EventSource('/api/social/live');stream.addEventListener('counts',e=>{const count=JSON.parse(e.data).notifications||0,badge=document.getElementById('notification-count');badge.hidden=!count;badge.textContent=count||''});stream.addEventListener('notification',()=>loadNotifications(false))}document.getElementById('notifications-button').onclick=()=>loadNotifications(true);document.getElementById('notifications-close').onclick=()=>document.getElementById('notifications').classList.remove('open');loadStories();setTimeout(async()=>{if(await auth()){loadNotifications(false);connectSocialLive()}},800);
+    <script>
+      const feed = document.getElementById('feed'),
+        more = document.getElementById('more'),
+        modal = document.getElementById('publish-modal'),
+        statusBox = document.getElementById('upload-status');
+      let cursor = null,
+        category = '',
+        activePost = null,
+        authenticated = null,
+        currentTab = 'feed';
+      const escapeHtml = (value) =>
+        String(value ?? '').replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              '&': '&amp;',
+              '<': '&lt;',
+              '>': '&gt;',
+              '"': '&quot;',
+              "'": '&#39;',
+            })[c],
+        );
+      async function auth() {
+        if (authenticated !== null) return authenticated;
+        const r = await fetch('/api/auth/me');
+        authenticated = r.ok;
+        document.getElementById('visitor-intro').hidden = authenticated;
+        document.getElementById('visitor-login').hidden = authenticated;
+        document.getElementById('notifications-button').hidden = !authenticated;
+        if (r.ok) {
+          const d = await r.json();
+          document.getElementById('wallet-balance').textContent =
+            ((d.wallet?.balanceUnits || 0) / 100).toLocaleString('pt-BR', {
+              maximumFractionDigits: 2,
+            }) + ' moedas';
+        }
+        return authenticated;
+      }
+      async function requireAuth() {
+        if (await auth()) return true;
+        location.href =
+          '/entrar.html?returnTo=' + encodeURIComponent('/social');
+        return false;
+      }
+      const SOCIAL_FALLBACK = '/assets/social-seed/geral.svg',
+        PRODUCT_FALLBACK = '/assets/store-seed/utilidades.svg';
+      (async () => {
+        try {
+          const [productResponse, courseResponse] = await Promise.all([
+            fetch('/api/marketplace/products', { cache: 'no-store' }),
+            fetch('/api/courses', { cache: 'no-store' }),
+          ]);
+          if (!productResponse.ok || !courseResponse.ok) return;
+          const productData = await productResponse.json();
+          const courseData = await courseResponse.json();
+          const slug = (value) =>
+            String(value || 'item')
+              .normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/(^-|-$)/g, '');
+          const items = [
+            {
+              store: 'Sertaneja Moda Country',
+              name: '50% OFF na cidade',
+              href: '/cidade/avenida-premium',
+            },
+            {
+              store: 'Centro Educacional',
+              name: 'Conheça todos os cursos',
+              href: '/centro-educacional.html',
+            },
+            ...(courseData.courses || [])
+              .filter((course) => course.available)
+              .map((course) => ({
+                store: 'Centro Educacional',
+                name: course.title,
+                href:
+                  '/centro-educacional.html#' + encodeURIComponent(course.slug),
+              })),
+            ...(productData.products || []).slice(0, 30).map((product) => ({
+              store: product.store_name,
+              name: product.name,
+              href: '/produto/' + product.id + '/' + slug(product.name),
+            })),
+          ];
+          const track = document.getElementById('socialTickerTrack');
+          const ticker = document.getElementById('socialMarketTicker');
+          const add = (item) => {
+            const link = document.createElement('a');
+            link.className = 'social-ticker-item';
+            link.href = item.href;
+            link.innerHTML =
+              '<b>' +
+              escapeHtml(item.store) +
+              '</b><span>◆</span><span>' +
+              escapeHtml(item.name) +
+              '</span>';
+            track.append(link);
+          };
+          items.forEach(add);
+          items.forEach(add);
+          track.style.setProperty(
+            '--social-ticker-duration',
+            Math.max(80, items.length * 6.5) + 's',
+          );
+          ticker.classList.add('ready');
+        } catch {}
+      })();
+      document.addEventListener(
+        'error',
+        (event) => {
+          const image = event.target;
+          if (
+            !(image instanceof HTMLImageElement) ||
+            !image.dataset.fallback ||
+            image.dataset.fallbackApplied
+          )
+            return;
+          image.dataset.fallbackApplied = '1';
+          image.src = image.dataset.fallback;
+        },
+        true,
+      );
+      function card(p) {
+        const cta =
+          p.ctaUrl && p.ctaLabel
+            ? `<a class="cta" href="${escapeHtml(p.ctaUrl)}" target="_blank" rel="noopener sponsored">${escapeHtml(p.ctaLabel)}</a>`
+            : '';
+        return `<article class="post" data-id="${p.id}" data-author-id="${p.author.id}"><div class="video">${p.mediaType === 'image' ? `<img class="photo-media" loading="lazy" src="${escapeHtml(p.imageUrl || SOCIAL_FALLBACK)}" data-fallback="${SOCIAL_FALLBACK}" alt="Publicação de ${escapeHtml(p.author.name)}">` : `<iframe loading="lazy" data-player-src="${escapeHtml(p.playerUrl)}" allow="accelerometer; autoplay; encrypted-media; picture-in-picture" allowfullscreen title="Vídeo de ${escapeHtml(p.author.name)}"></iframe>`}</div>${p.mediaType === 'video' ? `<button class="video-gesture" type="button" aria-label="Toque duas vezes para expandir o vídeo"></button>` : ''}<button class="expand-control" type="button" aria-label="Expandir vídeo" title="Expandir vídeo">⛶</button>${!p.mine ? `<details class="post-menu"><summary aria-label="Abrir menu da publicação" title="Mais opções">⋯</summary><div class="post-menu-list"><button class="copy-link" type="button">Copiar link</button><button class="not-interested" type="button">Não tenho interesse</button><button class="mute-user" type="button">Silenciar este perfil</button><button class="block-user danger" type="button">Bloquear este perfil</button><button class="report danger" type="button">Denunciar publicação</button></div></details>` : ''}<div class="shade"></div><div class="post-copy"><div class="author"><a class="profile-author" href="/perfil/${encodeURIComponent(p.author.handle)}"><span class="avatar">${escapeHtml(p.author.name.slice(0, 1).toUpperCase())}</span><span><strong>${escapeHtml(p.author.name)}</strong><small>@${escapeHtml(p.author.handle)}</small></span></a>${!p.mine ? `<button class="follow" data-user="${p.author.id}">${p.following ? 'Seguindo' : 'Seguir'}</button>` : ''}</div><p class="caption">${escapeHtml(p.caption)}</p><button class="caption-toggle" type="button" aria-expanded="false">mais</button><div class="meta">${escapeHtml(p.city || 'Vitriny City')} · #${escapeHtml(p.category)}</div>${cta}</div><div class="rail"><button class="action like ${p.liked ? 'liked' : ''}"><i>♥</i><span>${p.likes}</span></button><button class="action comment"><i>●</i><span>${p.comments}</span></button><button class="action repost ${p.reposted ? 'liked' : ''}" title="Republicar"><i>↻</i><span>${p.reposts}</span></button><button class="action save ${p.saved ? 'liked' : ''}" title="Salvar nos favoritos"><i>★</i><span>${p.saves}</span></button><button class="action share"><i>↗</i><span>${p.shares}</span></button>${!p.mine ? `<button class="action not-interested" title="Não tenho interesse"><i>⊘</i><span>Não quero</span></button><button class="action report"><i>⚑</i><span>Denunciar</span></button>` : ``}</div></article>`;
+      }
+      function productCard(p) {
+        const link =
+          '/produto/' +
+          p.id +
+          '/' +
+          String(p.name || 'produto')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/(^-|-$)/g, '') +
+          '?utm_source=vitriny_social&utm_medium=recommendation&utm_campaign=feed_commerce';
+        return `<article class="post product-recommendation" data-product-id="${p.id}"><div class="video"><img class="product-media" loading="lazy" src="${escapeHtml(p.image_url || PRODUCT_FALLBACK)}" data-fallback="${PRODUCT_FALLBACK}" alt="${escapeHtml(p.name)}"></div><div class="shade"></div><div class="post-copy"><span class="product-badge">Produto recomendado</span><div class="author"><span class="avatar">A</span><span><strong>${escapeHtml(p.store_name)}</strong><small>Vitriny Loja</small></span></div><p class="caption">${escapeHtml(p.name)}</p><div class="meta">${escapeHtml(p.category || 'Produtos')}</div><div class="product-price">${(p.price_cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</div><div class="product-stock">${p.stock_quantity} unidades disponíveis</div><a class="product-cta" data-asset-type="product" data-asset-id="${p.id}" href="${escapeHtml(link)}">Ver produto na loja</a></div></article>`;
+      }
+      function refreshCaptionToggles() {
+        feed.querySelectorAll('.caption-toggle').forEach((button) => {
+          const caption = button.previousElementSibling;
+          if (caption && caption.scrollHeight > caption.clientHeight + 1)
+            button.classList.add('visible');
+        });
+      }
 
-    document.getElementById('my-videos').addEventListener('click',e=>{if(e.target.closest('.open-publish'))return openModal();const expand=e.target.closest('.my-expand');if(expand){e.preventDefault();return openMediaViewer(expand.dataset.player)}const post=e.target.closest('.post');if(post&&e.target.closest('.expand-control'))toggleExpand(post)});auth();
-    let loadingNextPage=false;feed.addEventListener('scroll',async()=>{const nearEnd=feed.scrollTop+feed.clientHeight>=feed.scrollHeight-feed.clientHeight*.45;if(!nearEnd||!cursor||loadingNextPage)return;loadingNextPage=true;try{await load()}finally{loadingNextPage=false}});
-    document.getElementById('filters').addEventListener('click',e=>{const b=e.target.closest('.chip');if(!b)return;document.querySelectorAll('.chip').forEach(x=>x.classList.remove('active'));b.classList.add('active');category=b.dataset.category;load(true)});more.onclick=()=>load();load(true);if(new URLSearchParams(location.search).get('publicar')==='1')openModal();
-  </script>
-</body>
+      const intelligenceState = new Map(),
+        intelligenceObserved = new WeakSet();
+      function intelligenceEvent(id, type, watchMs = 0) {
+        return fetch('/api/social/posts/' + id + '/intelligence', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, watchMs }),
+          keepalive: true,
+        }).catch(() => {});
+      }
+      function closeIntelligenceSession(post) {
+        const state = intelligenceState.get(post.dataset.id);
+        if (!state?.started) return;
+        const watched = Math.min(60000, Date.now() - state.started);
+        state.total += watched;
+        state.started = 0;
+        const type =
+          watched < 1800 ? 'skip' : watched >= 15000 ? 'complete' : 'watch';
+        intelligenceEvent(post.dataset.id, type, watched);
+      }
+      const intelligenceObserver = new IntersectionObserver(
+        (entries) =>
+          entries.forEach((entry) => {
+            const post = entry.target,
+              id = post.dataset.id;
+            let state = intelligenceState.get(id);
+            if (!state) {
+              state = { started: 0, total: 0, sessions: 0 };
+              intelligenceState.set(id, state);
+            }
+            if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+              if (!state.started) {
+                state.started = Date.now();
+                state.sessions++;
+                if (state.sessions === 1) {
+                  fetch('/api/social/posts/' + id + '/view', {
+                    method: 'POST',
+                  }).catch(() => {});
+                  intelligenceEvent(id, 'impression');
+                } else intelligenceEvent(id, 'replay');
+              }
+            } else closeIntelligenceSession(post);
+          }),
+        { threshold: [0, 0.6, 1] },
+      );
+      function observeIntelligence() {
+        feed
+          .querySelectorAll('.post:not(.product-recommendation)')
+          .forEach((post) => {
+            if (!intelligenceObserved.has(post)) {
+              intelligenceObserved.add(post);
+              intelligenceObserver.observe(post);
+            }
+          });
+      }
+      const playerObserver = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const player = entry.target;
+            if (!player.src && player.dataset.playerSrc)
+              player.src = player.dataset.playerSrc;
+            playerObserver.unobserve(player);
+          }
+        },
+        { root: feed, rootMargin: '85% 0px', threshold: 0.01 },
+      );
+      function observePlayers() {
+        feed
+          .querySelectorAll('iframe[data-player-src]:not([src])')
+          .forEach((player) => playerObserver.observe(player));
+      }
+      addEventListener('pagehide', () =>
+        feed.querySelectorAll('.post').forEach(closeIntelligenceSession),
+      );
+      async function load(reset = false) {
+        if (reset) {
+          cursor = null;
+          feed.innerHTML = '<div class="skeleton"></div>';
+        }
+        const q = new URLSearchParams({ limit: '8' });
+        if (cursor) q.set('before', cursor);
+        if (category) q.set('category', category);
+        if (currentTab === 'following') q.set('following', '1');
+        if (['friends', 'latest'].includes(currentTab))
+          q.set('mode', currentTab);
+        const r = await fetch('/api/social/feed?' + q);
+        const data = await r.json();
+        if (reset) feed.innerHTML = '';
+        if (!data.items?.length && !cursor)
+          feed.innerHTML =
+            '<div class="empty"><h2>Nenhuma publicação neste feed</h2><p>Siga pessoas, faça novas conexões ou volte ao feed Para você.</p><button class="btn open-publish">Publicar agora</button></div>';
+        else {
+          const cards = data.items.map(card);
+          if (
+            reset &&
+            ['feed', 'latest'].includes(currentTab) &&
+            ['', 'produtos', 'ofertas'].includes(category) &&
+            cards.length >= 3
+          ) {
+            try {
+              const shopResponse = await fetch('/api/marketplace/products'),
+                shopData = await shopResponse.json();
+              if (shopResponse.ok && shopData.products?.length)
+                cards.splice(3, 0, productCard(shopData.products[0]));
+            } catch {}
+          }
+          feed.insertAdjacentHTML('beforeend', cards.join(''));
+        }
+        cursor = data.nextCursor;
+        more.hidden = !cursor;
+        observeIntelligence();
+        observePlayers();
+        requestAnimationFrame(refreshCaptionToggles);
+      }
+      const statusName = {
+        uploading: 'Enviando',
+        processing: 'Processando',
+        pending_review: 'Em análise',
+        ready: 'Publicado',
+        rejected: 'Rejeitado',
+        error: 'Erro',
+      };
+      async function loadSaved() {
+        if (!(await requireAuth())) return;
+        const box = document.getElementById('my-videos');
+        box.hidden = false;
+        box.innerHTML = '<div class="skeleton"></div>';
+        const r = await fetch('/api/social/saved'),
+          d = await r.json();
+        if (!r.ok) {
+          box.innerHTML =
+            '<div class="empty"><p>' +
+            escapeHtml(d.error || 'Não foi possível carregar favoritos.') +
+            '</p></div>';
+          return;
+        }
+        box.innerHTML =
+          d.items?.map(card).join('') ||
+          '<div class="empty"><h2>Nenhum favorito salvo</h2><p>Use a estrela nos vídeos para guardar e assistir depois.</p></div>';
+      }
+      async function loadMine() {
+        if (!(await requireAuth())) return;
+        const box = document.getElementById('my-videos');
+        box.hidden = false;
+        box.innerHTML = '<div class="skeleton"></div>';
+        const r = await fetch('/api/social/posts/me'),
+          d = await r.json();
+        if (!r.ok) {
+          box.innerHTML =
+            '<div class="empty"><p>' +
+            escapeHtml(d.error || 'Não foi possível carregar seus vídeos.') +
+            '</p></div>';
+          return;
+        }
+        box.innerHTML =
+          d.items
+            ?.map((p) => {
+              const player = p.videoUid
+                ? `https://iframe.videodelivery.net/${encodeURIComponent(p.videoUid)}?muted=true&controls=true`
+                : '';
+              return `<article class="my-video"><div class="my-thumb">${player ? `<iframe src="${player}" title="Seu vídeo" allow="accelerometer; autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe><button class="my-expand" type="button" data-player="${player}" aria-label="Ampliar vídeo" title="Ampliar vídeo">⛶</button>` : ''}</div><div><span class="badge ${escapeHtml(p.status)}">${escapeHtml(statusName[p.status] || p.status)}</span><h3>${escapeHtml(p.caption || 'Vídeo sem legenda')}</h3><div class="stats"><span>▶ ${p.views} visualizações qualificadas</span><span>◎ ${p.reach} pessoas alcançadas</span><span>⚡ ${p.interactions} interações · ${p.engagementRate}%</span><span>◷ ${p.avgWatchSeconds}s de média · ${p.completionRate}% concluíram</span><span>♥ ${p.likes}</span><span>● ${p.comments}</span><span>⚑ ${p.reports}</span>${p.chargeCoins ? `<span>◉ ${p.chargeCoins} moedas · ${p.chargeStatus === 'refunded' ? 'devolvidas' : 'link comercial'}</span>` : ''}</div>${p.moderationReason ? `<p class="hint">Análise: ${escapeHtml(p.moderationReason)}</p>` : ''}</div></article>`;
+            })
+            .join('') ||
+          '<div class="empty"><h2>Você ainda não publicou vídeos</h2><p>O vídeo comum é gratuito. Links comerciais custam 5 moedas.</p><button class="btn open-publish">Publicar vídeo</button></div>';
+      }
+      function setExpandState(post, expanded) {
+        const button = post?.querySelector('.expand-control');
+        if (!button) return;
+        button.textContent = expanded ? '✕' : '⛶';
+        button.setAttribute(
+          'aria-label',
+          expanded ? 'Minimizar vídeo' : 'Expandir vídeo',
+        );
+        button.title = expanded ? 'Minimizar vídeo' : 'Expandir vídeo';
+      }
+      function fallbackExpand(post) {
+        const willExpand = !post.classList.contains('expanded');
+        document.querySelectorAll('.post.expanded').forEach((item) => {
+          item.classList.remove('expanded');
+          setExpandState(item, false);
+        });
+        post.classList.toggle('expanded', willExpand);
+        document.body.classList.toggle('video-expanded', willExpand);
+        setExpandState(post, willExpand);
+        if (willExpand) post.scrollIntoView({ block: 'center' });
+      }
+      function toggleExpand(post) {
+        fallbackExpand(post);
+      }
+      const mediaViewer = document.getElementById('media-viewer'),
+        mediaViewerFrame = document.getElementById('media-viewer-frame');
+      function closeMediaViewer() {
+        mediaViewer.classList.remove('open');
+        mediaViewer.setAttribute('aria-hidden', 'true');
+        mediaViewerFrame.src = '';
+        document.body.classList.remove('video-expanded');
+      }
+      function openMediaViewer(src) {
+        if (!src) return;
+        mediaViewerFrame.src =
+          src + (src.includes('?') ? '&' : '?') + 'autoplay=true';
+        mediaViewer.classList.add('open');
+        mediaViewer.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('video-expanded');
+        document.getElementById('media-viewer-close').focus();
+      }
+      document.getElementById('media-viewer-close').onclick = closeMediaViewer;
+      mediaViewer.addEventListener('click', (e) => {
+        if (e.target === mediaViewer) closeMediaViewer();
+      });
+      feed.addEventListener(
+        'click',
+        (e) => {
+          const button = e.target.closest('.caption-toggle');
+          if (!button) return;
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          const copy = button.closest('.post-copy'),
+            open = copy.classList.toggle('caption-open');
+          button.textContent = open ? 'menos' : 'mais';
+          button.setAttribute('aria-expanded', String(open));
+        },
+        true,
+      );
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          if (mediaViewer.classList.contains('open')) return closeMediaViewer();
+          const post = document.querySelector('.post.expanded');
+          if (post) fallbackExpand(post);
+        }
+      });
+      document.addEventListener(
+        'click',
+        (e) => {
+          const button = e.target.closest('.expand-control');
+          if (!button) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const post = button.closest('.post');
+          if (post) toggleExpand(post);
+        },
+        true,
+      );
+      document.addEventListener('dblclick', (e) => {
+        const zone = e.target.closest('.video-gesture');
+        if (!zone) return;
+        e.preventDefault();
+        const post = zone.closest('.post');
+        if (post) toggleExpand(post);
+      });
+      let lastVideoTapAt = 0,
+        lastVideoTapPost = null;
+      document.addEventListener('pointerup', (e) => {
+        if (e.pointerType !== 'touch') return;
+        const zone = e.target.closest('.video-gesture');
+        if (!zone) return;
+        const post = zone.closest('.post'),
+          now = Date.now();
+        if (post === lastVideoTapPost && now - lastVideoTapAt < 360) {
+          e.preventDefault();
+          toggleExpand(post);
+          lastVideoTapAt = 0;
+          lastVideoTapPost = null;
+        } else {
+          lastVideoTapAt = now;
+          lastVideoTapPost = post;
+        }
+      });
+      function openModal() {
+        requireAuth().then((ok) => {
+          if (ok) modal.classList.add('open');
+        });
+      }
+      ['publish-top', 'publish-side', 'publish-mobile'].forEach((id) =>
+        document.getElementById(id)?.addEventListener('click', openModal),
+      );
+      modal.querySelector('.close').onclick = () =>
+        modal.classList.remove('open');
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.classList.remove('open');
+      });
+      feed.addEventListener('click', async (e) => {
+        if (e.target.closest('.open-publish')) return openModal();
+        if (e.target.closest('.product-recommendation')) return;
+        const post = e.target.closest('.post');
+        if (!post) return;
+        if (e.target.closest('.copy-link')) {
+          const url = location.origin + '/social/post/' + post.dataset.id;
+          try {
+            await navigator.clipboard.writeText(url);
+            alert('Link copiado!');
+          } catch {
+            prompt('Copie o link da publicação:', url);
+          }
+          return;
+        }
+        if (e.target.closest('.mute-user')) {
+          if (!(await requireAuth())) return;
+          const r = await fetch(
+              '/api/social/users/' + post.dataset.authorId + '/mute',
+              { method: 'POST' },
+            ),
+            d = await r.json();
+          if (r.ok && d.muted) {
+            post.remove();
+            alert(
+              'Perfil silenciado. As publicações dele não aparecerão no seu feed.',
+            );
+          } else alert(d.error || 'Não foi possível silenciar este perfil.');
+          return;
+        }
+        if (e.target.closest('.block-user')) {
+          if (
+            !(await requireAuth()) ||
+            !confirm(
+              'Bloquear este perfil? Vocês deixarão de se seguir e não verão conteúdos um do outro.',
+            )
+          )
+            return;
+          const r = await fetch(
+              '/api/social/users/' + post.dataset.authorId + '/block',
+              { method: 'POST' },
+            ),
+            d = await r.json();
+          if (r.ok && d.blocked) {
+            feed
+              .querySelectorAll(
+                '[data-author-id="' + post.dataset.authorId + '"]',
+              )
+              .forEach((item) => item.remove());
+            alert('Perfil bloqueado.');
+          } else alert(d.error || 'Não foi possível bloquear este perfil.');
+          return;
+        }
+        if (e.target.closest('.profile-author'))
+          intelligenceEvent(post.dataset.id, 'profile_click');
+        if (e.target.closest('.cta'))
+          intelligenceEvent(post.dataset.id, 'cta_click');
+        if (e.target.closest('.not-interested')) {
+          const r = await fetch(
+            '/api/social/posts/' + post.dataset.id + '/not-interested',
+            { method: 'POST' },
+          );
+          if (r.ok) {
+            closeIntelligenceSession(post);
+            intelligenceObserver.unobserve(post);
+            post.remove();
+            if (feed.querySelectorAll('.post').length < 4 && cursor) load();
+          }
+          return;
+        }
+        if (e.target.closest('.like')) {
+          if (!(await requireAuth())) return;
+          const r = await fetch(
+              '/api/social/posts/' + post.dataset.id + '/like',
+              { method: 'POST' },
+            ),
+            d = await r.json();
+          if (r.ok) {
+            const b = e.target.closest('.like');
+            b.classList.toggle('liked', d.liked);
+            b.querySelector('span').textContent = d.likes;
+          }
+        }
+        if (e.target.closest('.comment')) openComments(post.dataset.id);
+        if (e.target.closest('.save')) {
+          if (!(await requireAuth())) return;
+          const b = e.target.closest('.save'),
+            r = await fetch('/api/social/posts/' + post.dataset.id + '/save', {
+              method: 'POST',
+            }),
+            d = await r.json();
+          if (r.ok) {
+            b.classList.toggle('liked', d.saved);
+            b.querySelector('span').textContent = d.saves;
+          }
+        }
+        if (e.target.closest('.repost')) {
+          if (!(await requireAuth())) return;
+          const b = e.target.closest('.repost'),
+            r = await fetch(
+              '/api/social/posts/' + post.dataset.id + '/repost',
+              { method: 'POST' },
+            ),
+            d = await r.json();
+          if (r.ok) {
+            b.classList.toggle('liked', d.reposted);
+            b.querySelector('span').textContent = d.reposts;
+          } else alert(d.error || 'Não foi possível republicar.');
+        }
+        if (e.target.closest('.report')) {
+          if (!(await requireAuth())) return;
+          const reason = prompt(
+            'Motivo: pornografia, nudez, violencia, odio, golpe, direitos_autorais ou outro',
+            'outro',
+          );
+          if (reason) {
+            const r = await fetch(
+              '/api/social/posts/' + post.dataset.id + '/report',
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  reason: reason.toLowerCase().replace(/[^a-z_]/g, ''),
+                }),
+              },
+            );
+            const d = await r.json();
+            alert(
+              r.ok
+                ? 'Denúncia enviada para análise.'
+                : d.error || 'Não foi possível denunciar.',
+            );
+            if (d.hiddenForReview) load(true);
+          }
+        }
+        if (e.target.closest('.share')) {
+          fetch('/api/social/posts/' + post.dataset.id + '/share', {
+            method: 'POST',
+          }).catch(() => {});
+          const url = location.origin + '/social/post/' + post.dataset.id;
+          if (navigator.share)
+            navigator.share({ title: 'Vitriny Social', url });
+          else {
+            await navigator.clipboard.writeText(url);
+            alert('Link copiado!');
+          }
+        }
+        if (e.target.closest('.follow')) {
+          if (!(await requireAuth())) return;
+          const b = e.target.closest('.follow'),
+            r = await fetch('/api/social/users/' + b.dataset.user + '/follow', {
+              method: 'POST',
+            }),
+            d = await r.json();
+          if (r.ok) b.textContent = d.following ? 'Seguindo' : 'Seguir';
+        }
+      });
+      document.getElementById('suggest-video-seo').onclick = async () => {
+        if (!(await requireAuth())) return;
+        const form = document.getElementById('upload-form'),
+          r = await fetch('/api/social/seo-suggestion', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              caption: form.caption.value,
+              category: form.category.value,
+              city: form.city.value,
+            }),
+          }),
+          d = await r.json();
+        if (r.ok) {
+          form.caption.value = d.optimizedCaption;
+          form.seoTitle.value = d.title;
+          form.seoDescription.value = d.description;
+          form.seoKeywords.value = d.keywords.join(', ');
+          document.getElementById('video-seo-preview').innerHTML =
+            '<b>' +
+            escapeHtml(d.title) +
+            '</b><br>' +
+            escapeHtml(d.description);
+        }
+      };
+      document
+        .getElementById('upload-form')
+        .addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const form = e.currentTarget,
+            file = form.video.files[0];
+          if (!file) return;
+          if (file.size > 200 * 1024 * 1024) {
+            statusBox.textContent = 'O arquivo ultrapassa 200 MB.';
+            return;
+          }
+          statusBox.textContent = 'Preparando envio seguro...';
+          const body = Object.fromEntries(new FormData(form));
+          delete body.video;
+          const r = await fetch('/api/social/uploads', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            }),
+            d = await r.json();
+          if (!r.ok) {
+            statusBox.textContent = d.error || 'Não foi possível enviar.';
+            return;
+          }
+          const upload = new FormData();
+          upload.append('file', file);
+          statusBox.textContent = 'Enviando vídeo... não feche esta página.';
+          const sent = await fetch(d.uploadUrl, {
+            method: 'POST',
+            body: upload,
+          });
+          if (!sent.ok) {
+            statusBox.textContent = 'O envio falhou. Tente novamente.';
+            return;
+          }
+          statusBox.textContent =
+            'Vídeo recebido! Ele aparecerá somente depois da análise de segurança.';
+          form.reset();
+          setTimeout(() => {
+            modal.classList.remove('open');
+            load(true);
+          }, 1800);
+        });
+      async function openComments(id) {
+        activePost = id;
+        document.getElementById('comments').classList.add('open');
+        const r = await fetch('/api/social/posts/' + id + '/comments'),
+          d = await r.json();
+        document.getElementById('comment-list').innerHTML =
+          d.items
+            ?.map(
+              (c) =>
+                `<div class="comment"><b>${escapeHtml(c.name)} · @${escapeHtml(c.handle)}</b><p>${escapeHtml(c.body)}</p></div>`,
+            )
+            .join('') || '<p class="hint">Ainda não há comentários.</p>';
+      }
+      document.getElementById('close-comments').onclick = () =>
+        document.getElementById('comments').classList.remove('open');
+      document
+        .getElementById('comment-form')
+        .addEventListener('submit', async (e) => {
+          e.preventDefault();
+          if (!(await requireAuth())) return;
+          const input = e.currentTarget.body,
+            r = await fetch('/api/social/posts/' + activePost + '/comments', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ body: input.value }),
+            });
+          if (r.ok) {
+            input.value = '';
+            openComments(activePost);
+          }
+        });
+      document.querySelector('.tabs').addEventListener('click', (e) => {
+        const b = e.target.closest('.tab');
+        if (!b) return;
+        currentTab = b.dataset.tab;
+        document
+          .querySelectorAll('.tab')
+          .forEach((x) => x.classList.toggle('active', x === b));
+        const mine = document.getElementById('my-videos'),
+          feeds = ['feed', 'following', 'friends', 'latest'];
+        feed.hidden = !feeds.includes(currentTab);
+        document.getElementById('filters').hidden = !feeds.includes(currentTab);
+        more.hidden = !feeds.includes(currentTab) || !cursor;
+        mine.hidden = !['mine', 'saved'].includes(currentTab);
+        if (feeds.includes(currentTab)) load(true);
+        if (currentTab === 'mine') loadMine();
+        if (currentTab === 'saved') loadSaved();
+      });
+      const mediaModal = document.getElementById('media-modal'),
+        mediaForm = document.getElementById('media-form'),
+        mediaStatus = document.getElementById('media-status');
+      function openMedia(kind) {
+        requireAuth().then((ok) => {
+          if (!ok) return;
+          mediaForm.kind.value = kind;
+          document.getElementById('media-title').textContent =
+            kind === 'story' ? 'Novo Story' : 'Nova foto';
+          document.querySelector('.story-only').hidden = kind !== 'story';
+          document.querySelector('.photo-only').hidden = kind === 'story';
+          mediaModal.classList.add('open');
+        });
+      }
+      document.getElementById('publish-photo').onclick = () =>
+        openMedia('photo');
+      document.getElementById('publish-story').onclick = () =>
+        openMedia('story');
+      document.getElementById('story-add').onclick = () => openMedia('story');
+      document.getElementById('media-close').onclick = () =>
+        mediaModal.classList.remove('open');
+      document.getElementById('suggest-seo').onclick = async () => {
+        if (!(await requireAuth())) return;
+        const body = {
+          caption: mediaForm.caption.value,
+          category: mediaForm.category.value,
+          city: mediaForm.city.value,
+        };
+        const r = await fetch('/api/social/seo-suggestion', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          }),
+          d = await r.json();
+        if (r.ok) {
+          mediaForm.caption.value = d.optimizedCaption;
+          mediaForm.seoTitle.value = d.title;
+          mediaForm.seoDescription.value = d.description;
+          mediaForm.seoKeywords.value = d.keywords.join(', ');
+          document.getElementById('seo-preview').innerHTML =
+            '<b>' +
+            escapeHtml(d.title) +
+            '</b><br>' +
+            escapeHtml(d.description) +
+            '<br><small>' +
+            escapeHtml(d.keywords.join(', ')) +
+            '</small>';
+        }
+      };
+      mediaForm.onsubmit = async (e) => {
+        e.preventDefault();
+        if (!(await requireAuth())) return;
+        const file = mediaForm.photo.files[0];
+        if (!file) return;
+        if (file.size > 10 * 1024 * 1024) {
+          mediaStatus.textContent = 'A foto ultrapassa 10 MB.';
+          return;
+        }
+        mediaStatus.textContent = 'Enviando foto...';
+        const up = await fetch('/api/social/media/photo', {
+            method: 'POST',
+            headers: { 'Content-Type': file.type },
+            body: file,
+          }),
+          ud = await up.json();
+        if (!up.ok) {
+          mediaStatus.textContent = ud.error || 'Falha ao enviar a foto.';
+          return;
+        }
+        const kind = mediaForm.kind.value,
+          payload = {
+            mediaUrl: ud.url,
+            caption: mediaForm.caption.value,
+            category: mediaForm.category.value,
+            city: mediaForm.city.value,
+            ctaLabel: mediaForm.ctaLabel.value,
+            ctaUrl: mediaForm.ctaUrl.value,
+            seoTitle: mediaForm.seoTitle.value,
+            seoDescription: mediaForm.seoDescription.value,
+            seoKeywords: mediaForm.seoKeywords.value,
+          };
+        const r = await fetch(
+            kind === 'story'
+              ? '/api/social/stories'
+              : '/api/social/photo-posts',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            },
+          ),
+          d = await r.json();
+        mediaStatus.textContent = r.ok
+          ? 'Recebido! O conteúdo aparecerá depois da análise de segurança.'
+          : d.error || 'Não foi possível publicar.';
+        if (r.ok) {
+          mediaForm.reset();
+          setTimeout(() => {
+            mediaModal.classList.remove('open');
+            loadStories();
+            load(true);
+          }, 1600);
+        }
+      };
+      let storyItems = [];
+      async function loadStories() {
+        const r = await fetch('/api/social/stories'),
+          d = await r.json();
+        storyItems = d.items || [];
+        document
+          .getElementById('stories')
+          .querySelectorAll('.story-bubble')
+          .forEach((x) => x.remove());
+        document
+          .getElementById('stories')
+          .insertAdjacentHTML(
+            'beforeend',
+            storyItems
+              .map(
+                (s, i) =>
+                  `<button class="story-bubble" data-story="${i}"><span class="story-ring">${s.author.avatarUrl ? `<img src="${escapeHtml(s.author.avatarUrl)}" alt="">` : `<span>${escapeHtml(s.author.name.slice(0, 1))}</span>`}</span><small>${escapeHtml(s.author.handle)}</small></button>`,
+              )
+              .join(''),
+          );
+      }
+      document.getElementById('stories').addEventListener('click', (e) => {
+        const b = e.target.closest('.story-bubble');
+        if (!b) return;
+        const s = storyItems[Number(b.dataset.story)];
+        document.getElementById('story-image').src = s.mediaUrl;
+        document.getElementById('story-image').hidden = false;
+        document.getElementById('story-author').textContent =
+          s.author.name + ' · @' + s.author.handle;
+        document.getElementById('story-caption').textContent = s.caption;
+        const a = document.getElementById('story-link');
+        a.hidden = !s.ctaUrl;
+        a.href = s.ctaUrl || '#';
+        a.textContent = s.ctaLabel || 'Saiba mais';
+        document.getElementById('story-viewer').classList.add('open');
+        fetch('/api/social/stories/' + s.id + '/view', {
+          method: 'POST',
+        }).catch(() => {});
+      });
+      document.getElementById('story-close').onclick = () => {
+        document.getElementById('story-viewer').classList.remove('open');
+        const image = document.getElementById('story-image');
+        image.hidden = true;
+        image.removeAttribute('src');
+      };
+      async function loadNotifications(open = false) {
+        if (!(await auth())) return;
+        const r = await fetch('/api/social/notifications'),
+          d = await r.json();
+        if (!r.ok) return;
+        const badge = document.getElementById('notification-count');
+        badge.hidden = !d.unread;
+        badge.textContent = d.unread;
+        document.getElementById('notification-list').innerHTML =
+          d.items
+            ?.map(
+              (n) =>
+                `<div class="notice"><b>${escapeHtml(n.actor_name || 'Vitriny Social')}</b> ${escapeHtml(n.message)}<br><small>${new Date(n.created_at + 'Z').toLocaleString('pt-BR')}</small></div>`,
+            )
+            .join('') || '<p class="hint">Nenhuma notificação ainda.</p>';
+        if (open) {
+          document.getElementById('notifications').classList.add('open');
+          await fetch('/api/social/notifications/read', { method: 'POST' });
+          badge.hidden = true;
+        }
+      }
+      function connectSocialLive() {
+        const stream = new EventSource('/api/social/live');
+        stream.addEventListener('counts', (e) => {
+          const count = JSON.parse(e.data).notifications || 0,
+            badge = document.getElementById('notification-count');
+          badge.hidden = !count;
+          badge.textContent = count || '';
+        });
+        stream.addEventListener('notification', () => loadNotifications(false));
+      }
+      document.getElementById('notifications-button').onclick = () =>
+        loadNotifications(true);
+      document.getElementById('notifications-close').onclick = () =>
+        document.getElementById('notifications').classList.remove('open');
+      loadStories();
+      setTimeout(async () => {
+        if (await auth()) {
+          loadNotifications(false);
+          connectSocialLive();
+        }
+      }, 800);
+
+      document.getElementById('my-videos').addEventListener('click', (e) => {
+        if (e.target.closest('.open-publish')) return openModal();
+        const expand = e.target.closest('.my-expand');
+        if (expand) {
+          e.preventDefault();
+          return openMediaViewer(expand.dataset.player);
+        }
+        const post = e.target.closest('.post');
+        if (post && e.target.closest('.expand-control')) toggleExpand(post);
+      });
+      auth();
+      let loadingNextPage = false;
+      feed.addEventListener('scroll', async () => {
+        const nearEnd =
+          feed.scrollTop + feed.clientHeight >=
+          feed.scrollHeight - feed.clientHeight * 0.45;
+        if (!nearEnd || !cursor || loadingNextPage) return;
+        loadingNextPage = true;
+        try {
+          await load();
+        } finally {
+          loadingNextPage = false;
+        }
+      });
+      document.getElementById('filters').addEventListener('click', (e) => {
+        const b = e.target.closest('.chip');
+        if (!b) return;
+        document
+          .querySelectorAll('.chip')
+          .forEach((x) => x.classList.remove('active'));
+        b.classList.add('active');
+        category = b.dataset.category;
+        load(true);
+      });
+      more.onclick = () => load();
+      load(true);
+      if (new URLSearchParams(location.search).get('publicar') === '1')
+        openModal();
+    </script>
+  </body>
 </html>

@@ -10,3 +10,6 @@ uploads
 *.log
 coverage
 scripts
+*.bak*
+backups
+inspect-*.mjs

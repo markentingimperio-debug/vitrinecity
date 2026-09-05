@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {spawn} from 'node:child_process';
+import {createHmac,scryptSync} from 'node:crypto';
+import Database from 'better-sqlite3';
+
+const dataDir=mkdtempSync(path.join(tmpdir(),'vitriny-courier-')),port=35000+Math.floor(Math.random()*1000),origin=`http://127.0.0.1:${port}`;
+const webhookSecret='webhook-test-secret-32-characters';
+const child=spawn(process.execPath,['server.js'],{cwd:new URL('..',import.meta.url),env:{...process.env,DATA_DIR:dataDir,PORT:String(port),SITE_URL:origin,STORE_PORTAL_SECRET:'courier-test-management-secret-32',LOCAL_DELIVERY_ENCRYPTION_KEY:'courier-test-encryption-secret-32',MERCADOPAGO_WEBHOOK_SECRET:webhookSecret},stdio:['ignore','pipe','pipe']});
+let output='';child.stdout.on('data',c=>output+=c);child.stderr.on('data',c=>output+=c);
+const request=(url,options={})=>fetch(origin+url,{...options,headers:{origin,'content-type':'application/json',...(options.headers||{})}});
+async function wait(){for(let i=0;i<80;i++){try{if((await fetch(origin+'/api/health')).ok)return}catch{}await new Promise(r=>setTimeout(r,100))}throw Error(output)}
+try{
+  await wait();const db=new Database(path.join(dataDir,'vitrinecity.db'));
+  const hash=s=>{const salt='00112233445566778899aabbccddeeff';return `scrypt:${salt}:${scryptSync(s,salt,64).toString('hex')}`};
+  const password='senha-entrega-123',passwordHash=hash(password);
+  const courierId=Number(db.prepare("INSERT INTO local_delivery_couriers(name,whatsapp,city,state,password_hash) VALUES ('Entregador','62999999999','Silvânia','GO',?)").run(passwordHash).lastInsertRowid);
+  db.prepare("INSERT INTO users(name,email,password_hash,adult_confirmed) VALUES ('Cliente','cliente@example.com',?,1)").run(passwordHash);const userId=db.prepare("SELECT id FROM users WHERE email='cliente@example.com'").get().id;
+  db.prepare("INSERT INTO lot_orders(reference,name,email,amount_cents,status,business_name) VALUES ('store-courier','Loja','loja@example.com',100,'approved','Loja')").run();
+  db.prepare("INSERT INTO store_profiles(order_reference,business_name,review_status,address,city,state) VALUES ('store-courier','Loja','published','Rua 1','Silvânia','GO')").run();
+  const address=Number(db.prepare("INSERT INTO customer_addresses(user_id,label,recipient_name,postal_code,street,number,neighborhood,city,state) VALUES (?,'Casa','Cliente','75180000','Rua 2','2','Centro','Silvânia','GO')").run(userId).lastInsertRowid);
+  db.prepare("INSERT INTO marketplace_orders(reference,buyer_user_id,store_reference,address_id,products_cents,shipping_cents,platform_percent_cents,platform_fixed_cents,return_operation_cents,total_cents,payment_status,delivery_mode,delivery_courier_cents) VALUES ('shop-courier',?,'store-courier',?,1000,500,100,200,50,1500,'approved','local',450)").run(userId,address);
+  const jobId=Number(db.prepare("INSERT INTO local_delivery_jobs(order_reference,distance_meters,fee_cents,platform_cents,courier_cents,status) VALUES ('shop-courier',900,500,50,450,'available')").run().lastInsertRowid);
+  const offerId=Number(db.prepare("INSERT INTO local_delivery_offers(job_id,courier_id,distance_to_store_meters,expires_at) VALUES (?,?,?,?)").run(jobId,courierId,120,new Date(Date.now()+300000).toISOString()).lastInsertRowid);db.close();
+  let response;for(let i=0;i<7;i++)response=await request('/api/courier/auth/login',{method:'POST',body:JSON.stringify({whatsapp:'62888888888',password:'incorreta-123'})});assert.equal(response.status,429);
+  response=await request('/api/courier/auth/login',{method:'POST',body:JSON.stringify({whatsapp:'62999999999',password})});assert.equal(response.status,200);const cookie=response.headers.get('set-cookie').split(';')[0];
+  response=await request('/api/courier/pix-key',{method:'PUT',headers:{cookie},body:JSON.stringify({type:'email',value:'entregador@example.com'})});assert.equal(response.status,200);
+  response=await request(`/api/courier/dispatch/${offerId}/respond`,{method:'POST',headers:{cookie},body:JSON.stringify({action:'accept'})});assert.equal(response.status,200);
+  for(const action of ['pickup','deliver']){response=await request(`/api/courier/jobs/${jobId}`,{method:'PATCH',headers:{cookie},body:JSON.stringify({action})});assert.equal(response.status,200)}
+  response=await request(`/api/courier/jobs/${jobId}`,{method:'PATCH',headers:{cookie},body:JSON.stringify({action:'deliver'})});assert.equal(response.status,409);
+  response=await request('/api/courier/wallet',{headers:{cookie}});let wallet=await response.json();assert.equal(wallet.balanceCents,0);assert.equal(wallet.ledger.length,0);
+  response=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'cliente@example.com',password})});assert.equal(response.status,200);const buyerCookie=response.headers.get('set-cookie').split(';')[0];
+  response=await request('/api/marketplace/orders/shop-courier/confirm-delivery',{method:'POST',headers:{cookie:buyerCookie},body:'{}'});assert.equal(response.status,200);assert.equal((await response.json()).confirmed,true);
+  response=await request('/api/marketplace/orders/shop-courier/confirm-delivery',{method:'POST',headers:{cookie:buyerCookie},body:'{}'});assert.equal(response.status,200);assert.equal((await response.json()).replayed,true);
+  wallet=await (await request('/api/courier/wallet',{headers:{cookie}})).json();assert.equal(wallet.balanceCents,450);assert.equal(wallet.ledger.length,1);
+  const withdrawalHeaders={cookie,'idempotency-key':'withdrawal-test-0001'};response=await request('/api/courier/withdrawals',{method:'POST',headers:withdrawalHeaders,body:JSON.stringify({amountCents:300})});assert.equal(response.status,201);const withdrawalId=(await response.json()).id;
+  response=await request('/api/courier/withdrawals',{method:'POST',headers:withdrawalHeaders,body:JSON.stringify({amountCents:300})});assert.equal(response.status,200);assert.equal((await response.json()).id,withdrawalId);
+  wallet=await (await request('/api/courier/wallet',{headers:{cookie}})).json();assert.equal(wallet.balanceCents,150);assert.equal(wallet.withdrawals.length,1);assert.equal(wallet.withdrawals[0].pixKeyLast4,'.com');
+  const verifyDb=new Database(path.join(dataDir,'vitrinecity.db'));const courier=verifyDb.prepare('SELECT * FROM local_delivery_couriers WHERE id=?').get(courierId);assert.notEqual(courier.pix_key_encrypted,'entregador@example.com');assert.equal(JSON.stringify(courier).includes('entregador@example.com'),false);assert.equal(verifyDb.prepare("SELECT COUNT(*) total FROM local_delivery_ledger WHERE entry_type='delivery_credit'").get().total,1);verifyDb.close();
+  const signature=createHmac('sha256',webhookSecret).update('ts:1;').digest('hex'),webhookHeaders={'x-signature':`ts=1,v1=${signature}`};
+  response=await request('/api/payments/mercadopago/webhook?order=shop-courier&route_sig=invalid',{method:'POST',headers:webhookHeaders,body:JSON.stringify({type:'payment',data:{id:'123'}})});assert.equal(response.status,400);
+  const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');assert.match(server,/deliveryMode==='local'\?effectiveShippingCents:0/);assert.match(server,/app\.get\('\/api\/store-portal\/:reference\/paid-orders'/);assert.match(server,/proofReference/);assert.match(server,/marketplace_payment_events/);assert.match(server,/marketplaceSellerAccessToken\(account\)/);assert.match(server,/customer_confirmed_at IS NULL/);assert.match(server,/marketplaceWebhookRouteSignature\(reference\)/);assert.match(server,/timingSafeEqual\(Buffer\.from\(actual\),Buffer\.from\(expected\)\)/);const paymentFetch=server.indexOf("/v1/payments/${encodeURIComponent(dataId)}"),reconciliationLoad=server.indexOf("SELECT * FROM marketplace_payment_reconciliation WHERE order_reference=?",paymentFetch),legacyMarketplaceGuard=server.indexOf("!hintedReference&&reconciliation?.split_mode==='marketplace'",paymentFetch);assert.ok(paymentFetch>0&&reconciliationLoad>paymentFetch&&legacyMarketplaceGuard>reconciliationLoad,'somente shop com split marketplace deve exigir rota assinada após consulta central');
+  console.log('courier-operations-api: ok');
+}finally{child.kill();await new Promise(r=>child.once('exit',r));await new Promise(r=>setTimeout(r,200));rmSync(dataDir,{recursive:true,force:true,maxRetries:10,retryDelay:100})}
