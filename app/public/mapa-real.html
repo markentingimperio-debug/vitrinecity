@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="description" content="Explore lojas, serviços e outdoors na Cidade Premium da VitrineCity." />
+    <title>Cidade Premium — VitrineCity</title>
+    <link rel="stylesheet" href="/mapa-real.css?v=2" />
+    <style>
+      .premium-badge{padding:10px 14px;border-radius:12px;background:linear-gradient(135deg,#071f4b,#1768e6);color:#fff;font-size:12px;font-weight:950;letter-spacing:.06em;box-shadow:0 6px 18px #1768e638}
+      .premium-outdoor{position:absolute;width:150px;min-height:64px;transform:translate(-50%,-100%) rotate(-2deg);padding:5px;border:3px solid #eef7ff;border-radius:5px;background:linear-gradient(135deg,#ffca28,#ff7800);box-shadow:0 7px 0 #1b3455,0 13px 20px #061a3470;color:#071f4b;text-align:left;text-decoration:none;font-family:Inter,Arial,sans-serif;animation:premiumFloat 3.4s ease-in-out infinite;display:grid;grid-template-columns:48px 1fr;gap:6px;align-items:center;overflow:hidden}
+      .premium-outdoor:not(:has(img)){grid-template-columns:1fr;text-align:center}.premium-outdoor img{width:48px;height:48px;border-radius:3px;object-fit:cover;background:#fff}.outdoor-copy{min-width:0}.premium-outdoor small,.premium-outdoor strong,.premium-outdoor em{display:block}.premium-outdoor small{font-size:6px;font-weight:950;text-transform:uppercase}.premium-outdoor strong{font-size:9px;line-height:1.08;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.premium-outdoor em{margin-top:2px;font-size:8px;font-style:normal;font-weight:950}.premium-outdoor.changing .outdoor-copy{animation:outdoorChange .45s ease}.premium-outdoor:hover{z-index:21;filter:brightness(1.1)}@keyframes outdoorChange{from{opacity:.15;transform:translateY(5px)}to{opacity:1;transform:none}}
+      .edge-outdoor{position:absolute;z-index:18}.edge-outdoor.edge-left{transform:translate(-50%,-100%) rotate(2deg)}.edge-outdoor.edge-right{transform:translate(-50%,-100%) rotate(-2deg)}
+      .premium-building img{position:absolute;inset:5px 5px 25px;width:calc(100% - 10px);height:42px;border-radius:6px;object-fit:cover;filter:saturate(1.08) contrast(1.03)}.premium-building:has(img):before{display:none}.premium-building:has(img) span{padding:2px 3px;border-radius:4px;background:#071f4bd9}
+      @media(max-width:760px){.premium-badge{padding:8px 10px;font-size:9px}.premium-outdoor{width:126px;min-height:56px;grid-template-columns:40px 1fr}.edge-outdoor.edge-left{transform:translate(-50%,-100%) rotate(2deg) scale(.82)}.edge-outdoor.edge-right{transform:translate(-50%,-100%) rotate(-2deg) scale(.82)}.premium-outdoor img{width:40px;height:40px}.premium-outdoor strong{font-size:8px}.premium-building img{height:38px}.store-card{min-height:78px}.map-wrap{height:58vh;min-height:390px}}
+    </style>
+    <style>.vehicle-help{display:block;margin-top:-6px;color:#5d7192}.store-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}.store-actions a,.store-actions button{display:inline-flex;padding:6px 9px;border:0;border-radius:8px;background:#eaf3ff;color:#1768e6;text-decoration:none;font:inherit;font-size:11px;font-weight:900;cursor:pointer}.store-actions :last-child{background:#1768e6;color:#fff}</style>
+    <script src="/analytics.js" defer></script>
+    <script src="/mapa-real.js?v=14" defer></script>
+    <script src="/global-market-banner.js?v=5" defer></script>
+  <script src="/openai-ads.js" defer></script><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#071f4b"><link rel="apple-touch-icon" href="/assets/pwa-icon-192.png"><script src="/waze-navigation.js?v=1"></script></head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="VitrineCity — página inicial"><i></i>VitrineCity</a>
+      <span class="premium-badge">✦ CIDADE PREMIUM</span>
+    </header>
+    <main>
+      <aside class="panel" aria-label="Busca de lojas">
+        <div class="intro">
+          <span class="eyebrow">A CIDADE DIGITAL SOBRE O BRASIL REAL</span>
+          <h1>Explore a Cidade Premium</h1>
+          <p>Encontre lojas, serviços e outdoors digitais conectados às cidades reais.</p>
+        </div>
+        <form id="filters" class="filters">
+          <label>Buscar loja ou categoria<input id="search" type="search" placeholder="Ex.: plantas, moda, serviços" /></label>
+          <div class="filter-row">
+            <label>Estado<select id="state"><option value="">Todos</option></select></label>
+            <label>Cidade<select id="city"><option value="">Todas</option></select></label>
+          </div>
+          <label>Estou dirigindo
+            <select id="vehicle" aria-describedby="vehicle-help">
+              <option value="car">🚗 Carro</option>
+              <option value="motorcycle">🏍️ Moto</option>
+              <option value="truck">🚚 Caminhão</option>
+              <option value="bus">🚌 Ônibus</option>
+            </select>
+          </label>
+          <small id="vehicle-help" class="vehicle-help">A rota considera o tipo de veículo selecionado.</small>
+          <button class="location" id="near-me" type="button">⌖ Usar minha localização</button>
+          <a class="location" href="/navegar.html" style="display:block;text-align:center;text-decoration:none">➜ Dirigir ou viajar</a>
+        </form>
+        <p id="status" class="status" role="status">Carregando lojas…</p>
+        <section id="results" class="results" aria-label="Lojas encontradas"></section>
+      </aside>
+      <section class="map-wrap" aria-label="Cidade Premium e suas lojas">
+        <div id="map"></div>
+        <div id="map-message" class="map-message" hidden></div>
+      </section>
+    </main>
+  <script src="/global-market-banner.js?v=3" defer></script><script src="/pwa-install.js?v=2" defer></script></body>
+</html>

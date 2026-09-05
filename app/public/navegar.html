@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#071f4b">
+  <meta name="description" content="Navegação, viagens e trânsito dentro da VitrineCity.">
+  <title>Navegar — VitrineCity</title>
+  <link rel="stylesheet" href="/navegar.css?v=1">
+  <script src="/waze-navigation.js?v=1"></script><script src="/navegar.js?v=5" defer></script>
+<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#071f4b"><link rel="apple-touch-icon" href="/assets/pwa-icon-192.png"></head>
+<body>
+  <header class="topbar"><a href="/cidade-premium">‹ Explorar cidade</a><strong>VitrineCity GPS</strong><span id="network">Online</span></header>
+  <main>
+    <section class="controls" aria-label="Planejar rota">
+      <div class="title"><span>Planeje sua viagem</span><h1>Dirigir ou viajar</h1><p>Escolha o destino e abra a navegação com trânsito e voz no Waze. Para bicicleta, usamos uma rota ciclável no Google Maps.</p></div>
+      <form id="route-form">
+        <label>Origem<input id="origin" autocomplete="street-address" placeholder="Minha localização ou endereço"></label>
+        <button id="use-location" type="button" class="secondary">⌖ Usar minha localização</button>
+        <label>Destino<input id="destination" autocomplete="street-address" required placeholder="Rua, cidade e estado"></label>
+        <label>Modo<select id="mode"><option value="car">🚗 Carro</option><option value="motorcycle">🏍️ Motocicleta</option><option value="bicycle">🚲 Bicicleta</option></select></label>
+        <div class="buttons"><button id="open-waze" type="button">Navegar no Waze</button></div><p>O Waze usa sua posição atual como origem. O endereço de origem abaixo serve para a prévia no mapa.</p><div class="buttons"><button id="calculate" type="submit">Calcular rota</button><button id="start-navigation" type="button" class="secondary" disabled>Acompanhar posição no mapa</button></div>
+      </form>
+      <p id="status" role="status">Informe o destino ou escolha uma loja no Explorar cidade.</p>
+      <section id="summary" class="summary" hidden><strong id="distance">—</strong><span id="duration">—</span><small id="traffic-note"></small></section>
+      <ol id="steps" aria-label="Instruções da rota"></ol>
+      <a id="fallback" href="#" target="_blank" rel="noopener" hidden>Abrir rota alternativa</a>
+    </section>
+    <section class="map-shell" aria-label="Mapa da navegação"><div id="map"></div><div id="map-message" hidden></div></section>
+  </main>
+<script src="/global-market-banner.js?v=3" defer></script><script src="/pwa-install.js?v=2" defer></script></body>
+</html>
