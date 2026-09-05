@@ -61,5 +61,5 @@ async function start() {
   motion.addEventListener('change',e=>{if(e.matches){paused=true;draw();}});
   let footerVisible=false,headerVisible=true;
   const observer=new IntersectionObserver(entries=>{for(const entry of entries){if(entry.target===root)footerVisible=entry.isIntersecting;else headerVisible=entry.isIntersecting;}visible=footerVisible||headerVisible;});observer.observe(root);observer.observe(banner);
-  draw();setInterval(()=>{if(!paused&&!hover&&!focused&&visible&&!document.hidden){index=(index+1)%items.length;draw();}},7000);
+  draw();setInterval(()=>{if(!paused&&!hover&&!focused&&visible&&!document.hidden){index=(index+1)%items.length;draw();}},4000);
 }

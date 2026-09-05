@@ -1,7 +1,7 @@
 (() => {
   if(window.__vcGlobalMarketBannerLoaded || location.pathname.startsWith('/admin'))return;
   window.__vcGlobalMarketBannerLoaded=true;
-  import('/market-outdoor.js?v=2').catch(()=>{});
+  import('/market-outdoor.js?v=3').catch(()=>{});
   // Preserve the existing paid advertising placement, separately labelled.
   fetch('/api/ads/serve?placement=banner').then(r=>r.ok?r.json():{}).then(data=>{
     if(!data.ads?.length || document.getElementById('vc-paid-sponsor-strip'))return;
