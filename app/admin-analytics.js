@@ -2,8 +2,7 @@ import path from 'node:path';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SAFE_EVENTS = new Set([
-  'page_view', 'click', 'lead', 'affiliate_signup', 'checkout_start',
-  'purchase', 'store_view', 'whatsapp_click'
+  'page_view', 'click', 'affiliate_signup', 'store_view', 'whatsapp_click'
 ]);
 
 const clean = (value, size = 160) => String(value || '').trim().slice(0, size);
@@ -401,20 +400,27 @@ export function setupAdminAnalytics({ app, db, requireAdmin, publicDir }) {
   });
 
   function serverEvent(req, eventName, assetType, assetId, valueCents = 0) {
+    try {
+    if (req.get('x-vc-analytics-consent') !== 'accepted') return;
     const sid = sessionId(req);if (!sid) return;
     const source = db.prepare('SELECT session_id,user_id FROM analytics_sessions WHERE session_id=?').get(sid);if (!source) return;
     db.prepare(`INSERT INTO analytics_events
-      (session_id,user_id,event_name,path,asset_type,asset_id,value_cents) VALUES (?,?,?,?,?,?,?)`)
-      .run(sid, source.user_id, eventName, clean(req.originalUrl, 300), clean(assetType, 40), clean(assetId, 120), valueCents);
+      (session_id,user_id,event_name,path,asset_type,asset_id,value_cents,metadata_json) VALUES (?,?,?,?,?,?,?,?)`)
+      .run(sid, req.user?.id || source.user_id, eventName, clean(req.path, 300), clean(assetType, 40), clean(assetId, 120), valueCents,
+        JSON.stringify({ origin: 'server', googleConsent: req.get('x-vc-google-analytics-consent') === 'accepted' }));
+    } catch { console.warn('Optional server analytics could not be recorded.'); }
   }
 
   return {
     recordOrderAttribution(req, orderReference, orderType) {
+      try {
+      if (req.get('x-vc-analytics-consent') !== 'accepted') return;
       const sid = sessionId(req);if (!sid) return;
       const source = db.prepare('SELECT * FROM analytics_sessions WHERE session_id=?').get(sid);if (!source) return;
-      db.prepare(`INSERT OR REPLACE INTO analytics_order_attribution
+      db.prepare(`INSERT OR IGNORE INTO analytics_order_attribution
         (order_reference,order_type,session_id,utm_source,utm_medium,utm_campaign,utm_content) VALUES (?,?,?,?,?,?,?)`)
         .run(orderReference, orderType, sid, source.utm_source, source.utm_medium, source.utm_campaign, source.utm_content);
+      } catch { console.warn('Optional order attribution could not be recorded.'); }
     },
     recordLead(req, interest) {
       serverEvent(req, 'lead', 'lead', interest);
@@ -423,13 +429,15 @@ export function setupAdminAnalytics({ app, db, requireAdmin, publicDir }) {
       serverEvent(req, 'checkout_start', orderType, reference, valueCents);
     },
     recordPurchase(orderReference, orderType, valueCents) {
+      try {
       const source = db.prepare('SELECT session_id FROM analytics_order_attribution WHERE order_reference=?').get(orderReference);
       if (!source?.session_id) return;
-      const exists = db.prepare("SELECT 1 FROM analytics_events WHERE event_name='purchase' AND asset_id=? LIMIT 1").get(orderReference);
+      const exists = db.prepare("SELECT 1 FROM analytics_events WHERE event_name='purchase' AND asset_type=? AND asset_id=? LIMIT 1").get(orderType, orderReference);
       if (exists) return;
       db.prepare(`INSERT INTO analytics_events
         (session_id,event_name,path,asset_type,asset_id,value_cents) VALUES (?,'purchase','/webhook',?,?,?)`)
         .run(source.session_id, orderType, orderReference, valueCents);
+      } catch { console.warn('Optional purchase analytics could not be recorded.'); }
     }
   };
 }

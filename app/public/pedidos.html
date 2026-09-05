@@ -14,6 +14,7 @@
   <header><a href="/loja">← Voltar à loja</a><h1>Meus pedidos</h1><p class="muted">Pagamento, nota fiscal, etiqueta e rastreamento em um só lugar.</p></header>
   <main><section class="card" aria-labelledby="customer-chat-title"><h2 id="customer-chat-title">Fale com a VitrineCity</h2><p class="muted">Tire dúvidas sobre seus pedidos com nossa equipe.</p><div data-profile-chat="customer"></div></section><div id="orders">Carregando...</div></main>
   <script src="/profile-chat.js"></script>
+  <script src="/analytics.js?v=conversions-20260905"></script>
   <script>
     const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const money=v=>(v/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
