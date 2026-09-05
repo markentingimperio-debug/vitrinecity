@@ -24,13 +24,20 @@ async function start() {
     const item=list[i];try{const u=new URL(item.url,location.origin);if(u.origin!==location.origin||seen.has(u.href))continue;seen.add(u.href);items.push(item);}catch{}
   }
   if(!items.length)return;
-  const css=document.createElement('link');css.rel='stylesheet';css.href='/market-outdoor.css?v=1';document.head.append(css);
+  const css=document.createElement('link');css.rel='stylesheet';css.href='/market-outdoor.css?v=2';document.head.append(css);
   const root=document.createElement('section');root.id='vc-outdoor';root.setAttribute('aria-roledescription','carrossel');root.setAttribute('aria-label','Destaques da VitrineCity');
   root.innerHTML='<div class="vc-od-heading"><div><span>EM DESTAQUE NA VITRINECITY</span><h2>Seu próximo achado está aqui.</h2></div><a href="/ofertas">Explorar ofertas ↗</a></div><div class="vc-od-stage"><div class="vc-od-copy"><span class="vc-od-label"></span><h3></h3><p class="vc-od-description"></p><p class="vc-od-disclosure"></p><a class="vc-od-cta"></a></div><div class="vc-od-visual"><img width="480" height="340" alt="" decoding="async"><span class="vc-od-fallback" hidden>VitrineCity</span></div></div><div class="vc-od-controls"><span class="vc-od-count" aria-live="off"></span><div><button type="button" data-action="prev" aria-label="Destaque anterior">←</button><button type="button" data-action="pause">Pausar</button><button type="button" data-action="next" aria-label="Próximo destaque">→</button></div></div>';
   const footer=document.querySelector('body > footer');
   if(footer)footer.before(root);else document.body.append(root);
   const banner=document.createElement('aside');banner.id='vc-global-market-banner';banner.setAttribute('aria-label','Destaques da VitrineCity');
-  banner.innerHTML='<strong>VITRINECITY</strong><a class="vc-hb-link"><small></small><b></b></a><button type="button" aria-label="Pausar banner automático">Pausar</button>';
+  banner.innerHTML='<strong>VITRINECITY</strong><div class="vc-hb-window"><nav aria-label="Ofertas e recursos"></nav></div><button type="button" aria-label="Pausar banner contínuo">Pausar</button>';
+  const track=banner.querySelector('nav');
+  for(let copy=0;copy<2;copy++)for(const item of items){
+    const a=document.createElement('a');a.className='vc-hb-link';a.href=item.url;
+    const label=document.createElement('small');label.textContent=item.kind==='affiliate'?'Publicidade · Afiliado':item.label;
+    const title=document.createElement('b');title.textContent=item.title;a.append(label,title);
+    if(copy){a.setAttribute('aria-hidden','true');a.tabIndex=-1;}track.append(a);
+  }
   document.querySelector('#marketTicker')?.remove();document.body.prepend(banner);
   let index=0, paused=matchMedia('(prefers-reduced-motion: reduce)').matches, hover=false, focused=false, visible=true;
   const motion=matchMedia('(prefers-reduced-motion: reduce)');
@@ -41,25 +48,20 @@ async function start() {
     $('.vc-od-description').textContent=item.description;
     $('.vc-od-disclosure').textContent=item.kind==='affiliate'?'Publicidade · Link de afiliado. Podemos receber comissão.':'Confira os detalhes e as condições na página.';
     const cta=$('.vc-od-cta');cta.textContent=item.button+' ↗';cta.href=item.url;
-    banner.querySelector('small').textContent=item.kind==='affiliate'?'Publicidade · Afiliado':item.label;
-    banner.querySelector('b').textContent=item.title;banner.querySelector('a').href=item.url;
     image.hidden=true;$('.vc-od-fallback').hidden=false;
     try { const url=new URL(item.image,location.origin);if(!item.image || url.protocol!=='https:')throw Error();image.src=url.href;image.alt=item.title; } catch {image.removeAttribute('src');}
     const count=$('.vc-od-count');count.setAttribute('aria-live',manual?'polite':'off');count.textContent=String(index+1).padStart(2,'0')+' / '+String(items.length).padStart(2,'0');
     pause.textContent=paused?'Reproduzir':'Pausar';pause.setAttribute('aria-label',paused?'Reproduzir destaques automaticamente':'Pausar destaques automáticos');
-    banner.querySelector('button').textContent=paused?'Reproduzir':'Pausar';banner.querySelector('button').setAttribute('aria-label',paused?'Reproduzir banner automático':'Pausar banner automático');
   }
   image.addEventListener('load',()=>{image.hidden=false;$('.vc-od-fallback').hidden=true;});
   image.addEventListener('error',()=>{image.hidden=true;$('.vc-od-fallback').hidden=false;});
   root.addEventListener('click',e=>{const button=e.target.closest('button[data-action]');if(!button)return;
     if(button.dataset.action==='pause')paused=!paused;else{paused=true;index=(index+(button.dataset.action==='next'?1:-1)+items.length)%items.length;}draw(true);});
   root.addEventListener('mouseenter',()=>hover=true);root.addEventListener('mouseleave',()=>hover=false);
-  banner.addEventListener('mouseenter',()=>hover=true);banner.addEventListener('mouseleave',()=>hover=false);
-  banner.addEventListener('focusin',()=>focused=true);banner.addEventListener('focusout',()=>{focused=banner.contains(document.activeElement);});
-  banner.querySelector('button').addEventListener('click',()=>{paused=!paused;draw(true);});
+  let bannerPaused=false;
+  banner.querySelector('button').addEventListener('click',()=>{bannerPaused=!bannerPaused;banner.classList.toggle('vc-hb-paused',bannerPaused);const button=banner.querySelector('button');button.textContent=bannerPaused?'Reproduzir':'Pausar';button.setAttribute('aria-label',bannerPaused?'Reproduzir banner contínuo':'Pausar banner contínuo');});
   root.addEventListener('focusin',()=>focused=true);root.addEventListener('focusout',()=>{focused=root.contains(document.activeElement);});
   motion.addEventListener('change',e=>{if(e.matches){paused=true;draw();}});
-  let footerVisible=false,headerVisible=true;
-  const observer=new IntersectionObserver(entries=>{for(const entry of entries){if(entry.target===root)footerVisible=entry.isIntersecting;else headerVisible=entry.isIntersecting;}visible=footerVisible||headerVisible;});observer.observe(root);observer.observe(banner);
+  const observer=new IntersectionObserver(entries=>{visible=entries[0].isIntersecting;});observer.observe(root);
   draw();setInterval(()=>{if(!paused&&!hover&&!focused&&visible&&!document.hidden){index=(index+1)%items.length;draw();}},4000);
 }
