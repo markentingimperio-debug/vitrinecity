@@ -31,7 +31,9 @@
     query.setAttribute('aria-expanded', 'false'); query.removeAttribute('aria-activedescendant');
   };
   function applyFilter() {
-    $('ai-panel').hidden = !aiEnabled || !searched || filter === 'local';
+    $('ai-panel').hidden = !aiEnabled || !searched || !['all','web'].includes(filter) || $('platform').value !== 'all';
+    $('platform-filter').hidden = filter === 'local';
+    $('platform-note').hidden = !searched || filter === 'local' || (!['shopping','social'].includes(filter) && $('platform').value === 'all');
     document.querySelectorAll('[data-section]').forEach(section => {
       const matches = filter === 'all' || (section.dataset.section === 'web' ? filter !== 'local' : filter === 'local');
       section.hidden = !searched || !matches || section.id === 'ads-section' && !section.childElementCount;
@@ -60,10 +62,10 @@
     if(page===1){webUrls.clear();relatedQueries([]);box.replaceChildren(node('p','Pesquisando sites e vídeos…','panel status'));}
     else box.querySelector('[data-more-web]')?.remove();
     try {
-      const response=await fetch('/api/search/web?'+new URLSearchParams({q:value,type:filter==='local'?'all':filter,page:String(page)}),{signal:webController.signal});
+      const response=await fetch('/api/search/web?'+new URLSearchParams({q:value,type:filter==='local'?'all':filter,source:$('platform').value,page:String(page)}),{signal:webController.signal});
       if(!response.ok)throw new Error('unavailable');
       const data=await response.json();if(own!==webVersion)return;
-      if(page===1)box.replaceChildren(node('h2',filter==='videos'?'Vídeos relacionados':'Sites e conteúdos relacionados','section-title'));
+      if(page===1)box.replaceChildren(node('h2',filter==='videos'?'Vídeos relacionados':filter==='shopping'?'Produtos e ofertas relacionadas':filter==='social'?'Conteúdos nas redes sociais':'Sites e conteúdos relacionados','section-title'));
       if(data.unavailable?.length)box.append(node('p','Algumas fontes não responderam. Exibindo os resultados disponíveis.','status'));
       let added=0;
       for(const result of data.results || []){
@@ -200,9 +202,12 @@
   query.addEventListener('blur',closeSuggestions);
   $('search-form').addEventListener('submit',event=>{event.preventDefault();search(query.value);});
   $('city').addEventListener('change',()=>{if(searched)search(searched);});
+  $('platform').addEventListener('change',()=>{
+    filter='all'; document.querySelectorAll('[data-filter]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.filter==='all'))); applyFilter(); if(searched)loadWeb(searched);
+  });
   document.querySelectorAll('[data-query]').forEach(button=>button.addEventListener('click',()=>search(button.dataset.query)));
   document.querySelectorAll('[data-filter]').forEach(button=>button.addEventListener('click',()=>{
-    filter=button.dataset.filter;document.querySelectorAll('[data-filter]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));applyFilter();
+    filter=button.dataset.filter;$('platform').value='all';document.querySelectorAll('[data-filter]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));applyFilter();
     if(searched){if(filter==='local'){webController?.abort();webVersion++;webPending=false;relatedQueries([]);$('search-status').textContent='Resultados na Vitrine para “'+searched+'”.';}else loadWeb(searched);}
   }));
   const initial=new URLSearchParams(location.search);$('city').value=String(initial.get('city')||'').slice(0,100);

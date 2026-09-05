@@ -7,6 +7,18 @@ export const SEARCH_ENGINES = Object.freeze({
 });
 const text = (value, max = 500) => String(value || '').replace(/<[^>]*>/g, '').replace(/&(?:amp|quot|apos|lt|gt|nbsp);/g,
   value => ({'&amp;':'&','&quot;':'"','&apos;':"'",'&lt;':'<','&gt;':'>','&nbsp;':' '}[value])).trim().slice(0, max);
+export const SEARCH_PLATFORMS = Object.freeze({
+  mercadolivre: ['mercadolivre.com.br'], shopee: ['shopee.com.br'],
+  kwai: ['kwai.com'], instagram: ['instagram.com'], tiktok: ['tiktok.com']
+});
+export function platformDomains(kind, source) {
+  if (Object.hasOwn(SEARCH_PLATFORMS, source)) return SEARCH_PLATFORMS[source];
+  return (kind === 'shopping' ? ['mercadolivre','shopee'] : kind === 'social' ? ['kwai','instagram','tiktok'] : [])
+    .flatMap(id => SEARCH_PLATFORMS[id]);
+}
+export function resultMatchesDomains(url, domains) {
+  try { const host = new URL(url).hostname; return !domains.length || domains.some(domain => host === domain || host.endsWith('.'+domain)); } catch { return false; }
+}
 export function publicResultUrl(value) {
   try {
     const url = new URL(String(value));
@@ -84,7 +96,7 @@ export function setupMetasearch(app, { db, env = process.env, fetchImpl = fetch,
   }
   setupSearchAi(app, { db, env, fetchImpl, now, lookup: query => {
     if (!base) throw new Error('unconfigured');
-    return cached(JSON.stringify([query,'all',1]), async () => normalizeWebResults(await getJson('/search', {
+    return cached(JSON.stringify([query,'all',1,'all']), async () => normalizeWebResults(await getJson('/search', {
       q:query,format:'json',language:'pt-BR',engines:enabled.join(','),categories:'general,videos',pageno:'1',safesearch:'1'
     }), enabled),120000);
   }});
@@ -92,21 +104,25 @@ export function setupMetasearch(app, { db, env = process.env, fetchImpl = fetch,
     providers:enabled.map(id=>({id,name:SEARCH_ENGINES[id],type:id==='youtube'?'video':'web'})) }));
   app.get('/api/search/web', async (req,res)=>{
     res.set('Cache-Control','no-store');
-    const query=text(req.query.q,300),kind=['all','web','videos'].includes(req.query.type)?req.query.type:'all';
+    const query=text(req.query.q,300),kind=['all','web','videos','shopping','social'].includes(req.query.type)?req.query.type:'all';
+    const source=Object.hasOwn(SEARCH_PLATFORMS,String(req.query.source))?String(req.query.source):'all';
+    const domains=platformDomains(kind,source);
+    const upstreamQuery=domains.length ? query+' ('+domains.map(domain=>'site:'+domain).join(' OR ')+')' : query;
     const page=Math.min(5,Math.max(1,Math.floor(Number(req.query.page)||1)));
     if(query.length<2)return res.status(400).json({status:'invalid_query',results:[],suggestions:[]});
     if(!base)return res.status(503).json({status:'unconfigured',results:[],suggestions:[]});
     if(!gate(req,res,'search'))return;
-    const chosen=enabled.filter(id=>kind==='all'||(kind==='videos'?id==='youtube':id!=='youtube'));
+    const chosen=enabled.filter(id=>domains.length?id!=='youtube':kind==='all'||(kind==='videos'?id==='youtube':id!=='youtube'));
     if(!chosen.length)return res.json({status:'empty',results:[],suggestions:[],page,nextPage:null});
     try {
-      const data=await cached(JSON.stringify([query,kind,page]),async()=>normalizeWebResults(await getJson('/search',{
-        q:query,format:'json',language:'pt-BR',engines:chosen.join(','),categories:kind==='videos'?'videos':kind==='web'?'general':'general,videos',
+      const data=await cached(JSON.stringify([query,kind,page,source]),async()=>normalizeWebResults(await getJson('/search',{
+        q:upstreamQuery,format:'json',language:'pt-BR',engines:chosen.join(','),categories:domains.length?'general':kind==='videos'?'videos':kind==='web'?'general':'general,videos',
         pageno:String(page),safesearch:'1'
       }),chosen),120000);
-      res.json({status:data.unavailable.length?'partial':data.results.length?'ready':'empty',...data,page,
+      const results=data.results.filter(result=>resultMatchesDomains(result.url,domains));
+      res.json({...data,results,status:data.unavailable.length?'partial':results.length?'ready':'empty',page,
         // Engines have different pagination support. Only offer a bounded next request after a nonempty page.
-        nextPage:data.results.length && page<5?page+1:null});
+        nextPage:results.length && page<5?page+1:null});
     }catch(error){res.status(error.message==='busy'?429:503).json({status:'unavailable',results:[],suggestions:[]});}
   });
   app.get('/api/search/autocomplete',async(req,res)=>{

@@ -35,6 +35,10 @@ Antes da implantação, copie os arquivos afetados e preserve a imagem atual do 
 
 Os testes automatizados usam respostas controladas para validar falhas, cache e segurança. Não substituem o teste real dos provedores na VPS. Em 05/09/2026, a consulta real `como fazer bolo` retornou 39 resultados no serviço privado, com Bing, Brave e YouTube presentes e algumas fontes indisponíveis.
 
+## Plataformas e redes
+
+Filtros Compras (Mercado Livre e Shopee), Redes sociais (Kwai, Instagram e TikTok) e seletor individual restringem a consulta aos domínios oficiais e filtram URLs retornadas. São resultados públicos indexados, não uma integração com catálogos privados, preços em tempo real ou feeds autenticados. Domínios parecidos de terceiros não passam pelo filtro. A interface apresenta o domínio de destino, não o nome do buscador intermediário.
+
 ## Rateio opcional de IA
 
 Gemini e Groq podem explicar os trechos encontrados, somente quando o visitante pede. Não buscam páginas nem executam ferramentas. `/api/search/ai/status` informa se a função está configurada. Sem credenciais autorizadas, o botão fica oculto e nenhuma consulta de IA é feita.

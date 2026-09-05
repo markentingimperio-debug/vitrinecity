@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import express from 'express';
-import { setupMetasearch, normalizeWebResults, publicResultUrl } from '../metasearch.js';
+import { setupMetasearch, normalizeWebResults, publicResultUrl, platformDomains, resultMatchesDomains } from '../metasearch.js';
 
 const engines=['google','bing','youtube'];
+assert.deepEqual(platformDomains('shopping','all'),['mercadolivre.com.br','shopee.com.br']);
+assert.deepEqual(platformDomains('all','instagram'),['instagram.com']);
+assert.equal(resultMatchesDomains('https://produto.mercadolivre.com.br/MLB-123',['mercadolivre.com.br']),true);
+assert.equal(resultMatchesDomains('https://mercadolivre.com.br.fake.example/item',['mercadolivre.com.br']),false);
 const payload={results:[
   {title:'<b>Bolo simples</b>',url:'https://receitas.example/bolo?utm_source=google',content:'Misture farinha &amp; ovos.',engines:['google'],template:'default.html'},
   {title:'Receita repetida',url:'https://receitas.example/bolo#preparo',engines:['bing']},
@@ -38,6 +42,7 @@ try {
   assert.equal(data.suggestions[0].type,'web');
   r=await get({q:'x'});assert.equal(r.status,400);
   r=await get({q:'bolo',page:'999'});await r.json();assert.equal(upstream.at(-1).searchParams.get('pageno'),'5');
+  r=await get({q:'vaso',source:'shopee'});data=await r.json();assert.equal(data.results.length,0);assert.ok(upstream.at(-1).searchParams.get('q').includes('site:shopee.com.br'));assert.ok(!upstream.at(-1).searchParams.get('engines').includes('youtube'));
   fail=true;r=await get({q:'unique query'});assert.equal(r.status,503);assert.equal((await r.json()).status,'unavailable');fail=false;
   for(let i=0;i<15;i++)await get({q:'como fazer bolo'});
   r=await get({q:'como fazer bolo'});assert.equal(r.status,429);assert.equal(r.headers.get('retry-after'),'60');
