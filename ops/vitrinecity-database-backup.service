@@ -1,0 +1,12 @@
+[Unit]
+Description=VitrineCity verified SQLite daily backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/vitrinecity/ops/backup-database.sh
+TimeoutStartSec=600
+Nice=10
+IOSchedulingClass=idle
+UMask=0077
