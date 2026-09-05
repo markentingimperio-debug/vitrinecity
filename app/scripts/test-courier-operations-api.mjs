@@ -34,7 +34,17 @@ try{
   response=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'cliente@example.com',password})});assert.equal(response.status,200);const buyerCookie=response.headers.get('set-cookie').split(';')[0];
   response=await request('/api/marketplace/orders/shop-courier/confirm-delivery',{method:'POST',headers:{cookie:buyerCookie},body:'{}'});assert.equal(response.status,200);assert.equal((await response.json()).confirmed,true);
   response=await request('/api/marketplace/orders/shop-courier/confirm-delivery',{method:'POST',headers:{cookie:buyerCookie},body:'{}'});assert.equal(response.status,200);assert.equal((await response.json()).replayed,true);
-  wallet=await (await request('/api/courier/wallet',{headers:{cookie}})).json();assert.equal(wallet.balanceCents,450);assert.equal(wallet.ledger.length,1);
+  // Current production contract: confirmation schedules a manual payout, not a legacy wallet credit.
+  wallet=await (await request('/api/courier/wallet',{headers:{cookie}})).json();assert.equal(wallet.balanceCents,0);assert.equal(wallet.ledger.length,0);
+  assert.equal(wallet.manualPayouts.length,1);assert.equal(wallet.manualPayouts[0].orderReference,'shop-courier');assert.equal(wallet.manualPayouts[0].amountCents,450);assert.equal(wallet.manualPayouts[0].status,'pending');
+  response=await request('/api/courier/withdrawals',{method:'POST',headers:{cookie,'idempotency-key':'pending-payout-test-0001'},body:JSON.stringify({amountCents:300})});assert.equal(response.status,409);
+  wallet=await (await request('/api/courier/wallet',{headers:{cookie}})).json();assert.equal(wallet.withdrawals.length,0);assert.equal(wallet.ledger.length,0);
+  // Independent legacy-balance fixture in the disposable test DB; no production funds are touched.
+  const legacyDb=new Database(path.join(dataDir,'vitrinecity.db'));
+  legacyDb.transaction(()=>{
+    legacyDb.prepare("INSERT INTO local_delivery_ledger(courier_id,entry_type,amount_cents,idempotency_key) VALUES (?,'delivery_credit',450,'test-legacy-credit')").run(courierId);
+    legacyDb.prepare('UPDATE local_delivery_couriers SET balance_cents=450 WHERE id=?').run(courierId);
+  })();legacyDb.close();
   const withdrawalHeaders={cookie,'idempotency-key':'withdrawal-test-0001'};response=await request('/api/courier/withdrawals',{method:'POST',headers:withdrawalHeaders,body:JSON.stringify({amountCents:300})});assert.equal(response.status,201);const withdrawalId=(await response.json()).id;
   response=await request('/api/courier/withdrawals',{method:'POST',headers:withdrawalHeaders,body:JSON.stringify({amountCents:300})});assert.equal(response.status,200);assert.equal((await response.json()).id,withdrawalId);
   wallet=await (await request('/api/courier/wallet',{headers:{cookie}})).json();assert.equal(wallet.balanceCents,150);assert.equal(wallet.withdrawals.length,1);assert.equal(wallet.withdrawals[0].pixKeyLast4,'.com');

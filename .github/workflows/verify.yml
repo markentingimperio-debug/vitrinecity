@@ -1,0 +1,22 @@
+name: Verify release
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  isolated-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build application with locked dependencies
+        run: docker build -t vitrinecity-test:app app
+      - name: Build live-studio test runtime
+        run: docker build -t vitrinecity-test:studio ops/live-studio
+      - name: Run isolated application and live-studio tests
+        run: bash ops/verify-release.sh vitrinecity-test:app vitrinecity-test:studio

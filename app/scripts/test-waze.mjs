@@ -20,7 +20,7 @@ for(const file of ['mapa-real.js','navegar.js'])new vm.Script(fs.readFileSync(ba
 const courier=fs.readFileSync(base+'entregador.html','utf8');
 for(const script of courier.matchAll(/<script>([\s\S]*?)<\/script>/g))new vm.Script(script[1]);
 // Execute the actual courier routing selector: collection and customer must not be reversed.
-const selector=courier.match(/function navigateJob\(job\)\{.*?\}\n/)[0];
+const selector=courier.match(/function navigateJob\(job\)\{.*?\}\r?\n/)[0];
 const calls=[];const routing=vm.createContext({openInternalNavigation:a=>calls.push(a)});vm.runInContext(selector,routing);
 routing.navigateJob({status:'assigned',storeAddress:'Loja',deliveryAddress:'Cliente'});
 routing.navigateJob({status:'picked_up',storeAddress:'Loja',deliveryAddress:'Cliente'});
