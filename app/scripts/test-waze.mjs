@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+const base=process.argv[2]||'public/';
+const ctx=vm.createContext({URL,URLSearchParams,location:{assign(value){ctx.opened=value}}});
+vm.runInContext(fs.readFileSync(base+'waze-navigation.js','utf8'),ctx);
+const nav=ctx.VCNavigation;
+assert.equal(nav.url({}),null);
+assert.equal(nav.point(null,''),null);
+assert.equal(nav.point(91,180),null);
+assert.equal(nav.point(0,0),'0,0');
+assert.equal(nav.url({lat:10,lng:20,mode:'truck'}),null);
+let target=new URL(nav.url({lat:-16.68,lng:-49.25,address:'Loja homônima',mode:'motorcycle'}));
+assert.equal(target.hostname,'waze.com');assert.equal(target.searchParams.get('ll'),'-16.68,-49.25');assert.equal(target.searchParams.has('q'),false);assert.equal(target.searchParams.get('navigate'),'yes');
+target=new URL(nav.url({address:'Rua A, 42 & Centro, Goiânia GO'}));assert.equal(target.searchParams.get('q'),'Rua A, 42 & Centro, Goiânia GO');
+assert.equal(new URL(nav.url({address:'Rua A',mode:'bicycle'})).searchParams.get('travelmode'),'bicycling');
+assert.equal(nav.open({}),false);assert.equal(ctx.opened,undefined);
+nav.open({address:'Destino'});assert.equal(new URL(ctx.opened).hostname,'waze.com');
+for(const file of ['mapa-real.js','navegar.js'])new vm.Script(fs.readFileSync(base+file,'utf8'));
+const courier=fs.readFileSync(base+'entregador.html','utf8');
+for(const script of courier.matchAll(/<script>([\s\S]*?)<\/script>/g))new vm.Script(script[1]);
+// Execute the actual courier routing selector: collection and customer must not be reversed.
+const selector=courier.match(/function navigateJob\(job\)\{.*?\}\n/)[0];
+const calls=[];const routing=vm.createContext({openInternalNavigation:a=>calls.push(a)});vm.runInContext(selector,routing);
+routing.navigateJob({status:'assigned',storeAddress:'Loja',deliveryAddress:'Cliente'});
+routing.navigateJob({status:'picked_up',storeAddress:'Loja',deliveryAddress:'Cliente'});
+routing.navigateJob({status:'assigned'});assert.deepEqual(calls,['Loja','Cliente']);
+// Waze action must work when maps/geolocation/configuration are unavailable.
+const nodes=Object.fromEntries(['route-form','origin','destination','mode','status','map-message','fallback','open-waze','use-location','start-navigation','network'].map(id=>[id,{value:'',dataset:{},classList:{toggle(){}},focus(){}}]));
+nodes.mode.value='car';nodes.destination.value='Loja';nodes.destination.dataset.coords='-16.68,-49.25';
+const page=vm.createContext({document:{getElementById:id=>nodes[id]},VCNavigation:nav,location:{assign:u=>calls.push(u)},window:{addEventListener(){}},navigator:{onLine:true},URLSearchParams});
+vm.runInContext(fs.readFileSync(base+'navegar.js','utf8').replace('updateNetwork();init();',''),page);
+nodes['open-waze'].onclick();assert.equal(new URL(calls.at(-1)).searchParams.get('ll'),'-16.68,-49.25');
+nodes.destination.value='Novo endereço';nodes.destination.oninput();nodes['open-waze'].onclick();assert.equal(new URL(calls.at(-1)).searchParams.get('q'),'Novo endereço');
+console.log('PASS: destinos, coordenadas, bicicletas, restrições, etapas de entrega, mapa indisponível e sintaxe.');
