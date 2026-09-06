@@ -1,0 +1,95 @@
+{
+  "id": "microsoft-20260906-v2",
+  "verifiedCommit": "9f9cdc6d5259c626c616ee276587dbf10cf91452",
+  "authorization": "Administrador confirmou em 06/09/2026: usar materiais gratuitos da Microsoft no GitHub para ensinar Jarvis, mantendo IA e memória na VPS, sem contratar serviços pagos Microsoft. Este lote de duas sínteses é sujeito a conferência e aprovação explícita pelo operador Codex somente após avaliação; não autoriza execução de código externo, aprendizado automático ou novas permissões.",
+  "corrections": [],
+  "documents": [
+    {
+      "title": "Microsoft: RAG e organização de documentos",
+      "body": "RAG, geração aumentada por recuperação, consulta uma base de documentos e acrescenta trechos relevantes ao contexto de uma pergunta antes de gerar a resposta. Organizar documentos grandes em trechos menores ajuda a respeitar o limite de contexto; manter título e contexto suficiente evita fragmentos sem sentido. Busca por palavras-chave compara termos; busca vetorial usa representações numéricas, chamadas embeddings, para procurar similaridade de significado; busca híbrida combina as duas. Os textos e sua origem precisam continuar disponíveis, não apenas os vetores. Recuperar um trecho parecido não prova que ele responde à pergunta nem que está atualizado. Avaliar a relevância e a sustentação da resposta nas fontes é necessário. Esta é uma explicação conceitual, não uma declaração de recursos ativos: estudar RAG não treina pesos, não cria um banco vetorial e não conecta serviços. O Jarvis atual consulta documentos aprovados por palavras; este material não altera essa implementação. Síntese editorial em português de lição da Microsoft, licença MIT, revisada em 06/09/2026; sem uso dos exemplos Azure.",
+      "source": "Jarvis microsoft-20260906-v2/rag; Microsoft, MIT; https://github.com/microsoft/generative-ai-for-beginners/blob/645f932514e9f22f688c8feb3e49a7a7f2eb6f1b/15-rag-and-vector-databases/README.md",
+      "expiresAt": "2026-12-06"
+    },
+    {
+      "title": "Microsoft: avaliar respostas e reduzir erros de IA",
+      "body": "Uma resposta de inteligência artificial pode parecer confiante, fluente e detalhada e ainda estar factualmente errada. Essa fabricação é chamada alucinação. Avaliar a qualidade de respostas inclui conferir correção dos fatos, sustentação nas fontes, relevância para a pergunta e clareza da linguagem; fluência ou aparência convincente não comprovam verdade. Testes precisam representar perguntas e usos reais, inclusive situações em que falta informação. O uso responsável considera privacidade, segurança, inclusão, equidade, transparência sobre limites e responsabilidade por problemas. Reduzir riscos envolve cuidados no modelo, nas proteções da aplicação, no contexto fornecido e na experiência de quem usa. Nenhuma camada elimina todos os erros. Registrar problemas, revisar respostas e preparar recuperação de mudanças ajuda a operar o sistema. Conhecimento novo precisa de revisão: uma resposta gerada não deve virar fato aprovado automaticamente. Síntese editorial em português da lição Microsoft sobre IA responsável, licença MIT, revisada em 06/09/2026. É material para consulta, não certificação de segurança, garantia de precisão ou ativação de serviços Microsoft.",
+      "source": "Jarvis microsoft-20260906-v2/avaliacao; Microsoft, MIT; https://github.com/microsoft/generative-ai-for-beginners/blob/645f932514e9f22f688c8feb3e49a7a7f2eb6f1b/03-using-generative-ai-responsibly/README.md",
+      "expiresAt": "2026-12-06"
+    }
+  ],
+  "questions": [
+    {
+      "question": "Por que dividir documentos grandes em trechos para consultar na IA?",
+      "title": "Microsoft: RAG e organização de documentos",
+      "answerIncludes": [
+        "trechos"
+      ]
+    },
+    {
+      "question": "Qual a diferença entre busca por palavras-chave, vetores e busca híbrida?",
+      "title": "Microsoft: RAG e organização de documentos",
+      "answerIncludes": [
+        "busca"
+      ]
+    },
+    {
+      "question": "Uma resposta confiante de inteligência artificial pode estar errada?",
+      "title": "Microsoft: avaliar respostas e reduzir erros de IA",
+      "answerIncludes": [
+        "errada"
+      ]
+    },
+    {
+      "question": "Como avaliar a qualidade das respostas de um assistente?",
+      "title": "Microsoft: avaliar respostas e reduzir erros de IA",
+      "answerIncludes": [
+        "fontes"
+      ]
+    },
+    {
+      "question": "Para que servem embeddings em uma base de consulta?",
+      "title": "Microsoft: RAG e organização de documentos",
+      "answerIncludes": [
+        "significado"
+      ]
+    },
+    {
+      "question": "Por que uma resposta bem escrita não comprova que a IA acertou?",
+      "title": "Microsoft: avaliar respostas e reduzir erros de IA",
+      "answerIncludes": [
+        "fatos"
+      ]
+    }
+  ],
+  "provenance": {
+    "reviewedAt": "2026-09-06",
+    "type": "operator_curated_portuguese_summaries",
+    "licenseNotice": "ops/jarvis/MICROSOFT-LICENSE.txt",
+    "notMicrosoftEndorsed": true,
+    "sources": [
+      {
+        "repository": "microsoft/generative-ai-for-beginners",
+        "commit": "645f932514e9f22f688c8feb3e49a7a7f2eb6f1b",
+        "path": "15-rag-and-vector-databases/README.md",
+        "sha256": "d1ba42405de1e416ddc4520292fb45b955629e48d75c26431a340271a42f1f74",
+        "bytes": 14450,
+        "license": "MIT",
+        "licensePath": "LICENSE",
+        "licenseSha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+        "selected": "RAG workflow, chunking, keyword/vector/hybrid retrieval, evaluation; excluded code, images, prices and dated model examples"
+      },
+      {
+        "repository": "microsoft/generative-ai-for-beginners",
+        "commit": "645f932514e9f22f688c8feb3e49a7a7f2eb6f1b",
+        "path": "03-using-generative-ai-responsibly/README.md",
+        "sha256": "e4c9597c5dc464fedbd4365e96089c4d98a384da25f3d7695220ef5662747798",
+        "bytes": 10147,
+        "license": "MIT",
+        "licensePath": "LICENSE",
+        "licenseSha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+        "selected": "Hallucinations, evaluation, transparency, mitigation layers and responsible operation; excluded code, images and service activation"
+      }
+    ],
+    "excludedAfterEvaluation": "Lição Web-Dev de acessibilidade não aprovada nem importada: rodada v1 confundiu aria-describedby com nome acessível e sugeriu conformidade não verificada. Não executar revisão v1 como currículo aprovado."
+  }
+}
