@@ -2583,7 +2583,7 @@ const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: p
 const cryptoObservability = createCryptoObservability(db);
 cryptoObservability.seedLatest();
 mountCryptoObservability({ app, requireAdmin, observability: cryptoObservability });
-mountJarvis({ app, db, requireAdmin, sameOriginOnly });
+mountJarvis({ app, db, requireAdmin, sameOriginOnly, researchSchedule: true });
 setupOrganicAcquisition({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly, allowAttempt });
 const affiliateCatalog = setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, siteUrl: SITE_URL, publicDir: path.join(dir, 'public') });
