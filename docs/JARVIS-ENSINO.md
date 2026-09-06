@@ -41,3 +41,11 @@ Os resultados desta amostra são específicos: não comprovam precisão geral ne
 ## Janela noturna
 
 A automação existente da Gestora foi temporariamente direcionada ao Jarvis, sem criar uma automação duplicada. Rodadas horárias, até quatro conhecimentos novos/correções por rodada, com checagem de atividade anterior e saúde. O relatório final deve consolidar material aprovado, respostas reais, retornos de trechos, problemas e limites; depois restaurar a rotina permanente, preservando frequência e preferência de notificações. A execução dessas rodadas depende de o ambiente do Codex continuar disponível e conectado. O serviço de inferência na VPS é independente desse agendamento.
+
+### Lote de busca pública — rodada de 05:52 UTC
+
+`ops/jarvis/curriculum-busca-20260906.json` adiciona dois assuntos: como pesquisar sites, vídeos e lojas; e por que um resultado de rede social não representa conta conectada, feed privado ou integração com preço/estoque ao vivo. Fontes próprias verificadas no commit `c90f384`, com validade até 06/10/2026. A definição prévia está em `.claude/evals/jarvis-busca-20260906.md`.
+
+Ensaio com cópia da memória publicada de 11 documentos, em banco descartável: cobertura das quatro perguntas novas passou de 0/4 para 4/4, todas em primeiro lugar. A recuperação das nove perguntas anteriores permaneceu 9/9; pergunta sem fonte sobre faturamento futuro continuou sem resposta inventada. Aplicação repetida gerou zero operações. Houve uma síntese coerente sobre o filtro de cidade e três retornos explícitos de trechos com as informações corretas (página da busca e limites das redes), em aproximadamente 7,5–12,9 segundos. Isso demonstra ampliação de conteúdo consultável, não quatro acertos de geração nem melhoria da taxa do modelo: as perguntas são diferentes da primeira rodada. Não foram relaxadas proteções nem repetidas as perguntas apenas para obter uma geração.
+
+Este lote altera somente conteúdo e documentação. A importação usa o utilitário já testado, backup novo e eventos de aprovação do operador; não requer rebuild ou reinício do aplicativo. Os registros de execução devem confirmar separadamente a importação real e os totais após aplicação. O utilitário `gh` permanece indisponível neste ambiente; operações autorizadas de revisão/versionamento usam o conector GitHub, sem instalar ferramentas ou extrair credenciais.
