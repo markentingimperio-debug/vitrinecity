@@ -6,6 +6,7 @@ import { createCryptoObservability, mountCryptoObservability } from './crypto-ob
 import { mountJarvis } from './jarvis-core.js';
 import { setupDiscoverySearch } from './discovery-search.js';
 import { setupMetasearch } from './metasearch.js';
+import { setupSearchVideoEligibility } from './search-video-eligibility.js';
 import { createSearchContentProvider } from './search-content.js';
 import Database from 'better-sqlite3';
 import nodemailer from 'nodemailer';
@@ -3717,6 +3718,8 @@ function socialMetricsEnv(){const env={...process.env},map={youtube:['YOUTUBE_AP
   for(const row of db.prepare('SELECT provider,credentials_encrypted FROM social_provider_credentials').all())try{const values=JSON.parse(decryptSocialToken(row.credentials_encrypted));
     for(const name of map[row.provider]||[])if(values[name])env[name]=String(values[name]);}catch{}
   return env;}
+
+setupSearchVideoEligibility(app, { getEnv: socialMetricsEnv });
 
 app.get('/api/admin/social/intelligence/credentials',requireAdmin,(_req,res)=>{
   const env=socialMetricsEnv(),saved=new Map(db.prepare('SELECT provider,updated_at FROM social_provider_credentials').all().map(row=>[row.provider,row.updated_at]));

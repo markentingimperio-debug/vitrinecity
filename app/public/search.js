@@ -1,9 +1,12 @@
+import { createSearchReader } from './search-reader.js';
 (() => {
   const $ = id => document.getElementById(id);
   const query = $('q'), suggestions = $('suggestions'), local = $('local-results');
   let version = 0, controller, suggestController, timer, activeOption = -1, options = [], filter = 'all';
   let searched = '', webVersion = 0, webController, webNext = null, webPending = false;
   const webUrls = new Set();
+  let localRecommendations = [];
+  const reader = createSearchReader({document, origin:location.origin, getRecommendations:()=>localRecommendations});
   let aiEnabled = false, aiController;
   fetch('/api/search/ai/status').then(r => r.json()).then(data => { aiEnabled = data.enabled === true; applyFilter(); }).catch(() => {});
   const node = (tag, text, className) => {
@@ -74,6 +77,7 @@
         webUrls.add(result.url);added++;
         const article=node('article',undefined,'site'),heading=node('h3');heading.append(link(result.title,url));
         article.append(node('small',(result.type==='video'?'Vídeo · ':'')+new URL(url).hostname),heading,node('p',result.description));
+        reader.attach(article,result);
         box.append(article);
       }
       if(!webUrls.size)box.append(node('p','Nenhum resultado disponível agora. Tente outra palavra ou pesquise novamente em instantes.','panel status'));
@@ -88,12 +92,18 @@
     }finally{if(own===webVersion)webPending=false;}
   }
   function renderLocal(data) {
+    localRecommendations = [
+      ...(data.contents || []).map(item=>({...item,affiliate:item.kind==='affiliate' || item.url?.startsWith('/ofertas/')})),
+      ...(data.products || []).map(item=>({title:item.name,url:item.productUrl})),
+      ...(data.stores || []).map(item=>({title:item.name,url:item.url}))
+    ];
     local.replaceChildren();
     for (const item of data.contents || []) {
       const card = node('article',undefined,'local-card'), heading = node('h3');
       const affiliate = item.kind === 'affiliate';
       const a = link(item.title,item.url,!affiliate); if (affiliate && a.tagName === 'A') a.rel = 'sponsored noopener noreferrer';
       heading.append(a); card.append(node('small',affiliate?'OFERTA DE AFILIADO · Podemos receber comissão':'CONTEÚDO DA VITRINE'),heading,node('p',item.description));
+      reader.attach(card,{...item,affiliate:affiliate || item.url?.startsWith('/ofertas/')});
       local.append(card);
     }
     for (const [key, title] of [['stores', 'Lojas'], ['products', 'Produtos']]) {
@@ -119,6 +129,7 @@
     value = String(value).trim().slice(0,300);
     if (value.length < 2) { query.focus(); return; }
     searched = value; query.value = value;
+    reader.close(); localRecommendations = [];
     aiController?.abort(); $('ai-answer').replaceChildren(); $('ai-button').disabled = false;
     const run = ++version;
     controller?.abort(); controller = new AbortController();
