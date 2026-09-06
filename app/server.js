@@ -4,6 +4,7 @@ import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { createCryptoObservability, mountCryptoObservability } from './crypto-observability.js';
 import { mountJarvis } from './jarvis-core.js';
+import { mountJarvisPublic } from './jarvis-public.js';
 import { setupDiscoverySearch } from './discovery-search.js';
 import { setupMetasearch } from './metasearch.js';
 import { setupSearchVideoEligibility } from './search-video-eligibility.js';
@@ -2034,6 +2035,7 @@ function recordAdminLogin(req,email,success,reason){
 const ADMIN_HTML_PATHS=new Set(['/admin-vendas-afiliadas.html','/admin','/admin.html','/admin-agentes.html','/admin-sales-agents.html','/admin-crypto-matrix.html','/admin-quizzes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html','/admin-conteudos.html','/admin-entregas.html']);
 ADMIN_HTML_PATHS.add('/admin-live.html');
 ADMIN_HTML_PATHS.add('/admin-jarvis.html');
+ADMIN_HTML_PATHS.add('/admin-jarvis-public.html');
 ADMIN_HTML_PATHS.add('/admin-jarvis');
 ADMIN_HTML_PATHS.add('/admin-captacao.html');
 ADMIN_HTML_PATHS.add('/admin-live');
@@ -2646,6 +2648,12 @@ app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
 app.get(['/admin-jarvis.html','/admin-jarvis'], requireAdmin, (req,res,next)=>{
   res.set({'Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'"}); next();
 }, publicPage('admin-jarvis.html'));
+app.get('/admin-jarvis-public.html',requireAdmin,(req,res,next)=>{
+  res.set({'Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'"});next();
+},publicPage('admin-jarvis-public.html'));
+app.get('/jarvis-public.html',(req,res,next)=>{
+  res.set({'Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'"});next();
+},publicPage('jarvis-public.html'));
 
 app.get('/admin-crypto-matrix.html',requireAdmin,publicPage('admin-crypto-matrix.html'));
 app.get('/admin-quizzes.html',requireAdmin,publicPage('admin-quizzes.html'));
@@ -3266,7 +3274,8 @@ function publicAddress(row) {
 
 const existingSearchContent = createSearchContentProvider(dataDir, () => managedCourses(true));
 setupDiscoverySearch(app, db, publicStorePath, () => [...affiliateCatalog.searchContent(), ...existingSearchContent()]);
-setupMetasearch(app, { db });
+const metasearch = setupMetasearch(app, { db });
+mountJarvisPublic({app,db,lookup:metasearch.lookupPublic,requireAdmin,sameOriginOnly});
 
 app.get('/api/search/suggestions', (req, res) => {
   const query = String(req.query.q || '').trim().slice(0, 80);
