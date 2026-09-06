@@ -13,6 +13,10 @@ The allowlisted own-page reader remains available.
   are unchanged. Duplicates may supply the first valid cover without changing
   the original result's title or ranking.
 - Local product `imageUrl` and store `logoUrl` / `facadeUrl` fields are reused.
+- Official product photos also use the owner-provided domain
+  `adubonpkparaplantas.com.br`, restricted to dated WordPress raster uploads
+  (`/wp-content/uploads/YYYY/MM/filename`) without query parameters. Other paths
+  and lookalike hosts remain rejected.
 - The pure shared `public/search-result-image.js` validates a small set of
   explicit CDN hosts/paths and own-origin raster images under `/assets` and
   `/uploads`. It rejects arbitrary URLs, credentials, unsafe schemes, ports on

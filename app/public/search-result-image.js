@@ -19,6 +19,9 @@ function trustedCdn(url) {
   if(host==='upload.wikimedia.org')return path.startsWith('/wikipedia/') && raster.test(path);
   // This exact product-image host is already used by the curated affiliate catalog.
   if(host==='http2.mlstatic.com')return /^\/D_[A-Za-z0-9_-]+\.(?:jpe?g|png|webp)$/i.test(path);
+  // Owner-provided product photos: only dated static WordPress uploads on this host.
+  if(host==='adubonpkparaplantas.com.br')return !url.search &&
+    /^\/wp-content\/uploads\/\d{4}\/(?:0[1-9]|1[0-2])\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(path) && raster.test(path);
   return false;
 }
 
