@@ -32,6 +32,10 @@ No teste de recuperação, a fonte esperada passou de presente em 1/9 para 9/9 p
 
 O ensino também revelou que trechos de documentos curtos podiam começar no meio do texto, cortando contexto ou uma rota. O núcleo agora preserva o documento inteiro quando cabe no limite de 1.800 caracteres e evita começar no meio de uma palavra nos textos longos. Não foram removidas verificações de citação ou de limite do modelo para fazer os testes parecerem melhores.
 
+Na segunda rodada completa, o modelo gerou uma explicação incorreta sobre o piloto orgânico, confundindo o guia digital com eventos presenciais. A presença de uma citação válida não impediu essa invenção: a resposta foi reprovada na revisão semântica, antes de importar o material. O texto foi esclarecido com base na mesma documentação, sem incorporar a invenção. Três perguntas sobre o assunto foram repetidas, incluindo duas formulações novas. Todas recuperaram a fonte em primeiro lugar e geraram uma explicação coerente com o guia digital; duas incluíram a URL, enquanto a pergunta geral sobre a finalidade do guia recebeu uma resposta correta sem a URL. Tempos: aproximadamente 8–11 segundos. Essa amostra não garante que o erro nunca voltará a ocorrer. Continuar a revisão humana e testar dúvidas inéditas; não usar apenas citação ou correspondência de palavras como atestado de correção.
+
+Verificação local desta versão: 71 scripts de regressão passaram; os testes de memória e de importação verificaram conflitos, reaplicação sem duplicatas, preservação de registros arquivados e de consultas em andamento, além de transação sem alterações parciais. Testes de infraestrutura e saúde após publicação devem ser registrados separadamente dos ensaios em memória.
+
 Os resultados desta amostra são específicos: não comprovam precisão geral nem rentabilidade. Novas rodadas devem testar variações inéditas de perguntas e repetir algumas perguntas de controle, sem esconder falhas, fazer buscas pagas, incorporar respostas como fatos ou alterar o modelo para decorar apenas o teste.
 
 ## Janela noturna
