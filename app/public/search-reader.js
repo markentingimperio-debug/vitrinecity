@@ -56,7 +56,8 @@ export function readingFragment(document, html, sourceUrl) {
   template.innerHTML = html;
   const main = template.content.querySelector('main');
   if (!main) throw Error('no_reading_content');
-  const root = main.querySelector('article') || main;
+  // Related cards can use <article>; keep the selected page's whole main content.
+  const root = main;
   const allowed = new Set(['P','H1','H2','H3','H4','UL','OL','LI','STRONG','EM','B','I','BLOCKQUOTE','BR','SMALL','A','DL','DT','DD','TABLE','THEAD','TBODY','TR','TH','TD']);
   const drop = new Set(['SCRIPT','STYLE','NOSCRIPT','TEMPLATE','IFRAME','OBJECT','EMBED','SVG','MATH','FORM','BUTTON','INPUT','SELECT','TEXTAREA','NAV','HEADER','FOOTER']);
   let nodes = 0, chars = 0;
