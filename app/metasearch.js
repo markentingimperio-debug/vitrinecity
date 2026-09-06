@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { setupSearchAi } from './search-ai.js';
+import { safeResultImageUrl } from './public/search-result-image.js';
 
 export const SEARCH_ENGINES = Object.freeze({
   google: 'Google', bing: 'Bing', duckduckgo: 'DuckDuckGo', yahoo: 'Yahoo', brave: 'Brave',
@@ -36,10 +37,16 @@ export function normalizeWebResults(data, engines) {
     const providers = [...new Set([...(Array.isArray(raw.engines) ? raw.engines : []), raw.engine]
       .filter(name => engines.includes(name)))];
     if (!providers.length) continue;
+    const thumbnailUrl = safeResultImageUrl(raw.thumbnail) || safeResultImageUrl(raw.img_src);
     const existing = results.get(url);
-    if (existing) { existing.providers = [...new Set([...existing.providers, ...providers])]; continue; }
+    if (existing) {
+      existing.providers = [...new Set([...existing.providers, ...providers])];
+      if(!existing.thumbnailUrl && thumbnailUrl)existing.thumbnailUrl=thumbnailUrl;
+      continue;
+    }
     results.set(url, { url, title: text(raw.title, 200) || new URL(url).hostname,
-      description: text(raw.content), providers, type: raw.template === 'videos.html' || providers.includes('youtube') ? 'video' : 'web' });
+      description: text(raw.content), providers, type: raw.template === 'videos.html' || providers.includes('youtube') ? 'video' : 'web',
+      ...(thumbnailUrl ? {thumbnailUrl} : {}) });
   }
   const suggestions = [...new Set((Array.isArray(data.suggestions) ? data.suggestions : [])
     .filter(value => typeof value === 'string').map(value => text(value, 120)).filter(Boolean))].slice(0, 8);

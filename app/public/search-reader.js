@@ -43,6 +43,12 @@ export function isVideoResult(item, origin) {
   return !!info && (['youtube','tiktok'].includes(info.kind) || info.mediaLink==='video' || info.mediaLink==='share' || (info.kind==='external' && item?.type==='video'));
 }
 
+// All valid results outside the local reading allowlist use one native link.
+export function isOutboundResult(item, origin) {
+  const info=classifyResult(item?.url,origin);
+  return !!info && info.kind!=='local';
+}
+
 export async function readPublicPage(href, {origin, signal, fetcher = fetch}) {
   const result = classifyResult(href, origin);
   if (result?.kind !== 'local') throw Error('not_readable');
@@ -98,18 +104,18 @@ export function readingFragment(document, html, sourceUrl) {
 
 export function createSearchReader({document, origin, getRecommendations}) {
   const el = (tag, text, cls) => { const n=document.createElement(tag); if(text!==undefined)n.textContent=text; if(cls)n.className=cls; return n; };
-  function attachVideo(container,item) {
-    if(!isVideoResult(item,origin))return false;
+  function attachOutbound(container,item) {
+    if(!isOutboundResult(item,origin))return false;
     const info=classifyResult(item.url,origin);
-    const provider=info.kind==='youtube'?'YouTube':['TikTok','Instagram','Kwai'].includes(info.label)?info.label:null;
-    const verb=info.mediaLink==='share' && item.type!=='video'?'Abrir':'Assistir';
+    const provider=info.kind==='youtube' || info.label==='YouTube / Shorts'?'YouTube':['TikTok','Instagram','Kwai'].includes(info.label)?info.label:null;
+    const verb=isVideoResult(item,origin) && !(info.mediaLink==='share' && item.type!=='video')?'Assistir':'Abrir';
     const action=el('a',verb+' '+(provider?'no '+provider:'na fonte')+' · nova aba ↗','reader-action');
     action.href=info.url;action.target='_blank';action.rel='noopener noreferrer'+(item.affiliate?' sponsored':'');
     action.setAttribute('aria-label',action.textContent+': '+String(item.title || info.label).slice(0,300)+'. A VitrineCity continua aberta.');
     container.append(action);return true;
   }
   const dialog = el('dialog',undefined,'search-reader');
-  if (typeof dialog.showModal !== 'function') return {attach:attachVideo,close(){}};
+  if (typeof dialog.showModal !== 'function') return {attach:attachOutbound,close(){}};
   dialog.setAttribute('aria-labelledby','reader-title');
   const top=el('div',undefined,'reader-top'), close=el('button','← Voltar à busca','reader-back'); close.type='button';
   const brand=el('div',undefined,'reader-brand'),logo=el('img');logo.src='/assets/vitrinecity-logo.png';logo.alt='VitrineCity';logo.width=70;logo.height=70;
@@ -150,33 +156,29 @@ export function createSearchReader({document, origin, getRecommendations}) {
     const partner=el('section',undefined,'reader-channel');partner.append(el('h3','Nosso ecossistema'),link('Adubo NPK para Plantas ↗','https://adubonpkparaplantas.com.br/'),link('Nossa loja na Shopee ↗','https://shopee.com.br/agrotecnicavendas#product_list',true),el('p','Links da nossa equipe, em outra aba. Na Shopee, confira preços, estoque e condições antes de comprar.','reader-note'));recommendations.append(partner);
   }
   async function open(item, trigger) {
-    const info=classifyResult(item.url,origin); if(!info)return;
+    const info=classifyResult(item?.url,origin); if(info?.kind!=='local')return;
     pending?.abort(); pending=new AbortController(); const request=pending, own=++active;
     if(!dialog.open)returnFocus=trigger;
-    source.textContent=info.label+' · '+(info.kind==='local'?'Conteúdo próprio':'Fonte externa');
+    source.textContent=info.label+' · Conteúdo próprio';
     heading.textContent=String(item.title || info.label).slice(0,300); original.href=info.url;
     original.rel='noopener noreferrer'+(item.affiliate?' sponsored':'');
     renderRecommendations(info); content.replaceChildren(); progress.textContent='';
     document.body.classList.add('reader-open'); if(!dialog.open)dialog.showModal(); dialog.scrollTop=0; close.focus({preventScroll:true});
-    if(info.kind==='local') {
-      progress.textContent='Preparando leitura…';
-      const timeout=setTimeout(()=>request.abort(),10000);
-      try {
-        const html=await readPublicPage(info.url,{origin,signal:request.signal});
-        if(own!==active || !dialog.open)return;
-        const reading=el('div',undefined,'reader-article');reading.append(readingFragment(document,html,info.url));
-        content.replaceChildren(el('p','Modo leitura, sem imagens e recursos interativos. Use a página original para comprar, preencher formulários ou compartilhar.','reader-note'),reading);
-        progress.textContent='Leitura carregada.';
-      }catch { if(own===active && dialog.open)progress.textContent='Não foi possível preparar esta leitura. O link da página original continua disponível.'; }
-      finally {clearTimeout(timeout);}
-    } else {
-      content.append(el('h3','Prévia do resultado'),el('p',String(item.description || 'Consulte o conteúdo na fonte original.').slice(0,1000)),el('p','Este é um trecho fornecido pela busca, não a página completa. A reprodução ou leitura interna desta fonte não está habilitada. Abra o original sem fechar sua pesquisa.','reader-note'));
-    }
+    progress.textContent='Preparando leitura…';
+    const timeout=setTimeout(()=>request.abort(),10000);
+    try {
+      const html=await readPublicPage(info.url,{origin,signal:request.signal});
+      if(own!==active || !dialog.open)return;
+      const reading=el('div',undefined,'reader-article');reading.append(readingFragment(document,html,info.url));
+      content.replaceChildren(el('p','Modo leitura, sem imagens e recursos interativos. Use a página original para comprar, preencher formulários ou compartilhar.','reader-note'),reading);
+      progress.textContent='Leitura carregada.';
+    }catch { if(own===active && dialog.open)progress.textContent='Não foi possível preparar esta leitura. O link da página original continua disponível.'; }
+    finally {clearTimeout(timeout);}
   }
   function attach(container,item) {
-    if(attachVideo(container,item))return;
-    const info=classifyResult(item.url,origin);if(!info)return;
-    const button=el('button',info.kind==='local'?'Ler na Vitrine':'Prévia e relacionados','reader-action');button.type='button';
+    if(attachOutbound(container,item))return;
+    const info=classifyResult(item?.url,origin);if(info?.kind!=='local')return;
+    const button=el('button','Ler na Vitrine','reader-action');button.type='button';
     button.setAttribute('aria-haspopup','dialog');button.setAttribute('aria-label',button.textContent+': '+String(item.title || info.label).slice(0,300));
     button.onclick=()=>open(item,button);container.append(button);
   }
