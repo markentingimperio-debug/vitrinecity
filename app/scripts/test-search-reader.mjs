@@ -32,4 +32,5 @@ const html=fs.readFileSync(new URL('../public/pesquisar.html',import.meta.url),'
 assert.match(html,/https:\/\/www.youtube.com\/@agrotecnica362/);assert.match(js,/https:\/\/www.youtube.com\/@agrotecnica362/);
 assert.match(html,/https:\/\/www.instagram.com\/agrotecniica\//);assert.match(js,/https:\/\/www.instagram.com\/agrotecniica\//);
 assert.match(html,/https:\/\/www.tiktok.com\/@agrotecnica5/);assert.match(js,/https:\/\/www.tiktok.com\/@agrotecnica5/);
+assert.match(html,/https:\/\/adubonpkparaplantas.com.br\//);assert.match(js,/https:\/\/adubonpkparaplantas.com.br\//);
 console.log('Reader: URL allowlist, no external fetch/proxy, bounded response, no credentials, markup fallback and assets verified.');

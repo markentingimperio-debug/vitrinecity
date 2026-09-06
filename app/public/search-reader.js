@@ -123,6 +123,7 @@ export function createSearchReader({document, origin, getRecommendations}) {
     const channel=el('section',undefined,'reader-channel');
     channel.append(el('h3','Da nossa equipe'),link('Agrotécnica no YouTube ↗','https://www.youtube.com/@agrotecnica362'),link('@agrotecniica no Instagram ↗','https://www.instagram.com/agrotecniica/'),link('@agrotecnica5 no TikTok ↗','https://www.tiktok.com/@agrotecnica5'),el('p','Canais indicados pela equipe VitrineCity. Abrem na plataforma original, em outra aba.','reader-note'));
     recommendations.append(channel);
+    const partner=el('section',undefined,'reader-channel');partner.append(el('h3','Nosso ecossistema'),link('Adubo NPK para Plantas ↗','https://adubonpkparaplantas.com.br/'),el('p','Site da nossa equipe · adubonpkparaplantas.com.br. Abre em outra aba.','reader-note'));recommendations.append(partner);
   }
   async function open(item, trigger) {
     const info=classifyResult(item.url,origin); if(!info)return;
