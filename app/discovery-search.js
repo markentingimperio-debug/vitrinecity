@@ -46,10 +46,12 @@ export function setupDiscoverySearch(app, db, publicStorePath, contentProvider =
       FROM store_products sp JOIN store_profiles p ON p.order_reference=sp.store_reference
       WHERE sp.active=1 AND p.review_status='published' AND (?='' OR vc_normalize(p.city)=?)
         AND ${match("sp.name||' '||COALESCE(sp.description,'')||' '||COALESCE(sp.category,'')||' '||p.business_name")}
-      ORDER BY relevance + COALESCE((verifiedRating-3)*verifiedReviews/(verifiedReviews+10.0)*5,0) DESC,
+      ORDER BY CASE WHEN p.order_reference='official_agrotecnica' THEN 0 ELSE 1 END,
+        relevance + COALESCE((verifiedRating-3)*verifiedReviews/(verifiedReviews+10.0)*5,0) DESC,
         sp.name,sp.id LIMIT 60`).all(normalizeSearch(query), normalizeSearch(query), location, location, ...terms.map(term => ' '+term))
       .map(row => ({ ...row, productUrl: `/produto/${row.id}/${normalizeSearch(row.name).replaceAll(' ', '-') || 'produto'}`,
-        rankReason: row.verifiedReviews ? 'Relevância e avaliações de compras verificadas' : 'Correspondência com a sua busca' }));
+        officialStore: row.storeReference === 'official_agrotecnica',
+        rankReason: row.storeReference === 'official_agrotecnica' ? 'Loja oficial · Prioridade da plataforma para produtos relacionados à busca' : row.verifiedReviews ? 'Relevância e avaliações de compras verificadas' : 'Correspondência com a sua busca' }));
     const promoted = searchPromotions(query);
     const contents = [...promoted, ...contentProvider().filter(item => !promoted.some(p => p.url === item.url) && terms.every(term => (' '+normalizeSearch([item.title,item.description,item.keywords].filter(Boolean).join(' '))).includes(' '+term)))]
       .slice(0, 20);
@@ -60,8 +62,8 @@ export function setupDiscoverySearch(app, db, publicStorePath, contentProvider =
     const { stores, products, contents = [] } = search(query, req.query.city);
     const seen = new Set();
     const kinds = {course:'Curso',recipe:'Receita',news:'Notícia',sports:'Esporte',article:'Artigo',affiliate:'Oferta de afiliado'};
-    const suggestions = [...contents.slice(0, 3).map(item => ({ label: item.title, type: 'content', category: kinds[item.kind] || 'Conteúdo' })),...stores.slice(0, 4).map(s => ({ label: s.name, type: 'store', category: s.segment, city: s.city })),
-      ...products.slice(0, 6).map(p => ({ label: p.name, type: 'product', category: p.category, city: p.city }))]
+    const suggestions = [...products.filter(p=>p.officialStore).slice(0,6).map(p=>({label:p.name,type:'product',category:'Loja oficial · Prioridade da plataforma',city:p.city})),...contents.slice(0, 3).map(item => ({ label: item.title, type: 'content', category: kinds[item.kind] || 'Conteúdo' })),...stores.slice(0, 4).map(s => ({ label: s.name, type: 'store', category: s.segment, city: s.city })),
+      ...products.filter(p=>!p.officialStore).slice(0, 6).map(p => ({ label: p.name, type: 'product', category: p.category, city: p.city }))]
       .filter(item => { const key = normalizeSearch(item.label); if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, 8);
     if(!suggestions.length){const candidate=correction(query,req.query.city);if(candidate)suggestions.push({label:candidate,type:'content',category:'Você quis dizer?'});}
     res.json({ suggestions });
@@ -71,6 +73,6 @@ export function setupDiscoverySearch(app, db, publicStorePath, contentProvider =
     const city = String(req.query.city || '').trim().slice(0, 100);
     const result=search(query,city),total=result.stores.length+result.products.length+(result.contents?.length||0);
     if(normalizeSearch(query).length>=2){recordOperation(db,'search');if(!total)recordOperation(db,'search_empty');}
-    res.json({ query, city, rankingVersion: 'vitrine-local-v2', ...result, suggestedQuery:total?null:correction(query,city) });
+    res.json({ query, city, rankingVersion: 'vitrine-local-v3-official-first', ...result, suggestedQuery:total?null:correction(query,city) });
   });
 }

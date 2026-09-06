@@ -55,5 +55,34 @@ Validação do rateio: `npm run test:search` inclui fallback de 429, pausa, cach
 
 Referências: https://docs.searxng.org/dev/search_api.html e https://docs.searxng.org/admin/installation-docker
 
+## Explorar sem perder a pesquisa (06/09/2026)
+
+Os títulos continuam sendo links diretos. Botões adicionais abrem um visualizador modal com a logo fornecida pelo administrador, fonte, original em outra aba e sugestões dos resultados locais já carregados. Não há requisições extras de publicidade nem IA no visualizador. Não há gravação de histórico, rastreamento de reprodução, cópia de vídeos ou proxy de páginas externas.
+
+O administrador indicou `https://www.youtube.com/@agrotecnica362`, `https://www.instagram.com/agrotecniica/` e `https://www.tiktok.com/@agrotecnica5` em 06/09/2026. Os canais Agrotécnica aparecem em “Da nossa equipe”, separados da relevância da busca, com links externos explícitos. Não há importação automática de vídeos ou afirmação de métricas/temas não verificados.
+
+O site `https://adubonpkparaplantas.com.br/`, informado como próprio pelo administrador, aparece em “Nosso ecossistema”. É um link identificado, não importação, iframe, associação automática de contas ou alegação sobre estoque/preços.
+
+A loja `https://shopee.com.br/agrotecnicavendas#product_list`, também informada pelo administrador, aparece como “Nossa loja na Shopee”, com `rel=sponsored noopener noreferrer`, identificação comercial e aviso para conferir condições na plataforma. Não é catálogo importado nem redirecionamento de afiliado inventado.
+
+Por solicitação do administrador, produtos ativos relacionados à consulta da loja interna `official_agrotecnica` (página pública `/loja/official_agrotecnica/agrotecnica`) precedem os demais produtos, guias e afiliados na busca e nas recomendações do leitor. A prioridade é identificada como escolha da plataforma, não como melhor avaliação. Filtros de cidade, termos pesquisados e publicação permanecem obrigatórios; sem correspondência não são inventados produtos. O link da loja oficial permanece antes dos sites externos. A versão do ranking passa a `vitrine-local-v3-official-first`.
+
+- **Ler na Vitrine:** versão textual de quatro guias/artigos próprios explicitamente permitidos e páginas públicas `/ofertas/:slug`. Não aceita parâmetros de consulta, ações, autenticação ou rotas administrativas. A leitura é carregada sob a própria origem, sem cookies, com redirecionamentos proibidos, timeout de 10 segundos e máximo de 500 KB. HTML é analisado em template inerte e reconstruído com tags permitidas, limite de texto/nós/profundidade e sem scripts, imagens, estilos, formulários ou atributos ativos. A fonte completa permanece acessível para fotos, compras e interações. Não indexa novas páginas automaticamente.
+- **TikTok:** URLs canônicas públicas `/@autor/video/ID` recebem player oficial, somente após clicar em “Carregar player”. Sem autoplay, download, script externo no documento principal ou cobertura dos controles. Indisponibilidade, restrição e remoção dependem da fonte; o link original fica sempre disponível. Links encurtados não são resolvidos nem incorporados automaticamente.
+- **YouTube / Shorts:** mesma confirmação antes de consultar `/api/search/video-eligibility`. Usa apenas `YOUTUBE_API_KEY` já configurada no ambiente ou credenciais administrativas existentes; nenhuma chave é criada/alterada. Só permite player se a API oficial confirmar explicitamente `madeForKids: false` e `embeddable: true`. Campo ausente, quota, falha ou configuração ausente mantêm o original. Usa `youtube-nocookie.com`, referer de origem e player mínimo de 200 px; isso não significa ausência de compartilhamento de dados nem garantia de reprodução.
+- **Instagram / Kwai / outros sites:** prévia textual da busca e original, sem incorporar uma página inteira nem inventar um endpoint de player. Instagram possui caminho oficial oEmbed/SDK, ainda não validado neste visualizador. Não foi confirmado um player público documentado do Kwai. Não prometer reprodução universal.
+
+O endpoint de elegibilidade YouTube valida IDs e parâmetros, aceita apenas o provedor fixo, limita JSON a 32 KB, timeout a 8 segundos, concorrência a 2, visitantes a 15/minuto, cache a 100 entradas por 10 minutos e falhas a 30 segundos. Guarda local de 100 tentativas/dia UTC por processo (também conta falhas; reinicia com o processo). Quotas reais do projeto prevalecem. Não adiciona API paga, cobrança ou dependência; compartilha a cota da chave existente.
+
+Publicidade existente continua na página de busca, separada de resultados orgânicos. O modal não exibe nossos anúncios. Banners sobre/ao redor de players terceiros não foram liberados: dependem de regras do provedor, rede de anúncios e valor independente do conteúdo. Abertura de leitor não é tratada como venda, view confirmada do vídeo ou nova impressão de publicidade. Ao fechar, remove o iframe e cancela a leitura; volta ao botão acionado, sem refazer a busca. Não usa cookies/storage adicionais.
+
+Referências verificadas:
+- TikTok player oficial: https://developers.tiktok.com/docs/en/embed-player
+- YouTube público infantil: https://developers.google.com/youtube/v3/guides/made_for_kids_status
+- YouTube políticas: https://developers.google.com/youtube/terms/developer-policies
+- Meta oEmbed oficial (opção futura, não implementada): https://github.com/facebook/meta-embeds-for-wordpress
+
+Testes: `node app/scripts/test-search-reader.mjs`, `node app/scripts/test-search-video-eligibility.mjs`, `npm run test:search` dentro de app; testes gerais por `ops/verify-release.sh`. Regressão de navegador isolada: 12 casos de sanitização, foco/Escape, 360 px, originais, filtros, carregamento voluntário e falha fechada do YouTube. Reprodução real dos provedores deve ser verificada separadamente: testes com respostas simuladas não comprovam disponibilidade de um vídeo.
+
 Cloudflare: configure SEARCH_AI_CLOUDFLARE_KEY, SEARCH_AI_CLOUDFLARE_ACCOUNT_ID e SEARCH_AI_CLOUDFLARE_DAILY=100. Inclua cloudflare em SEARCH_AI_FREE_PROVIDERS somente após confirmar Workers Free. Modelo fixo: @cf/meta/llama-3.1-8b-instruct-fp8-fast, com até 512 tokens de saída. O token deve ter somente Workers AI Read/Edit na conta selecionada. Não requer Worker público nem alteração de DNS. A cota do provedor é compartilhada pela conta; ao esgotar, o serviço gratuito rejeita chamadas. O módulo tenta outro provedor habilitado e mantém a busca normal quando todos esgotam. Testes cobrem o formato nativo da resposta, falhas nas duas direções, limites e validação do ID da conta.
 

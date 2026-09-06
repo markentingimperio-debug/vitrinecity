@@ -56,5 +56,16 @@ try {
   result=await get('/api/discovery/search','confetaria');assert.equal(result.suggestedQuery,'confeitaria');assert.equal(result.stores.length,0,'Never silently replace the query');
   result=await get('/api/discovery/search/suggestions','confetaria');assert.equal(result.suggestions[0].label,'confeitaria');
   result=await get('/api/discovery/search','confetaria','cidade inexistente');assert.equal(result.suggestedQuery,null,'Correction respects city filter');
-  console.log('discovery-search: all behavioral checks passed');
+  db.prepare('INSERT INTO store_profiles(order_reference,business_name,description,city,review_status) VALUES (?,?,?,?,?)').run('official_agrotecnica','Agrotecnica','Loja oficial','São Paulo','published');
+  db.prepare('INSERT INTO store_products VALUES (?,?,?,?,?,?,?,?)').run(100,'official_agrotecnica','Bolo especial','Bolo','Cozinha',2500,'',1);
+  db.prepare('INSERT INTO store_products VALUES (?,?,?,?,?,?,?,?)').run(101,'official_agrotecnica','Bolo indisponível','Bolo','Cozinha',2500,'',0);
+  result=await get('/api/discovery/search','bolo');
+  assert.equal(result.products[0].id,100);assert.equal(result.products[0].officialStore,true);assert.match(result.products[0].rankReason,/Prioridade da plataforma/);
+  assert.equal((await get('/api/discovery/search/suggestions','bolo')).suggestions[0].label,'Bolo especial');
+  assert.equal(result.products.find(p=>p.id===2).officialStore,false);assert.ok(!result.products.some(p=>p.id===101));
+  assert.ok(!(await get('/api/discovery/search','bolo','Goiânia')).products.some(p=>p.officialStore),'Official priority must preserve city filter');
+  assert.ok(!(await get('/api/discovery/search','parafusadeira')).products.some(p=>p.officialStore),'Never inject unrelated official products');
+  db.prepare("UPDATE store_profiles SET review_status='pending' WHERE order_reference='official_agrotecnica'").run();
+  assert.ok(!(await get('/api/discovery/search','bolo')).products.some(p=>p.officialStore),'Unpublished official stores remain hidden');
+  console.log('discovery-search: all behavioral checks and explicit relevant official-store priority passed');
 } finally { await new Promise(resolve=>server.close(resolve));db.close(); }

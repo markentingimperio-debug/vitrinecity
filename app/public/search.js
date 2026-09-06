@@ -1,9 +1,12 @@
+import { createSearchReader } from './search-reader.js';
 (() => {
   const $ = id => document.getElementById(id);
   const query = $('q'), suggestions = $('suggestions'), local = $('local-results');
   let version = 0, controller, suggestController, timer, activeOption = -1, options = [], filter = 'all';
   let searched = '', webVersion = 0, webController, webNext = null, webPending = false;
   const webUrls = new Set();
+  let localRecommendations = [];
+  const reader = createSearchReader({document, origin:location.origin, getRecommendations:()=>localRecommendations});
   let aiEnabled = false, aiController;
   fetch('/api/search/ai/status').then(r => r.json()).then(data => { aiEnabled = data.enabled === true; applyFilter(); }).catch(() => {});
   const node = (tag, text, className) => {
@@ -74,6 +77,7 @@
         webUrls.add(result.url);added++;
         const article=node('article',undefined,'site'),heading=node('h3');heading.append(link(result.title,url));
         article.append(node('small',(result.type==='video'?'Vídeo · ':'')+new URL(url).hostname),heading,node('p',result.description));
+        reader.attach(article,result);
         box.append(article);
       }
       if(!webUrls.size)box.append(node('p','Nenhum resultado disponível agora. Tente outra palavra ou pesquise novamente em instantes.','panel status'));
@@ -88,16 +92,34 @@
     }finally{if(own===webVersion)webPending=false;}
   }
   function renderLocal(data) {
+    localRecommendations = [
+      ...(data.products || []).map(item=>({title:item.name,url:item.productUrl,official:item.officialStore===true})).sort((a,b)=>Number(b.official)-Number(a.official)),
+      ...(data.contents || []).map(item=>({...item,affiliate:item.kind==='affiliate' || item.url?.startsWith('/ofertas/')})),
+      ...(data.stores || []).map(item=>({title:item.name,url:item.url}))
+    ];
     local.replaceChildren();
+    const official = (data.products || []).filter(item=>item.officialStore===true);
+    if(official.length) {
+      const section=node('section',undefined,'official-products'),grid=node('div',undefined,'local-grid');
+      section.append(node('h3','Primeiro, nossa loja oficial'),node('p','Produtos relacionados à sua busca, com prioridade da plataforma.','status'));
+      for(const item of official) {
+        const card=node('article',undefined,'local-card'),title=node('h3'); title.append(link(item.name,item.productUrl,true));
+        card.append(node('small','LOJA OFICIAL · AGROTÉCNICA'),title);
+        if(Number.isFinite(item.priceCents))card.append(node('p',(item.priceCents/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})));
+        card.append(node('small','Confira estoque, frete e condições na página do produto.'));grid.append(card);
+      }
+      section.append(grid);local.append(section);
+    }
     for (const item of data.contents || []) {
       const card = node('article',undefined,'local-card'), heading = node('h3');
       const affiliate = item.kind === 'affiliate';
       const a = link(item.title,item.url,!affiliate); if (affiliate && a.tagName === 'A') a.rel = 'sponsored noopener noreferrer';
       heading.append(a); card.append(node('small',affiliate?'OFERTA DE AFILIADO · Podemos receber comissão':'CONTEÚDO DA VITRINE'),heading,node('p',item.description));
+      reader.attach(card,{...item,affiliate:affiliate || item.url?.startsWith('/ofertas/')});
       local.append(card);
     }
     for (const [key, title] of [['stores', 'Lojas'], ['products', 'Produtos']]) {
-      const rows = Array.isArray(data[key]) ? data[key] : [];
+      const rows = Array.isArray(data[key]) ? data[key].filter(item=>key!=='products' || item.officialStore!==true) : [];
       if (!rows.length) continue;
       const grid = node('div', undefined, 'local-grid');
       for (const item of rows) {
@@ -119,6 +141,7 @@
     value = String(value).trim().slice(0,300);
     if (value.length < 2) { query.focus(); return; }
     searched = value; query.value = value;
+    reader.close(); localRecommendations = [];
     aiController?.abort(); $('ai-answer').replaceChildren(); $('ai-button').disabled = false;
     const run = ++version;
     controller?.abort(); controller = new AbortController();
@@ -189,6 +212,7 @@
         }));
         if (current.signal.aborted || query.value.trim() !== value) return;
         const seen=new Set();options=responses.flatMap(result=>result.status==='fulfilled'?result.value.suggestions||[]:[])
+          .sort((a,b)=>Number(b.category==='Loja oficial · Prioridade da plataforma')-Number(a.category==='Loja oficial · Prioridade da plataforma'))
           .filter(item=>{const key=item.label?.toLocaleLowerCase();if(!key||seen.has(key))return false;seen.add(key);return true;}).slice(0,10);
         suggestions.replaceChildren(...options.map((item,index) => {
           const el = node('li',item.label); el.id='suggestion-'+index;el.role='option';el.setAttribute('aria-selected','false');
