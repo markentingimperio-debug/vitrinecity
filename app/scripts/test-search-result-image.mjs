@@ -5,6 +5,24 @@ import { safeResultImageUrl, getResultImage } from '../public/search-result-imag
 const origin='https://vitrinecity.com';
 const youtube='https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg';
 const bing='https://tse1.mm.bing.net/th?id=OIP.example&pid=Api';
+const officialProduct='https://adubonpkparaplantas.com.br/wp-content/uploads/2026/08/npk-10-10-10-liquido-500ml-300x300.jpg';
+assert.equal(safeResultImageUrl(officialProduct),officialProduct,'The owner-provided official product image must be accepted.');
+assert.equal(getResultImage({imageUrl:officialProduct},origin),officialProduct);
+for(const value of [
+  officialProduct.replace('adubonpkparaplantas.com.br','adubonpkparaplantas.com.br.evil.test'),
+  officialProduct.replace('adubonpkparaplantas.com.br','www.adubonpkparaplantas.com.br'),
+  officialProduct.replace('adubonpkparaplantas.com.br','adubonpkparaplantas.com.br:443'),
+  officialProduct.replace('adubonpkparaplantas.com.br','adubonpkparaplantas.com.br:444'),
+  officialProduct.replace('https://','http://'),
+  officialProduct.replace('https://','https://user:pass@'),
+  officialProduct.replace('/wp-content/uploads/2026/08/','/api/'),
+  officialProduct.replace('/wp-content/uploads/2026/08/','/wp-content/uploads/2026/13/'),
+  officialProduct.replace('/wp-content/uploads/2026/08/','/wp-content/uploads/2026/00/'),
+  officialProduct.replace('/wp-content/uploads/2026/08/','/wp-content/uploads/2026/08/../'),
+  officialProduct.replace('/wp-content/uploads/2026/08/','/wp-content/uploads/2026/08/%2e%2e/'),
+  officialProduct.replace('.jpg','.svg'),officialProduct.replace('.jpg','.php'),
+  officialProduct+'?redirect=https://evil.test/image.jpg'
+])assert.equal(safeResultImageUrl(value,origin),'',value);
 for(const value of [youtube,bing,
   'https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg',
   'https://i.ytimg.com/vi_webp/dQw4w9WgXcQ/hqdefault.webp',
