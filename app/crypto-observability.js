@@ -87,11 +87,12 @@ export function createCryptoObservability(db) {
       const report = recent ? parse(recent.report_json, null) : null;
       const stats = db.prepare(`SELECT COUNT(*) AS orders,
         SUM(CASE WHEN action_type='SELL' THEN 1 ELSE 0 END) AS exits,
+        SUM(CASE WHEN action_type='SELL' AND pnl_usd IS NOT NULL THEN 1 ELSE 0 END) AS pricedExits,
         SUM(CASE WHEN action_type='SELL' THEN pnl_usd END) AS pnlUsd
         FROM crypto_matrix_history WHERE symbol=? AND reported_order=1 AND checked_at BETWEEN ? AND ?`).get(symbol, since, until);
       return { symbol, strategyVersion: 'EMA-RSI v1', checkedAt: report?.checkedAt || null,
         stale: stale(report?.checkedAt, now, 30), signal: report?.reports.find(item => item.symbol === symbol) || null,
-        ...stats, exits: stats.exits || 0 };
+        ...stats, pnlUsd: stats.pricedExits === stats.exits ? stats.pnlUsd : null, exits: stats.exits || 0 };
     });
     const timeline = db.prepare(`SELECT report_json,source FROM crypto_matrix_history
       WHERE checked_at BETWEEN ? AND ? AND action_type IN ('BUY','SELL') ORDER BY checked_at DESC LIMIT 50`).all(since, until)
