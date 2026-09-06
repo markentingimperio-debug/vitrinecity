@@ -31,4 +31,5 @@ assert.match(js,/data\.available!==true/);assert.match(js,/data\.id!==info\.id/)
 const html=fs.readFileSync(new URL('../public/pesquisar.html',import.meta.url),'utf8');assert.match(html,/search-reader.css/);assert.match(html,/search.js" type="module"/);assert.match(html,/vitrinecity-logo.png/);
 assert.match(html,/https:\/\/www.youtube.com\/@agrotecnica362/);assert.match(js,/https:\/\/www.youtube.com\/@agrotecnica362/);
 assert.match(html,/https:\/\/www.instagram.com\/agrotecniica\//);assert.match(js,/https:\/\/www.instagram.com\/agrotecniica\//);
+assert.match(html,/https:\/\/www.tiktok.com\/@agrotecnica5/);assert.match(js,/https:\/\/www.tiktok.com\/@agrotecnica5/);
 console.log('Reader: URL allowlist, no external fetch/proxy, bounded response, no credentials, markup fallback and assets verified.');

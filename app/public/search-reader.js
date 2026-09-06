@@ -121,7 +121,7 @@ export function createSearchReader({document, origin, getRecommendations}) {
     paths.append(link('Conhecer a Vitriny Social','/social'),link('Explorar lojas e pessoas','/descobrir'),link('Ver seleção de produtos afiliados','/ofertas'));
     recommendations.append(paths);
     const channel=el('section',undefined,'reader-channel');
-    channel.append(el('h3','Da nossa equipe'),link('Agrotécnica no YouTube ↗','https://www.youtube.com/@agrotecnica362'),link('@agrotecniica no Instagram ↗','https://www.instagram.com/agrotecniica/'),el('p','Canais indicados pela equipe VitrineCity. Abrem na plataforma original, em outra aba.','reader-note'));
+    channel.append(el('h3','Da nossa equipe'),link('Agrotécnica no YouTube ↗','https://www.youtube.com/@agrotecnica362'),link('@agrotecniica no Instagram ↗','https://www.instagram.com/agrotecniica/'),link('@agrotecnica5 no TikTok ↗','https://www.tiktok.com/@agrotecnica5'),el('p','Canais indicados pela equipe VitrineCity. Abrem na plataforma original, em outra aba.','reader-note'));
     recommendations.append(channel);
   }
   async function open(item, trigger) {
