@@ -1,0 +1,26 @@
+{
+  "id": "busca-20260906-v1",
+  "verifiedCommit": "c90f384e8f896e98c687afd1ebc45528064f7c0e",
+  "authorization": "Administrador autorizou ensino supervisionado do Jarvis em rodadas noturnas até 06/09/2026 às 08h Brasília. Curadoria de fatos próprios verificados pelo operador Codex; sem ampliar ações ou permissões do modelo.",
+  "corrections": [],
+  "documents": [
+    {
+      "title": "Busca integrada: pesquisar sites, vídeos e lojas",
+      "body": "A busca integrada de sites, vídeos e lojas da VitrineCity fica em /pesquisar.html. Digite o assunto e use Pesquisar. Os filtros são Tudo, Sites, Vídeos, Compras, Redes sociais e Na Vitrine. Em Na Vitrine aparecem lojas publicadas e produtos ativos de lojas publicadas; o campo Cidade da loja limita apenas esses resultados locais, não os sites da internet. Os termos de pesquisa e de sugestões podem ser enviados às fontes externas: evite digitar senhas ou dados pessoais. O serviço privado de metabusca reúne resultados disponíveis; fontes podem falhar ou bloquear e a lista não é completa nem garantida. Uma lista vazia não prova que um negócio ou conteúdo não exista. A busca não precisa de síntese de IA para funcionar. Jarvis apenas explica este procedimento: seu núcleo de memória não executa pesquisas na web.",
+      "source": "Jarvis busca-20260906-v1/pesquisar; docs/BUSCA-VITRINE.md, app/public/pesquisar.html e app/discovery-search.js @c90f384",
+      "expiresAt": "2026-10-06"
+    },
+    {
+      "title": "Redes sociais na pesquisa: filtros não conectam contas",
+      "body": "Na página /pesquisar.html, o filtro Redes sociais e o seletor de plataforma procuram conteúdo público indexado nos domínios de Kwai, Instagram e TikTok. Encontrar um resultado do Instagram ou TikTok não significa que uma conta foi conectada à VitrineCity. Esses filtros de pesquisa não autenticam contas, não acessam feeds privados nem sincronizam métricas de perfis. Alguns links podem pedir login no site de destino. O filtro Compras usa os domínios de Mercado Livre e Shopee; resultados indexados não são integração com catálogos privados e não garantem preço ou estoque em tempo real. Jarvis não testa nem conecta contas ao explicar esses filtros. Para conferir o estado de integrações administrativas, é preciso abrir o painel correspondente e verificar evidências atuais.",
+      "source": "Jarvis busca-20260906-v1/redes; docs/BUSCA-VITRINE.md, app/metasearch.js e app/public/pesquisar.html @c90f384",
+      "expiresAt": "2026-10-06"
+    }
+  ],
+  "questions": [
+    {"question":"Em que página pesquiso sites e vídeos?","title":"Busca integrada: pesquisar sites, vídeos e lojas","answerIncludes":["/pesquisar.html"]},
+    {"question":"O filtro de cidade da pesquisa também limita sites da internet?","title":"Busca integrada: pesquisar sites, vídeos e lojas","answerIncludes":["não"]},
+    {"question":"Se encontro Instagram na busca, minha conta já está conectada?","title":"Redes sociais na pesquisa: filtros não conectam contas","answerIncludes":["não"]},
+    {"question":"A pesquisa de redes mostra feeds privados e preços atuais?","title":"Redes sociais na pesquisa: filtros não conectam contas","answerIncludes":["não"]}
+  ]
+}
