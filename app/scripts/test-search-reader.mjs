@@ -33,4 +33,5 @@ assert.match(html,/https:\/\/www.youtube.com\/@agrotecnica362/);assert.match(js,
 assert.match(html,/https:\/\/www.instagram.com\/agrotecniica\//);assert.match(js,/https:\/\/www.instagram.com\/agrotecniica\//);
 assert.match(html,/https:\/\/www.tiktok.com\/@agrotecnica5/);assert.match(js,/https:\/\/www.tiktok.com\/@agrotecnica5/);
 assert.match(html,/https:\/\/adubonpkparaplantas.com.br\//);assert.match(js,/https:\/\/adubonpkparaplantas.com.br\//);
+assert.match(html,/https:\/\/shopee.com.br\/agrotecnicavendas#product_list/);assert.match(js,/https:\/\/shopee.com.br\/agrotecnicavendas#product_list/);
 console.log('Reader: URL allowlist, no external fetch/proxy, bounded response, no credentials, markup fallback and assets verified.');
