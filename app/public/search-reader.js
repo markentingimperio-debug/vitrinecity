@@ -112,13 +112,13 @@ export function createSearchReader({document, origin, getRecommendations}) {
       const info=classifyResult(item.url,origin);
       if(!info || seen.has(info.url) || ++count>4)continue; seen.add(info.url);
       const row=el('div',undefined,'reader-recommendation');
-      row.append(link(item.title,item.url,item.affiliate),el('small',item.affiliate?'Oferta de afiliado · Podemos receber comissão':'Conteúdo ou negócio da Vitrine'));
+      row.append(link(item.title,item.url,item.affiliate),el('small',item.official?'Loja oficial · Prioridade da plataforma':item.affiliate?'Oferta de afiliado · Podemos receber comissão':'Conteúdo ou negócio da Vitrine'));
       if(info.kind==='local')attach(row,item);
       recommendations.append(row);
     }
     if(!count)recommendations.append(el('p','Ainda não há outro resultado local para este assunto.','reader-note'));
     const paths=el('div',undefined,'reader-explore');
-    paths.append(link('Conhecer a Vitriny Social','/social'),link('Explorar lojas e pessoas','/descobrir'),link('Ver seleção de produtos afiliados','/ofertas'));
+    paths.append(link('Visitar nossa loja oficial · Agrotécnica','/loja/official_agrotecnica/agrotecnica'),link('Conhecer a Vitriny Social','/social'),link('Explorar lojas e pessoas','/descobrir'),link('Ver seleção de produtos afiliados','/ofertas'));
     recommendations.append(paths);
     const channel=el('section',undefined,'reader-channel');
     channel.append(el('h3','Da nossa equipe'),link('Agrotécnica no YouTube ↗','https://www.youtube.com/@agrotecnica362'),link('@agrotecniica no Instagram ↗','https://www.instagram.com/agrotecniica/'),link('@agrotecnica5 no TikTok ↗','https://www.tiktok.com/@agrotecnica5'),el('p','Canais indicados pela equipe VitrineCity. Abrem na plataforma original, em outra aba.','reader-note'));

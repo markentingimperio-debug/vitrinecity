@@ -11,4 +11,5 @@
 .reader-channel{margin-top:28px;padding-top:24px;border-top:1px solid var(--line);font-size:14px}
 .reader-channel>a{display:block;margin:12px 0}
 .ecosystem-link{border-top:1px solid var(--line);margin-top:24px;padding-top:24px}.ecosystem-link .section-title{margin-top:8px}
+.official-products{padding-bottom:24px;border-bottom:1px solid var(--line);margin-bottom:24px}.official-products>h3{margin-bottom:0}
 @media(max-width:760px){.search-reader{width:100%;height:100vh;height:100dvh;max-height:100dvh;margin:0;border-radius:0;border:0}.reader-top{padding:10px 16px;flex-wrap:wrap}.reader-heading{padding:20px 18px 12px}.reader-body{grid-template-columns:1fr;gap:24px;padding:22px 18px calc(28px + env(safe-area-inset-bottom))}.reader-recommendations{border-left:0;border-top:1px solid var(--line);padding:24px 0 0}.reader-article{font-size:16px}.reader-player-notice{padding:20px}.reader-video:not(.reader-youtube){height:620px;max-height:75dvh}.reader-back{font-size:14px}}

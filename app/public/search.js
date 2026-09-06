@@ -93,11 +93,23 @@ import { createSearchReader } from './search-reader.js';
   }
   function renderLocal(data) {
     localRecommendations = [
+      ...(data.products || []).map(item=>({title:item.name,url:item.productUrl,official:item.officialStore===true})).sort((a,b)=>Number(b.official)-Number(a.official)),
       ...(data.contents || []).map(item=>({...item,affiliate:item.kind==='affiliate' || item.url?.startsWith('/ofertas/')})),
-      ...(data.products || []).map(item=>({title:item.name,url:item.productUrl})),
       ...(data.stores || []).map(item=>({title:item.name,url:item.url}))
     ];
     local.replaceChildren();
+    const official = (data.products || []).filter(item=>item.officialStore===true);
+    if(official.length) {
+      const section=node('section',undefined,'official-products'),grid=node('div',undefined,'local-grid');
+      section.append(node('h3','Primeiro, nossa loja oficial'),node('p','Produtos relacionados à sua busca, com prioridade da plataforma.','status'));
+      for(const item of official) {
+        const card=node('article',undefined,'local-card'),title=node('h3'); title.append(link(item.name,item.productUrl,true));
+        card.append(node('small','LOJA OFICIAL · AGROTÉCNICA'),title);
+        if(Number.isFinite(item.priceCents))card.append(node('p',(item.priceCents/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})));
+        card.append(node('small','Confira estoque, frete e condições na página do produto.'));grid.append(card);
+      }
+      section.append(grid);local.append(section);
+    }
     for (const item of data.contents || []) {
       const card = node('article',undefined,'local-card'), heading = node('h3');
       const affiliate = item.kind === 'affiliate';
@@ -107,7 +119,7 @@ import { createSearchReader } from './search-reader.js';
       local.append(card);
     }
     for (const [key, title] of [['stores', 'Lojas'], ['products', 'Produtos']]) {
-      const rows = Array.isArray(data[key]) ? data[key] : [];
+      const rows = Array.isArray(data[key]) ? data[key].filter(item=>key!=='products' || item.officialStore!==true) : [];
       if (!rows.length) continue;
       const grid = node('div', undefined, 'local-grid');
       for (const item of rows) {
@@ -200,6 +212,7 @@ import { createSearchReader } from './search-reader.js';
         }));
         if (current.signal.aborted || query.value.trim() !== value) return;
         const seen=new Set();options=responses.flatMap(result=>result.status==='fulfilled'?result.value.suggestions||[]:[])
+          .sort((a,b)=>Number(b.category==='Loja oficial · Prioridade da plataforma')-Number(a.category==='Loja oficial · Prioridade da plataforma'))
           .filter(item=>{const key=item.label?.toLocaleLowerCase();if(!key||seen.has(key))return false;seen.add(key);return true;}).slice(0,10);
         suggestions.replaceChildren(...options.map((item,index) => {
           const el = node('li',item.label); el.id='suggestion-'+index;el.role='option';el.setAttribute('aria-selected','false');
