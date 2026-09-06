@@ -6,7 +6,7 @@ const readablePaths = new Set([
 export function classifyResult(value, origin) {
   try {
     const raw = String(value || '');
-    if (raw.length > 2048 || /[\\\x00-\x20]/.test(raw)) return null;
+    if (!raw || raw.length > 2048 || /[\\\x00-\x20]/.test(raw)) return null;
     const url = new URL(raw, origin);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
     const own = url.origin === origin || url.origin === 'https://vitrinecity.com';
@@ -16,18 +16,31 @@ export function classifyResult(value, origin) {
     const host = url.hostname;
     if (url.protocol === 'https:' && !url.port && ['www.tiktok.com','tiktok.com'].includes(host)) {
       const match = url.pathname.match(/^\/@[a-zA-Z0-9._]{1,40}\/video\/(\d{15,22})\/?$/);
-      if (match) return {kind:'tiktok',url:url.href,label:'TikTok',embed:'https://www.tiktok.com/player/v1/'+match[1]+'?autoplay=0&controls=1&description=1&music_info=1'};
+      if (match) return {kind:'tiktok',url:url.href,label:'TikTok'};
     }
-    let label = host;
+    let label = host, mediaLink;
     if (['youtube.com','www.youtube.com','m.youtube.com','youtu.be'].includes(host)) {
       label = 'YouTube / Shorts';
-      const id = host === 'youtu.be' ? url.pathname.slice(1) : url.pathname === '/watch' ? url.searchParams.get('v') : url.pathname.match(/^\/(?:shorts|embed)\/([A-Za-z0-9_-]{11})\/?$/)?.[1];
+      const id = host === 'youtu.be' ? url.pathname.replace(/^\/|\/$/g,'') : url.pathname === '/watch' ? url.searchParams.get('v') : url.pathname.match(/^\/(?:shorts|embed|live)\/([A-Za-z0-9_-]{11})\/?$/)?.[1];
       if(url.protocol==='https:' && !url.port && /^[A-Za-z0-9_-]{11}$/.test(id || '')) return {kind:'youtube',url:url.href,label,id};
     }
     if (['instagram.com','www.instagram.com'].includes(host)) label = 'Instagram';
     if (['kwai.com','www.kwai.com','k.kwai.com'].includes(host)) label = 'Kwai';
-    return {kind:'external',url:url.href,label};
+    if (['tiktok.com','www.tiktok.com','vm.tiktok.com','vt.tiktok.com'].includes(host)) label = 'TikTok';
+    if(url.protocol==='https:' && !url.port) {
+      if(label==='Instagram' && /^\/(?:reel|reels)\/[A-Za-z0-9_-]{1,128}\/?$/.test(url.pathname))mediaLink='video';
+      if(label==='Kwai' && /^\/short-video\/[A-Za-z0-9_-]{1,128}\/?$/.test(url.pathname))mediaLink='video';
+      if(['vm.tiktok.com','vt.tiktok.com','k.kwai.com'].includes(host) && /^\/(?:p\/)?[A-Za-z0-9_-]{1,128}\/?$/.test(url.pathname))mediaLink='share';
+      if(['tiktok.com','www.tiktok.com'].includes(host) && /^\/t\/[A-Za-z0-9_-]{1,128}\/?$/.test(url.pathname))mediaLink='share';
+    }
+    return {kind:'external',url:url.href,label,...(mediaLink?{mediaLink}:{})};
   } catch { return null; }
+}
+
+// Media and unverified share links get one outbound action; this is not eligibility.
+export function isVideoResult(item, origin) {
+  const info=classifyResult(item?.url,origin);
+  return !!info && (['youtube','tiktok'].includes(info.kind) || info.mediaLink==='video' || info.mediaLink==='share' || (info.kind==='external' && item?.type==='video'));
 }
 
 export async function readPublicPage(href, {origin, signal, fetcher = fetch}) {
@@ -85,8 +98,18 @@ export function readingFragment(document, html, sourceUrl) {
 
 export function createSearchReader({document, origin, getRecommendations}) {
   const el = (tag, text, cls) => { const n=document.createElement(tag); if(text!==undefined)n.textContent=text; if(cls)n.className=cls; return n; };
+  function attachVideo(container,item) {
+    if(!isVideoResult(item,origin))return false;
+    const info=classifyResult(item.url,origin);
+    const provider=info.kind==='youtube'?'YouTube':['TikTok','Instagram','Kwai'].includes(info.label)?info.label:null;
+    const verb=info.mediaLink==='share' && item.type!=='video'?'Abrir':'Assistir';
+    const action=el('a',verb+' '+(provider?'no '+provider:'na fonte')+' · nova aba ↗','reader-action');
+    action.href=info.url;action.target='_blank';action.rel='noopener noreferrer'+(item.affiliate?' sponsored':'');
+    action.setAttribute('aria-label',action.textContent+': '+String(item.title || info.label).slice(0,300)+'. A VitrineCity continua aberta.');
+    container.append(action);return true;
+  }
   const dialog = el('dialog',undefined,'search-reader');
-  if (typeof dialog.showModal !== 'function') return {attach(){},close(){}};
+  if (typeof dialog.showModal !== 'function') return {attach:attachVideo,close(){}};
   dialog.setAttribute('aria-labelledby','reader-title');
   const top=el('div',undefined,'reader-top'), close=el('button','← Voltar à busca','reader-back'); close.type='button';
   const brand=el('div',undefined,'reader-brand'),logo=el('img');logo.src='/assets/vitrinecity-logo.png';logo.alt='VitrineCity';logo.width=70;logo.height=70;
@@ -146,37 +169,14 @@ export function createSearchReader({document, origin, getRecommendations}) {
         progress.textContent='Leitura carregada.';
       }catch { if(own===active && dialog.open)progress.textContent='Não foi possível preparar esta leitura. O link da página original continua disponível.'; }
       finally {clearTimeout(timeout);}
-    } else if(['tiktok','youtube'].includes(info.kind)) {
-      const notice=el('div',undefined,'reader-player-notice');
-      const provider=info.kind==='youtube'?'YouTube':'TikTok';
-      notice.append(el('h3','Assista sem fechar sua pesquisa'),el('p','Ao carregar, seu navegador se conecta ao '+provider+', que recebe dados de conexão e pode usar cookies. A reprodução depende da disponibilidade e das permissões do vídeo.'),link('Privacidade do '+provider,info.kind==='youtube'?'https://policies.google.com/privacy':'https://www.tiktok.com/legal/page/row/privacy-policy/pt-BR'));
-      const play=el('button','Carregar player do '+provider,'primary');play.type='button';notice.append(play);content.append(notice);
-      play.onclick=async()=>{
-        if(own!==active || !dialog.open)return;
-        play.disabled=true;
-        if(info.kind==='youtube') {
-          progress.textContent='Verificando se este vídeo pode ser incorporado…';
-          const timeout=setTimeout(()=>request.abort(),10000);
-          try {
-            const response=await fetch('/api/search/video-eligibility?'+new URLSearchParams({provider:'youtube',id:info.id}),{signal:request.signal});
-            const data=await response.json();if(own!==active || !dialog.open)return;
-            if(!response.ok || data.available!==true || data.id!==info.id || data.provider!=='youtube')throw Error('not_eligible');
-          } catch { if(own===active && dialog.open)progress.textContent='A reprodução interna deste vídeo não foi liberada. Você pode assistir pelo link original, mantendo sua busca aberta.'; return; }
-          finally {clearTimeout(timeout);}
-        }
-        const frame=el('iframe',undefined,'reader-video'+(info.kind==='youtube'?' reader-youtube':''));frame.title='Player oficial do '+provider+': '+heading.textContent;
-        frame.referrerPolicy='strict-origin-when-cross-origin';frame.allow='fullscreen; encrypted-media';frame.allowFullscreen=true;
-        frame.src=info.kind==='youtube'?'https://www.youtube-nocookie.com/embed/'+info.id+'?autoplay=0&playsinline=1':info.embed;
-        progress.textContent='Player solicitado. A disponibilidade final depende do '+provider+'.';
-        content.replaceChildren(frame,el('p','Se o vídeo não carregar, use “Abrir original em outra aba”. Os links e recomendações do player podem abrir o '+provider+'.','reader-note'));
-      };
     } else {
       content.append(el('h3','Prévia do resultado'),el('p',String(item.description || 'Consulte o conteúdo na fonte original.').slice(0,1000)),el('p','Este é um trecho fornecido pela busca, não a página completa. A reprodução ou leitura interna desta fonte não está habilitada. Abra o original sem fechar sua pesquisa.','reader-note'));
     }
   }
   function attach(container,item) {
+    if(attachVideo(container,item))return;
     const info=classifyResult(item.url,origin);if(!info)return;
-    const button=el('button',info.kind==='local'?'Ler na Vitrine':['tiktok','youtube'].includes(info.kind)?'Assistir aqui':'Prévia e relacionados','reader-action');button.type='button';
+    const button=el('button',info.kind==='local'?'Ler na Vitrine':'Prévia e relacionados','reader-action');button.type='button';
     button.setAttribute('aria-haspopup','dialog');button.setAttribute('aria-label',button.textContent+': '+String(item.title || info.label).slice(0,300));
     button.onclick=()=>open(item,button);container.append(button);
   }
