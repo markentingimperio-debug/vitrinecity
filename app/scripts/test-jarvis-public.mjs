@@ -133,6 +133,67 @@ try {
     web('https://outside.example/plantas')
   ]});
 
+  await scenario('irrelevant results do not occupy the three-source limit, and strongest overlap ranks first',async f=>{
+    f.enable();const r=await f.ask('SEO indexação sitemap');
+    assert.equal(r.status,'ready');assert.equal(r.sources.length,3);
+    assert.deepEqual(r.sources.map(s=>s.title),['SEO, indexação e sitemap','SEO e indexação','SEO para sites']);
+    assert.deepEqual(r.sources.map(s=>s.id),[1,2,3]);
+    assert.ok(!JSON.stringify(r).includes('WhatsApp'));
+    assert.ok(!JSON.stringify(f.core.list()).includes('WhatsApp'),'Off-topic results must not enter the public draft queue.');
+  },{results:[
+    web('https://pt.wikipedia.org/wiki/WhatsApp',{title:'WhatsApp Web',description:'Mensagens e chamadas em computadores e dispositivos móveis.'}),
+    web('https://developers.google.com/search/docs/fundamentals/seo-starter-guide',{title:'SEO para sites',description:'Boas práticas de conteúdo público e navegação acessível.'}),
+    web('https://pt.wikipedia.org/wiki/Futebol',{title:'Futebol e esportes',description:'Campeonatos e partidas de equipes esportivas internacionais.'}),
+    web('https://developers.google.com/search/docs/crawling-indexing/overview-google-crawlers',{title:'SEO e indexação',description:'Boas práticas de descoberta e organização de páginas.'}),
+    web('https://developers.google.com/search/docs/crawling-indexing/sitemaps/overview',{title:'SEO, indexação e sitemap',description:'Boas práticas de organização de páginas para buscadores.'})
+  ]});
+
+  await scenario('a relevant fourth result survives three unrelated initial results',async f=>{
+    f.enable();const r=await f.ask('Como melhorar SEO?');
+    assert.equal(r.status,'ready');assert.equal(r.sources.length,1);
+    assert.equal(r.sources[0].title,'Guia de SEO');assert.equal(r.sources[0].id,1);
+    assert.equal(r.knowledge.draftsCreated,1);assert.equal(f.core.list().length,1);
+    assert.equal(f.core.list()[0].title,'Guia de SEO');
+  },{results:[
+    web('https://pt.wikipedia.org/wiki/WhatsApp',{title:'WhatsApp Web',description:'Aplicativo de mensagens e chamadas em dispositivos móveis.'}),
+    web('https://pt.wikipedia.org/wiki/Musica',{title:'Música instrumental',description:'Instrumentos musicais e arranjos para apresentações artísticas.'}),
+    web('https://pt.wikipedia.org/wiki/Futebol',{title:'Futebol internacional',description:'Informações de campeonatos, partidas e equipes esportivas.'}),
+    web('https://developers.google.com/search/docs/fundamentals/seo-starter-guide',{title:'Guia de SEO',description:'Como melhorar SEO com conteúdo útil, títulos claros e navegação acessível.'})
+  ]});
+
+  await scenario('no topical overlap means no sources, model invocation or new drafts',async f=>{
+    f.enable();const r=await f.ask('SEO indexação sitemap');
+    assert.equal(r.status,'no_sources');assert.equal(r.mode,'excerpts');assert.deepEqual(r.sources,[]);
+    assert.equal(r.knowledge.draftsCreated,0);assert.equal(f.core.list().length,0);
+    assert.equal(f.modelCalls.length,0,'An enabled model must not receive unrelated search excerpts.');
+    assert.equal(f.lookups.length,1);assert.equal(f.core.status().queriesToday,1);
+    assert.ok(!r.answer.includes('WhatsApp'));assert.ok(!r.answer.includes('Futebol'));
+  },{model:true,results:[
+    web('https://pt.wikipedia.org/wiki/WhatsApp',{title:'WhatsApp Web',description:'Aplicativo de mensagens e chamadas em dispositivos móveis.'}),
+    web('https://pt.wikipedia.org/wiki/Futebol',{title:'Futebol internacional',description:'Informações de campeonatos, partidas e equipes esportivas.'})
+  ]});
+
+  await scenario('topical overlap normalizes accents and letter case in both directions',async f=>{
+    f.enable();const r=await f.ask('FOTOSSÍNTESE');
+    assert.equal(r.status,'ready');assert.equal(r.sources.length,1);assert.equal(r.sources[0].title,'Fotossintese');
+    f.setResults([
+      web('https://pt.wikipedia.org/wiki/WhatsApp',{title:'WhatsApp Web',description:'Aplicativo de mensagens e chamadas em dispositivos móveis.'}),
+      web('https://pt.wikipedia.org/wiki/Polinizacao',{title:'POLINIZAÇÃO',description:'Transferência de pólen entre flores realizada por agentes naturais.'})
+    ]);f.advance();const plainQuestion=await f.ask('polinizacao');
+    assert.equal(plainQuestion.status,'ready');assert.equal(plainQuestion.sources.length,1);
+    assert.equal(plainQuestion.sources[0].title,'POLINIZAÇÃO');
+  },{results:[
+    web('https://pt.wikipedia.org/wiki/WhatsApp',{title:'WhatsApp Web',description:'Aplicativo de mensagens e chamadas em dispositivos móveis.'}),
+    web(undefined,{title:'Fotossintese',description:'Processo que converte luz em compostos orgânicos nos vegetais.'})
+  ]});
+
+  await scenario('internal ranking values and raw search scores never leak into the public response',async f=>{
+    f.enable();const r=await f.ask();assert.equal(r.status,'ready');assert.equal(r.sources.length,1);
+    assert.deepEqual(Object.keys(r.sources[0]).sort(),['excerpt','id','reviewed','title','url']);
+    assert.doesNotMatch(JSON.stringify(r),/"(?:score|hits|matches)"\s*:/);
+    assert.doesNotMatch(f.publicDump(),/"(?:score|hits|matches)"\s*:/);
+  },{results:[web(undefined,{score:999,hits:999,matches:999})]});
+
   await scenario('public review, revision conflicts, edits and archival revoke approved retrieval',async f=>{
     f.enable();await f.ask();let doc=f.core.list()[0];
     deniedSync(()=>f.core.transition(doc.id,{status:'approved',revision:doc.revision},7),[400,403]);

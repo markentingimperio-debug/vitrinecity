@@ -80,11 +80,13 @@ export function createJarvisPublic({db,lookup,env=process.env,fetchImpl=fetch,no
       .filter(d=>d.hits>=Math.max(1,Math.ceil(query.length*.75))).sort((a,b)=>b.hits-a.hits).slice(0,3)
       .map((d,i)=>({id:i+1,title:d.title,url:d.url,excerpt:plain(d.body,500),reviewed:true}));
   }
-  function candidates(data){return (Array.isArray(data?.results)?data.results:[]).slice(0,40).flatMap(raw=>{
+  function candidates(data,question){const query=tokens(question);return (Array.isArray(data?.results)?data.results:[]).slice(0,40).flatMap(raw=>{
     const url=publicKnowledgeUrl(raw?.url),title=plain(raw?.title,140),excerpt=plain(raw?.description,350);
     if(!url||raw?.type==='video'||title.length<3||excerpt.length<10||sensitive(title+excerpt+url))return [];
-    return [{title,url,excerpt,reviewed:false}];
-  }).filter((r,i,a)=>a.findIndex(x=>x.url===r.url)===i).slice(0,3).map((r,i)=>({id:i+1,...r}));}
+    const words=new Set(tokens(title+' '+excerpt)),matches=query.filter(t=>words.has(t)).length;
+    if(!matches)return [];
+    return [{title,url,excerpt,reviewed:false,matches}];
+  }).filter((r,i,a)=>a.findIndex(x=>x.url===r.url)===i).sort((a,b)=>b.matches-a.matches).slice(0,3).map(({matches,...r},i)=>({id:i+1,...r}));}
   function draft(sources,id){return db.transaction(()=>{
     if(!owns(id))return 0;let added=0;
     for(const s of sources){if(added>=2||count('draft')>=20||count()>=100)break;const url=permittedMemoryUrl(s.url);if(!url||db.prepare('SELECT 1 FROM jarvis_public_knowledge WHERE url=?').get(url))continue;
@@ -120,7 +122,7 @@ export function createJarvisPublic({db,lookup,env=process.env,fetchImpl=fetch,no
           let wait;try{data=await Promise.race([Promise.resolve().then(()=>lookup(question)),new Promise((_,reject)=>{wait=setTimeout(()=>reject(Error('lookup_timeout')),15000);})]);}finally{clearTimeout(wait);}
           if(!owns(id))fail('Consulta cancelada ou serviço pausado.',409);
           if(!Array.isArray(data?.results))throw Error('invalid_search');
-          const safe=candidates(data);data={sources:safe,at:stamp()};
+          const safe=candidates(data,question);data={sources:safe,at:stamp()};
           if(safe.length){if(cache.size>=100)cache.delete(cache.keys().next().value);cache.set(key,{data,until:now()+600000});}
         }
         sources=data.sources;researchedAt=data.at;mode='excerpts';
