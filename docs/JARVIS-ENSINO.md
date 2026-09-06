@@ -1,5 +1,7 @@
 # Ensino supervisionado do Jarvis
 
+Rodada posterior: [piloto Microsoft de conhecimento revisado](JARVIS-MICROSOFT.md), com fontes MIT, avaliação v1 reprovada e v2 reduzida a dois temas. Esse lote não cria um conector automático nem contrata serviços.
+
 O administrador autorizou ensinar a IA e continuar em rodadas até a próxima manhã. Em 06/09/2026, foi adotado provisoriamente o prazo de 08h de Brasília (11:00 UTC), com pergunta enviada para confirmar a interpretação de “amanhã cedo”. Uma resposta posterior do administrador prevalece.
 
 Isso amplia a memória consultável. Não é ajuste de pesos, treinamento contínuo do Qwen, cópia das conversas do administrador ou ampliação das permissões do modelo. O material só contém fatos do código e da documentação próprios, revisados pelo operador.
