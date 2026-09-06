@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { createJarvisResearch } from './jarvis-research.js';
 
 const API = '/api/admin/jarvis';
 const MODEL_ORIGIN = 'http://jarvis-model:8080'; // Fixed internal service, never a user-supplied URL.
@@ -173,7 +174,7 @@ export function createJarvis(db, { env = process.env, fetchImpl = fetch, now = D
   };
 }
 
-export function mountJarvis({ app, db, requireAdmin, sameOriginOnly, env, fetchImpl, now = Date.now }) {
+export function mountJarvis({ app, db, requireAdmin, sameOriginOnly, env, fetchImpl, now = Date.now, researchSchedule = false, researchFetchImpl }) {
   const core=createJarvis(db,{env,fetchImpl,now}), visitors=new Map();
   app.use(API, (req,res,next)=>{res.set('Cache-Control','no-store');next();}, requireAdmin, (req,res,next)=>{
     res.set('Cache-Control','no-store');
@@ -192,5 +193,13 @@ export function mountJarvis({ app, db, requireAdmin, sameOriginOnly, env, fetchI
   app.post(API+'/knowledge/:id/status',route(req=>({item:core.transition(req.params.id,req.body,req.user.id)})));
   app.post(API+'/settings',route(req=>core.setEnabled(req.body,req.user.id)));
   app.post(API+'/ask',route(req=>core.ask(req.body,req.user.id)));
+  // A separate deterministic collector, never a tool callable by the local model.
+  // Registered after the shared admin/auth/CSRF middleware above.
+  const research=createJarvisResearch({db,core,fetchImpl:researchFetchImpl,now,schedule:researchSchedule});
+  app.get(API+'/research/status',route(()=>research.status()));
+  app.post(API+'/research/settings',route(req=>research.setSettings(req.body,req.user.id)));
+  app.post(API+'/research/start',route(req=>{const result=research.start(req.body,req.user.id);req.res.status(202);return result;}));
+  app.post(API+'/research/cancel',route(req=>research.cancel(req.body,req.user.id)));
+  core.research=research;
   return core;
 }
