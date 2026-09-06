@@ -55,4 +55,18 @@ Código 74 indica banco possivelmente já atualizado e falha de gravação da au
 
 ## Próximos passos não implementados
 
+### Ocorrência operacional após PR #134
+
+Em 06/09/2026 às 16:00 UTC, a primeira importação gravou e verificou os dois documentos (IDs 14/15, revisão 2), preservando os 13 antigos. O wrapper tentou a saúde em `localhost:3000` do host, mas essa porta não é publicada pelo Compose. A proteção arquivou seletivamente os dois novos registros, revisão 3, às `2026-09-06T16:00:57.348Z`. A checagem HTTPS pública e a checagem interna no próprio container retornaram 200; os containers permaneceram saudáveis. Não foi uma queda causada pelo conteúdo.
+
+O endereço local de saúde deve ser consultado **dentro do container**, como já faz o healthcheck do Compose, além de verificar `https://vitrinecity.com/api/health`. Não abrir a porta do host para contornar a checagem.
+
+`ops/jarvis/recover-microsoft-20260906.mjs` trata apenas essa reversão do operador: exige os dois IDs, fonte, texto, autoria, criação, revisão 3, horário exato de rollback e os seis eventos originais conferidos. Edições ou arquivamentos administrativos impedem a retomada. Exige novo backup, relatório novo, lock, confirmação `--confirm-own-rollback-recovery` e transação; `resume` aprova na revisão 4 com eventos próprios, sem apagar o histórico; `verify` confere essa revisão. Em nova falha, `rollback-recovery` arquiva só os dois registros na revisão 5. O operador inicial não deve ser reaplicado nem ter seu histórico reescrito.
+
+O teste `ops/jarvis/test-microsoft-recovery-20260906.mjs` usa cópia de tabelas em tmpfs e volume real somente leitura: mudanças administrativas simuladas e alteração de evento devem abortar antes de escrever; retomada, verificação e reversão seletiva devem preservar os 13 anteriores. A evidência da retomada real é o relatório privado `/work/recovery-result-microsoft-v2.json`, não apenas o merge desse procedimento.
+
+Esse ensaio passou em 06/09/2026: as duas simulações foram rejeitadas antes das escritas; retomada, verificação e rollback preservaram os 13 registros antigos; a memória de produção permaneceu inalterada durante o teste. A retomada não precisa executar novamente o modelo: os corpos do lote aprovado continuam exatamente os mesmos.
+
+### Fora do piloto
+
 Ingestão automática de repositórios, sincronização com Drive/OneDrive, histórico integral de todas as revisões no banco, busca semântica e treinamento de pesos continuam fora deste piloto. Crescimento seguro exige seleção de fontes/licenças, revisão, testes de perguntas novas, expiração e observação de erros reais. Não há promessa de que anexar documentos faça o modelo aprender sozinho ou ganhar novas permissões.
