@@ -149,4 +149,11 @@ export function setupMetasearch(app, { db, env = process.env, fetchImpl = fetch,
       res.json({suggestions:suggestions.map(label=>({label,type:'web'}))});
     }catch{res.status(503).json({status:'unavailable',suggestions:[]});}
   });
+  return {lookupPublic:query=>{
+    if(!base)throw Error('unconfigured');
+    const chosen=enabled.filter(id=>id!=='youtube');
+    return cached(JSON.stringify([query,'web',1,'all']),async()=>normalizeWebResults(await getJson('/search',{
+      q:query,format:'json',language:'pt-BR',engines:chosen.join(','),categories:'general',pageno:'1',safesearch:'1'
+    }),chosen),120000);
+  }};
 }

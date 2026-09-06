@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Pergunte ao Jarvis da VitrineCity e consulte respostas com fontes públicas. Geração local, com conhecimento revisado e pesquisa na web.">
+  <title>Pergunte ao Jarvis | VitrineCity</title>
+  <link rel="stylesheet" href="/jarvis-public.css"><script src="/jarvis-public.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Pular para o conteúdo</a>
+  <header class="site-header"><a class="brand" href="/"><img src="/assets/vitrinecity-logo.png" width="64" height="64" alt="VitrineCity — início"><span>VITRINECITY <small>/ JARVIS</small></span></a><nav aria-label="Navegação principal"><a href="/pesquisar.html">Pesquisar</a><a href="/jarvis-public.html" aria-current="page">Pergunte ao Jarvis</a></nav></header>
+  <main id="main">
+    <section class="hero"><div><p class="eyebrow">CONHECIMENTO ABERTO · FONTES VISÍVEIS</p><h1>Sua pergunta.<br><span>Um ponto de partida.</span></h1><p class="intro">Converse com o Jarvis sobre o que você quer descobrir. Consulte as fontes e forme sua própria conclusão.</p></div><div class="jarvis-mark" aria-hidden="true"><strong>J</strong><span>JARVIS</span></div></section>
+    <div class="workspace">
+      <section class="panel" aria-labelledby="ask-title">
+        <div class="section-head"><h2 id="ask-title">Pergunte ao Jarvis</h2><span id="service-state" class="tag">VERIFICANDO</span></div>
+        <p id="service-notice" class="muted">Consultando a disponibilidade do assistente…</p>
+        <button id="refresh-status" class="quiet" type="button">Verificar disponibilidade</button>
+        <form id="ask-form">
+          <label for="question">O que você quer saber?</label>
+          <textarea id="question" name="question" rows="4" minlength="3" maxlength="300" required placeholder="Ex.: Como deixar um formulário mais acessível?" aria-describedby="question-help question-count"></textarea>
+          <div class="field-help"><span id="question-help">Cada pergunta é independente. Inclua o contexto necessário, sem dados pessoais.</span><span id="question-count">0 / 300</span></div>
+          <label class="check" for="search-consent"><input id="search-consent" type="checkbox" required><span>Autorizo enviar esta pergunta aos buscadores para consultar fontes públicas. A resposta pode usar geração local ou apenas trechos das fontes, sem API externa de IA.</span></label>
+          <p class="fine">Não envie senhas, documentos, informações de clientes ou outros dados privados.</p>
+          <div class="actions"><button id="ask" class="primary" type="submit" disabled>Perguntar ao Jarvis ↗</button><button id="cancel" type="button" hidden>Cancelar consulta</button></div>
+        </form>
+        <p id="error" class="error" role="alert" hidden></p>
+        <p id="announcement" role="status" aria-live="polite" aria-atomic="true" class="notice"></p>
+        <section id="conversation" class="conversation" aria-labelledby="conversation-title" aria-busy="false">
+          <div class="section-head"><h2 id="conversation-title" tabindex="-1">Nesta página</h2><button id="clear-history" class="quiet" type="button" disabled>Limpar conversa</button></div>
+          <p class="fine">As últimas seis trocas ficam apenas na memória desta página. Não são enviadas como histórico na próxima pergunta.</p>
+          <div id="exchanges"><p class="muted">Sua primeira resposta aparecerá aqui, junto das fontes consultadas.</p></div>
+        </section>
+      </section>
+      <aside class="panel guidance" aria-labelledby="about-title"><p class="eyebrow">ANTES DE COMEÇAR</p><h2 id="about-title">Curiosidade com cuidado.</h2><h3>Confira as fontes</h3><p>Respostas são experimentais e podem conter erros. Uma referência não garante que todas as afirmações estejam corretas.</p><h3>Limites deste piloto</h3><p>Este piloto não atende pedidos de orientação médica, jurídica, financeira ou de atividades perigosas. Procure profissionais qualificados para decisões nessas áreas.</p><h3>Pesquisa e memória pública</h3><p>O Jarvis pode consultar fontes da web e conhecimentos revisados para uso público. Ele não acessa a memória empresarial interna.</p><h3>Conhecimento com revisão</h3><p>Novas descobertas podem virar rascunhos para curadoria. Isso não é aprovação nem treinamento automático do modelo.</p><h3>Sem executar ações</h3><p>O Jarvis não compra, publica, envia mensagens nem modifica sua conta. A geração local tem capacidade limitada.</p><a href="/pesquisar.html">Prefere explorar os resultados? Abrir busca →</a></aside>
+    </div>
+    <noscript><p class="error">Ative o JavaScript para consultar o Jarvis. Você também pode navegar pelos links da VitrineCity.</p></noscript>
+    <footer><p>VitrineCity · Conhecimento para explorar, fontes para conferir.</p><nav aria-label="Informações"><a href="/privacy.html">Privacidade</a><a href="/contato.html">Contato</a></nav></footer>
+  </main>
+</body>
+</html>
