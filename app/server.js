@@ -3,6 +3,7 @@ import { integrationObserver, openRouterOperation } from './integration-health.j
 import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { createCryptoObservability, mountCryptoObservability } from './crypto-observability.js';
+import { mountJarvis } from './jarvis-core.js';
 import { setupDiscoverySearch } from './discovery-search.js';
 import { setupMetasearch } from './metasearch.js';
 import { createSearchContentProvider } from './search-content.js';
@@ -2031,6 +2032,8 @@ function recordAdminLogin(req,email,success,reason){
 
 const ADMIN_HTML_PATHS=new Set(['/admin-vendas-afiliadas.html','/admin','/admin.html','/admin-agentes.html','/admin-sales-agents.html','/admin-crypto-matrix.html','/admin-quizzes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html','/admin-conteudos.html','/admin-entregas.html']);
 ADMIN_HTML_PATHS.add('/admin-live.html');
+ADMIN_HTML_PATHS.add('/admin-jarvis.html');
+ADMIN_HTML_PATHS.add('/admin-jarvis');
 ADMIN_HTML_PATHS.add('/admin-captacao.html');
 ADMIN_HTML_PATHS.add('/admin-live');
 
@@ -2579,6 +2582,7 @@ const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: p
 const cryptoObservability = createCryptoObservability(db);
 cryptoObservability.seedLatest();
 mountCryptoObservability({ app, requireAdmin, observability: cryptoObservability });
+mountJarvis({ app, db, requireAdmin, sameOriginOnly });
 setupOrganicAcquisition({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly, allowAttempt });
 const affiliateCatalog = setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, siteUrl: SITE_URL, publicDir: path.join(dir, 'public') });
@@ -2638,6 +2642,9 @@ app.get('/admin-cursos.html',requireAdmin,publicPage('admin-cursos.html'));
 app.get('/admin-curso-preview.html',requireAdmin,publicPage('admin-curso-preview.html'));
 app.get('/afiliados.html', enhancedPublicPage('afiliados.html', ['/affiliate-creator.js']));
 app.get('/admin-agentes.html',requireAdmin,publicPage('admin-agentes.html'));
+app.get(['/admin-jarvis.html','/admin-jarvis'], requireAdmin, (req,res,next)=>{
+  res.set({'Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'"}); next();
+}, publicPage('admin-jarvis.html'));
 
 app.get('/admin-crypto-matrix.html',requireAdmin,publicPage('admin-crypto-matrix.html'));
 app.get('/admin-quizzes.html',requireAdmin,publicPage('admin-quizzes.html'));

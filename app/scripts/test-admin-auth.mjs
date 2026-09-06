@@ -14,8 +14,12 @@ try{
   await wait();const email=`admin-${port}@example.com`,password='senha-administrativa-123';
   let response=await request('/admin');assert.equal(response.status,302);assert.equal(response.headers.get('location'),'/admin-login.html');
   assert.equal((await request('/api/admin/crypto-matrix')).status,401);
+  assert.equal((await request('/admin-jarvis.html')).status,302);
+  assert.equal((await request('/admin-jarvis')).status,302);
+  assert.equal((await request('/api/admin/jarvis/status')).status,401);
   response=await request('/api/auth/register',{method:'POST',body:JSON.stringify({name:'Gestor Teste',email,password,adultConfirmed:true,termsAccepted:true})});assert.equal(response.status,201);const regularCookie=response.headers.get('set-cookie').split(';')[0];
   assert.equal((await request('/api/admin/crypto-matrix',{headers:{cookie:regularCookie}})).status,403);
+  assert.equal((await request('/api/admin/jarvis/status',{headers:{cookie:regularCookie}})).status,403);
   response=await request('/api/privacy/requests',{method:'POST',headers:{cookie:regularCookie},body:JSON.stringify({requestType:'correction',details:'Corrigir meu nome cadastrado.'})});assert.equal(response.status,201);const privacyProtocol=(await response.json()).protocol;assert.match(privacyProtocol,/^LGPD-/);
   response=await request('/api/privacy/requests',{headers:{cookie:regularCookie}});assert.equal(response.status,200);assert.equal((await response.json()).items[0].protocol,privacyProtocol);
   response=await request('/api/privacy/export',{headers:{cookie:regularCookie}});assert.equal(response.status,200);assert.match(response.headers.get('content-disposition'),/vitrinecity-dados-/);const privacyExport=await response.json();assert.equal(privacyExport.account.email,email);assert.equal(privacyExport.privacyRequests[0].protocol,privacyProtocol);
@@ -36,6 +40,8 @@ try{
   response=await request('/api/admin/auth/login',{method:'POST',headers:{cookie:regularCookie},body:JSON.stringify({email,password})});assert.equal(response.status,200);const setCookie=response.headers.get('set-cookie')||'';assert.match(setCookie,/Max-Age=28800/);let adminCookie=setCookie.split(';')[0];
   response=await request('/api/admin/auth/status',{headers:{cookie:adminCookie}});let adminStatus=await response.json();assert.equal(adminStatus.administrator,true);assert.equal(adminStatus.mfaEnabled,false);
   response=await request('/api/admin/crypto-matrix',{headers:{cookie:adminCookie}});assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');const matrix=await response.json();assert.equal(matrix.realLocked,true);assert.equal(matrix.summary.cycles,0);
+  response=await request('/api/admin/jarvis/status',{headers:{cookie:adminCookie}});assert.equal(response.status,200);assert.equal((await response.json()).approvedAvailable,3);
+  response=await request('/admin-jarvis.html',{headers:{cookie:adminCookie}});assert.equal(response.status,200);assert.match(response.headers.get('content-security-policy'),/script-src 'self'/);assert.match(await response.text(),/Eu sou Jarvis/);
   response=await request('/api/admin/auth/mfa/setup',{method:'POST',headers:{cookie:adminCookie},body:'{}'});assert.equal(response.status,200);const mfaSetup=await response.json();assert.match(mfaSetup.secret,/^[A-Z2-7]+$/);
   response=await request('/api/admin/auth/mfa/confirm',{method:'POST',headers:{cookie:adminCookie},body:JSON.stringify({totpCode:totp(mfaSetup.secret)})});assert.equal(response.status,200);
   response=await request('/api/auth/logout',{method:'POST',headers:{cookie:adminCookie},body:'{}'});assert.equal(response.status,200);
@@ -78,4 +84,4 @@ try{
   const metricsPage=readFileSync(new URL('../public/admin-metricas-externas.html',import.meta.url),'utf8');assert.match(metricsPage,/credenciais são criptografadas/);assert.match(metricsPage,/noindex,nofollow/);
   const identityPage=readFileSync(new URL('../public/admin-identidade.html',import.meta.url),'utf8');assert.match(identityPage,/segredo será criptografado/i);assert.match(identityPage,/noindex,nofollow/);
   console.log('admin-auth: ok');
-}finally{child.kill();await new Promise(r=>child.once('exit',r));await new Promise(r=>setTimeout(r,200));try{rmSync(dataDir,{recursive:true,force:true,maxRetries:5,retryDelay:100})}catch(error){if(error.code!=='EPERM')throw error}}
+}finally{if(child.exitCode===null&&child.signalCode===null){const exited=new Promise(r=>child.once('exit',r));child.kill();await exited;}await new Promise(r=>setTimeout(r,200));try{rmSync(dataDir,{recursive:true,force:true,maxRetries:5,retryDelay:100})}catch(error){if(error.code!=='EPERM')throw error}}

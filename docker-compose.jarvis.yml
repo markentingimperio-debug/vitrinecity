@@ -1,0 +1,23 @@
+# Reused by the optional jarvis profile in docker-compose.yml. No runtime download.
+services:
+  jarvis-model:
+    image: ghcr.io/ggml-org/llama.cpp@sha256:c363a67c08cb74cc9099590d88cd9948ee0c464cca03db40f9cb5c19d5376da9
+    restart: unless-stopped
+    user: '65534:65534'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 2
+    mem_limit: 4g
+    pids_limit: 96
+    tmpfs: ['/tmp:size=64m,mode=1777']
+    volumes:
+      - /opt/vitrinecity-jarvis-model:/models:ro
+    networks: [jarvis_private]
+    command: ['-m','/models/Qwen3-1.7B-Q8_0.gguf','--alias','jarvis-local','--host','0.0.0.0','--port','8080','-c','4096','-np','1','-t','2','-tb','2','-n','300','--jinja','--no-webui']
+    healthcheck:
+      test: ['CMD','curl','-fsS','http://127.0.0.1:8080/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
