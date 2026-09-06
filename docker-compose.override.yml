@@ -2,6 +2,9 @@
 services:
   app:
     environment:
+      # Local-only Jarvis; the optional model service must be installed separately.
+      # Existing deployments retain this setting during ordinary application rebuilds.
+      JARVIS_LOCAL_MODEL: ${JARVIS_LOCAL_MODEL:-1}
       SEARXNG_URL: http://search:8080
       SEARCH_ENGINES: google,bing,duckduckgo,yahoo,brave,qwant,startpage,mojeek,wikipedia,youtube
       SEARCH_AI_FREE_PROVIDERS: ${SEARCH_AI_FREE_PROVIDERS:-}
