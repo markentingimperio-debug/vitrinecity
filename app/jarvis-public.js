@@ -11,7 +11,8 @@ const plain=(v,max)=>typeof v==='string'?v.replace(/<[^>]*>/g,'').replace(/[\u00
 const normalize=v=>String(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 const sensitive=v=>/\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b|\b\d{3}[. -]?\d{3}[. -]?\d{3}[- ]?\d{2}\b|(?:\+?55[ -]?)?\(?\d{2}\)?[ -]?\d{4,5}[- ]?\d{4}\b|PRIVATE KEY|\b(?:sk-proj-|ghp_|github_pat_)[\w-]{8,}|\b(?:password|senha|token|segredo|cpf)\s*[:=]/i.test(v);
 const risky=v=>/\b(?:suicid\w*|automutil\w*|explosiv\w*|bomba caseira|fabricar arma|invadir conta|roubar senha|pornograf\w*|nudes?|sexo com menor|dosagem|diagnostico|prescrev\w*|remedios?|medicamentos?|dor no peito|sintomas?|tratamento medico|cancer|gravidez|criptomoedas?|bitcoin|investimentos?|investir|dobrar (?:meu |o )?dinheiro|lucro garantido|aconselhamento juridico|advogad\w*)\b/.test(normalize(v));
-const tokens=v=>[...new Set(normalize(v).match(/[a-z0-9]{3,30}/g)||[])].filter(t=>!new Set(['como','para','uma','que','qual','quais','onde','por','com','dos','das','tem','pode','sobre','voce','isso','essa','esse','meu','minha','fazer','explique','quero']).has(t));
+const shortTerms=new Set(['ia','ai','ui','ux','ti','rh','js','qa','vr','pc','tv','3d','2d']);
+const tokens=v=>[...new Set(normalize(v).match(/[a-z0-9]{2,30}/g)||[])].filter(t=>(t.length>=3||shortTerms.has(t))&&!new Set(['como','para','uma','que','qual','quais','onde','por','com','dos','das','tem','pode','sobre','voce','isso','essa','esse','meu','minha','fazer','explique','quero']).has(t));
 
 export function publicKnowledgeUrl(value){
   if(typeof value!=='string'||value.length>1200||/[\s\\\u0000-\u001f\u007f]/.test(value))return '';

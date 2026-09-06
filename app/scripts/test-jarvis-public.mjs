@@ -194,6 +194,37 @@ try {
     assert.doesNotMatch(f.publicDump(),/"(?:score|hits|matches)"\s*:/);
   },{results:[web(undefined,{score:999,hits:999,matches:999})]});
 
+  await scenario('IA acronym retrieves a Microsoft source and the same question reuses approved public memory',async f=>{
+    f.enable();const question='O que é IA?',r=await f.ask(question);
+    assert.equal(r.status,'ready');assert.equal(r.mode,'excerpts');assert.equal(r.sources.length,1);
+    assert.equal(r.sources[0].title,'Introdução à IA');assert.equal(r.sources[0].reviewed,false);
+    assert.equal(r.knowledge.draftsCreated,1);assert.equal(f.lookups.length,1);
+    let doc=f.core.list()[0];
+    doc=f.core.save(doc.id,{title:'Conceitos de IA',body:'IA significa inteligência artificial: sistemas computacionais que realizam tarefas associadas à inteligência humana.',revision:doc.revision},7);
+    doc=f.core.transition(doc.id,{status:'approved',revision:doc.revision,confirmedPublic:true},7);
+    assert.equal(doc.status,'approved');f.setResults([]);f.advance(601000);
+    const remembered=await f.ask(question);
+    assert.equal(remembered.status,'ready');assert.equal(remembered.mode,'approved_memory');
+    assert.equal(remembered.sources.length,1);assert.equal(remembered.sources[0].title,'Conceitos de IA');
+    assert.equal(remembered.sources[0].reviewed,true);assert.equal(remembered.knowledge.draftsCreated,0);
+    assert.equal(f.lookups.length,1,'An approved IA match must not launch a second search after the cache expires.');
+    assert.equal(f.modelCalls.length,0);
+  },{results:[web('https://learn.microsoft.com/pt-br/training/modules/ai-introduction-fixture/',{
+    title:'Introdução à IA',description:'Inteligência artificial e tarefas computacionais associadas à aprendizagem e à percepção.'
+  })]});
+
+  await scenario('questions containing only stop words do not match arbitrary sources',async f=>{
+    f.enable();
+    for(const question of ['O que é?','de um em ao']){
+      const r=await f.ask(question);
+      assert.equal(r.status,'no_sources');assert.equal(r.mode,'excerpts');assert.deepEqual(r.sources,[]);
+      assert.equal(r.knowledge.draftsCreated,0);assert.equal(f.core.list().length,0);
+    }
+    assert.equal(f.modelCalls.length,0,'Prepositions and question stop words must not enable a model call.');
+  },{model:true,results:[web('https://learn.microsoft.com/pt-br/training/modules/ai-introduction-fixture/',{
+    title:'O que é IA e como aprender',description:'Conceitos de aprendizagem em um curso introdutório ao estudo de sistemas computacionais.'
+  })]});
+
   await scenario('public review, revision conflicts, edits and archival revoke approved retrieval',async f=>{
     f.enable();await f.ask();let doc=f.core.list()[0];
     deniedSync(()=>f.core.transition(doc.id,{status:'approved',revision:doc.revision},7),[400,403]);

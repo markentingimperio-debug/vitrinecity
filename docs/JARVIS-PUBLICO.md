@@ -56,7 +56,7 @@ Em falha, pausar público e voltar à imagem anterior; não restaurar banco anti
 
 ## Verificação da implementação
 
-- 34 cenários de aceitação pública (incluindo cinco regressões de relevância), nove do gate de modelo, teste HTTP real de autenticação/origem e suíte de release de 82 arquivos passaram em isolamento.
+- 36 cenários de aceitação pública (incluindo sete regressões de relevância/siglas), nove do gate de modelo, teste HTTP real de autenticação/origem e suíte de release de 82 arquivos passaram em isolamento.
 - UI integrada com Express e SQLite em memória: consentimento → pergunta → prévia → edição administrativa → aprovação explícita → reutilização sem busca. Cancelamento tardio, ausência de cookies/histórico no POST e sentinelas privadas também conferidos.
 - Layout público/curadoria inspecionado em 375, 768 e 1440px, sem overflow; não havia baseline para afirmar ausência de regressão visual por comparação.
 - Auditoria somente leitura encontrou `qs@6.15.3` moderado, preexistente e indireto. Os caminhos reportados (`comma:true` e `qs.stringify`) não são usados pelo novo endpoint JSON. Atualização controlada para 6.16.0 fica como manutenção separada; nenhum lock foi alterado aqui.
