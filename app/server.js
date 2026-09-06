@@ -2,6 +2,7 @@ import { setupProductionHardening } from './production-hardening.js';
 import { integrationObserver, openRouterOperation } from './integration-health.js';
 import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
+import { createCryptoObservability, mountCryptoObservability } from './crypto-observability.js';
 import { setupDiscoverySearch } from './discovery-search.js';
 import { setupMetasearch } from './metasearch.js';
 import { createSearchContentProvider } from './search-content.js';
@@ -2575,6 +2576,9 @@ app.use((req, res, next) => {
   next();
 });
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
+const cryptoObservability = createCryptoObservability(db);
+cryptoObservability.seedLatest();
+mountCryptoObservability({ app, requireAdmin, observability: cryptoObservability });
 setupOrganicAcquisition({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly, allowAttempt });
 const affiliateCatalog = setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, siteUrl: SITE_URL, publicDir: path.join(dir, 'public') });
@@ -5831,6 +5835,7 @@ app.post('/api/integrations/binance-local/demo-report', (req, res) => {
     pnlUsd: Number(body.action.pnlUsd) || 0
   } : { type: 'HOLD', reason: 'Sem decisão registrada.' };
   const positions = body.positions && typeof body.positions === 'object' ? body.positions : {};
+  db.transaction(() => {
   db.prepare(`INSERT INTO binance_demo_report
     (id,checked_at,action_type,action_json,reports_json,positions_json,realized_pnl_usd,received_at)
     VALUES (1,?,?,?,?,?,?,CURRENT_TIMESTAMP)
@@ -5840,6 +5845,8 @@ app.post('/api/integrations/binance-local/demo-report', (req, res) => {
         String(body.checkedAt || '').slice(0, 40), action.type, JSON.stringify(action),
         JSON.stringify(reports), JSON.stringify(positions).slice(0, 10000), Number(body.realizedPnlUsd) || 0
       );
+  cryptoObservability.record(body);
+  })();
   return res.json({ received: true });
 });
 
