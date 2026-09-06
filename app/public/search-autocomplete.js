@@ -35,11 +35,11 @@ export function setupSearchAutocomplete({query,suggestions,city=()=>'',onSelect}
     options=[];active=-1;suggestions.hidden=true;suggestions.replaceChildren();
     query.setAttribute('aria-expanded','false');query.removeAttribute('aria-activedescendant');
   }
-  function position() {
+  function position(keepFieldVisible=false) {
     if(suggestions.hidden)return;
     const viewport=view.visualViewport,top=viewport?.offsetTop || 0,height=viewport?.height || view.innerHeight;
     let rect=query.form.getBoundingClientRect();
-    if(Math.max(top+height-rect.bottom,rect.top-top)<96 && height>180) {
+    if(keepFieldVisible && height>180 && (rect.top<top+8 || rect.bottom>top+height-8 || Math.max(top+height-rect.bottom,rect.top-top)<96)) {
       query.scrollIntoView({block:'center',inline:'nearest'});rect=query.form.getBoundingClientRect();
     }
     const below=top+height-rect.bottom-12,above=rect.top-top-12;
@@ -75,7 +75,7 @@ export function setupSearchAutocomplete({query,suggestions,city=()=>'',onSelect}
             detail.textContent=[item.type==='web'?'Sugestão de pesquisa':item.type==='store'?'Loja da Vitrine':item.type==='content'?'Conteúdo da Vitrine':'Produto da Vitrine',item.category].filter(Boolean).join(' · ');
             row.append(label,detail);row.addEventListener('pointerdown',event=>event.preventDefault());row.addEventListener('click',()=>select(item));return row;
           }));
-          suggestions.hidden=!options.length;query.setAttribute('aria-expanded',String(Boolean(options.length)));position();markActive();
+          suggestions.hidden=!options.length;query.setAttribute('aria-expanded',String(Boolean(options.length)));position(true);markActive();
         }});
       } finally {if(own===generation)clearTimeout(deadline);}
     },220);
@@ -92,7 +92,8 @@ export function setupSearchAutocomplete({query,suggestions,city=()=>'',onSelect}
     }else if(event.key==='Enter'&&active>=0){event.preventDefault();select(options[active]);}
   });
   query.form.addEventListener('submit',close);
-  view.addEventListener('resize',position);view.addEventListener('scroll',position,{passive:true});
-  view.visualViewport?.addEventListener('resize',position);view.visualViewport?.addEventListener('scroll',position,{passive:true});
+  const resize=()=>position(true),scroll=()=>position();
+  view.addEventListener('resize',resize);view.addEventListener('scroll',scroll,{passive:true});
+  view.visualViewport?.addEventListener('resize',resize);view.visualViewport?.addEventListener('scroll',scroll,{passive:true});
   return {close};
 }
