@@ -14,7 +14,7 @@ Pedido autorizado pelo administrador em 06/09/2026: conversar com visitantes, bu
 1. Valida pergunta de 3–300 caracteres, campos exatos e consentimento. Rejeita padrões comuns de dados pessoais/credenciais e solicitações perigosas ou sensíveis. É uma proteção conservadora de piloto, não um classificador universal.
 2. Reserva orçamento diário e uma rodada pública por vez antes de qualquer consulta externa.
 3. Procura primeiro texto explicitamente aprovado na coleção pública, não vencido, com sobreposição suficiente à pergunta. Nesse caso entrega trechos revisados sem buscar novamente.
-4. Quando não houver memória correspondente, consulta o SearXNG existente por callback, somente a primeira página textual. Não baixa páginas de resultados, imagens ou perfis. Até três fontes com prévias de 350 caracteres.
+4. Quando não houver memória correspondente, consulta o SearXNG existente por callback, somente a primeira página textual. Não baixa páginas de resultados, imagens ou perfis. Descarta candidatos sem termos significativos em comum com a pergunta e ordena por essa correspondência antes de selecionar até três fontes com prévias de 350 caracteres. Esse filtro lexical reduz ruído; não é uma prova de relevância semântica.
 5. Tenta síntese curta no modelo local, compartilhando uma única vaga de inferência com o Jarvis administrativo. Ocupação, falha, excesso de saída ou citações inválidas resultam em **trechos**, identificados como tal. Sem fontes suficientes, informa isso.
 6. Até duas prévias elegíveis podem virar novos rascunhos privados da coleção pública, com URL/data/validade. **A pergunta e a resposta gerada não são gravadas como conhecimento.**
 
@@ -56,7 +56,7 @@ Em falha, pausar público e voltar à imagem anterior; não restaurar banco anti
 
 ## Verificação da implementação
 
-- 29 cenários de aceitação pública, nove do gate de modelo, teste HTTP real de autenticação/origem e suíte de release de 82 arquivos passaram em isolamento.
+- 36 cenários de aceitação pública (incluindo sete regressões de relevância/siglas), nove do gate de modelo, teste HTTP real de autenticação/origem e suíte de release de 82 arquivos passaram em isolamento.
 - UI integrada com Express e SQLite em memória: consentimento → pergunta → prévia → edição administrativa → aprovação explícita → reutilização sem busca. Cancelamento tardio, ausência de cookies/histórico no POST e sentinelas privadas também conferidos.
 - Layout público/curadoria inspecionado em 375, 768 e 1440px, sem overflow; não havia baseline para afirmar ausência de regressão visual por comparação.
 - Auditoria somente leitura encontrou `qs@6.15.3` moderado, preexistente e indireto. Os caminhos reportados (`comma:true` e `qs.stringify`) não são usados pelo novo endpoint JSON. Atualização controlada para 6.16.0 fica como manutenção separada; nenhum lock foi alterado aqui.

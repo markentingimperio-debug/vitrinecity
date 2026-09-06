@@ -11,7 +11,8 @@ const plain=(v,max)=>typeof v==='string'?v.replace(/<[^>]*>/g,'').replace(/[\u00
 const normalize=v=>String(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 const sensitive=v=>/\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b|\b\d{3}[. -]?\d{3}[. -]?\d{3}[- ]?\d{2}\b|(?:\+?55[ -]?)?\(?\d{2}\)?[ -]?\d{4,5}[- ]?\d{4}\b|PRIVATE KEY|\b(?:sk-proj-|ghp_|github_pat_)[\w-]{8,}|\b(?:password|senha|token|segredo|cpf)\s*[:=]/i.test(v);
 const risky=v=>/\b(?:suicid\w*|automutil\w*|explosiv\w*|bomba caseira|fabricar arma|invadir conta|roubar senha|pornograf\w*|nudes?|sexo com menor|dosagem|diagnostico|prescrev\w*|remedios?|medicamentos?|dor no peito|sintomas?|tratamento medico|cancer|gravidez|criptomoedas?|bitcoin|investimentos?|investir|dobrar (?:meu |o )?dinheiro|lucro garantido|aconselhamento juridico|advogad\w*)\b/.test(normalize(v));
-const tokens=v=>[...new Set(normalize(v).match(/[a-z0-9]{3,30}/g)||[])].filter(t=>!new Set(['como','para','uma','que','qual','quais','onde','por','com','dos','das','tem','pode','sobre','voce','isso','essa','esse','meu','minha','fazer','explique','quero']).has(t));
+const shortTerms=new Set(['ia','ai','ui','ux','ti','rh','js','qa','vr','pc','tv','3d','2d']);
+const tokens=v=>[...new Set(normalize(v).match(/[a-z0-9]{2,30}/g)||[])].filter(t=>(t.length>=3||shortTerms.has(t))&&!new Set(['como','para','uma','que','qual','quais','onde','por','com','dos','das','tem','pode','sobre','voce','isso','essa','esse','meu','minha','fazer','explique','quero']).has(t));
 
 export function publicKnowledgeUrl(value){
   if(typeof value!=='string'||value.length>1200||/[\s\\\u0000-\u001f\u007f]/.test(value))return '';
@@ -80,11 +81,13 @@ export function createJarvisPublic({db,lookup,env=process.env,fetchImpl=fetch,no
       .filter(d=>d.hits>=Math.max(1,Math.ceil(query.length*.75))).sort((a,b)=>b.hits-a.hits).slice(0,3)
       .map((d,i)=>({id:i+1,title:d.title,url:d.url,excerpt:plain(d.body,500),reviewed:true}));
   }
-  function candidates(data){return (Array.isArray(data?.results)?data.results:[]).slice(0,40).flatMap(raw=>{
+  function candidates(data,question){const query=tokens(question);return (Array.isArray(data?.results)?data.results:[]).slice(0,40).flatMap(raw=>{
     const url=publicKnowledgeUrl(raw?.url),title=plain(raw?.title,140),excerpt=plain(raw?.description,350);
     if(!url||raw?.type==='video'||title.length<3||excerpt.length<10||sensitive(title+excerpt+url))return [];
-    return [{title,url,excerpt,reviewed:false}];
-  }).filter((r,i,a)=>a.findIndex(x=>x.url===r.url)===i).slice(0,3).map((r,i)=>({id:i+1,...r}));}
+    const words=new Set(tokens(title+' '+excerpt)),matches=query.filter(t=>words.has(t)).length;
+    if(!matches)return [];
+    return [{title,url,excerpt,reviewed:false,matches}];
+  }).filter((r,i,a)=>a.findIndex(x=>x.url===r.url)===i).sort((a,b)=>b.matches-a.matches).slice(0,3).map(({matches,...r},i)=>({id:i+1,...r}));}
   function draft(sources,id){return db.transaction(()=>{
     if(!owns(id))return 0;let added=0;
     for(const s of sources){if(added>=2||count('draft')>=20||count()>=100)break;const url=permittedMemoryUrl(s.url);if(!url||db.prepare('SELECT 1 FROM jarvis_public_knowledge WHERE url=?').get(url))continue;
@@ -120,7 +123,7 @@ export function createJarvisPublic({db,lookup,env=process.env,fetchImpl=fetch,no
           let wait;try{data=await Promise.race([Promise.resolve().then(()=>lookup(question)),new Promise((_,reject)=>{wait=setTimeout(()=>reject(Error('lookup_timeout')),15000);})]);}finally{clearTimeout(wait);}
           if(!owns(id))fail('Consulta cancelada ou serviço pausado.',409);
           if(!Array.isArray(data?.results))throw Error('invalid_search');
-          const safe=candidates(data);data={sources:safe,at:stamp()};
+          const safe=candidates(data,question);data={sources:safe,at:stamp()};
           if(safe.length){if(cache.size>=100)cache.delete(cache.keys().next().value);cache.set(key,{data,until:now()+600000});}
         }
         sources=data.sources;researchedAt=data.at;mode='excerpts';
