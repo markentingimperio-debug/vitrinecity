@@ -775,17 +775,34 @@
             com lojas e prestadores pelos canais oficiais.
           </p>
           <form
+            id="home-search"
             action="/pesquisar.html"
-            style="display: flex; gap: 8px; margin-top: 22px"
+            role="search"
+            style="display: flex; gap: 8px; margin-top: 22px; position: relative"
           >
             <input
               name="q"
+              type="search"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded="false"
+              aria-controls="home-search-suggestions"
+              autocomplete="off"
+              maxlength="300"
               required
               minlength="2"
               placeholder="Pesquise assuntos, sites, vídeos e produtos..."
               aria-label="Buscar lojas e produtos"
             /><button class="button" type="submit">🔎 Buscar</button>
+            <ul id="home-search-suggestions" class="vc-autocomplete" role="listbox" aria-label="Sugestões de busca" hidden></ul>
           </form>
+          <p style="font-size:12px;color:var(--muted)">As sugestões consultam fontes externas. Evite digitar dados pessoais.</p>
+          <link rel="stylesheet" href="/search-autocomplete.css">
+          <script type="module">
+            import {setupSearchAutocomplete} from '/search-autocomplete.js';
+            const form=document.getElementById('home-search');
+            setupSearchAutocomplete({query:form.elements.q,suggestions:document.getElementById('home-search-suggestions')});
+          </script>
           <div class="actions">
             <a class="button" href="/descobrir">✨ Descobrir <small style="display:block;font-weight:600">Conteúdos, cursos, livros e produtos</small></a
             ><a class="button" href="/entregas">🛵 VC Entregas <small style="display:block;font-weight:600">Compras e entregas locais</small></a

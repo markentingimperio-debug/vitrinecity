@@ -3,3 +3,17 @@
 #vc-outdoor{width:calc(100% - 36px);flex:none}@media(max-width:700px){#vc-outdoor{margin:28px auto}}
 #vc-global-market-banner{display:flex;position:relative;align-items:center;gap:20px;min-height:72px;width:100%;padding:12px max(18px,5vw);background:#071f4b;color:#fff;border-bottom:2px solid #ffc628;font:14px Inter,Arial,sans-serif;box-sizing:border-box}#vc-global-market-banner strong{font-size:11px;letter-spacing:.12em;color:#ffc628}#vc-global-market-banner .vc-hb-link{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0;text-decoration:none;color:#fff}#vc-global-market-banner small{font-size:10px;color:#bcd6f6}#vc-global-market-banner b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#vc-global-market-banner button{padding:10px;border:1px solid #7489a7;border-radius:8px;background:transparent;color:white;cursor:pointer;min-height:44px}#vc-paid-sponsor-strip{display:flex;gap:18px;padding:10px 5vw;background:#fff7de;overflow:auto;font:12px Arial,sans-serif}#vc-paid-sponsor-strip a{color:#45370f;white-space:nowrap}@media(max-width:600px){#vc-global-market-banner{gap:10px}#vc-global-market-banner strong{display:none}}#vc-global-market-banner a:focus-visible,#vc-global-market-banner button:focus-visible{outline:3px solid #ffc628;outline-offset:3px}
 #vc-global-market-banner .vc-hb-window{flex:1;overflow:hidden;min-width:0}#vc-global-market-banner nav{display:flex;width:max-content;gap:32px;animation:vcHighlightMarquee 160s linear infinite}#vc-global-market-banner .vc-hb-link{flex:none;min-width:220px;white-space:nowrap}#vc-global-market-banner b{overflow:visible}#vc-global-market-banner:hover nav,#vc-global-market-banner:focus-within nav,#vc-global-market-banner.vc-hb-paused nav{animation-play-state:paused}@keyframes vcHighlightMarquee{to{transform:translateX(calc(-50% - 16px))}}@media(prefers-reduced-motion:reduce){#vc-global-market-banner nav{animation:none}#vc-global-market-banner .vc-hb-window{overflow-x:auto}}
+
+/* Sticky is opt-in on the home and search pages only, below the search skip link. */
+#vc-global-market-banner.vc-hb-sticky{position:sticky;top:0;z-index:5;}
+html.vc-hb-sticky-page{scroll-padding-top:calc(var(--vc-market-banner-height,72px) + 12px);}
+html.vc-hb-sticky-home{scroll-padding-top:calc(var(--vc-market-banner-height,72px) + 88px);}
+html.vc-hb-sticky-home:not(.vc-hb-editing) body > header{top:var(--vc-market-banner-height,72px);}
+html.vc-hb-editing #vc-global-market-banner.vc-hb-sticky{position:relative;}
+html.vc-hb-sticky-home.vc-hb-editing body > header{position:relative;top:0;}
+html.vc-hb-sticky-page.vc-hb-editing{scroll-padding-top:12px;}
+@media(max-height:480px){
+  #vc-global-market-banner.vc-hb-sticky{position:relative;}
+  html.vc-hb-sticky-home:not(.vc-hb-editing) body > header{position:relative;top:0;}
+  html.vc-hb-sticky-page{scroll-padding-top:12px;}
+}

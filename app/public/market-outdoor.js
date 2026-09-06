@@ -39,6 +39,7 @@ async function start() {
     if(copy){a.setAttribute('aria-hidden','true');a.tabIndex=-1;}track.append(a);
   }
   document.querySelector('#marketTicker')?.remove();document.body.prepend(banner);
+  configureStickyHighlights(banner);
   let index=0, paused=matchMedia('(prefers-reduced-motion: reduce)').matches, hover=false, focused=false, visible=true;
   const motion=matchMedia('(prefers-reduced-motion: reduce)');
   const $=s=>root.querySelector(s), pause=$('[data-action="pause"]'), image=$('img');
@@ -64,4 +65,26 @@ async function start() {
   motion.addEventListener('change',e=>{if(e.matches){paused=true;draw();}});
   const observer=new IntersectionObserver(entries=>{visible=entries[0].isIntersecting;});observer.observe(root);
   draw();setInterval(()=>{if(!paused&&!hover&&!focused&&visible&&!document.hidden){index=(index+1)%items.length;draw();}},4000);
+}
+
+export function configureStickyHighlights(banner, {
+  document=globalThis.document, pathname=globalThis.location.pathname, ResizeObserver=globalThis.ResizeObserver
+} = {}) {
+  const home=pathname==='/' || pathname==='/index.html';
+  if(!home && pathname!=='/pesquisar.html')return;
+  const page=document.documentElement;
+  banner.classList.add('vc-hb-sticky');
+  page.classList.add('vc-hb-sticky-page');
+  if(home)page.classList.add('vc-hb-sticky-home');
+  // Keep the existing home navigation below the actual banner, including text zoom.
+  const measure=()=>page.style.setProperty('--vc-market-banner-height',`${banner.offsetHeight}px`);
+  measure();
+  if(ResizeObserver)new ResizeObserver(measure).observe(banner);
+  // Release sticky space while typing; the banner remains in normal document flow.
+  const editing=()=>page.classList.toggle('vc-hb-editing',Boolean(document.activeElement?.closest?.(
+    'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'
+  )));
+  document.addEventListener('focusin',editing);
+  document.addEventListener('focusout',()=>queueMicrotask(editing));
+  editing();
 }

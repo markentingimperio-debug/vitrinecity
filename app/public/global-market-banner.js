@@ -5,7 +5,7 @@
     let css=document.querySelector('link[data-vc-market-styles]');
     if(css?.sheet){resolve(true);return;}
     if(!css){
-      css=document.createElement('link');css.rel='stylesheet';css.href='/market-outdoor.css?v=3';css.dataset.vcMarketStyles='';
+      css=document.createElement('link');css.rel='stylesheet';css.href='/market-outdoor.css?v=4';css.dataset.vcMarketStyles='';
     }
     let settled=false;
     const finish=ready=>{if(settled)return;settled=true;resolve(ready);};
@@ -15,7 +15,7 @@
     else if(css.sheet)finish(true);
   });
   import('/platform-performance.js?v=1').catch(()=>{});
-  import('/market-outdoor.js?v=5').catch(()=>{});
+  import('/market-outdoor.js?v=6').catch(()=>{});
   // Preserve the existing paid advertising placement, separately labelled.
   window.__vcMarketStylesReady.then(ready=>ready?fetch('/api/ads/serve?placement=banner'):null).then(r=>r?.ok?r.json():{}).then(data=>{
     if(!data.ads?.length || document.getElementById('vc-paid-sponsor-strip'))return;

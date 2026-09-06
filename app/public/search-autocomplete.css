@@ -1,0 +1,5 @@
+.vc-autocomplete{position:absolute;top:100%;left:0;right:0;z-index:50;max-height:var(--suggestions-max-height,320px);margin:5px 0;padding:6px;list-style:none;border:1px solid #dce5ef;border-radius:14px;background:#fff;color:#102746;text-align:left;line-height:1.4;box-shadow:0 15px 30px #10274624;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y}
+.vc-autocomplete[hidden]{display:none!important}.vc-autocomplete[data-placement=above]{top:auto;bottom:100%}
+.vc-autocomplete-input{font-size:16px;min-width:0}
+.vc-autocomplete [role=option]{min-height:44px;padding:10px 12px;border-radius:8px;cursor:pointer;overflow-wrap:anywhere}.vc-autocomplete [aria-selected=true],.vc-autocomplete [role=option]:hover{background:#edf3ff}
+.vc-autocomplete-label{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:16px;font-weight:600}.vc-autocomplete small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#596e87;font-size:12px;font-weight:400}

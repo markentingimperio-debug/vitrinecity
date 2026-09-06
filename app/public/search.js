@@ -1,8 +1,9 @@
-import { createSearchReader } from './search-reader.js';
+import { createSearchReader, isVideoResult } from './search-reader.js';
+import { setupSearchAutocomplete } from './search-autocomplete.js';
 (() => {
   const $ = id => document.getElementById(id);
   const query = $('q'), suggestions = $('suggestions'), local = $('local-results');
-  let version = 0, controller, suggestController, timer, activeOption = -1, options = [], filter = 'all';
+  let version = 0, controller, filter = 'all';
   let searched = '', webVersion = 0, webController, webNext = null, webPending = false;
   const webUrls = new Set();
   let localRecommendations = [];
@@ -28,10 +29,6 @@ import { createSearchReader } from './search-reader.js';
     const a = node('a', label); a.href = href;
     if (!internal) { a.target = '_blank'; a.rel = 'noopener noreferrer'; }
     return a;
-  };
-  const closeSuggestions = () => {
-    suggestions.hidden = true; suggestions.replaceChildren(); activeOption = -1;
-    query.setAttribute('aria-expanded', 'false'); query.removeAttribute('aria-activedescendant');
   };
   function applyFilter() {
     $('ai-panel').hidden = !aiEnabled || !searched || !['all','web'].includes(filter) || $('platform').value !== 'all';
@@ -75,7 +72,10 @@ import { createSearchReader } from './search-reader.js';
         if(webUrls.has(result.url))continue;
         const url=safeUrl(result.url);if(!url)continue;
         webUrls.add(result.url);added++;
-        const article=node('article',undefined,'site'),heading=node('h3');heading.append(link(result.title,url));
+        const article=node('article',undefined,'site'),heading=node('h3');
+        // Videos have one explicit outbound action; the search remains open.
+        if(isVideoResult(result,location.origin))heading.textContent=result.title;
+        else heading.append(link(result.title,url));
         article.append(node('small',(result.type==='video'?'Vídeo · ':'')+new URL(url).hostname),heading,node('p',result.description));
         reader.attach(article,result);
         box.append(article);
@@ -145,7 +145,7 @@ import { createSearchReader } from './search-reader.js';
     aiController?.abort(); $('ai-answer').replaceChildren(); $('ai-button').disabled = false;
     const run = ++version;
     controller?.abort(); controller = new AbortController();
-    suggestController?.abort(); clearTimeout(timer); closeSuggestions();
+    autocomplete.close();
     const params = new URLSearchParams({q:value});
     if ($('city').value.trim()) params.set('city',$('city').value.trim());
     history.replaceState(null,'','?'+params);
@@ -200,39 +200,7 @@ import { createSearchReader } from './search-reader.js';
     } catch (error) { if (error.name !== 'AbortError' && searched === target) box.replaceChildren(node('p','A IA está indisponível ou atingiu o limite de uso. Você pode continuar consultando os sites e vídeos abaixo.','status')); }
     finally { if (aiController === current) $('ai-button').disabled = false; }
   });
-  query.addEventListener('input', () => {
-    clearTimeout(timer); suggestController?.abort(); closeSuggestions();
-    const value = query.value.trim(); if (value.length < 2) return;
-    timer = setTimeout(async () => {
-      const current = new AbortController(); suggestController = current;
-      try {
-        const params=new URLSearchParams({q:value,city:$('city').value.trim()});
-        const responses=await Promise.allSettled(['/api/search/autocomplete?','/api/discovery/search/suggestions?'].map(async path=>{
-          const response=await fetch(path+params,{signal:current.signal});return response.ok?response.json():{suggestions:[]};
-        }));
-        if (current.signal.aborted || query.value.trim() !== value) return;
-        const seen=new Set();options=responses.flatMap(result=>result.status==='fulfilled'?result.value.suggestions||[]:[])
-          .sort((a,b)=>Number(b.category==='Loja oficial · Prioridade da plataforma')-Number(a.category==='Loja oficial · Prioridade da plataforma'))
-          .filter(item=>{const key=item.label?.toLocaleLowerCase();if(!key||seen.has(key))return false;seen.add(key);return true;}).slice(0,10);
-        suggestions.replaceChildren(...options.map((item,index) => {
-          const el = node('li',item.label); el.id='suggestion-'+index;el.role='option';el.setAttribute('aria-selected','false');
-          el.append(node('small',[item.type==='web'?'Sugestão de pesquisa':item.type==='store'?'Loja da Vitrine':item.type==='content'?'Conteúdo da Vitrine':'Produto da Vitrine',item.category].filter(Boolean).join(' · ')));
-          el.addEventListener('pointerdown',e=>e.preventDefault());el.addEventListener('click',()=>search(item.label));return el;
-        }));
-        suggestions.hidden = !options.length;query.setAttribute('aria-expanded',String(Boolean(options.length)));
-      } catch { /* Suggestions never prevent submitting a search. */ }
-    },220);
-  });
-  query.addEventListener('keydown',event=>{
-    if(event.key==='Escape'){closeSuggestions();return;}
-    if(suggestions.hidden)return;
-    if(['ArrowDown','ArrowUp'].includes(event.key)){
-      event.preventDefault();activeOption=(activeOption+(event.key==='ArrowDown'?1:options.length-1)+options.length)%options.length;
-      [...suggestions.children].forEach((el,i)=>el.setAttribute('aria-selected',String(i===activeOption)));
-      query.setAttribute('aria-activedescendant','suggestion-'+activeOption);
-    }else if(event.key==='Enter'&&activeOption>=0){event.preventDefault();search(options[activeOption].label);}
-  });
-  query.addEventListener('blur',closeSuggestions);
+  const autocomplete=setupSearchAutocomplete({query,suggestions,city:()=>$('city').value.trim(),onSelect:search});
   $('search-form').addEventListener('submit',event=>{event.preventDefault();search(query.value);});
   $('city').addEventListener('change',()=>{if(searched)search(searched);});
   $('platform').addEventListener('change',()=>{
