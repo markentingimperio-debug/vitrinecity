@@ -1,0 +1,29 @@
+{
+  "id": "aprendizado-20260906-v1",
+  "verifiedCommit": "91d1587a9582a0fe551270591991a72e41e06641",
+  "authorization": "Administrador autorizou rodadas noturnas de ensino supervisionado do Jarvis até 06/09/2026 às 08h Brasília. Operador Codex revisou a explicação existente sobre aprendizado e aprovação, sem ampliar autonomia ou importar conversas privadas.",
+  "documents": [],
+  "corrections": [
+    {
+      "expected": {
+        "title": "Como ensinar e corrigir conhecimentos",
+        "body": "Para ensinar ao Jarvis, cadastre um conhecimento com título, texto e fonte. Revise e aprove explicitamente. Rascunhos, documentos arquivados ou vencidos não são usados nas respostas. Uma edição volta a informação para rascunho e exige nova aprovação. Perguntas e respostas do chat não entram automaticamente na memória.",
+        "source": "Contrato de memória Jarvis v1",
+        "status": "approved",
+        "revision": 1,
+        "updated_by": 0
+      },
+      "document": {
+        "title": "Como ensinar e corrigir conhecimentos",
+        "body": "O Jarvis não aprende sozinho com o que o administrador conversa no chat. Conversas, perguntas e respostas não entram automaticamente na memória. Aprender novas informações neste núcleo significa consultar conhecimentos revisados e aprovados; não significa treinar ou alterar os pesos do modelo. Para ensinar uma informação nova, cadastre um conhecimento com título, texto e fonte, revise o conteúdo e aprove explicitamente. Para corrigir um conhecimento, edite o texto, revise e aprove novamente: a edição volta o documento para rascunho. Rascunhos, documentos arquivados e documentos vencidos não são usados nas respostas. Uma resposta do próprio Jarvis não deve ser incorporada como fato sem conferência da fonte. Ele apenas explica esse processo e não salva uma conversa como aprendizado automático.",
+        "source": "Jarvis aprendizado-20260906-v1/memoria; app/jarvis-core.js (política, bootstrap, save, transition e ask) @91d1587",
+        "expiresAt": "2026-10-06"
+      }
+    }
+  ],
+  "questions": [
+    {"question":"o jarvis aprende sozinho tudo que converso com ele?","title":"Como ensinar e corrigir conhecimentos","answerIncludes":["não"]},
+    {"question":"Conversar no chat faz Jarvis aprender automaticamente?","title":"Como ensinar e corrigir conhecimentos","answerIncludes":["não"]},
+    {"question":"Como posso ensinar uma informação nova e corrigir o que o Jarvis sabe?","title":"Como ensinar e corrigir conhecimentos","answerIncludes":["aprov"]}
+  ]
+}
