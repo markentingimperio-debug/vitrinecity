@@ -25,6 +25,7 @@ await assert.rejects(readPublicPage('/ofertas/item',{origin,fetcher:async()=>new
 await assert.rejects(readPublicPage('/ofertas/item',{origin,fetcher:async()=>new Response('not found',{status:404,headers:{'content-type':'text/html'}})}));
 await assert.rejects(readPublicPage('/ofertas/item',{origin,fetcher:async()=>new Response('x'.repeat(500001),{headers:{'content-type':'text/html'}})}));
 const js=fs.readFileSync(new URL('../public/search-reader.js',import.meta.url),'utf8');
+assert.doesNotMatch(js,/main\.querySelector\(\s*['"]article['"]\s*\)/,'A related article card must not replace the main page content');
 assert.match(js,/template\.innerHTML = html/);assert.doesNotMatch(js,/content\.innerHTML|eval\(|new Function|srcdoc|postMessage/);
 assert.match(js,/dialog\.addEventListener\('close',cleanup\)/);assert.match(js,/content\.replaceChildren\(\)/);assert.match(js,/strict-origin-when-cross-origin/);
 assert.match(js,/data\.available!==true/);assert.match(js,/data\.id!==info\.id/);assert.match(js,/data\.provider!=='youtube'/);
