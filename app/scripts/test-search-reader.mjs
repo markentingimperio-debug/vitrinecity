@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { classifyResult, createSearchReader, isVideoResult, readPublicPage } from '../public/search-reader.js';
+import { classifyResult, createSearchReader, isOutboundResult, isVideoResult, readPublicPage } from '../public/search-reader.js';
 const origin='https://vitrinecity.com';
 for(const value of ['javascript:alert(1)','data:text/html,test','file:///etc/passwd','https://name:secret@example.com','https://x.test/hello world','\\evil.test/test',null,undefined,'']) {
   assert.equal(classifyResult(value,origin),null,value);
@@ -65,10 +65,11 @@ const videos=[
 ];
 for(const supportsDialog of [true,false]) {
   const document=documentDouble(supportsDialog);
-  const reader=createSearchReader({document,origin,getRecommendations(){throw Error('Video links must not open recommendations or a dialog');}});
+  const reader=createSearchReader({document,origin,getRecommendations(){throw Error('Outbound links must not open recommendations or a dialog');}});
   for(const sample of videos) {
     const item={...sample,title:'<img src=x onerror=alert(1)> vídeo',affiliate:true};
     assert.equal(isVideoResult(item,origin),true,sample.url);
+    assert.equal(isOutboundResult(item,origin),true);
     const container=new Element('article');reader.attach(container,item);
     assert.equal(container.children.length,1,'Exactly one video action');
     const action=container.children[0];
@@ -79,25 +80,56 @@ for(const supportsDialog of [true,false]) {
     assert.equal(action.getAttribute('aria-haspopup'),undefined);assert.equal(action.children.length,0,'Result title is text only');
     assert.equal(document.created.some(element=>element.tagName==='IFRAME'||element.open===true),false);
   }
+  for(const sample of [
+    {url:'https://pixabay.com/pt/videos/search/plantas/',label:'na fonte'},
+    {url:'https://www.dailymotion.com/video/x123456',label:'na fonte',affiliate:true},
+    {url:'https://www.instagram.com/agrotecniica/',label:'no Instagram'},
+    {url:'https://www.tiktok.com/@agrotecnica5',label:'no TikTok',affiliate:true},
+    {url:'https://www.kwai.com/@example',label:'no Kwai'},
+    {url:'https://www.youtube.com/@agrotecnica362',label:'no YouTube'},
+    {url:'https://example.com/article',label:'na fonte'}
+  ]) {
+    const item={...sample,type:'web',title:'<script>untrusted result</script>'},container=new Element('article');
+    assert.equal(isVideoResult(item,origin),false,'A generic external page is not claimed to be a playable video');
+    assert.equal(isOutboundResult(item,origin),true,'Title rendering and action builder share one outbound decision');
+    reader.attach(container,item);
+    assert.equal(container.children.length,1,'Exactly one action for an external result, including browsers without dialog');
+    const action=container.children[0];
+    assert.equal(action.tagName,'A','Generic external results must use one native link, not a preview button');
+    assert.equal(action.href,sample.url);assert.equal(action.target,'_blank');
+    assert.equal(action.rel,'noopener noreferrer'+(sample.affiliate?' sponsored':''));
+    assert.equal(action.textContent,'Abrir '+sample.label+' · nova aba ↗');
+    assert.equal(action.onclick,undefined);assert.equal(action.getAttribute('aria-haspopup'),undefined);
+    assert.match(action.getAttribute('aria-label'),/A VitrineCity continua aberta\./);
+    assert.equal(action.children.length,0,'External title is never parsed as markup');
+    assert.equal(document.created.some(element=>element.tagName==='IFRAME'||element.open===true),false);
+  }
   for(const url of ['javascript:alert(1)','https://name:secret@example.com','data:text/html,test','',null]) {
     const item={url,type:'video'},container=new Element('article');
     assert.equal(isVideoResult(item,origin),false);reader.attach(container,item);assert.equal(container.children.length,0);
+    assert.equal(isOutboundResult(item,origin),false);
+    const webContainer=new Element('article');reader.attach(webContainer,{url,type:'web'});assert.equal(webContainer.children.length,0);
   }
   assert.equal(isVideoResult({url:'/ofertas/produto-publico',type:'video'},origin),false,'Own readable pages stay in the local reader');
+  assert.equal(isOutboundResult({url:'/ofertas/produto-publico'},origin),false,'Own readable page title does not switch to the outbound flow');
   if(supportsDialog) {
     const container=new Element('article');reader.attach(container,{url:'/ofertas/produto-publico'});
     assert.equal(container.children[0].tagName,'BUTTON');assert.equal(container.children[0].textContent,'Ler na Vitrine');
     assert.equal(container.children[0].getAttribute('aria-haspopup'),'dialog');
   }
+  const emptyContainer=new Element('article');reader.attach(emptyContainer,null);assert.equal(emptyContainer.children.length,0);
   reader.close();
 }
+assert.doesNotMatch(js,/Prévia e relacionados|Prévia do resultado/,'No dead external preview branch remains');
 assert.equal(isVideoResult({url:'https://example.com/article',type:'web'},origin),false);
 for(const url of ['https://www.instagram.com/agrotecniica/','https://www.instagram.com/p/EXEMPLO/','https://www.instagram.com.evil.test/reel/EXEMPLO/','https://www.instagram.com:444/reel/EXEMPLO/','https://k.kwai.com/','https://vt.tiktok.com/','http://www.instagram.com/reel/EXEMPLO/'])assert.equal(isVideoResult({url,type:'web'},origin),false,url);
 assert.equal(isVideoResult(null,origin),false);
+assert.equal(isOutboundResult(null,origin),false);
+assert.equal(isOutboundResult({url:'/artigo/conteudo-publicado'},origin),true,'A page not allowlisted for reading still has native navigation');
 const html=fs.readFileSync(new URL('../public/pesquisar.html',import.meta.url),'utf8');assert.match(html,/search-reader.css/);assert.match(html,/search.js" type="module"/);assert.match(html,/vitrinecity-logo.png/);
 assert.match(html,/https:\/\/www.youtube.com\/@agrotecnica362/);assert.match(js,/https:\/\/www.youtube.com\/@agrotecnica362/);
 assert.match(html,/https:\/\/www.instagram.com\/agrotecniica\//);assert.match(js,/https:\/\/www.instagram.com\/agrotecniica\//);
 assert.match(html,/https:\/\/www.tiktok.com\/@agrotecnica5/);assert.match(js,/https:\/\/www.tiktok.com\/@agrotecnica5/);
 assert.match(html,/https:\/\/adubonpkparaplantas.com.br\//);assert.match(js,/https:\/\/adubonpkparaplantas.com.br\//);
 assert.match(html,/https:\/\/shopee.com.br\/agrotecnicavendas#product_list/);assert.match(js,/https:\/\/shopee.com.br\/agrotecnicavendas#product_list/);
-console.log('Reader: single safe outbound video action, no player/API, dialog fallback, own-page reading, bounded response and assets verified.');
+console.log('Reader: single safe outbound action for all external results, no preview/player/API, dialog fallback, own-page reading, bounded response and assets verified.');

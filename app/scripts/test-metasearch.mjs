@@ -19,6 +19,23 @@ const normal=normalizeWebResults(payload,engines);
 assert.equal(normal.results.length,2);assert.deepEqual(normal.results[0].providers,['google','bing']);
 assert.equal(normal.results[0].title,'Bolo simples');assert.equal(normal.results[0].description,'Misture farinha & ovos.');
 assert.deepEqual(normal.suggestions,['bolo de chocolate','bolo sem leite']);assert.deepEqual(normal.unavailable,['bing']);
+const thumbnail='https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg';
+const covers=normalizeWebResults({results:[
+  {url:'https://example.org/one',engine:'google',title:'First',thumbnail:'javascript:bad'},
+  {url:'https://example.org/one#again',engine:'bing',img_src:thumbnail},
+  {url:'https://example.org/one',engine:'youtube',thumbnail:'https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg'},
+  {url:'https://example.org/two',engine:'google',thumbnail:'https://arbitrary.example/image.jpg',img_src:thumbnail},
+  {url:'https://example.org/three',engine:'google',thumbnail:'https://127.0.0.1/private'},
+  {url:'https://example.org/four',engine:'unconfigured',thumbnail},
+  {url:'https://example.org/five',engine:'google',thumbnail:'/assets/local.jpg'}
+]},engines).results;
+assert.equal(covers[0].thumbnailUrl,thumbnail,'A later duplicate may supply the first safe thumbnail.');
+assert.equal(covers[0].title,'First','Thumbnail enrichment must preserve the original result metadata.');
+assert.deepEqual(covers[0].providers,['google','bing','youtube']);
+assert.equal(covers[1].thumbnailUrl,thumbnail,'A rejected thumbnail may fall back to a safe img_src.');
+assert.ok(!Object.hasOwn(covers[2],'thumbnailUrl'),'Unsafe images must not reach the API.');
+assert.equal(covers.length,4,'Unknown engines still do not enter the results.');
+assert.ok(!Object.hasOwn(covers[3],'thumbnailUrl'),'Upstream images cannot reference local application paths.');
 for(const url of ['javascript:x','file:///etc/passwd','https://name:pass@example.com','http://192.168.1.1','http://[::1]'])assert.equal(publicResultUrl(url),'');
 let calls=0,fail=false,clock=Date.now(),upstream=[];
 const fetchImpl=async(url,options)=>{

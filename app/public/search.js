@@ -1,5 +1,6 @@
-import { createSearchReader, isVideoResult } from './search-reader.js';
+import { createSearchReader, isOutboundResult } from './search-reader.js';
 import { setupSearchAutocomplete } from './search-autocomplete.js';
+import { attachResultCover } from './search-result-cover.js';
 (() => {
   const $ = id => document.getElementById(id);
   const query = $('q'), suggestions = $('suggestions'), local = $('local-results');
@@ -73,9 +74,10 @@ import { setupSearchAutocomplete } from './search-autocomplete.js';
         const url=safeUrl(result.url);if(!url)continue;
         webUrls.add(result.url);added++;
         const article=node('article',undefined,'site'),heading=node('h3');
-        // Videos have one explicit outbound action; the search remains open.
-        if(isVideoResult(result,location.origin))heading.textContent=result.title;
+        // Every external result has one action, not a linked title plus a preview.
+        if(isOutboundResult(result,location.origin))heading.textContent=result.title;
         else heading.append(link(result.title,url));
+        attachResultCover(article,result,{document,origin:location.origin});
         article.append(node('small',(result.type==='video'?'Vídeo · ':'')+new URL(url).hostname),heading,node('p',result.description));
         reader.attach(article,result);
         box.append(article);
@@ -104,6 +106,7 @@ import { setupSearchAutocomplete } from './search-autocomplete.js';
       section.append(node('h3','Primeiro, nossa loja oficial'),node('p','Produtos relacionados à sua busca, com prioridade da plataforma.','status'));
       for(const item of official) {
         const card=node('article',undefined,'local-card'),title=node('h3'); title.append(link(item.name,item.productUrl,true));
+        attachResultCover(card,item,{document,origin:location.origin});
         card.append(node('small','LOJA OFICIAL · AGROTÉCNICA'),title);
         if(Number.isFinite(item.priceCents))card.append(node('p',(item.priceCents/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})));
         card.append(node('small','Confira estoque, frete e condições na página do produto.'));grid.append(card);
@@ -114,7 +117,10 @@ import { setupSearchAutocomplete } from './search-autocomplete.js';
       const card = node('article',undefined,'local-card'), heading = node('h3');
       const affiliate = item.kind === 'affiliate';
       const a = link(item.title,item.url,!affiliate); if (affiliate && a.tagName === 'A') a.rel = 'sponsored noopener noreferrer';
-      heading.append(a); card.append(node('small',affiliate?'OFERTA DE AFILIADO · Podemos receber comissão':'CONTEÚDO DA VITRINE'),heading,node('p',item.description));
+      attachResultCover(card,item,{document,origin:location.origin});
+      if(isOutboundResult(item,location.origin))heading.textContent=item.title;
+      else heading.append(a);
+      card.append(node('small',affiliate?'OFERTA DE AFILIADO · Podemos receber comissão':'CONTEÚDO DA VITRINE'),heading,node('p',item.description));
       reader.attach(card,{...item,affiliate:affiliate || item.url?.startsWith('/ofertas/')});
       local.append(card);
     }
@@ -124,6 +130,7 @@ import { setupSearchAutocomplete } from './search-autocomplete.js';
       const grid = node('div', undefined, 'local-grid');
       for (const item of rows) {
         const card = node('article', undefined, 'local-card');
+        attachResultCover(card,item,{document,origin:location.origin});
         const heading = node('h3'); heading.append(link(item.name, key === 'stores' ? item.url : item.productUrl, true));
         card.append(heading, node('small', [item.storeName, item.city, item.category || item.segment].filter(Boolean).join(' · ')));
         if (key === 'products' && Number.isFinite(item.priceCents)) card.append(node('p', (item.priceCents/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})));
