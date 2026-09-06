@@ -14,6 +14,8 @@ const draft = {title:'Atendimento orquídeas',body:'O atendimento de orquídeas 
 assert.equal(core.list().length,3);
 assert.equal(core.retrieve('Quais são os limites do Jarvis?').length,1);
 assert.equal(core.retrieve('Onde está o catálogo de ofertas?')[0].id,2);
+assert.match(core.get(2).body,/administrar o catálogo.*admin-vendas-afiliadas/);
+assert.equal(core.retrieve('preço disponibilidade textos antigos')[0].excerpt,core.get(2).body);
 assert.ok(core.retrieve('Como ensinar conhecimentos e corrigir a memória?').length);
 assert.deepEqual(core.retrieve('Qual a cotação do bitcoin amanhã?'),[]);
 let doc=core.save(draft,7);

@@ -50,7 +50,7 @@ export function createJarvis(db, { env = process.env, fetchImpl = fetch, now = D
     if (db.prepare('SELECT 1 FROM jarvis_bootstrap').get()) return;
     const seeds = [
       ['Identidade e limites do Jarvis', 'Jarvis é o assistente interno da VitrineCity. Este núcleo consulta conhecimentos aprovados pelo administrador. Não publica, envia mensagens, movimenta dinheiro, executa comandos ou altera o site. Memória consultável não é treinamento automático de um modelo.', 'Especificação do núcleo Jarvis v1'],
-      ['Catálogo de ofertas da VitrineCity', 'O catálogo público de produtos afiliados está em /ofertas. A administração do catálogo está em /admin-afiliados.html. Preços, estoque e condições devem ser conferidos na oferta atual. Jarvis não confirma preço ou disponibilidade a partir de textos antigos.', 'Rotas do catálogo VitrineCity, versão 3c4c17d'],
+      ['Catálogo de ofertas da VitrineCity', 'O catálogo público de ofertas e produtos afiliados fica em /ofertas. Para administrar o catálogo de ofertas, cadastrar produtos ou editar links, acesse Vendas afiliadas em /admin-vendas-afiliadas.html. A página /admin-afiliados.html administra campanhas de vídeos de afiliados, não este catálogo. Preço, frete, estoque e condições devem ser conferidos na plataforma de compra atual; Jarvis não confirma disponibilidade a partir de textos antigos.', 'Rotas do catálogo VitrineCity, versão 0c35b13'],
       ['Como ensinar e corrigir conhecimentos', 'Para ensinar ao Jarvis, cadastre um conhecimento com título, texto e fonte. Revise e aprove explicitamente. Rascunhos, documentos arquivados ou vencidos não são usados nas respostas. Uma edição volta a informação para rascunho e exige nova aprovação. Perguntas e respostas do chat não entram automaticamente na memória.', 'Contrato de memória Jarvis v1']
     ];
     for (const [title, body, source] of seeds) db.prepare('INSERT INTO jarvis_documents(title,body,source,status,created_at,updated_at,updated_by) VALUES(?,?,?,\'approved\',?,?,0)').run(title, body, source, stamp(), stamp());
@@ -75,7 +75,9 @@ export function createJarvis(db, { env = process.env, fetchImpl = fetch, now = D
       .sort((a,b) => b.score-a.score || b.updated_at.localeCompare(a.updated_at) || a.id-b.id).slice(0,3)
       .map((doc,i) => {
         const hit=[...normalize(doc.body).matchAll(/[a-z0-9]{2,30}/g)].find(m=>tokens.includes(m[0]));
-        const start=Math.max(0,(hit?.index||0)-250);
+        const target=Math.max(0,(hit?.index||0)-250);
+        // Do not cut short documents (or URLs/words) when all of their context fits.
+        const start=doc.body.length<=1800?0:Math.max(0,doc.body.lastIndexOf(' ',target)+1);
         return { id:doc.id,citation:i+1,revision:doc.revision,title:doc.title,source:doc.source,updatedAt:doc.updated_at,excerpt:doc.body.slice(start,start+1800) };
       });
   }
