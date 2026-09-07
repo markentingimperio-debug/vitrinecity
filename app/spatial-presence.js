@@ -49,11 +49,12 @@ export function createSpatialPresenceTracker({now=Date.now,ttlMs=50_000,maxSessi
     const district=normalizeSpatialPresenceDistrict(districtValue),id=String(sessionId||'').trim();
     if(!district)throw new TypeError('invalid_district');
     if(!SESSION_RE.test(id))throw new TypeError('invalid_session');
-    const before=sessions.get(id),time=Number(now());
-    for(const [sid,entry] of sessions)if(entry.expiresAt<=time)sessions.delete(sid);
-    if(!sessions.has(id)&&sessions.size>=capacity)throw new Error('presence_capacity');
+    const time=Number(now());let expired=false;
+    for(const [sid,entry] of sessions)if(entry.expiresAt<=time){sessions.delete(sid);expired=true;}
+    const before=sessions.get(id);
+    if(!before&&sessions.size>=capacity)throw new Error('presence_capacity');
     sessions.set(id,{district,expiresAt:time+ttl});
-    const state=(!before||before.district!==district)?emitIfChanged(time):currentSnapshot(time);
+    const state=(expired||!before||before.district!==district)?emitIfChanged(time):currentSnapshot(time);
     return Object.freeze({...state,district,count:state.districts[district]});
   };
   const leave=sessionId=>{
