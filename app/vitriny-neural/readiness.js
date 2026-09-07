@@ -3,7 +3,7 @@ export function assessNeuralReadiness({runtime,qualification=null}={}){
   const status=runtime.status();
   const config=status.config||runtime.config||{enabled:false,mode:'disabled'};
   const providers=status.skills?.providers||[];
-  const providerReady=providers.length>0;
+  const providerReady=providers.some(provider=>provider.policy?.enabled!==false);
   const semanticReady=qualification?.overall?.passed===true;
   const safetyReady=qualification?.safety?.passed===true;
   const productionEligible=qualification?.productionEligible===true;
