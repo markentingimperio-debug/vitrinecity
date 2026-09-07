@@ -2,7 +2,7 @@ function text(value,max=160){return String(value??'').replace(/\s+/g,' ').trim()
 function positive(value){const n=Number(value);return Number.isFinite(n)&&n>0?n:0;}
 function slug(value){return text(value,120).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'').slice(0,100)||'loja';}
 function stableHash(value){let hash=2166136261;for(const char of String(value||'')){hash^=char.codePointAt(0);hash=Math.imul(hash,16777619)>>>0;}return hash>>>0;}
-function safeMedia(value){const raw=text(value,500);if(!raw)return'';try{const url=new URL(raw,location?.origin||'https://vitrinecity.com');if(!['http:','https:'].includes(url.protocol))return'';return url.origin===(location?.origin||url.origin)?url.pathname+url.search:url.href;}catch{return'';}}
+function safeMedia(value){const raw=text(value,500);if(!raw)return'';try{const origin=globalThis.location?.origin||'https://vitrinecity.com',url=new URL(raw,origin);if(!['http:','https:'].includes(url.protocol))return'';return url.origin===origin?url.pathname+url.search:url.href;}catch{return'';}}
 
 export function normalizeSpatialStore(raw={}){
   const reference=text(raw.order_reference??raw.reference,120),name=text(raw.business_name??raw.name,120);
@@ -35,7 +35,8 @@ export function mapStoresToSpatialEntities(stores,{limit=48,origin={x:112,z:0},s
   });
 }
 
-export async function fetchSpatialStores({fetchImpl=fetch,url='/api/marketplace/stores',timeoutMs=6000,limit=48}={}){
+export async function fetchSpatialStores({fetchImpl=globalThis.fetch,url='/api/marketplace/stores',timeoutMs=6000,limit=48}={}){
+  if(typeof fetchImpl!=='function')throw new TypeError('Spatial store registry requer fetch.');
   const response=await fetchImpl(url,{headers:{accept:'application/json'},cache:'no-store',signal:AbortSignal.timeout(Math.max(1000,Math.min(20000,Number(timeoutMs)||6000)))});
   if(!response.ok)throw new Error(`spatial_stores_${response.status}`);
   const data=await response.json();
