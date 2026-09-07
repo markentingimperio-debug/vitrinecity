@@ -1,4 +1,5 @@
 import {qualifyModel} from './provider-qualification.js';
+import {assessNeuralReadiness} from './readiness.js';
 
 const API='/api/admin/vitriny-neural';
 const ALLOWED_SKILLS=new Set(['media.generate','code.engineer','growth.optimizer','research.supervised','commerce.advisor','support.assistant','ranking.optimizer']);
@@ -9,6 +10,14 @@ export function mountVitrinyNeuralAdmin({app,runtime,requireAdmin,sameOriginOnly
   app.use(API,requireAdmin,(req,res,next)=>{res.set('Cache-Control','no-store');if(req.method==='GET')return next();return sameOriginOnly(req,res,next);});
   app.get(API+'/status',(_req,res)=>res.json(runtime.status()));
   app.get(API+'/skills',(_req,res)=>res.json(runtime.skills.status()));
+  app.get(API+'/readiness',(_req,res)=>res.json({ok:true,readiness:assessNeuralReadiness({runtime})}));
+  app.post(API+'/readiness',(req,res)=>{
+    try{
+      const report=safeBody(req.body);
+      const qualification=qualifyModel(report);
+      return res.json({ok:true,qualification,readiness:assessNeuralReadiness({runtime,qualification})});
+    }catch(error){return res.status(error?.status||400).json({error:String(error?.message||'Relatório inválido.').slice(0,400)});}
+  });
   app.post(API+'/policy/decide',(req,res)=>{
     try{
       if(!runtime.gate?.decide)return res.status(503).json({error:'Policy gate indisponível.'});
