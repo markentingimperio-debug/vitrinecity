@@ -1,3 +1,5 @@
+import {storeInteriorHref} from './vitriny-spatial-session.js';
+
 function text(value,max=160){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max);}
 function positive(value){const n=Number(value);return Number.isFinite(n)&&n>0?n:0;}
 function slug(value){return text(value,120).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'').slice(0,100)||'loja';}
@@ -16,7 +18,8 @@ export function normalizeSpatialStore(raw={}){
     rating:Math.max(0,Math.min(5,positive(raw.rating_average??raw.ratingAverage))),
     acceptingOrders:Boolean(Number(raw.accepting_orders??raw.acceptingOrders??1)),
     logoUrl:safeMedia(raw.logo_url??raw.logoUrl),facadeUrl:safeMedia(raw.facade_url??raw.facadeUrl),
-    href:`/loja/${encodeURIComponent(reference)}/${slug(name)}`
+    href:`/loja/${encodeURIComponent(reference)}/${slug(name)}`,
+    interiorHref:storeInteriorHref(reference,name)
   });
 }
 
