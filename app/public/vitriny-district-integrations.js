@@ -6,8 +6,8 @@ const DEFINITIONS=Object.freeze([
   {id:'creator',label:'Creator District',spatialPath:'/v/br/go/vitrine-city/creator',href:'/vitriny-multiverse-creator.html',fallbackHref:'/afiliados.html',description:'Criadores, afiliados e oportunidades de conteúdo.'},
   {id:'food',label:'Food Avenue',spatialPath:'/v/br/go/vitrine-city/food',href:'/vitriny-multiverse-food.html',fallbackHref:'/cidade.html',description:'Restaurantes, cardápios e experiências locais de alimentação.'},
   {id:'education',label:'Education District',spatialPath:'/v/br/go/vitrine-city/education',href:'/vitriny-multiverse-district.html?district=education',fallbackHref:'/centro-educacional.html',description:'Cursos, aprendizagem e experiências educacionais.'},
-  {id:'entertainment',label:'Entertainment District',spatialPath:'/v/br/go/vitrine-city/entertainment',href:'/passeio-virtual.html',fallbackHref:'/passeio-virtual.html',description:'Passeios, entretenimento e experiências imersivas.'},
-  {id:'business',label:'Business District',spatialPath:'/v/br/go/vitrine-city/business',href:'/para-empresas.html',fallbackHref:'/para-empresas.html',description:'Soluções, presença digital e recursos para empresas.'},
+  {id:'entertainment',label:'Entertainment District',spatialPath:'/v/br/go/vitrine-city/entertainment',href:'/vitriny-multiverse-entertainment.html',fallbackHref:'/passeio-virtual.html',description:'Arena espacial alimentada por conteúdo público e experiências imersivas.'},
+  {id:'business',label:'Business District',spatialPath:'/v/br/go/vitrine-city/business',href:'/vitriny-multiverse-business.html',fallbackHref:'/para-empresas.html',description:'Skyline de empresas publicadas, presença digital e recursos empresariais.'},
   {id:'services',label:'Services District',spatialPath:'/v/br/go/vitrine-city/services',href:'/vitriny-multiverse-district.html?district=services',fallbackHref:'/solucoes.html',description:'Serviços e soluções integradas da plataforma.'}
 ]);
 
