@@ -31,9 +31,9 @@ export function startSpatialTelemetryClient({district=inferSpatialPresenceDistri
     if(now-lastSample>=5000){const fps=Math.round(frames*1000/(now-lastSample));frames=0;lastSample=now;if(documentRef.visibilityState!=='hidden')send('render_sample',{fpsBucket:fpsBucket(fps)});}
     raf=requestAnimationFrame(sample);
   };
-  documentRef.addEventListener('click',onClick,{capture:true});globalThis.addEventListener?.('vitriny:spatial-event',onSpatialEvent);
+  documentRef.addEventListener('click',onClick,true);globalThis.addEventListener?.('vitriny:spatial-event',onSpatialEvent);
   send('district_enter',{targetType:'district'});raf=requestAnimationFrame(sample);
-  const stop=()=>{if(stopped)return;stopped=true;cancelAnimationFrame(raf);documentRef.removeEventListener('click',onClick,{capture:true});globalThis.removeEventListener?.('vitriny:spatial-event',onSpatialEvent);send('district_exit',{targetType:'district',beacon:true});};
+  const stop=()=>{if(stopped)return;send('district_exit',{targetType:'district',beacon:true});stopped=true;cancelAnimationFrame(raf);documentRef.removeEventListener('click',onClick,true);globalThis.removeEventListener?.('vitriny:spatial-event',onSpatialEvent);};
   globalThis.addEventListener?.('pagehide',stop,{once:true});
   return Object.freeze({district,profile:renderProfile,send,stop});
 }
