@@ -1,5 +1,6 @@
 import {setupSpatialPresence} from './spatial-presence.js';
 import {setupSpatialTelemetry} from './spatial-telemetry.js';
+import {setupSpatialApi} from './spatial-api.js';
 
 // Narrow protections compatible with existing inline scripts, maps and payment providers.
 // A script-src policy requires a separate nonce migration; this is not a complete XSS defence.
@@ -22,6 +23,7 @@ export function setupProductionHardening(app, {now=Date.now}={}) {
   if(typeof app?.get==='function'&&typeof app?.post==='function'){
     const presence=setupSpatialPresence(app,{now});
     const telemetry=setupSpatialTelemetry(app,{now});
+    setupSpatialApi(app);
     if(app.locals){app.locals.spatialPresence=presence;app.locals.spatialTelemetry=telemetry;}
   }
 }
