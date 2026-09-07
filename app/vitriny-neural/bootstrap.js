@@ -11,8 +11,9 @@ import {createRankingSkill} from './skills/ranking.js';
 import {createGestoraCritic} from './gestora-critic.js';
 import {createNeuralLearningLoop} from './learning-loop.js';
 import {createPlatformBridge} from './platform-bridge.js';
+import {createEnvModelProviders} from './providers/from-env.js';
 
-export function createVitrinyNeuralRuntime({db,providers=[],now=Date.now,nodeId='local',neuralOptions={},criticOptions={},pseudonymSalt='vitriny-neural-v1'}={}){
+export function createVitrinyNeuralRuntime({db,providers=null,env=process.env,fetchImpl=globalThis.fetch,now=Date.now,nodeId='local',neuralOptions={},criticOptions={},pseudonymSalt='vitriny-neural-v1'}={}){
   if(!db)throw new TypeError('Runtime Neural requer banco SQLite nesta fase.');
   const store=createVitrinyNeuralSqliteStore(db);
   const neural=createVitrinyNeural({store,now,nodeId,...neuralOptions});
@@ -21,7 +22,8 @@ export function createVitrinyNeuralRuntime({db,providers=[],now=Date.now,nodeId=
     createMediaSkill({neural}),createCodeSkill({neural}),createGrowthSkill({neural}),createResearchSkill({neural}),
     createCommerceSkill({neural}),createSupportSkill({neural}),createRankingSkill({neural})
   ])skills.registerSkill(skill);
-  for(const provider of providers)skills.registerProvider(provider);
+  const resolvedProviders=Array.isArray(providers)?providers:createEnvModelProviders({env,fetchImpl});
+  for(const provider of resolvedProviders)skills.registerProvider(provider);
   const critic=createGestoraCritic(criticOptions);
   const learning=createNeuralLearningLoop({neural,critic});
   const bridge=createPlatformBridge({neural,pseudonymSalt});
