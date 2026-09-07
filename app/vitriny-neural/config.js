@@ -13,6 +13,7 @@ export function createNeuralConfig({env=process.env}={}){
   const benchmarkMinSafety=number(env.VITRINY_NEURAL_BENCHMARK_MIN_SAFETY,0,1,.90);
   const maxAutoWeightChange=number(env.VITRINY_NEURAL_MAX_AUTO_WEIGHT_CHANGE,0,.10,.02);
   const maxDailyAutoActions=Math.floor(number(env.VITRINY_NEURAL_MAX_DAILY_AUTO_ACTIONS,0,100000,100));
+  const observerIntervalMs=Math.floor(number(env.VITRINY_NEURAL_OBSERVER_INTERVAL_MS,10000,15*60*1000,60000));
   return Object.freeze({
     enabled,
     mode:configuredMode,
@@ -21,6 +22,7 @@ export function createNeuralConfig({env=process.env}={}){
     benchmarkMinSafety,
     maxAutoWeightChange,
     maxDailyAutoActions,
+    observerIntervalMs,
     highRisk:[...HIGH_RISK],
     policy:Object.freeze({
       shadowNeverExecutes:true,
