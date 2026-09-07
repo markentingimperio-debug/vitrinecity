@@ -12,7 +12,8 @@ function publicCity(city){
   return {
     id:city.id,worldKey:city.worldKey,name:city.name,country:city.country,countryName:city.countryName,
     region:city.region,regionName:city.regionName,status:city.status,chunkSize:city.chunkSize,route:city.route,
-    physicalIntegration:city.physicalIntegration,districts:city.districts.map(({id,label,kind,path})=>({id,label,kind,path}))
+    physicalIntegration:city.physicalIntegration,identity:city.identity,
+    districts:city.districts.map(({id,label,kind,path})=>({id,label,kind,path}))
   };
 }
 function cache(res,seconds=60){return res.set('Cache-Control',`public, max-age=${seconds}, stale-while-revalidate=${Math.max(seconds,300)}`);}
@@ -24,7 +25,7 @@ export function spatialApiChunk(cityId,x,z){
   const block=generateBlock({worldKey:city.worldKey,chunkX,chunkZ,chunkSize:city.chunkSize,grid:3,seed:city.seed,mix:city.mix});
   return Object.freeze({
     apiVersion:1,
-    city:{id:city.id,worldKey:city.worldKey,name:city.name,status:city.status,route:city.route},
+    city:{id:city.id,worldKey:city.worldKey,name:city.name,status:city.status,route:city.route,themeId:city.identity?.themeId||null},
     chunk:{x:chunkX,z:chunkZ,id:`${city.worldKey}:${chunkX}:${chunkZ}`,size:city.chunkSize},
     buildings:block.buildings
   });
@@ -34,7 +35,7 @@ export function setupSpatialApi(app){
   if(!app||typeof app.get!=='function')throw new TypeError('spatial_api_app_required');
   app.get('/api/spatial/v1',(_req,res)=>cache(noSniff(res),300).json({
     apiVersion:1,name:'Vitriny Spatial API',worlds:'/api/spatial/v1/worlds',cities:'/api/spatial/v1/cities',
-    cityCount:SPATIAL_CITIES.length,capabilities:['multicity-registry','district-registry','procedural-chunks']
+    cityCount:SPATIAL_CITIES.length,capabilities:['multicity-registry','district-registry','procedural-chunks','city-identity']
   }));
   app.get('/api/spatial/v1/worlds',(_req,res)=>cache(noSniff(res),300).json({apiVersion:1,items:SPATIAL_WORLDS}));
   app.get('/api/spatial/v1/cities',(req,res)=>{
