@@ -41,6 +41,9 @@ Categorias avaliadas:
 ## Falhas forçadas
 O teste simulou um provider prioritário completamente indisponível. Após três falhas consecutivas, o circuit breaker abriu o circuito e o roteador passou a usar o provider saudável. O provider de fallback concluiu todas as tarefas testadas.
 
+## Correção descoberta pelo stress test
+A fila SQLite originalmente marcava falhas transitórias como `failed`, mas o worker só reclamava eventos `pending`, o que impediria retry real. A implementação foi corrigida para devolver falhas transitórias a `pending` até o limite de cinco tentativas; depois disso o evento vai para `dead_letter`.
+
 ## Segurança testada
 A suíte verificou:
 - rejeição de payload semelhante a credencial;
