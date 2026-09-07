@@ -5,6 +5,8 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 COPY *.js ./
 COPY vitriny-neural ./vitriny-neural
+RUN mkdir -p ./scripts
+COPY scripts/run-vitriny-neural-live-benchmark.mjs ./scripts/run-vitriny-neural-live-benchmark.mjs
 COPY affiliate-catalog-seed.json ./
 COPY public ./public
 RUN node prepare-public-highlights.js
