@@ -72,14 +72,18 @@ Ao selecionar um edifício de loja, o usuário entra no showroom espacial isolad
 
 ### Live District Layer
 
-O mesmo princípio agora começa a ser aplicado fora do Commerce:
+O mesmo princípio agora é aplicado aos demais distritos sem duplicar backend:
 
-- **Social District** consome sugestões públicas de perfis e transforma pessoas/comunidades em entidades espaciais clicáveis;
+- **Social District** consome sugestões públicas de perfis e transforma perfis em entidades espaciais clicáveis;
 - **Education District** consome cursos públicos e materializa experiências educacionais como pavilhões;
 - **Services District** consome serviços digitais públicos e materializa quiosques/edifícios de solução;
+- **Creator District** usa campanhas públicas do programa de criadores/afiliados como missões espaciais;
+- **Food Avenue** usa estabelecimentos publicados do marketplace para formar uma avenida de alimentação;
+- **Business District** usa empresas já publicadas para compor um skyline corporativo, sem expor a base administrativa de prospecção;
+- **Entertainment District** usa itens públicos da Vitriny Social para formar uma arena de telas/conteúdo;
 - cada distrito mantém um `fallbackHref` para a experiência HTML clássica.
 
-Esses distritos vivos não copiam banco de dados nem lógica de negócio. Eles apenas projetam dados públicos já existentes no espaço 3D.
+Esses distritos vivos projetam apenas dados públicos já existentes. Dados administrativos, prospects, pagamentos e operações privadas não são materializados no espaço público.
 
 ### Spatial Session Return
 
@@ -128,9 +132,9 @@ O mundo 3D não substitui páginas indexáveis. Cada entidade comercial deve con
 2. **Renderer v1** — Three.js, câmera, LOD, ciclo load/unload e descarte de recursos.
 3. **Central Plaza visual** — arquitetura premium e portais.
 4. **Commerce District v1** — Store ID -> Building ID, lojas vivas, showroom 3D, produtos clicáveis e retorno à posição anterior.
-5. **Live Districts v1** — Social, Education e Services conectados aos dados públicos reais; Creator, Food, Entertainment e Business entram na sequência.
-6. **Spatial API** — cidades, chunks e entidades servidos por endpoint versionado dedicado quando o volume justificar.
-7. **Presence** — presença agregada; depois avatares e WebSocket.
+5. **Live Districts v1** — Social, Education, Services, Creator, Food, Business e Entertainment conectados a dados públicos reais.
+6. **Presence v1** — primeiro presença agregada e efêmera por distrito; depois avatares e WebSocket.
+7. **Spatial API** — cidades, chunks e entidades servidos por endpoint versionado dedicado quando o volume justificar.
 8. **Multicity** — Silvânia, Anápolis, Goiânia e expansão por demanda.
 9. **WebGPU/VR** — somente após métricas provarem necessidade.
 
