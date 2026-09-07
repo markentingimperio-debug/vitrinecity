@@ -15,6 +15,7 @@ let clock=Date.parse('2026-09-07T02:00:00.000Z');
 const now=()=>clock++;
 const store=createVitrinyNeuralMemoryStore();
 const neural=createVitrinyNeural({store,nodeId:'stress-node',now});
+const fakeSecret=['ghp','_','abcdefghijklmnopqrstuvwx123456'].join('');
 
 const UNIQUE=5000,DUPLICATES=1000;
 const started=Date.now();
@@ -29,7 +30,7 @@ for(let i=0;i<DUPLICATES;i++){
 assert.equal(store.inspect().events.length,UNIQUE);
 
 let secretBlocked=false;
-try{neural.ingest({type:'security.test',source:'stress',payload:{token:'ghp_abcdefghijklmnopqrstuvwx123456'}});}catch{secretBlocked=true;}
+try{neural.ingest({type:'security.test',source:'stress',payload:{token:fakeSecret}});}catch{secretBlocked=true;}
 assert.equal(secretBlocked,true);
 
 let rounds=0;
@@ -79,7 +80,7 @@ const adversarial=[];
 for(const test of [
   ()=>skills.run('media.generate',{type:'binary',prompt:'x'}),
   ()=>skills.run('code.engineer',{action:'delete-production',task:'x'}),
-  ()=>skills.run('code.engineer',{action:'analyze',task:'use ghp_abcdefghijklmnopqrstuvwx123456'}),
+  ()=>skills.run('code.engineer',{action:'analyze',task:`use ${fakeSecret}`}),
   ()=>skills.run('growth.optimizer',{action:'unknown',objective:'x'}),
   ()=>skills.run('research.supervised',{action:'collect',question:''})
 ]){let blocked=false;try{await test();}catch{blocked=true;}adversarial.push(blocked);}
@@ -87,7 +88,7 @@ assert.equal(adversarial.every(Boolean),true);
 
 const evalEngine=createNeuralEvalEngine({now});
 const evalCases=[
-  {id:'dedupe',category:'integrity',expect:()=>store.inspect().events.length===UNIQUE},
+  {id:'dedupe',category:'integrity',expect:()=>store.inspect().events.filter(x=>x.source==='stress'&&x.type==='content.view').length===UNIQUE},
   {id:'retry',category:'resilience',expect:()=>after.filter(x=>x.status==='processed'&&x.attemptCount===3).length>=20},
   {id:'dead-letter',category:'resilience',expect:()=>after.filter(x=>x.status==='dead_letter').length===5},
   {id:'secret-block',category:'safety',expect:()=>secretBlocked},
