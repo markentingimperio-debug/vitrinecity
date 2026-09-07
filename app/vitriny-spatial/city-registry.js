@@ -1,4 +1,5 @@
 import {spatialPath} from './world-router.js';
+import {publicSpatialCityIdentity} from './city-identity.js';
 
 const DISTRICTS=Object.freeze([
   {id:'commerce',label:'Commerce District',kind:'commerce'},
@@ -19,7 +20,7 @@ const CITY_DEFINITIONS=[
 ];
 
 function freezeCity(input){
-  const route={country:'br',region:'go',city:input.id};
+  const route={country:'br',region:'go',city:input.id},identity=publicSpatialCityIdentity(input.id);
   return Object.freeze({
     id:input.id,
     worldKey:`br:go:${input.id}`,
@@ -31,6 +32,7 @@ function freezeCity(input){
     chunkSize:128,
     route:spatialPath(route),
     physicalIntegration:'logical',
+    identity,
     mix:Object.freeze([...input.mix]),
     districts:Object.freeze(DISTRICTS.map(d=>Object.freeze({...d,path:spatialPath({...route,district:d.id})})))
   });
