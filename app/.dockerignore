@@ -9,7 +9,8 @@ uploads
 *.sqlite-*
 *.log
 coverage
-scripts
+scripts/*
+!scripts/run-vitriny-neural-live-benchmark.mjs
 *.bak*
 backups
 inspect-*.mjs
