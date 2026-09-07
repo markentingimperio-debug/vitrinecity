@@ -2,6 +2,7 @@ import {createHash,randomUUID} from 'node:crypto';
 
 const DEFAULT_ENGINES=['google','bing','duckduckgo','brave','qwant','startpage','mojeek','wikipedia'];
 const SOCIAL_HOSTS=new Set(['instagram.com','www.instagram.com','tiktok.com','www.tiktok.com','kwai.com','www.kwai.com','reddit.com','www.reddit.com']);
+const SOCIAL_DOMAINS=['instagram.com','tiktok.com','kwai.com','reddit.com'];
 const SEARCH_ENGINE_IDS=new Set([...DEFAULT_ENGINES,'yahoo','youtube']);
 
 function truthy(value){return ['1','true','yes','on'].includes(String(value??'').trim().toLowerCase());}
@@ -33,13 +34,20 @@ function configuredTopics(env){
   const raw=String(env.VITRINY_NEURAL_RESEARCH_TOPICS||'inteligência artificial para negócios,SEO técnico e indexação,marketplace e comércio eletrônico,marketing digital e aquisição de clientes,programação web e arquitetura de software').split(',').map(x=>safeText(x,140,3)).filter(Boolean);
   return [...new Set(raw)].slice(0,20);
 }
+function configuredSocialDomains(env){
+  const requested=String(env.VITRINY_NEURAL_SOCIAL_DOMAINS||SOCIAL_DOMAINS.join(',')).split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);
+  return [...new Set(requested.filter(x=>SOCIAL_DOMAINS.includes(x)))];
+}
 function makeConfig(env){
+  const intervalMs=Math.max(10*60*1000,Math.min(24*60*60*1000,Number(env.VITRINY_NEURAL_WEB_RESEARCH_INTERVAL_MS)||60*60*1000));
   return{
     enabled:truthy(env.VITRINY_NEURAL_WEB_RESEARCH_ENABLED),
-    intervalMs:Math.max(15*60*1000,Math.min(24*60*60*1000,Number(env.VITRINY_NEURAL_WEB_RESEARCH_INTERVAL_MS)||60*60*1000)),
-    dailyRuns:Math.max(1,Math.min(100,Number(env.VITRINY_NEURAL_WEB_RESEARCH_DAILY_RUNS)||12)),
+    intervalMs,
+    dailyRuns:Math.max(1,Math.min(144,Number(env.VITRINY_NEURAL_WEB_RESEARCH_DAILY_RUNS)||Math.min(144,Math.ceil(24*60*60*1000/intervalMs)))),
     maxResults:Math.max(5,Math.min(40,Number(env.VITRINY_NEURAL_WEB_RESEARCH_MAX_RESULTS)||20)),
     candidateThreshold:Math.max(.5,Math.min(.98,Number(env.VITRINY_NEURAL_RESEARCH_CANDIDATE_SCORE)||.72)),
+    socialEnabled:truthy(env.VITRINY_NEURAL_SOCIAL_RESEARCH_ENABLED??'1'),
+    socialDomains:configuredSocialDomains(env),
     topics:configuredTopics(env),engines:configuredEngines(env)
   };
 }
@@ -71,6 +79,21 @@ export function createNeuralWebResearchEngine({db,neural=null,env=process.env,fe
     const text=await response.text();if(Buffer.byteLength(text,'utf8')>2_000_000)throw new Error('search_response_too_large');
     const data=JSON.parse(text);return Array.isArray(data.results)?data.results.slice(0,config.maxResults):[];
   }
+  function socialQuery(query){
+    if(!config.socialEnabled||!config.socialDomains.length)return'';
+    return `${query} (${config.socialDomains.map(domain=>`site:${domain}`).join(' OR ')})`;
+  }
+  async function collect(query){
+    const batches=[await search(query)];
+    const social=socialQuery(query);
+    if(social)batches.push(await search(social));
+    const seen=new Set(),merged=[];
+    for(const raw of batches.flat()){
+      const url=safeUrl(raw?.url);if(!url||seen.has(url))continue;seen.add(url);merged.push(raw);
+      if(merged.length>=config.maxResults*2)break;
+    }
+    return merged;
+  }
   function saveSource(raw,at){
     const url=safeUrl(raw.url);if(!url)return null;
     const providers=[...new Set([...(Array.isArray(raw.engines)?raw.engines:[]),raw.engine].filter(x=>config.engines.includes(x)))];
@@ -98,17 +121,17 @@ export function createNeuralWebResearchEngine({db,neural=null,env=process.env,fe
     const q=safeText(query||`${selected} melhores práticas evidências documentação oficial tendências 2026`,300,3);
     const id=randomUUID(),started=stamp();db.prepare('INSERT INTO neural_research_runs(id,topic,status,query,started_at) VALUES(?,?,\'running\',?,?)').run(id,selected,q,started);running=true;
     try{
-      const raw=await search(q),sources=[];let candidates=0;
+      const raw=await collect(q),sources=[];let candidates=0;
       for(const item of raw){const source=saveSource(item,stamp());if(!source)continue;sources.push(source);if(maybeCandidate(selected,q,source,stamp()))candidates++;}
       db.prepare("UPDATE neural_research_runs SET status='completed',results=?,candidates=?,completed_at=? WHERE id=?").run(sources.length,candidates,stamp(),id);
-      try{neural?.signal?.({metric:'research.run.candidates',dimension:selected,value:candidates,confidence:sources.length?Math.min(1,candidates/sources.length):0,metadata:{results:sources.length,actor},createdAt:stamp()});}catch{}
+      try{neural?.signal?.({metric:'research.run.candidates',dimension:selected,value:candidates,confidence:sources.length?Math.min(1,candidates/sources.length):0,metadata:{results:sources.length,actor,socialEnabled:config.socialEnabled},createdAt:stamp()});}catch{}
       return{id,status:'completed',topic:selected,query:q,results:sources.length,candidates,topSources:sources.sort((a,b)=>b.score-a.score).slice(0,5).map(x=>({url:x.url,title:x.title,score:x.score,type:x.type,providers:x.providers}))};
     }catch(error){db.prepare("UPDATE neural_research_runs SET status='failed',error=?,completed_at=? WHERE id=?").run(String(error?.message||'research_failed').slice(0,300),stamp(),id);throw error;}
     finally{running=false;}
   }
   function listCandidates({status='candidate',limit=50}={}){const n=Math.max(1,Math.min(200,Number(limit)||50));return db.prepare(`SELECT c.*,s.url,s.title,s.host,s.source_type,s.providers_json FROM neural_knowledge_candidates c JOIN neural_research_sources s ON s.fingerprint=c.source_fingerprint WHERE c.status=? ORDER BY c.score DESC,c.created_at DESC LIMIT ?`).all(String(status),n).map(row=>({...row,providers:JSON.parse(row.providers_json||'[]')}));}
   function reviewCandidate(id,{status,note=''}={}){if(!['approved','rejected','candidate'].includes(status))throw new Error('candidate_status_invalid');const at=stamp();const info=db.prepare('UPDATE neural_knowledge_candidates SET status=?,reviewed_at=?,review_note=? WHERE id=?').run(status,status==='candidate'?null:at,safeText(note,500),String(id));if(!info.changes)throw new Error('candidate_not_found');return db.prepare('SELECT * FROM neural_knowledge_candidates WHERE id=?').get(String(id));}
-  function status(){const last=db.prepare('SELECT * FROM neural_research_runs ORDER BY started_at DESC LIMIT 1').get()||null;return{enabled:config.enabled,configured:Boolean(base),running,intervalMs:config.intervalMs,dailyRuns:config.dailyRuns,runsToday:runsToday(),topics:config.topics,engines:config.engines,candidateThreshold:config.candidateThreshold,pendingCandidates:Number(db.prepare("SELECT COUNT(*) n FROM neural_knowledge_candidates WHERE status='candidate'").get()?.n||0),approvedCandidates:Number(db.prepare("SELECT COUNT(*) n FROM neural_knowledge_candidates WHERE status='approved'").get()?.n||0),last};}
+  function status(){const last=db.prepare('SELECT * FROM neural_research_runs ORDER BY started_at DESC LIMIT 1').get()||null;return{enabled:config.enabled,configured:Boolean(base),running,intervalMs:config.intervalMs,dailyRuns:config.dailyRuns,runsToday:runsToday(),topics:config.topics,engines:config.engines,candidateThreshold:config.candidateThreshold,socialEnabled:config.socialEnabled,socialDomains:config.socialDomains,pendingCandidates:Number(db.prepare("SELECT COUNT(*) n FROM neural_knowledge_candidates WHERE status='candidate'").get()?.n||0),approvedCandidates:Number(db.prepare("SELECT COUNT(*) n FROM neural_knowledge_candidates WHERE status='approved'").get()?.n||0),last};}
   function schedule(){if(timer||!config.enabled)return false;const tick=async()=>{try{await run();}catch(error){if(!['research_daily_limit','searxng_unconfigured'].includes(error?.message))logger?.warn?.('[vitriny-neural] web research',String(error?.message||error));}finally{timer=setTimeout(tick,config.intervalMs);timer.unref?.();}};timer=setTimeout(tick,5000);timer.unref?.();return true;}
   function stop(){if(timer){clearTimeout(timer);timer=null;}return true;}
   return{config,run,status,listCandidates,reviewCandidate,schedule,stop,scoreSource:scoreResearchSource};
