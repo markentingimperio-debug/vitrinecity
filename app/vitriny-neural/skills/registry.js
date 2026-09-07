@@ -2,7 +2,8 @@ const ID=/^[a-z][a-z0-9._-]{1,63}$/;
 
 function ensureId(value,label){const v=String(value||'').trim();if(!ID.test(v))throw new Error(`${label} inválido.`);return v;}
 function ensureFn(value,label){if(typeof value!=='function')throw new TypeError(`${label} precisa ser função.`);return value;}
-function statOf(stats,id){if(!stats.has(id))stats.set(id,{success:0,fail:0,consecutiveFail:0,totalMs:0,lastMs:0,openedUntil:0});return stats.get(id);}
+function statOf(stats,id){if(!stats.has(id))stats.set(id,{success:0,fail:0,consecutiveFail:0,totalMs:0,lastMs:0,openedUntil:0,inputTokens:0,outputTokens:0,totalTokens:0});return stats.get(id);}
+function usageOf(output){const u=output?.usage||output?.output?.usage||{};const input=Number(u.prompt_tokens??u.input_tokens??u.promptTokens??u.inputTokens??0)||0;const outputTokens=Number(u.completion_tokens??u.output_tokens??u.completionTokens??u.outputTokens??0)||0;const total=Number(u.total_tokens??u.totalTokens??0)||input+outputTokens;return{inputTokens:Math.max(0,input),outputTokens:Math.max(0,outputTokens),totalTokens:Math.max(0,total)};}
 
 export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circuitCooldownMs=60000}={}){
   const skills=new Map(),providers=new Map(),stats=new Map();
@@ -58,8 +59,8 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
         const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);
         try{
           const output=await provider.invoke({capability,input,signal:controller.signal});
-          const elapsed=Math.max(0,now()-started),s=statOf(stats,provider.id);s.success++;s.consecutiveFail=0;s.lastMs=elapsed;s.totalMs+=elapsed;s.openedUntil=0;
-          return {provider:provider.id,output,durationMs:elapsed,attempts:[...attempts,{provider:provider.id,ok:true}]};
+          const elapsed=Math.max(0,now()-started),s=statOf(stats,provider.id),usage=usageOf(output);s.success++;s.consecutiveFail=0;s.lastMs=elapsed;s.totalMs+=elapsed;s.openedUntil=0;s.inputTokens+=usage.inputTokens;s.outputTokens+=usage.outputTokens;s.totalTokens+=usage.totalTokens;
+          return {provider:provider.id,output,durationMs:elapsed,usage,attempts:[...attempts,{provider:provider.id,ok:true}]};
         }finally{clearTimeout(timer);}
       }catch(error){
         const elapsed=Math.max(0,now()-started),s=statOf(stats,provider.id);s.fail++;s.consecutiveFail++;s.lastMs=elapsed;s.totalMs+=elapsed;if(s.consecutiveFail>=threshold)s.openedUntil=now()+cooldown;
@@ -74,7 +75,7 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
     return skill.execute({input,context,invoke,candidates,registry:{skills,providers,stats}});
   }
 
-  function status(){const clock=now();return {skills:[...skills.values()].map(s=>({id:s.id,version:s.version,capabilities:s.capabilities,risk:s.risk})),providers:[...providers.values()].map(p=>{const s=statOf(stats,p.id),calls=s.success+s.fail;return{id:p.id,capabilities:[...p.capabilities],priority:p.priority,costClass:p.costClass,local:p.local,stats:{success:s.success,fail:s.fail,consecutiveFail:s.consecutiveFail,reliability:(s.success+1)/(calls+2),avgMs:calls?s.totalMs/calls:0,lastMs:s.lastMs,circuit:s.openedUntil>clock?'open':'closed',openedUntil:s.openedUntil||null}};})};}
+  function status(){const clock=now();return {skills:[...skills.values()].map(s=>({id:s.id,version:s.version,capabilities:s.capabilities,risk:s.risk})),providers:[...providers.values()].map(p=>{const s=statOf(stats,p.id),calls=s.success+s.fail;return{id:p.id,capabilities:[...p.capabilities],priority:p.priority,costClass:p.costClass,local:p.local,stats:{success:s.success,fail:s.fail,consecutiveFail:s.consecutiveFail,reliability:(s.success+1)/(calls+2),avgMs:calls?s.totalMs/calls:0,lastMs:s.lastMs,inputTokens:s.inputTokens,outputTokens:s.outputTokens,totalTokens:s.totalTokens,circuit:s.openedUntil>clock?'open':'closed',openedUntil:s.openedUntil||null}};})};}
 
   return {registerSkill,registerProvider,run,invoke,candidates,status};
 }
