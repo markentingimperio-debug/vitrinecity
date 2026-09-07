@@ -64,3 +64,7 @@ export function storeInteriorHref(reference,name=''){
   const label=clean(name,120);if(label)params.set('name',label);
   return `/vitriny-store-interior.html?${params.toString()}`;
 }
+
+if(typeof window!=='undefined'&&typeof document!=='undefined'){
+  queueMicrotask(()=>import('./vitriny-spatial-presence-client.js').then(module=>module.autoStartSpatialPresence()).catch(()=>{}));
+}
