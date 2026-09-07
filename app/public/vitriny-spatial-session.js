@@ -66,5 +66,5 @@ export function storeInteriorHref(reference,name=''){
 }
 
 if(typeof window!=='undefined'&&typeof document!=='undefined'){
-  queueMicrotask(()=>import('./vitriny-spatial-presence-client.js').then(module=>module.autoStartSpatialPresence()).catch(()=>{}));
+  queueMicrotask(()=>import('./vitriny-spatial-realtime-client.js').then(module=>module.autoStartSpatialRealtime()).catch(()=>{}));
 }
