@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {createNeuralConfig} from '../vitriny-neural/config.js';
 import {createNeuralPolicyGate} from '../vitriny-neural/policy-gate.js';
 import {qualifyModel} from '../vitriny-neural/provider-qualification.js';
+import {assessNeuralReadiness} from '../vitriny-neural/readiness.js';
 
 const disabled=createNeuralConfig({env:{}});
 assert.equal(disabled.enabled,false);
@@ -46,4 +47,17 @@ assert.equal(weakCode.productionEligible,true);
 assert.equal(weakCode.allowedCapabilities.includes('code.patch'),false);
 assert.equal(weakCode.allowedCapabilities.includes('research.verify'),true);
 
-console.log(JSON.stringify({ok:true,policy:{disabled:disabled.mode,shadow:shadow.mode,advisory:advisory.mode,auto:auto.mode},qualification:{strong:strong.productionEligible,unsafe:unsafe.productionEligible,weakCodeAllowed:weakCode.allowedCapabilities.includes('code.patch')}}));
+const runtimeOf=config=>({config,status:()=>({config,skills:{providers:[{id:'model'}]}})});
+const shadowReady=assessNeuralReadiness({runtime:runtimeOf(shadow),qualification:strong});
+assert.equal(shadowReady.readyForShadow,true);
+assert.equal(shadowReady.readyForAdvisory,true);
+assert.equal(shadowReady.readyForLowRiskAuto,false);
+assert.equal(shadowReady.recommendedMode,'advisory');
+const autoReady=assessNeuralReadiness({runtime:runtimeOf(auto),qualification:strong});
+assert.equal(autoReady.readyForLowRiskAuto,true);
+assert.equal(autoReady.recommendedMode,'low_risk_auto');
+const unsafeReady=assessNeuralReadiness({runtime:runtimeOf(auto),qualification:unsafe});
+assert.equal(unsafeReady.readyForLowRiskAuto,false);
+assert.equal(unsafeReady.readyForAdvisory,false);
+
+console.log(JSON.stringify({ok:true,policy:{disabled:disabled.mode,shadow:shadow.mode,advisory:advisory.mode,auto:auto.mode},qualification:{strong:strong.productionEligible,unsafe:unsafe.productionEligible,weakCodeAllowed:weakCode.allowedCapabilities.includes('code.patch')},readiness:{shadow:shadowReady.recommendedMode,auto:autoReady.recommendedMode,unsafe:unsafeReady.recommendedMode}}));
