@@ -26,6 +26,9 @@ for(const item of DISTRICT_INTEGRATIONS){
 assert.equal(districtExperience('commerce').href,'/loja.html');
 assert.equal(districtExperience('social').href,'/vitriny-multiverse-district.html?district=social');
 assert.equal(districtExperience('social').fallbackHref,'/social.html');
+assert.equal(districtExperience('creator').href,'/vitriny-multiverse-creator.html');
+assert.equal(districtExperience('creator').fallbackHref,'/afiliados.html');
+assert.equal(districtExperience('creator').mode,'spatial-live');
 assert.equal(districtExperience('education').href,'/vitriny-multiverse-district.html?district=education');
 assert.equal(districtExperience('education').fallbackHref,'/centro-educacional.html');
 assert.equal(districtExperience('services').mode,'spatial-live');
