@@ -4,7 +4,7 @@ import {createGestoraCritic} from './gestora-critic.js';
 function object(value){return value&&typeof value==='object'&&!Array.isArray(value)?value:{};}
 function text(value,max,min=1){const v=String(value??'').trim();if(v.length<min||v.length>max)throw new Error('Texto de aprendizagem inválido.');return v;}
 
-export function createNeuralLearningLoop({neural,critic=createGestoraCritic()}={}){
+export function createNeuralLearningLoop({neural,critic=createGestoraCritic(),gate=null}={}){
   if(!neural?.signal||!neural?.lesson)throw new TypeError('Learning loop requer Vitriny Neural.');
 
   function evaluateExperiment(input={}){
@@ -35,8 +35,17 @@ export function createNeuralLearningLoop({neural,critic=createGestoraCritic()}={
       verified:lowRisk,
       lowRisk
     });
-    return {reward,critique,lesson};
+    const execution=gate?.decide?gate.decide({
+      risk,
+      confidence:reward.confidence,
+      reversible:input.reversible===true,
+      verified:lowRisk,
+      weightChange:Number(input.weightChange)||0,
+      financial:input.financial===true,
+      destructive:input.destructive===true
+    }):{decision:'not_configured',execute:false,reason:'policy_gate_not_configured',requiresHuman:true};
+    return {reward,critique,lesson,execution};
   }
 
-  return {evaluateExperiment,critic};
+  return {evaluateExperiment,critic,gate};
 }
