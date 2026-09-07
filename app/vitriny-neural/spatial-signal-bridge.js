@@ -1,4 +1,5 @@
 import {SPATIAL_PRESENCE_DISTRICTS} from '../spatial-presence.js';
+import {SPATIAL_CITIES} from '../vitriny-spatial/city-registry.js';
 
 function safeSnapshot(source){try{return source?.snapshot?.()||null;}catch{return null;}}
 
@@ -19,6 +20,15 @@ export function createSpatialNeuralBridge({capture,telemetry,presence,now=Date.n
         type:'spatial.aggregate',source:'spatial',entityType:'district',entityId:district,
         payload:{activeCount,eventCount,windowMinutes:Number(telemetryState?.windowMinutes||0),channel:'multiverse'},
         dedupeKey:`spatial:${bucket}:${district}`,priority:1,occurredAt:new Date(time).toISOString()
+      });
+    }
+    for(const city of SPATIAL_CITIES){
+      const eventCount=Math.max(0,Number(telemetryState?.byCity?.[city.id]||0));
+      if(!eventCount)continue;
+      events.push({
+        type:'spatial.aggregate',source:'spatial',entityType:'city',entityId:city.id,
+        payload:{eventCount,windowMinutes:Number(telemetryState?.windowMinutes||0),channel:'multiverse-city'},
+        dedupeKey:`spatial:${bucket}:city:${city.id}`,priority:1,occurredAt:new Date(time).toISOString()
       });
     }
     const renderSamples=Math.max(0,Number(telemetryState?.byEvent?.render_sample||0));
