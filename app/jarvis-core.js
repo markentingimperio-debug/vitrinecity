@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createJarvisResearch } from './jarvis-research.js';
 import { createJarvisModelGate } from './jarvis-model-gate.js';
+import { setupVitrinyNeural } from './vitriny-neural/server-integration.js';
 
 const API = '/api/admin/jarvis';
 const MODEL_ORIGIN = 'http://jarvis-model:8080'; // Fixed internal service, never a user-supplied URL.
@@ -207,5 +208,6 @@ export function mountJarvis({ app, db, requireAdmin, sameOriginOnly, env, fetchI
   app.post(API+'/research/start',route(req=>{const result=research.start(req.body,req.user.id);req.res.status(202);return result;}));
   app.post(API+'/research/cancel',route(req=>research.cancel(req.body,req.user.id)));
   core.research=research;
+  core.neural=setupVitrinyNeural({app,db,requireAdmin,sameOriginOnly,env,fetchImpl,nodeId:'vitrinecity-api'});
   return core;
 }
