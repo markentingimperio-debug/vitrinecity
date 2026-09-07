@@ -3,7 +3,7 @@ const BLOCKED_PREFIXES=['/admin','/api/admin','/pagamento','/checkout','/wallet'
 const DEFINITIONS=Object.freeze([
   {id:'commerce',label:'Commerce District',spatialPath:'/v/br/go/vitrine-city/commerce',href:'/loja.html',fallbackHref:'/loja.html',description:'Lojas, ofertas e marketplace da Vitrine City.'},
   {id:'social',label:'Social District',spatialPath:'/v/br/go/vitrine-city/social',href:'/vitriny-multiverse-district.html?district=social',fallbackHref:'/social.html',description:'Rede social, perfis, conteúdo e comunidades.'},
-  {id:'creator',label:'Creator District',spatialPath:'/v/br/go/vitrine-city/creator',href:'/afiliados.html',fallbackHref:'/afiliados.html',description:'Criadores, afiliados e oportunidades de conteúdo.'},
+  {id:'creator',label:'Creator District',spatialPath:'/v/br/go/vitrine-city/creator',href:'/vitriny-multiverse-creator.html',fallbackHref:'/afiliados.html',description:'Criadores, afiliados e oportunidades de conteúdo.'},
   {id:'food',label:'Food Avenue',spatialPath:'/v/br/go/vitrine-city/food',href:'/vitriny-multiverse-food.html',fallbackHref:'/cidade.html',description:'Restaurantes, cardápios e experiências locais de alimentação.'},
   {id:'education',label:'Education District',spatialPath:'/v/br/go/vitrine-city/education',href:'/vitriny-multiverse-district.html?district=education',fallbackHref:'/centro-educacional.html',description:'Cursos, aprendizagem e experiências educacionais.'},
   {id:'entertainment',label:'Entertainment District',spatialPath:'/v/br/go/vitrine-city/entertainment',href:'/passeio-virtual.html',fallbackHref:'/passeio-virtual.html',description:'Passeios, entretenimento e experiências imersivas.'},
