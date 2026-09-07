@@ -40,6 +40,14 @@ clock+=2_000;
 assert.equal(tracker.sweep().total,1);
 assert.equal(events.at(-1).total,1);
 
+tracker.heartbeat('session_qrstuvwxyz123456','business');
+clock+=49_000;
+const previousVersion=tracker.snapshot().version;
+clock+=2_000;
+state=tracker.heartbeat('session_qrstuvwxyz123456','business');
+assert.ok(state.version>previousVersion);
+assert.equal(events.at(-1).total,1);
+
 assert.throws(()=>tracker.heartbeat('short','social'),/invalid_session/);
 assert.throws(()=>tracker.heartbeat('session_valid_123456789','admin'),/invalid_district/);
 
