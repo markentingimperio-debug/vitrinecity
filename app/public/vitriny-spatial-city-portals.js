@@ -1,5 +1,6 @@
 import {parseSpatialReturnState,SPATIAL_RETURN_KEY} from './vitriny-spatial-session.js';
 import {planSpatialCityGates} from './vitriny-spatial-city-gates.js';
+import {resolveCityReturnState} from './vitriny-spatial-city-navigation.js';
 
 // Four explicit destinations for the preview. API strings never become navigation URLs.
 const CITY_NAMES=Object.freeze({
@@ -86,14 +87,15 @@ export function saveCityCheckpoint(input,{storage=storageOrNull(),now=Date.now()
 export function loadCityCheckpoint(destination,{storage=storageOrNull(),now=Date.now()}={}){
   const id=cityId(destination);
   if(!id||!storage)return null;
+  let checkpoint=null,legacy=null;
   try{
     const raw=storage.getItem(CHECKPOINT_PREFIX+id);
     const state=parseSpatialReturnState(raw,{now});
-    if(state?.worldKey===`br:go:${id}`)return state;
-    if(raw)storage.removeItem?.(CHECKPOINT_PREFIX+id);
-    const legacy=parseSpatialReturnState(storage.getItem(SPATIAL_RETURN_KEY),{now});
-    return legacy?.worldKey===`br:go:${id}`?legacy:null;
-  }catch{return null;}
+    if(state?.worldKey===`br:go:${id}`)checkpoint=state;
+    else if(raw)storage.removeItem?.(CHECKPOINT_PREFIX+id);
+  }catch{ /* A broken checkpoint must not hide a valid store return. */ }
+  try{legacy=storage.getItem(SPATIAL_RETURN_KEY);}catch{}
+  return resolveCityReturnState(`br:go:${id}`,{checkpoint,legacy,now});
 }
 
 export function spatialMovementBasis(yaw=Math.PI){
