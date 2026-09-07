@@ -18,8 +18,8 @@ export function normalizeSpatialPresenceCity(value){return spatialCity(String(va
 export function createSpatialPresenceTracker({now=Date.now,ttlMs=50_000,maxSessions=25_000,maxSubscribers=2_000}={}){
   const sessions=new Map(),subscribers=new Set();
   const ttl=Math.max(15_000,Math.min(180_000,Number(ttlMs)||50_000));
-  const capacity=Math.max(100,Math.min(100_000,Number(maxSessions)||25_000));
-  const subscriberCapacity=Math.max(10,Math.min(10_000,Number(maxSubscribers)||2_000));
+  const capacity=Math.max(1,Math.min(100_000,Math.trunc(Number(maxSessions)||25_000)));
+  const subscriberCapacity=Math.max(1,Math.min(10_000,Math.trunc(Number(maxSubscribers)||2_000)));
   let version=0,lastSignature='';
 
   const currentSnapshot=(time=Number(now()))=>{
