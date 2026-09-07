@@ -13,6 +13,7 @@ Transformar a Vitrine City em uma interface espacial expansível sem substituir 
 5. **Render adaptativo** — Lite, Standard e Ultra conforme capacidade do dispositivo e FPS real.
 6. **URLs indexáveis** — cada mundo/distrito/local mantém rota HTML/SEO paralela à navegação 3D.
 7. **Vitriny Neural recomenda; não quebra física** — personalização muda destaque, rota, conteúdo e ranking sem reescrever o mundo arbitrariamente.
+8. **Privacidade por padrão** — presença e telemetria espaciais são agregadas/efêmeras e não transportam identidade pessoal.
 
 ## Hierarquia espacial
 
@@ -85,6 +86,18 @@ O mesmo princípio agora é aplicado aos demais distritos sem duplicar backend:
 
 Esses distritos vivos projetam apenas dados públicos já existentes. Dados administrativos, prospects, pagamentos e operações privadas não são materializados no espaço público.
 
+### Presence v2
+
+A presença espacial usa sessão aleatória por aba, heartbeat com TTL curto e contagem agregada por distrito. A versão v2 adiciona um canal SSE (`/api/spatial/presence/stream`) para distribuir mudanças de contagem em tempo real sem expor a identidade dos visitantes.
+
+O servidor mantém Presence em memória de processo. Não grava conta, IP, localização pessoal ou histórico no banco. Sessões expiradas são removidas automaticamente, e os clientes recebem somente totais agregados por distrito e total do multiverso.
+
+### Spatial Telemetry
+
+A telemetria espacial coleta apenas eventos permitidos e agregáveis: entrada/saída de distrito, abertura de entidade, entrada em portal e amostras de renderização. Os campos são enums restritos de distrito, perfil de render, faixa de FPS e tipo de entidade.
+
+Não são enviados URL completa, texto digitado, identificador de usuário, sessionId de presença, IP persistente ou payload livre. O servidor agrega os eventos em janelas temporais em memória e disponibiliza o tracker em `app.locals.spatialTelemetry` para futura integração administrativa/Neural sem abrir métricas operacionais ao público.
+
 ### Spatial Session Return
 
 Antes de atravessar um portal ou entrar em uma loja, o cliente salva em `sessionStorage` somente estado efêmero de navegação: mundo, rota espacial segura, distrito, alvo, posição, yaw, pitch e timestamp. O retorno ao explorador valida versão, origem lógica, idade máxima e denylist de rotas sensíveis antes de restaurar a posição.
@@ -120,7 +133,7 @@ A Neural recebe sinais agregados de navegação espacial e pode sugerir:
 - pré-carregamento de chunks;
 - nível de renderização quando houver pressão de desempenho.
 
-Alterações de pagamentos, permissões, segurança e deploy continuam fora da autonomia espacial.
+Presence e telemetria fornecem apenas sinais agregados. Alterações de pagamentos, permissões, segurança e deploy continuam fora da autonomia espacial.
 
 ## SEO
 
@@ -133,10 +146,11 @@ O mundo 3D não substitui páginas indexáveis. Cada entidade comercial deve con
 3. **Central Plaza visual** — arquitetura premium e portais.
 4. **Commerce District v1** — Store ID -> Building ID, lojas vivas, showroom 3D, produtos clicáveis e retorno à posição anterior.
 5. **Live Districts v1** — Social, Education, Services, Creator, Food, Business e Entertainment conectados a dados públicos reais.
-6. **Presence v1** — primeiro presença agregada e efêmera por distrito; depois avatares e WebSocket.
+6. **Presence v2 + Telemetry v1** — heartbeat, TTL, SSE em tempo real e telemetria agregada de navegação/performance.
 7. **Spatial API** — cidades, chunks e entidades servidos por endpoint versionado dedicado quando o volume justificar.
-8. **Multicity** — Silvânia, Anápolis, Goiânia e expansão por demanda.
-9. **WebGPU/VR** — somente após métricas provarem necessidade.
+8. **Presence v3 / Avatares** — representação individual somente com regras explícitas de privacidade e escala distribuída.
+9. **Multicity** — Silvânia, Anápolis, Goiânia e expansão por demanda.
+10. **WebGPU/VR** — somente após métricas provarem necessidade.
 
 ## Critério para produção
 
