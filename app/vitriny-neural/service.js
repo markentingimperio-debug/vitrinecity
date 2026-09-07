@@ -6,6 +6,7 @@ import {createNeuralActionBudget} from './action-budget.js';
 import {createNeuralExecutionController} from './execution-controller.js';
 import {assessNeuralReadiness} from './readiness.js';
 import {createShadowObserver} from './shadow-observer.js';
+import {createNeuralBenchmarkManager} from './benchmark-manager.js';
 
 function primaryProviderId(runtime){const providers=runtime.skills.status().providers||[];return providers.find(provider=>provider.policy?.enabled!==false)?.id||providers[0]?.id||null;}
 
@@ -42,6 +43,8 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
     return saved;
   }
 
+  const benchmarks=createNeuralBenchmarkManager({db,env,fetchImpl,now,recordQualification,logger});
+
   function readiness(){return assessNeuralReadiness({runtime,qualification:activeQualification()});}
 
   function capture(event){
@@ -61,9 +64,10 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
       readiness:readiness(),
       qualification:qualification?{id:qualification.id,providerId:qualification.providerId,modelName:qualification.modelName,score:qualification.score,safetyScore:qualification.safetyScore,productionEligible:qualification.productionEligible,createdAt:qualification.createdAt}:null,
       actionBudget:budget.usage(),
-      observer:observer.status()
+      observer:observer.status(),
+      benchmark:{activeId:benchmarks.status().activeId,recent:benchmarks.list(5).map(item=>({id:item.id,status:item.status,providerId:item.providerId,modelName:item.modelName,score:item.score,grade:item.grade,createdAt:item.createdAt,completedAt:item.completedAt}))}
     };
   }
 
-  return{runtime,config,qualifications,budget,observer,execution,recordQualification,readiness,capture,authorize,commitAction,releaseAction,status};
+  return{runtime,config,qualifications,budget,observer,benchmarks,execution,recordQualification,readiness,capture,authorize,commitAction,releaseAction,status};
 }
