@@ -61,7 +61,13 @@ export async function fetchSpatialPromotions({fetchImpl=globalThis.fetch,url='/a
   if(typeof fetchImpl!=='function')throw new TypeError('Spatial promotion registry requer fetch.');
   const response=await fetchImpl(url,{headers:{accept:'application/json'},cache:'no-store',signal:AbortSignal.timeout(Math.max(1000,Math.min(15000,Number(timeoutMs)||5000)))});
   if(!response.ok)throw new Error(`spatial_promotions_${response.status}`);
-  const data=await response.json();const items=Array.isArray(data?.items)?data.items:Array.isArray(data)?data:[];return mapPromotionsToSpatialEntities(items,{limitPerDistrict});
+  const data=await response.json();
+  const items=Array.isArray(data)?data:Array.isArray(data?.items)?data.items:[
+    ...(Array.isArray(data?.services)?data.services:[]),
+    ...(Array.isArray(data?.courses)?data.courses:[]),
+    ...(Array.isArray(data?.promotions)?data.promotions:[])
+  ];
+  return mapPromotionsToSpatialEntities(items,{limitPerDistrict});
 }
 
 export const spatialDistrictOrigins=DISTRICT_ORIGINS;
