@@ -1,5 +1,6 @@
 import * as THREE from '/vendor/three/three.module.js';
 import {createSpatialClientRuntime} from '/vitriny-spatial-client-core.js';
+import {districtExperience} from '/vitriny-district-integrations.js';
 
 const palette=[0x6ee7ff,0x8f8cff,0xe48cff,0xffb36b,0x85e6a8,0x6f9cff,0xb58cff,0x6edbcf];
 const worldKey='br:go:vitrine-city';
@@ -33,7 +34,8 @@ function createChunkGroup(chunk){
 }
 function removeChunk(id){const group=chunkGroups.get(id);if(!group)return;group.traverse(obj=>{obj.geometry?.dispose?.();if(obj.material){const mats=Array.isArray(obj.material)?obj.material:[obj.material];for(const m of mats)m.dispose?.();}});scene.remove(group);chunkGroups.delete(id);}
 
-const districts=[['Commerce District',0,'commerce'],['Social District',45,'social'],['Creator District',90,'creator'],['Food Avenue',135,'food'],['Education District',180,'education'],['Entertainment District',225,'entertainment'],['Business District',270,'business'],['Services District',315,'services']];
+const districtAngles=[['commerce',0],['social',45],['creator',90],['food',135],['education',180],['entertainment',225],['business',270],['services',315]];
+const districts=districtAngles.map(([id,angle])=>{const experience=districtExperience(id);if(!experience)throw new Error(`Distrito sem integração: ${id}`);return[experience.label,angle,id,experience];});
 const portalTargets=[];
 function addCentralPlaza(){
   const plaza=new THREE.Group();plaza.name='central-plaza';
@@ -41,8 +43,8 @@ function addCentralPlaza(){
   const coreBase=new THREE.Mesh(new THREE.CylinderGeometry(9,12,4,40),new THREE.MeshStandardMaterial({color:0x121d31,metalness:.72,roughness:.22}));coreBase.position.y=2;plaza.add(coreBase);
   const core=new THREE.Mesh(new THREE.IcosahedronGeometry(7,2),new THREE.MeshPhysicalMaterial({color:0x74eaff,emissive:0x185f80,emissiveIntensity:2,metalness:.2,roughness:.16}));core.position.y=15;core.userData.animate='core';plaza.add(core);
   for(let i=0;i<districts.length;i++){
-    const [label,deg,id]=districts[i],a=deg*Math.PI/180,r=68,x=Math.cos(a)*r,z=Math.sin(a)*r,accent=palette[i];
-    const portal=new THREE.Group();portal.position.set(x,0,z);portal.rotation.y=-a+Math.PI/2;portal.userData={portal:true,label,id,path:`/v/br/go/vitrine-city/${id}`};
+    const [label,deg,id,experience]=districts[i],a=deg*Math.PI/180,r=68,x=Math.cos(a)*r,z=Math.sin(a)*r,accent=palette[i];
+    const portal=new THREE.Group();portal.position.set(x,0,z);portal.rotation.y=-a+Math.PI/2;portal.userData={portal:true,label,id,path:experience.spatialPath,href:experience.href,description:experience.description};
     const frameMat=new THREE.MeshStandardMaterial({color:0x19263a,metalness:.72,roughness:.22});const glowMat=new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.75});
     for(const px of [-3.7,3.7]){const p=new THREE.Mesh(new THREE.BoxGeometry(.8,7,.8),frameMat);p.position.set(px,3.5,0);portal.add(p);}const top=new THREE.Mesh(new THREE.BoxGeometry(8.2,.8,.8),frameMat);top.position.y=7;portal.add(top);const glow=new THREE.Mesh(new THREE.PlaneGeometry(6.2,5.6),glowMat);glow.position.y=3.8;portal.add(glow);plaza.add(portal);portalTargets.push(portal);
   }
@@ -57,12 +59,23 @@ async function syncChunks(force=false){const now=performance.now();if(updateBusy
 await syncChunks(true);
 
 function setMove(name,on){const map={forward:'KeyW',back:'KeyS',left:'KeyA',right:'KeyD'};const code=map[name];if(on)keys.add(code);else keys.delete(code);}
-addEventListener('keydown',e=>{keys.add(e.code);if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();});addEventListener('keyup',e=>keys.delete(e.code));
+function saveSpatialReturn(portal){
+  try{sessionStorage.setItem('vitrinySpatialReturn',JSON.stringify({version:1,spatialPath:portal.userData.path,districtId:portal.userData.id,position:{x:Number(position.x.toFixed(3)),y:Number(position.y.toFixed(3)),z:Number(position.z.toFixed(3))},yaw:Number(yaw.toFixed(5)),pitch:Number(pitch.toFixed(5)),createdAt:new Date().toISOString()}));}catch{}
+}
+function enterActivePortal(){
+  if(!activePortal)return false;
+  const href=activePortal.userData.href;
+  if(typeof href!=='string'||!href.startsWith('/')||href.startsWith('//'))return false;
+  saveSpatialReturn(activePortal);
+  location.assign(href);
+  return true;
+}
+addEventListener('keydown',e=>{keys.add(e.code);if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();if(e.code==='KeyE'&&!e.repeat)enterActivePortal();});addEventListener('keyup',e=>keys.delete(e.code));
 for(const button of document.querySelectorAll('[data-move]')){const name=button.dataset.move;button.addEventListener('pointerdown',e=>{e.preventDefault();setMove(name,true);});for(const evt of ['pointerup','pointercancel','pointerleave'])button.addEventListener(evt,()=>setMove(name,false));}
 renderer.domElement.addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;renderer.domElement.setPointerCapture(e.pointerId);});renderer.domElement.addEventListener('pointerup',()=>dragging=false);renderer.domElement.addEventListener('pointermove',e=>{if(!dragging)return;yaw-=(e.clientX-lastX)*.0045;pitch=Math.max(-.55,Math.min(.45,pitch-(e.clientY-lastY)*.003));lastX=e.clientX;lastY=e.clientY;});renderer.domElement.addEventListener('wheel',e=>{speed=Math.max(8,Math.min(55,speed-e.deltaY*.02));},{passive:true});
 
-document.getElementById('enterPortal').onclick=()=>{if(!activePortal)return;history.pushState({},'',activePortal.userData.path);document.getElementById('portalHint').textContent=`Destino ${activePortal.userData.path} · navegação espacial preparada`;};
-function updatePortal(){let best=null,bestD=Infinity;for(const portal of portalTargets){const d=portal.position.distanceTo(position);if(d<12&&d<bestD){best=portal;bestD=d;}}activePortal=best;const box=document.getElementById('portal');if(best){box.classList.add('show');document.getElementById('portalName').textContent=best.userData.label;document.getElementById('portalHint').textContent='Portal interligado · pronto para transição';}else box.classList.remove('show');}
+document.getElementById('enterPortal').onclick=enterActivePortal;
+function updatePortal(){let best=null,bestD=Infinity;for(const portal of portalTargets){const d=portal.position.distanceTo(position);if(d<12&&d<bestD){best=portal;bestD=d;}}activePortal=best;const box=document.getElementById('portal');if(best){box.classList.add('show');document.getElementById('portalName').textContent=best.userData.label;document.getElementById('portalHint').textContent=`${best.userData.description} · E ou botão para abrir`;}else box.classList.remove('show');}
 
 let frames=0,fpsClock=performance.now(),fps=0,last=performance.now();
 function animate(now){requestAnimationFrame(animate);const dt=Math.min(.05,(now-last)/1000);last=now;frames++;if(now-fpsClock>=1000){fps=Math.round(frames*1000/(now-fpsClock));frames=0;fpsClock=now;document.getElementById('fpsStat').textContent=`perfil ${profile.id} · ${fps} FPS`;}
