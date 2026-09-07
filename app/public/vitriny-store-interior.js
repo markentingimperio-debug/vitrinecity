@@ -4,6 +4,7 @@ import {normalizeSpatialStore} from '/vitriny-spatial-store-registry.js';
 import {SPATIAL_RETURN_KEY,explorerReturnHref,isSafeInternalHref,parseSpatialReturnState} from '/vitriny-spatial-session.js';
 
 const palette=[0x6ee7ff,0x8f8cff,0xe48cff,0xffb36b,0x85e6a8,0x6f9cff,0xb58cff,0x6edbcf];
+const profile=(()=>{const memory=Number(navigator.deviceMemory||0),cores=Number(navigator.hardwareConcurrency||2),mobile=matchMedia('(max-width:760px)').matches;let score=(memory>=8?3:memory>=4?2:memory>=2?1:0)+(cores>=8?3:cores>=4?2:1)+(mobile?-1:1);const id=score>=6?'ULTRA':score>=3?'STANDARD':'LITE';return{id,pixel:id==='ULTRA'?Math.min(devicePixelRatio,1.5):id==='STANDARD'?Math.min(devicePixelRatio,1.2):1,shadows:id!=='LITE',productLimit:id==='LITE'?12:id==='STANDARD'?20:24,labelScale:id==='LITE'?.88:1};})();
 const params=new URLSearchParams(location.search),reference=String(params.get('store')||'').trim().slice(0,120),nameHint=String(params.get('name')||'').trim().slice(0,120);
 const loading=document.getElementById('loading'),loadingText=document.getElementById('loadingText'),storeName=document.getElementById('storeName'),storeMeta=document.getElementById('storeMeta'),focusProduct=document.getElementById('focusProduct'),openStore=document.getElementById('openStore');
 
@@ -12,8 +13,8 @@ try{const state=parseSpatialReturnState(sessionStorage.getItem(SPATIAL_RETURN_KE
 
 const scene=new THREE.Scene();scene.background=new THREE.Color(0x050a13);scene.fog=new THREE.FogExp2(0x07101c,.018);
 const camera=new THREE.PerspectiveCamera(58,innerWidth/innerHeight,.1,180);
-const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));renderer.setSize(innerWidth,innerHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.08;renderer.shadowMap.enabled=true;document.body.prepend(renderer.domElement);
-scene.add(new THREE.HemisphereLight(0xcff5ff,0x0b1118,1.35));const key=new THREE.DirectionalLight(0xffffff,1.7);key.position.set(12,22,10);key.castShadow=true;scene.add(key);
+const renderer=new THREE.WebGLRenderer({antialias:profile.id!=='LITE',powerPreference:'high-performance'});renderer.setPixelRatio(profile.pixel);renderer.setSize(innerWidth,innerHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.08;renderer.shadowMap.enabled=profile.shadows;document.body.prepend(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xcff5ff,0x0b1118,1.35));const key=new THREE.DirectionalLight(0xffffff,1.7);key.position.set(12,22,10);key.castShadow=profile.shadows;scene.add(key);
 
 const floorMat=new THREE.MeshStandardMaterial({color:0x0d1724,roughness:.82,metalness:.08});
 const wallMat=new THREE.MeshStandardMaterial({color:0x111d2d,roughness:.62,metalness:.18});
@@ -21,32 +22,33 @@ const trimMat=new THREE.MeshStandardMaterial({color:0x1d3553,roughness:.42,metal
 const productTargets=[];
 
 function makeLabelTexture(product){
-  const canvas=document.createElement('canvas');canvas.width=512;canvas.height=256;const ctx=canvas.getContext('2d');
+  const canvas=document.createElement('canvas');canvas.width=profile.id==='LITE'?384:512;canvas.height=profile.id==='LITE'?192:256;const ctx=canvas.getContext('2d'),sx=canvas.width/512,sy=canvas.height/256;ctx.scale(sx,sy);
   ctx.fillStyle='#07111e';ctx.fillRect(0,0,512,256);ctx.strokeStyle='#62e7ff';ctx.lineWidth=4;ctx.strokeRect(8,8,496,240);
   ctx.fillStyle='#86edff';ctx.font='700 22px system-ui';ctx.fillText(product.category.slice(0,28),28,48);
   ctx.fillStyle='#f6fbff';ctx.font='900 30px system-ui';const words=product.name.split(/\s+/);let line='',y=92;
   for(const word of words){const next=line?`${line} ${word}`:word;if(ctx.measureText(next).width>450&&line){ctx.fillText(line,28,y);y+=38;line=word;if(y>168)break;}else line=next;}if(line&&y<=168)ctx.fillText(line,28,y);
   ctx.fillStyle='#ffc628';ctx.font='900 27px system-ui';ctx.fillText((product.priceCents/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}),28,220);
-  const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=renderer.capabilities.getMaxAnisotropy();return texture;
+  const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;if(profile.id!=='LITE')texture.anisotropy=renderer.capabilities.getMaxAnisotropy();return texture;
 }
 
 function addRoom(rows){
   const width=38,depth=Math.max(34,18+rows*8.5),height=12;
-  const floor=new THREE.Mesh(new THREE.PlaneGeometry(width,depth),floorMat);floor.rotation.x=-Math.PI/2;floor.position.set(0,0,-depth/2+8);floor.receiveShadow=true;scene.add(floor);
-  const back=new THREE.Mesh(new THREE.BoxGeometry(width,height,.6),wallMat);back.position.set(0,height/2,-depth+8);back.receiveShadow=true;scene.add(back);
+  const floor=new THREE.Mesh(new THREE.PlaneGeometry(width,depth),floorMat);floor.rotation.x=-Math.PI/2;floor.position.set(0,0,-depth/2+8);floor.receiveShadow=profile.shadows;scene.add(floor);
+  const back=new THREE.Mesh(new THREE.BoxGeometry(width,height,.6),wallMat);back.position.set(0,height/2,-depth+8);back.receiveShadow=profile.shadows;scene.add(back);
   const left=new THREE.Mesh(new THREE.BoxGeometry(.6,height,depth),wallMat);left.position.set(-width/2,height/2,-depth/2+8);scene.add(left);
   const right=left.clone();right.position.x=width/2;scene.add(right);
   const arch=new THREE.Mesh(new THREE.BoxGeometry(22,.5,.8),trimMat);arch.position.set(0,8.2,7);scene.add(arch);
-  for(let x=-15;x<=15;x+=6){const light=new THREE.PointLight(0x8feaff,.65,18,2);light.position.set(x,8,-4);scene.add(light);}
+  const lightGap=profile.id==='LITE'?10:6;for(let x=-15;x<=15;x+=lightGap){const light=new THREE.PointLight(0x8feaff,profile.id==='LITE'?.42:.65,18,2);light.position.set(x,8,-4);scene.add(light);}
   return {width,depth};
 }
 
 function addProduct(product){
   const accent=palette[product.accentIndex%palette.length],group=new THREE.Group();group.position.set(product.position.x,0,product.position.z);group.userData={product:true,href:product.href,label:product.name,priceCents:product.priceCents};
-  const base=new THREE.Mesh(new THREE.CylinderGeometry(2.15,2.35,.8,24),new THREE.MeshStandardMaterial({color:0x15243a,metalness:.5,roughness:.3}));base.position.y=.4;base.castShadow=true;base.receiveShadow=true;group.add(base);
-  const item=new THREE.Mesh(new THREE.BoxGeometry(2.8,2.8,2.8),new THREE.MeshPhysicalMaterial({color:0x172b42,emissive:accent,emissiveIntensity:.12,metalness:.22,roughness:.22,clearcoat:.65}));item.position.y=2.25;item.castShadow=true;item.receiveShadow=true;group.add(item);
-  const halo=new THREE.Mesh(new THREE.TorusGeometry(2.05,.06,8,48),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.82}));halo.rotation.x=Math.PI/2;halo.position.y=.92;group.add(halo);
-  const texture=makeLabelTexture(product),sign=new THREE.Mesh(new THREE.PlaneGeometry(4.9,2.45),new THREE.MeshBasicMaterial({map:texture,transparent:false}));sign.position.set(0,4.75,0);sign.userData.labelTexture=texture;group.add(sign);
+  const base=new THREE.Mesh(new THREE.CylinderGeometry(2.15,2.35,.8,profile.id==='LITE'?14:24),new THREE.MeshStandardMaterial({color:0x15243a,metalness:.5,roughness:.3}));base.position.y=.4;base.castShadow=profile.shadows;base.receiveShadow=profile.shadows;group.add(base);
+  const itemMaterial=profile.id==='LITE'?new THREE.MeshStandardMaterial({color:0x172b42,emissive:accent,emissiveIntensity:.08,metalness:.18,roughness:.3}):new THREE.MeshPhysicalMaterial({color:0x172b42,emissive:accent,emissiveIntensity:.12,metalness:.22,roughness:.22,clearcoat:.65});
+  const item=new THREE.Mesh(new THREE.BoxGeometry(2.8,2.8,2.8),itemMaterial);item.position.y=2.25;item.castShadow=profile.shadows;item.receiveShadow=profile.shadows;group.add(item);
+  const halo=new THREE.Mesh(new THREE.TorusGeometry(2.05,.06,profile.id==='LITE'?5:8,profile.id==='LITE'?24:48),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.82}));halo.rotation.x=Math.PI/2;halo.position.y=.92;group.add(halo);
+  const texture=makeLabelTexture(product),sign=new THREE.Mesh(new THREE.PlaneGeometry(4.9*profile.labelScale,2.45*profile.labelScale),new THREE.MeshBasicMaterial({map:texture,transparent:false}));sign.position.set(0,4.75,0);sign.userData.labelTexture=texture;group.add(sign);
   scene.add(group);productTargets.push(group);
 }
 
@@ -68,11 +70,11 @@ renderer.domElement.addEventListener('wheel',event=>{speed=Math.max(5,Math.min(2
 async function boot(){
   if(!reference){loadingText.textContent='Loja não informada.';loadingText.classList.add('error');return;}
   try{
-    const data=await fetchStoreInteriorData({storeReference:reference,storeName:nameHint,limit:24}),store=normalizeSpatialStore(data.store);
+    const data=await fetchStoreInteriorData({storeReference:reference,storeName:nameHint,limit:profile.productLimit}),store=normalizeSpatialStore(data.store);
     if(!store)throw new Error('store_invalid');
-    storeName.textContent=store.name;storeMeta.textContent=`${[store.city,store.state].filter(Boolean).join(' · ')||'Vitrine City'} · ${data.products.length} produtos no showroom`;
+    storeName.textContent=store.name;storeMeta.textContent=`${[store.city,store.state].filter(Boolean).join(' · ')||'Vitrine City'} · ${data.products.length} produtos · perfil ${profile.id}`;
     openStore.href=store.href;
-    const rows=Math.max(1,Math.ceil(data.products.length/4));room=addRoom(rows);
+    const columns=profile.id==='LITE'?3:4,rows=Math.max(1,Math.ceil(data.products.length/columns));room=addRoom(rows);
     for(const product of data.products)addProduct(product);
     if(!data.products.length)focusProduct.textContent='Esta loja ainda não possui produtos disponíveis para o showroom.';
     loading.classList.add('hide');
@@ -88,4 +90,4 @@ function animate(now){requestAnimationFrame(animate);const dt=Math.min(.05,(now-
   const look=new THREE.Vector3(Math.sin(-yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(-yaw)*Math.cos(pitch));camera.position.copy(position);camera.lookAt(position.clone().add(look));renderer.render(scene,camera);
 }
 requestAnimationFrame(animate);
-addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));renderer.setSize(innerWidth,innerHeight);});
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setPixelRatio(profile.pixel);renderer.setSize(innerWidth,innerHeight);});
