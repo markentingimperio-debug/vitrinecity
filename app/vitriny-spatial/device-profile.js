@@ -1,4 +1,7 @@
-function number(value,fallback){const n=Number(value);return Number.isFinite(n)?n:fallback;}
+function number(value,fallback){
+  if(value==null||value==='')return fallback;
+  const n=Number(value);return Number.isFinite(n)?n:fallback;
+}
 
 export const RENDER_PROFILES=Object.freeze({
   lite:Object.freeze({id:'lite',pixelRatio:1,chunkRadius:1,shadowMap:0,particles:0,maxBuildings:220,lodBias:1.8,targetFps:30}),
