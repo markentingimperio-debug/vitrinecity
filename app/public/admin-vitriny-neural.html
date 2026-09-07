@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>Vitriny Neural · Console de IA | VitrineCity</title>
+  <link rel="stylesheet" href="/vitriny-neural-admin.css">
+  <script src="/vitriny-neural-admin.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Pular para o conteúdo</a>
+<header>
+  <a class="brand" href="/admin">VITRINECITY <span>/ INTELIGÊNCIA</span></a>
+  <nav aria-label="Administração">
+    <a href="/admin">Central</a>
+    <a href="/admin-agentes.html">Edifício neural</a>
+    <a href="/admin-jarvis.html">Jarvis</a>
+    <a href="/admin-vitriny-neural.html" aria-current="page">Vitriny Neural</a>
+  </nav>
+</header>
+<main id="main">
+  <section class="hero">
+    <div>
+      <p class="eyebrow">VITRINY NEURAL · CONSOLE ADMINISTRATIVO</p>
+      <h1>Inteligência que<br><span>mede antes de agir.</span></h1>
+      <p class="intro">Teste o modelo, acompanhe aprendizagem, precisão, providers e o modo operacional da IA própria da VitrineCity.</p>
+    </div>
+    <div class="brain" aria-hidden="true"><div class="ring r1"></div><div class="ring r2"></div><strong>VN</strong><span>NEURAL</span></div>
+  </section>
+
+  <p id="error" class="error" role="alert" hidden></p>
+  <p id="announcement" class="sr-only" aria-live="polite" role="status"></p>
+
+  <section class="metrics" aria-label="Resumo da Vitriny Neural">
+    <article><span>MODO</span><strong id="mode">—</strong><small id="mode-detail">Carregando configuração</small></article>
+    <article><span>MODELO / PROVIDER</span><strong id="provider">—</strong><small id="provider-detail">Aguardando estado</small></article>
+    <article><span>PRECISÃO</span><strong id="precision">—</strong><small id="precision-detail">Sem qualificação carregada</small></article>
+    <article><span>READINESS</span><strong id="readiness">—</strong><small id="readiness-detail">Aguardando verificações</small></article>
+  </section>
+
+  <div class="toolbar"><p id="status-line">Aguardando dados…</p><button id="refresh" type="button">Atualizar agora</button></div>
+
+  <div class="grid">
+    <section class="panel test-panel" aria-labelledby="test-title">
+      <div class="section-head"><div><p class="eyebrow">01 / TESTAR IA</p><h2 id="test-title">Converse com uma habilidade</h2></div><span class="tag">SEM AÇÃO AUTOMÁTICA</span></div>
+      <p class="muted">O teste chama uma skill real da Vitriny Neural. Em código usa dry-run; nenhuma publicação, pagamento ou deploy é executado.</p>
+      <form id="test-form">
+        <label for="area">Área</label>
+        <select id="area">
+          <option value="support">Atendimento</option>
+          <option value="growth">Marketing / Growth</option>
+          <option value="code">Programação</option>
+          <option value="research">Pesquisa</option>
+          <option value="commerce">Comércio</option>
+          <option value="ranking">Ranking</option>
+          <option value="media">Imagem / vídeo / áudio</option>
+        </select>
+        <label for="prompt">Pedido para a Neural</label>
+        <textarea id="prompt" rows="5" maxlength="5000" minlength="3" required placeholder="Ex.: Analise como aumentar a conversão das lojas locais sem aumentar o desperdício de anúncios."></textarea>
+        <div class="form-foot"><small id="test-hint">A resposta é apenas para avaliação administrativa.</small><button class="primary" id="run-test" type="submit">Executar teste ↗</button></div>
+      </form>
+      <div class="response" id="test-response" aria-busy="false">
+        <div class="response-head"><span id="test-provider" class="tag">AGUARDANDO</span><span id="test-time">—</span></div>
+        <pre id="test-output">A resposta da Vitriny Neural aparecerá aqui.</pre>
+      </div>
+    </section>
+
+    <section class="panel benchmark-panel" aria-labelledby="benchmark-title">
+      <div class="section-head"><div><p class="eyebrow">02 / BENCHMARK</p><h2 id="benchmark-title">Prova de precisão real</h2></div><span id="benchmark-state" class="tag">AGUARDANDO</span></div>
+      <p class="muted">Executa o conjunto semântico com casos de segurança, código, pesquisa, marketing, comércio, suporte e ranking contra o provider configurado na VPS.</p>
+      <div class="benchmark-score"><strong id="benchmark-score">—</strong><span id="benchmark-grade">Sem resultado</span></div>
+      <div id="benchmark-categories" class="category-list"><p class="muted">Nenhum benchmark carregado.</p></div>
+      <p id="benchmark-meta" class="fine">O benchmark não muda o modo da Neural automaticamente.</p>
+      <button class="primary" id="benchmark-start" type="button">Iniciar benchmark real</button>
+    </section>
+  </div>
+
+  <section class="panel" aria-labelledby="shadow-title">
+    <div class="section-head"><div><p class="eyebrow">03 / MODO SHADOW</p><h2 id="shadow-title">Observação sem interferir na plataforma</h2></div><span id="shadow-state" class="tag">—</span></div>
+    <div class="shadow-grid">
+      <article><span>OBSERVER</span><strong id="observer-state">—</strong><small id="observer-detail">Aguardando</small></article>
+      <article><span>AÇÕES AUTOMÁTICAS</span><strong id="auto-state">Bloqueadas</strong><small id="budget-detail">—</small></article>
+      <article><span>SINAIS</span><strong id="signals">—</strong><small id="signals-detail">Métricas agregadas</small></article>
+      <article><span>DEAD LETTERS</span><strong id="deadletters">—</strong><small>Eventos isolados após falhas</small></article>
+    </div>
+    <p class="fine">Shadow observa e registra sinais, mas o Policy Gate não permite executar alterações. Elevação para advisory ou low-risk-auto deve ser uma decisão operacional separada e só após benchmark e revisão.</p>
+  </section>
+
+  <div class="grid">
+    <section class="panel" aria-labelledby="skills-title">
+      <div class="section-head"><div><p class="eyebrow">04 / SKILLS</p><h2 id="skills-title">Capacidades e providers</h2></div><span id="skill-count" class="tag">—</span></div>
+      <div id="skills"><p class="muted">Carregando skills…</p></div>
+      <h3>Providers</h3>
+      <div id="providers"><p class="muted">Carregando providers…</p></div>
+    </section>
+
+    <section class="panel" aria-labelledby="learning-title">
+      <div class="section-head"><div><p class="eyebrow">05 / APRENDIZADO</p><h2 id="learning-title">Estado do learning loop</h2></div><span class="tag">EVIDÊNCIA → LIÇÃO</span></div>
+      <div id="learning"><p class="muted">Carregando estado de aprendizagem…</p></div>
+      <h3>Orçamento de autonomia</h3>
+      <div id="actions"><p class="muted">Carregando orçamento…</p></div>
+    </section>
+  </div>
+
+  <section class="panel" aria-labelledby="precision-title">
+    <div class="section-head"><div><p class="eyebrow">06 / PRECISÃO</p><h2 id="precision-title">Histórico de qualificação</h2></div><span class="tag">POR CAPACIDADE</span></div>
+    <p class="muted">Um modelo pode ser aprovado para uma área e bloqueado em outra. Segurança tem limiar próprio.</p>
+    <div id="qualifications"><p class="muted">Nenhuma qualificação carregada.</p></div>
+  </section>
+
+  <footer><strong>Vitriny Neural · inteligência mensurável.</strong><p>O console é administrativo. Testes não concedem autonomia e o benchmark não altera o modo operacional automaticamente.</p><a href="/admin-jarvis.html">Voltar ao Jarvis</a></footer>
+</main>
+</body>
+</html>

@@ -16,9 +16,25 @@ export function mountVitrinyNeuralAdmin({app,runtime=null,service=null,requireAd
     if(!service?.qualifications?.list)return res.status(503).json({error:'Histórico de qualificação indisponível.'});
     return res.json({ok:true,items:service.qualifications.list({limit:50})});
   });
+  app.get(API+'/benchmark',(_req,res)=>{
+    if(!service?.benchmarks?.status)return res.status(503).json({error:'Benchmark indisponível.'});
+    return res.json({ok:true,...service.benchmarks.status()});
+  });
+  app.get(API+'/benchmark/:id',(req,res)=>{
+    if(!service?.benchmarks?.get)return res.status(503).json({error:'Benchmark indisponível.'});
+    const item=service.benchmarks.get(req.params.id);
+    return item?res.json({ok:true,item}):res.status(404).json({error:'Benchmark não encontrado.'});
+  });
   app.get(API+'/actions',(_req,res)=>{
     if(!service?.budget?.recent)return res.status(503).json({error:'Action budget indisponível.'});
     return res.json({ok:true,usage:service.budget.usage(),items:service.budget.recent(50)});
+  });
+  app.post(API+'/benchmark/start',(req,res)=>{
+    try{
+      if(!service?.benchmarks?.start)return res.status(503).json({error:'Benchmark indisponível.'});
+      const item=service.benchmarks.start({actorId:req.user?.id??null});
+      return res.status(202).json({ok:true,item});
+    }catch(error){return res.status(error?.status||500).json({error:String(error?.message||'Não foi possível iniciar o benchmark.').slice(0,400)});}
   });
   app.post(API+'/readiness',(req,res)=>{
     try{
