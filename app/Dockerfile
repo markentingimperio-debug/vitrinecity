@@ -5,6 +5,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 COPY *.js ./
 COPY vitriny-neural ./vitriny-neural
+COPY vitriny-spatial ./vitriny-spatial
 RUN mkdir -p ./scripts
 COPY scripts/run-vitriny-neural-live-benchmark.mjs ./scripts/run-vitriny-neural-live-benchmark.mjs
 COPY affiliate-catalog-seed.json ./
