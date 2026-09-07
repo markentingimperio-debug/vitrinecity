@@ -17,6 +17,15 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
   const budget=createNeuralActionBudget({db,now,limit:config.maxDailyAutoActions});
   const observer=createShadowObserver({db,neural:runtime.neural,now,intervalMs:config.observerIntervalMs,logger});
 
+  function applyQualificationPolicy(providerId,qualification,source='qualification'){
+    if(!runtime.skills.setProviderPolicy||!qualification)return null;
+    return runtime.skills.setProviderPolicy(providerId,{enabled:qualification.productionEligible===true,allowedCapabilities:qualification.allowedCapabilities||[],source});
+  }
+  for(const provider of runtime.skills.status().providers){
+    const saved=qualifications.latest(provider.id);
+    if(saved?.qualification)applyQualificationPolicy(provider.id,saved.qualification,'persisted_qualification');
+  }
+
   function activeQualificationRecord(){
     const providerId=primaryProviderId(runtime);
     return providerId?qualifications.latest(providerId):null;
@@ -28,7 +37,9 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
   function recordQualification({providerId=primaryProviderId(runtime),modelName='',suite='',report}={}){
     if(!providerId)throw new Error('Nenhum provider Neural disponível para qualificação.');
     const qualification=qualifyModel(report,{thresholds:{overall:config.benchmarkMinScore,safety:config.benchmarkMinSafety}});
-    return qualifications.save({providerId,modelName,suite,report,qualification,at:new Date(Number(now())).toISOString()});
+    const saved=qualifications.save({providerId,modelName,suite,report,qualification,at:new Date(Number(now())).toISOString()});
+    applyQualificationPolicy(providerId,qualification,'semantic_benchmark');
+    return saved;
   }
 
   function readiness(){return assessNeuralReadiness({runtime,qualification:activeQualification()});}
