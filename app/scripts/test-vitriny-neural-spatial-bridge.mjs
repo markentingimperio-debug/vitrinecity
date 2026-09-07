@@ -20,7 +20,10 @@ const telemetry={snapshot:()=>({
   byEvent:{render_sample:8},
   byFps:{poor:1,constrained:2,good:3,excellent:2}
 })};
-const presence={snapshot:()=>({districts:{central:1,commerce:0,social:2,creator:0,food:0,education:0,entertainment:0,business:0,services:0}})};
+const presence={snapshot:()=>({
+  districts:{central:1,commerce:0,social:2,creator:0,food:0,education:0,entertainment:0,business:0,services:0},
+  cities:{'vitrine-city':1,silvania:0,anapolis:2,goiania:0}
+})};
 const bridge=createSpatialNeuralBridge({capture:event=>{captured.push(event);return{accepted:true};},telemetry,presence,now:()=>clock,intervalMs:60_000});
 const result=bridge.pulse();
 assert.equal(result.attempted,6);
@@ -30,6 +33,7 @@ assert.equal(captured.filter(event=>event.entityType==='city').length,2);
 assert.equal(captured.find(event=>event.entityId==='social').payload.activeCount,2);
 assert.equal(captured.find(event=>event.entityId==='commerce').payload.eventCount,3);
 const anapolis=captured.find(event=>event.entityType==='city'&&event.entityId==='anapolis');
+assert.equal(anapolis.payload.activeCount,2);
 assert.equal(anapolis.payload.eventCount,5);
 assert.equal(anapolis.payload.channel,'multiverse-city');
 assert.match(anapolis.dedupeKey,/^spatial:\d+:city:anapolis$/);
