@@ -34,6 +34,7 @@ assert.equal(assessDevice({deviceMemory:2,hardwareConcurrency:2,width:390,height
 assert.equal(assessDevice({deviceMemory:8,hardwareConcurrency:8,width:1920,height:1080,webgpu:true}).recommended,'ultra');
 assert.equal(adaptProfile('ultra',{fps:25}).id,'standard');
 assert.equal(adaptProfile('lite',{fps:80}).id,'standard');
+assert.equal(adaptProfile('standard',{fps:45}).id,'standard');
 
 const a=generateBuilding({id:'store-1',kind:'retail',seed:'same'}),b=generateBuilding({id:'store-1',kind:'retail',seed:'same'});
 assert.deepEqual(a,b);
@@ -45,5 +46,6 @@ const plaza=centralPlazaLayout();
 assert.equal(plaza.districts.length,8);
 assert.equal(new Set(plaza.districts.map(x=>x.id)).size,8);
 assert.equal(plaza.center.id,'vitriny-neural-core');
+assert.equal(plaza.districts.every(item=>item.experience?.href?.startsWith('/')),true);
 
 console.log(JSON.stringify({ok:true,spatialVersion:VITRINY_SPATIAL_VERSION,portals:router.listPortals().length,chunks:first.loaded.length,profile:'adaptive',buildings:block.buildings.length}));
