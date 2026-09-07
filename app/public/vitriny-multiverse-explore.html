@@ -10,14 +10,14 @@
   </style>
 </head>
 <body>
-  <div id="loading" class="loading"><div><strong>Vitriny Spatial Runtime</strong><span>Carregando chunks e Central Plaza…</span></div></div>
+  <div id="loading" class="loading"><div><strong>Vitriny Spatial Runtime</strong><span>Carregando cidade, chunks e Central Plaza…</span></div></div>
   <div class="hud">
     <div class="top">
-      <div class="panel brand"><small>MULTIVERSE · STREAMING PREVIEW</small><strong>Vitriny City Spatial</strong><span>Chunks carregam e descarregam conforme você se move.</span></div>
+      <div class="panel brand"><small>MULTIVERSE · STREAMING PREVIEW</small><strong id="cityTitle">Vitriny City Spatial</strong><span>Chunks vêm da Spatial API e carregam/descarregam conforme você se move.</span></div>
       <div class="panel stat"><strong id="worldStat">br:go:vitrine-city</strong><span id="chunkStat">chunk 0,0 · 0 ativos</span><span id="fpsStat">perfil analisando</span><a href="/vitriny-multiverse-worlds.html">Abrir World Gate</a></div>
     </div>
     <div class="bottom">
-      <div class="panel"><div class="help">PC: WASD/setas para mover · arraste para olhar · E abre o portal próximo. No celular use o direcional e o botão do portal.</div><div id="portal" class="portal"><strong id="portalName">Portal</strong><span id="portalHint">Conecta ao ecossistema real da Vitrine City</span><button id="enterPortal" type="button">Abrir distrito</button></div></div>
+      <div class="panel"><div class="help">PC: WASD/setas para mover · arraste para olhar · E abre o portal próximo. No celular use o direcional e o botão do portal. Cidades em preview permitem exploração procedural, sem liberar operações comerciais locais.</div><div id="portal" class="portal"><strong id="portalName">Portal</strong><span id="portalHint">Conecta ao ecossistema real da Vitrine City</span><button id="enterPortal" type="button">Abrir distrito</button></div></div>
       <div id="pad" class="pad" aria-label="Controles de movimento"><button class="up" data-move="forward">▲</button><button class="left" data-move="left">◀</button><button class="down" data-move="back">▼</button><button class="right" data-move="right">▶</button></div>
     </div>
   </div>
