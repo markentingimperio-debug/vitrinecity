@@ -43,7 +43,7 @@ export function startSpatialRealtime(options={}){
   const district=options.district||inferSpatialPresenceDistrict();if(!district)return null;
   const cityId=normalizeSpatialCityId(options.cityId||spatialCityFromLocation());
   const telemetry=startSpatialTelemetryClient({...options,district,cityId});
-  const presence=startSpatialPresence({...options,district});
+  const presence=startSpatialPresence({...options,district,cityId});
   return Object.freeze({district,cityId,presence,telemetry,stop:()=>{presence?.stop?.();telemetry?.stop?.();}});
 }
 
