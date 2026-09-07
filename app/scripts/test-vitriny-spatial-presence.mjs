@@ -74,11 +74,28 @@ tracker.heartbeat('session_3333333333333333','education','goiania');
 assert.equal(tracker.snapshot().total,3);
 assert.equal(tracker.snapshot().cities.silvania,1);
 assert.equal(tracker.snapshot().cities.goiania,1);
+state=tracker.heartbeat('session_3333333333333333','central','goiania');
+assert.equal(state.total,3);
+assert.equal(state.districts.central,1);
 assert.throws(()=>tracker.heartbeat('session_4444444444444444','social','vitrine-city'),/presence_capacity/);
 tracker.leave('session_2222222222222222');
 assert.equal(tracker.snapshot().total,2);
 unsubscribe();
 assert.equal(tracker.subscriberCount(),0);
+
+let capClock=2_000_000;
+const capped=createSpatialPresenceTracker({now:()=>capClock,ttlMs:15_000,maxSessions:2,maxSubscribers:1});
+capped.heartbeat('capacity_session_000001','central','vitrine-city');
+capped.heartbeat('capacity_session_000002','commerce','vitrine-city');
+assert.equal(capped.size(),2);
+assert.doesNotThrow(()=>capped.heartbeat('capacity_session_000001','social','anapolis'));
+assert.throws(()=>capped.heartbeat('capacity_session_000003','food','silvania'),/presence_capacity/);
+const cappedUnsubscribe=capped.subscribe(()=>{});
+assert.throws(()=>capped.subscribe(()=>{}),/presence_subscriber_capacity/);
+capClock+=15_001;
+assert.doesNotThrow(()=>capped.heartbeat('capacity_session_000003','food','silvania'));
+assert.equal(capped.size(),1);
+cappedUnsubscribe();
 
 assert.equal(inferSpatialPresenceDistrict({pathname:'/vitriny-multiverse-explore.html',search:'?city=anapolis'}),'central');
 assert.equal(inferSpatialPresenceDistrict({pathname:'/vitriny-store-interior.html',search:'?store=abc'}),'commerce');
