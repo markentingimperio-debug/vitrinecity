@@ -2,11 +2,16 @@ import {createVitrinyNeuralService} from './service.js';
 import {mountVitrinyNeuralAdmin} from './admin-api.js';
 
 function truthy(value){return ['1','true','yes','on'].includes(String(value??'').trim().toLowerCase());}
+function pseudonymSalt(env){
+  const value=String(env?.VITRINY_NEURAL_PSEUDONYM_SALT||'').trim();
+  if(truthy(env?.VITRINY_NEURAL_ENABLED)&&value.length<16)throw new Error('VITRINY_NEURAL_PSEUDONYM_SALT precisa ter pelo menos 16 caracteres quando a Neural estiver habilitada.');
+  return value||'disabled-neural-no-personal-events';
+}
 
 export function setupVitrinyNeural({app,db,requireAdmin,sameOriginOnly,env=process.env,fetchImpl=globalThis.fetch,logger=console,nodeId='vitrinecity-api'}={}){
   if(!app||!db||typeof requireAdmin!=='function'||typeof sameOriginOnly!=='function')throw new TypeError('Integração Neural requer app, db e middlewares administrativos.');
   try{
-    const service=createVitrinyNeuralService({db,env,fetchImpl,nodeId,pseudonymSalt:String(env.VITRINY_NEURAL_PSEUDONYM_SALT||'vitriny-neural-v1')});
+    const service=createVitrinyNeuralService({db,env,fetchImpl,nodeId,pseudonymSalt:pseudonymSalt(env)});
     mountVitrinyNeuralAdmin({app,service,requireAdmin,sameOriginOnly});
     const capture=(event)=>{
       try{return service.capture(event);}catch(error){logger?.warn?.('[vitriny-neural] event rejected',String(error?.message||error));return{accepted:false,reason:'capture_failed'};}
