@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {adaptSpatialApiChunk,createSpatialApiChunkLoader,fetchSpatialCityContext,normalizeSpatialCityId,spatialCityFromLocation,spatialExplorerHref,spatialFallbackCity} from '../public/vitriny-spatial-api-client.js';
+import {adaptSpatialApiChunk,createSpatialApiChunkLoader,fetchSpatialCities,fetchSpatialCityContext,normalizeSpatialCityId,spatialCityFromLocation,spatialExplorerHref,spatialFallbackCities,spatialFallbackCity} from '../public/vitriny-spatial-api-client.js';
 
 assert.equal(normalizeSpatialCityId('ANAPOLIS'),'anapolis');
 assert.equal(normalizeSpatialCityId('../admin'),'vitrine-city');
@@ -7,6 +7,19 @@ assert.equal(spatialCityFromLocation({search:'?city=goiania'}),'goiania');
 assert.equal(spatialExplorerHref('silvania'),'/vitriny-multiverse-explore.html?city=silvania');
 assert.equal(spatialExplorerHref('anapolis',{returnState:true}),'/vitriny-multiverse-explore.html?city=anapolis&return=1');
 assert.equal(spatialFallbackCity('goiania').worldKey,'br:go:goiania');
+assert.equal(spatialFallbackCities().length,4);
+
+const listed=await fetchSpatialCities({fetchImpl:async url=>{
+  assert.equal(url,'/api/spatial/v1/cities?country=br&region=go');
+  return new Response(JSON.stringify({apiVersion:1,items:[
+    {id:'vitrine-city',worldKey:'br:go:vitrine-city',name:'Vitrine City',status:'active',chunkSize:128,route:'/v/br/go/vitrine-city'},
+    {id:'anapolis',worldKey:'br:go:anapolis',name:'Anápolis',status:'preview',chunkSize:128,route:'/v/br/go/anapolis'},
+    {id:'../admin',worldKey:'br:go:../admin',name:'Inválida'}
+  ]}),{status:200,headers:{'content-type':'application/json'}});
+}});
+assert.equal(listed.length,2);
+assert.equal(listed[0].status,'active');
+assert.equal(listed[1].id,'anapolis');
 
 const city=await fetchSpatialCityContext({cityId:'anapolis',fetchImpl:async url=>{
   assert.equal(url,'/api/spatial/v1/cities/anapolis');
@@ -40,4 +53,4 @@ assert.equal(fallbackChunk.source,'local-fallback');
 assert.equal(fallbackChunk.worldKey,'br:go:goiania');
 assert.deepEqual(fallbackSources,['fallback']);
 
-console.log(JSON.stringify({ok:true,city:city.id,chunk:adapted.id,fallback:fallbackChunk.source}));
+console.log(JSON.stringify({ok:true,city:city.id,cities:listed.length,chunk:adapted.id,fallback:fallbackChunk.source}));
