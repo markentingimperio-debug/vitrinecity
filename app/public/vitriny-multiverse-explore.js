@@ -1,6 +1,7 @@
 import * as THREE from '/vendor/three/three.module.js';
 import {createSpatialClientRuntime} from '/vitriny-spatial-client-core.js';
 import {districtExperience} from '/vitriny-district-integrations.js';
+import {fetchSpatialStores} from '/vitriny-spatial-store-registry.js';
 
 const palette=[0x6ee7ff,0x8f8cff,0xe48cff,0xffb36b,0x85e6a8,0x6f9cff,0xb58cff,0x6edbcf];
 const worldKey='br:go:vitrine-city';
@@ -52,7 +53,24 @@ function addCentralPlaza(){
 }
 addCentralPlaza();
 
-const position=new THREE.Vector3(0,1.7,112),velocity=new THREE.Vector3(),keys=new Set();let yaw=Math.PI,pitch=-.08,speed=24,dragging=false,lastX=0,lastY=0,activePortal=null;
+const liveStoreGroup=new THREE.Group(),storeTargets=[];liveStoreGroup.name='commerce-live-stores';scene.add(liveStoreGroup);
+function addLiveStore(entity){
+  const accent=palette[entity.accentIndex%palette.length],g=new THREE.Group();g.position.set(entity.position.x,0,entity.position.z);g.userData={store:true,href:entity.href,label:entity.name,reference:entity.reference};
+  const body=new THREE.Mesh(new THREE.BoxGeometry(entity.size.width,entity.size.height,entity.size.depth),new THREE.MeshStandardMaterial({color:0x17304a,metalness:.55,roughness:.26,emissive:accent,emissiveIntensity:.04}));body.position.y=entity.size.height/2;body.castShadow=profile.shadows;body.receiveShadow=true;g.add(body);
+  const crown=new THREE.Mesh(new THREE.BoxGeometry(entity.size.width*.82,.42,entity.size.depth*.82),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.95}));crown.position.y=entity.size.height+.25;g.add(crown);
+  const beacon=new THREE.Mesh(new THREE.CylinderGeometry(.08,.08,5,6),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.55}));beacon.position.y=entity.size.height+2.8;g.add(beacon);
+  liveStoreGroup.add(g);storeTargets.push(g);
+}
+async function loadLiveStores(){
+  try{
+    const entities=await fetchSpatialStores({limit:profile.id==='LITE'?20:48});
+    for(const entity of entities)addLiveStore(entity);
+    document.getElementById('worldStat').textContent=`${worldKey} · ${entities.length} lojas vivas`;
+  }catch{document.getElementById('worldStat').textContent=`${worldKey} · lojas em modo offline`;}
+}
+loadLiveStores();
+
+const position=new THREE.Vector3(0,1.7,112),velocity=new THREE.Vector3(),keys=new Set();let yaw=Math.PI,pitch=-.08,speed=24,dragging=false,lastX=0,lastY=0,pointerStartX=0,pointerStartY=0,activePortal=null;
 const runtime=createSpatialClientRuntime({worldKey,chunkSize:128,radius:profile.radius,maxLoaded:profile.radius===2?25:9,loader:(id,opts)=>import('/vitriny-spatial-client-core.js').then(m=>m.generateSpatialChunk(id,{...opts,grid:profile.grid})),onUnload:(id)=>removeChunk(id)});
 let updateBusy=false,lastChunkUpdate=0;
 async function syncChunks(force=false){const now=performance.now();if(updateBusy||(!force&&now-lastChunkUpdate<350))return;updateBusy=true;lastChunkUpdate=now;try{const forward={x:-Math.sin(yaw),z:-Math.cos(yaw)},state=await runtime.update({x:position.x,z:position.z},forward);for(const chunk of state.resources)if(!chunkGroups.has(chunk.id))createChunkGroup(chunk);document.getElementById('chunkStat').textContent=`chunk ${state.center.x},${state.center.z} · ${state.loaded.length} ativos`;document.getElementById('fpsStat').textContent=`perfil ${profile.id} · raio ${profile.radius}`;}finally{updateBusy=false;}}
@@ -62,17 +80,16 @@ function setMove(name,on){const map={forward:'KeyW',back:'KeyS',left:'KeyA',righ
 function saveSpatialReturn(portal){
   try{sessionStorage.setItem('vitrinySpatialReturn',JSON.stringify({version:1,spatialPath:portal.userData.path,districtId:portal.userData.id,position:{x:Number(position.x.toFixed(3)),y:Number(position.y.toFixed(3)),z:Number(position.z.toFixed(3))},yaw:Number(yaw.toFixed(5)),pitch:Number(pitch.toFixed(5)),createdAt:new Date().toISOString()}));}catch{}
 }
-function enterActivePortal(){
-  if(!activePortal)return false;
-  const href=activePortal.userData.href;
-  if(typeof href!=='string'||!href.startsWith('/')||href.startsWith('//'))return false;
-  saveSpatialReturn(activePortal);
-  location.assign(href);
-  return true;
-}
+function safeNavigate(href){if(typeof href!=='string'||!href.startsWith('/')||href.startsWith('//'))return false;location.assign(href);return true;}
+function enterActivePortal(){if(!activePortal)return false;saveSpatialReturn(activePortal);return safeNavigate(activePortal.userData.href);}
 addEventListener('keydown',e=>{keys.add(e.code);if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();if(e.code==='KeyE'&&!e.repeat)enterActivePortal();});addEventListener('keyup',e=>keys.delete(e.code));
 for(const button of document.querySelectorAll('[data-move]')){const name=button.dataset.move;button.addEventListener('pointerdown',e=>{e.preventDefault();setMove(name,true);});for(const evt of ['pointerup','pointercancel','pointerleave'])button.addEventListener(evt,()=>setMove(name,false));}
-renderer.domElement.addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;renderer.domElement.setPointerCapture(e.pointerId);});renderer.domElement.addEventListener('pointerup',()=>dragging=false);renderer.domElement.addEventListener('pointermove',e=>{if(!dragging)return;yaw-=(e.clientX-lastX)*.0045;pitch=Math.max(-.55,Math.min(.45,pitch-(e.clientY-lastY)*.003));lastX=e.clientX;lastY=e.clientY;});renderer.domElement.addEventListener('wheel',e=>{speed=Math.max(8,Math.min(55,speed-e.deltaY*.02));},{passive:true});
+
+const raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2();
+function storeAtPointer(event){pointer.x=event.clientX/innerWidth*2-1;pointer.y=-(event.clientY/innerHeight)*2+1;raycaster.setFromCamera(pointer,camera);const hit=raycaster.intersectObjects(storeTargets,true)[0];let node=hit?.object||null;while(node&&!node.userData?.store)node=node.parent;return node?.userData?.store?node:null;}
+renderer.domElement.addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;pointerStartX=e.clientX;pointerStartY=e.clientY;renderer.domElement.setPointerCapture(e.pointerId);});
+renderer.domElement.addEventListener('pointerup',e=>{const click=Math.hypot(e.clientX-pointerStartX,e.clientY-pointerStartY)<6;dragging=false;if(click){const store=storeAtPointer(e);if(store)safeNavigate(store.userData.href);}});
+renderer.domElement.addEventListener('pointermove',e=>{if(!dragging)return;yaw-=(e.clientX-lastX)*.0045;pitch=Math.max(-.55,Math.min(.45,pitch-(e.clientY-lastY)*.003));lastX=e.clientX;lastY=e.clientY;});renderer.domElement.addEventListener('wheel',e=>{speed=Math.max(8,Math.min(55,speed-e.deltaY*.02));},{passive:true});
 
 document.getElementById('enterPortal').onclick=enterActivePortal;
 function updatePortal(){let best=null,bestD=Infinity;for(const portal of portalTargets){const d=portal.position.distanceTo(position);if(d<12&&d<bestD){best=portal;bestD=d;}}activePortal=best;const box=document.getElementById('portal');if(best){box.classList.add('show');document.getElementById('portalName').textContent=best.userData.label;document.getElementById('portalHint').textContent=`${best.userData.description} · E ou botão para abrir`;}else box.classList.remove('show');}
