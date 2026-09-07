@@ -12,9 +12,12 @@ import {createGestoraCritic} from './gestora-critic.js';
 import {createNeuralLearningLoop} from './learning-loop.js';
 import {createPlatformBridge} from './platform-bridge.js';
 import {createEnvModelProviders} from './providers/from-env.js';
+import {createNeuralConfig} from './config.js';
+import {createNeuralPolicyGate} from './policy-gate.js';
 
-export function createVitrinyNeuralRuntime({db,providers=null,env=process.env,fetchImpl=globalThis.fetch,now=Date.now,nodeId='local',neuralOptions={},criticOptions={},pseudonymSalt='vitriny-neural-v1'}={}){
+export function createVitrinyNeuralRuntime({db,providers=null,env=process.env,fetchImpl=globalThis.fetch,now=Date.now,nodeId='local',neuralOptions={},criticOptions={},pseudonymSalt='vitriny-neural-v1',config=null}={}){
   if(!db)throw new TypeError('Runtime Neural requer banco SQLite nesta fase.');
+  const runtimeConfig=config||createNeuralConfig({env});
   const store=createVitrinyNeuralSqliteStore(db);
   const neural=createVitrinyNeural({store,now,nodeId,...neuralOptions});
   const skills=createSkillRegistry({now});
@@ -27,8 +30,9 @@ export function createVitrinyNeuralRuntime({db,providers=null,env=process.env,fe
   const critic=createGestoraCritic(criticOptions);
   const learning=createNeuralLearningLoop({neural,critic});
   const bridge=createPlatformBridge({neural,pseudonymSalt});
+  const gate=createNeuralPolicyGate({config:runtimeConfig});
   return {
-    neural,skills,critic,learning,bridge,
-    status(){return {neural:neural.status(),skills:skills.status(),critic:critic.policy,bridge:bridge.policy};}
+    neural,skills,critic,learning,bridge,config:runtimeConfig,gate,
+    status(){return {neural:neural.status(),skills:skills.status(),critic:critic.policy,bridge:bridge.policy,config:runtimeConfig};}
   };
 }
