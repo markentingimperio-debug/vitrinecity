@@ -28,9 +28,9 @@ export function createVitrinyNeuralRuntime({db,providers=null,env=process.env,fe
   const resolvedProviders=Array.isArray(providers)?providers:createEnvModelProviders({env,fetchImpl});
   for(const provider of resolvedProviders)skills.registerProvider(provider);
   const critic=createGestoraCritic(criticOptions);
-  const learning=createNeuralLearningLoop({neural,critic});
-  const bridge=createPlatformBridge({neural,pseudonymSalt});
   const gate=createNeuralPolicyGate({config:runtimeConfig});
+  const learning=createNeuralLearningLoop({neural,critic,gate});
+  const bridge=createPlatformBridge({neural,pseudonymSalt});
   return {
     neural,skills,critic,learning,bridge,config:runtimeConfig,gate,
     status(){return {neural:neural.status(),skills:skills.status(),critic:critic.policy,bridge:bridge.policy,config:runtimeConfig};}
