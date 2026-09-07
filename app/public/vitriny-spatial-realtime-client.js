@@ -1,4 +1,5 @@
 import {inferSpatialPresenceDistrict,startSpatialPresence} from '/vitriny-spatial-presence-client.js';
+import {normalizeSpatialCityId,spatialCityFromLocation} from '/vitriny-spatial-api-client.js';
 
 const TARGETS=new Set(['none','store','product','profile','course','service','campaign','content','restaurant','district','portal','business']);
 function profile(){
@@ -14,11 +15,11 @@ function targetFromHref(href=''){
   return'none';
 }
 
-export function startSpatialTelemetryClient({district=inferSpatialPresenceDistrict(),fetchImpl=globalThis.fetch,documentRef=globalThis.document,navigatorRef=globalThis.navigator}={}){
+export function startSpatialTelemetryClient({district=inferSpatialPresenceDistrict(),cityId=spatialCityFromLocation(),fetchImpl=globalThis.fetch,documentRef=globalThis.document,navigatorRef=globalThis.navigator}={}){
   if(!district||typeof fetchImpl!=='function'||!documentRef)return null;
-  const renderProfile=profile();let stopped=false,frames=0,lastSample=performance.now(),raf=0;
+  const renderProfile=profile(),city=normalizeSpatialCityId(cityId);let stopped=false,frames=0,lastSample=performance.now(),raf=0;
   const send=(event,{fpsBucket:fps='unknown',targetType='none',beacon=false}={})=>{
-    if(stopped&&!beacon)return;const type=TARGETS.has(targetType)?targetType:'none',payload={event,district,profile:renderProfile,fpsBucket:fps,targetType:type};
+    if(stopped&&!beacon)return;const type=TARGETS.has(targetType)?targetType:'none',payload={event,district,cityId:city,profile:renderProfile,fpsBucket:fps,targetType:type};
     if(beacon){try{navigatorRef?.sendBeacon?.('/api/spatial/telemetry/event',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{}return;}
     fetchImpl('/api/spatial/telemetry/event',{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',cache:'no-store',keepalive:true,body:JSON.stringify(payload)}).catch(()=>{});
   };
@@ -35,14 +36,15 @@ export function startSpatialTelemetryClient({district=inferSpatialPresenceDistri
   send('district_enter',{targetType:'district'});raf=requestAnimationFrame(sample);
   const stop=()=>{if(stopped)return;send('district_exit',{targetType:'district',beacon:true});stopped=true;cancelAnimationFrame(raf);documentRef.removeEventListener('click',onClick,true);globalThis.removeEventListener?.('vitriny:spatial-event',onSpatialEvent);};
   globalThis.addEventListener?.('pagehide',stop,{once:true});
-  return Object.freeze({district,profile:renderProfile,send,stop});
+  return Object.freeze({district,cityId:city,profile:renderProfile,send,stop});
 }
 
 export function startSpatialRealtime(options={}){
   const district=options.district||inferSpatialPresenceDistrict();if(!district)return null;
-  const telemetry=startSpatialTelemetryClient({...options,district});
+  const cityId=normalizeSpatialCityId(options.cityId||spatialCityFromLocation());
+  const telemetry=startSpatialTelemetryClient({...options,district,cityId});
   const presence=startSpatialPresence({...options,district});
-  return Object.freeze({district,presence,telemetry,stop:()=>{presence?.stop?.();telemetry?.stop?.();}});
+  return Object.freeze({district,cityId,presence,telemetry,stop:()=>{presence?.stop?.();telemetry?.stop?.();}});
 }
 
 export function autoStartSpatialRealtime(){return startSpatialRealtime();}
