@@ -3,5 +3,6 @@ export {chunkCoords,chunkId,desiredChunkSet,diffChunks,createChunkEngine} from '
 export {RENDER_PROFILES,assessDevice,adaptProfile} from './device-profile.js';
 export {buildingTemplate,generateBuilding,generateBlock,spatialBuildingTemplates} from './procedural-city.js';
 export {CENTRAL_PLAZA_ID,centralPlazaLayout,centralPlazaPortals,spatialDistricts} from './central-plaza.js';
+export {DISTRICT_INTEGRATIONS,districtExperience,safeDistrictHref,isSafeDistrictHref,districtIntegrationBlockedPrefixes} from './district-integrations.js';
 
 export const VITRINY_SPATIAL_VERSION=1;
