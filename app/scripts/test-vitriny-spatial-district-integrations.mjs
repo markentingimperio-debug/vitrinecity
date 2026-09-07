@@ -11,10 +11,12 @@ assert.equal(new Set(DISTRICT_INTEGRATIONS.map(item=>item.href)).size,8);
 
 for(const item of DISTRICT_INTEGRATIONS){
   assert.equal(item.enabled,true);
-  assert.equal(item.mode,'bridge');
+  assert.ok(['bridge','spatial-live'].includes(item.mode));
   assert.equal(item.href.startsWith('/'),true);
   assert.equal(item.href.startsWith('//'),false);
+  assert.equal(item.fallbackHref.startsWith('/'),true);
   assert.equal(isSafeDistrictHref(item.href),true);
+  assert.equal(isSafeDistrictHref(item.fallbackHref),true);
   assert.equal(districtExperience(item.id),item);
   assert.equal(safeDistrictHref(item.id),item.href);
   const lower=item.href.toLowerCase();
@@ -22,8 +24,12 @@ for(const item of DISTRICT_INTEGRATIONS){
 }
 
 assert.equal(districtExperience('commerce').href,'/loja.html');
-assert.equal(districtExperience('social').href,'/social.html');
-assert.equal(districtExperience('education').href,'/centro-educacional.html');
+assert.equal(districtExperience('social').href,'/vitriny-multiverse-district.html?district=social');
+assert.equal(districtExperience('social').fallbackHref,'/social.html');
+assert.equal(districtExperience('education').href,'/vitriny-multiverse-district.html?district=education');
+assert.equal(districtExperience('education').fallbackHref,'/centro-educacional.html');
+assert.equal(districtExperience('services').mode,'spatial-live');
+assert.equal(districtExperience('commerce').mode,'bridge');
 assert.equal(districtExperience('missing'),null);
 assert.equal(safeDistrictHref('missing'),null);
 assert.equal(isSafeDistrictHref('https://example.com'),false);
@@ -39,4 +45,4 @@ for(const district of plaza.districts){
   assert.equal(district.experience.href,experience.href);
 }
 
-console.log(JSON.stringify({ok:true,districts:DISTRICT_INTEGRATIONS.length,bridges:DISTRICT_INTEGRATIONS.map(item=>({id:item.id,href:item.href}))}));
+console.log(JSON.stringify({ok:true,districts:DISTRICT_INTEGRATIONS.length,live:DISTRICT_INTEGRATIONS.filter(item=>item.mode==='spatial-live').map(item=>item.id)}));
