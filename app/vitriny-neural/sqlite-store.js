@@ -141,7 +141,7 @@ export function createVitrinyNeuralSqliteStore(db) {
     const row=db.prepare('SELECT attempt_count FROM neural_events WHERE id=?').get(id);
     const terminal=Number(row?.attempt_count||0)>=5;
     const result=db.prepare(`UPDATE neural_events SET status=?,error_message=?,processed_at=?,lease_owner='',lease_until=0
-      WHERE id=? AND status='processing' AND lease_owner=?`).run(terminal?'dead_letter':'failed',String(error||'worker_failed').slice(0,500),at,id,workerId);
+      WHERE id=? AND status='processing' AND lease_owner=?`).run(terminal?'dead_letter':'pending',String(error||'worker_failed').slice(0,500),terminal?at:null,id,workerId);
     if (result.changes) audit(terminal?'event_dead_letter':'event_failed', id, workerId, { error:String(error||'worker_failed').slice(0,500) }, at);
     return { ok:Boolean(result.changes), terminal };
   }
