@@ -27,7 +27,7 @@ export function assessDevice(input={}){
 
 export function adaptProfile(currentId,{fps,targetFps=null}={}){
   const order=['lite','standard','ultra'];
-  const index=Math.max(0,order.indexOf(currentId));
+  const rawIndex=order.indexOf(currentId),index=rawIndex<0?0:rawIndex;
   const current=RENDER_PROFILES[order[index]],measured=number(fps,current.targetFps),target=number(targetFps,current.targetFps);
   if(measured<target*.72&&index>0)return RENDER_PROFILES[order[index-1]];
   if(measured>target*1.18&&index<order.length-1)return RENDER_PROFILES[order[index+1]];
