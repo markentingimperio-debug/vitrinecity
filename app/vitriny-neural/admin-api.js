@@ -73,9 +73,15 @@ export function mountVitrinyNeuralAdmin({app,runtime=null,service=null,requireAd
     try{
       const id=String(req.params.id||'');if(!ALLOWED_SKILLS.has(id))return res.status(404).json({error:'Skill não disponível neste endpoint.'});
       const input=safeBody(req.body);
-      const result=await activeRuntime.skills.run(id,input,{learningContext:{actor:'admin',userId:req.user?.id||null}});
-      return res.json({ok:true,result});
-    }catch(error){return res.status(error?.status||502).json({error:String(error?.message||'Falha na skill.').slice(0,400)});}
+      // A console é um ambiente de avaliação: ela pode testar um provider que tenha sido bloqueado por
+      // benchmark, mas o resultado nunca autoriza execução automática nem altera o modo da Neural.
+      const result=await activeRuntime.skills.run(id,input,{evaluation:true,maxTokens:400,learningContext:{actor:'admin-evaluation',userId:req.user?.id||null}});
+      return res.json({ok:true,evaluation:true,result});
+    }catch(error){
+      const attempts=Array.isArray(error?.attempts)?error.attempts:[];
+      const detail=attempts.length?` ${attempts.map(a=>`${a.provider}: ${a.error}`).join(' | ')}`:'';
+      return res.status(error?.status||502).json({error:(String(error?.message||'Falha na skill.')+detail).slice(0,700)});
+    }
   });
   app.post(API+'/events',(req,res)=>{
     try{
