@@ -10,15 +10,18 @@ const provider={
   capabilities:['code.analyze','research.verify','growth.diagnose','commerce.catalog-review','support.draft-reply','ranking.evaluate'],
   available:async()=>true,invoke:async({capability})=>({text:`ok ${capability}`,model:'integration-fixture'})
 };
-const env={VITRINY_NEURAL_ENABLED:'1',VITRINY_NEURAL_MODE:'low_risk_auto',VITRINY_NEURAL_MAX_DAILY_AUTO_ACTIONS:'1',VITRINY_NEURAL_AUTO_CONFIDENCE:'0.95'};
+const env={VITRINY_NEURAL_ENABLED:'1',VITRINY_NEURAL_MODE:'low_risk_auto',VITRINY_NEURAL_MAX_DAILY_AUTO_ACTIONS:'1',VITRINY_NEURAL_AUTO_CONFIDENCE:'0.95',VITRINY_NEURAL_PSEUDONYM_SALT:'integration-test-private-salt'};
 const logger={info(){},warn(){},error(){}};
+
+const unsafeApp=express(),unsafeDb=new Database(':memory:');
+const unsafe=setupVitrinyNeural({app:unsafeApp,db:unsafeDb,env:{VITRINY_NEURAL_ENABLED:'1'},logger,requireAdmin(_req,_res,next){next();},sameOriginOnly(_req,_res,next){next();}});
+assert.equal(unsafe.enabled,false);assert.equal(unsafe.status().service.mode,'unavailable');unsafeDb.close();
+
 const integration=setupVitrinyNeural({
   app,db,env,logger,
   requireAdmin(req,_res,next){req.user={id:1};next();},
   sameOriginOnly(_req,_res,next){next();}
 });
-// Override providers for deterministic integration test while preserving the mounted service.
-for(const item of integration.service.runtime.skills.status().providers){void item;}
 integration.service.runtime.skills.registerProvider(provider);
 
 const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
