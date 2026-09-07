@@ -1,4 +1,4 @@
-import {normalizeSpatialCityId,spatialCityFromLocation} from '/vitriny-spatial-api-client.js';
+import {normalizeSpatialCityId,spatialCityFromLocation} from './vitriny-spatial-api-client.js';
 
 const PRESENCE_KEY='vitrinySpatialPresenceSession';
 const ALLOWED=new Set(['central','commerce','social','creator','food','education','entertainment','business','services']);
