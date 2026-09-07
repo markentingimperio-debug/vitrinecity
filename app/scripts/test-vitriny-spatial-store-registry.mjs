@@ -10,6 +10,7 @@ const normalized=normalizeSpatialStore(raw[1]);
 assert.equal(normalized.id,'store:ref-a');
 assert.equal(normalized.kind,'food');
 assert.equal(normalized.href,'/loja/ref-a/cafe-arvore');
+assert.equal(normalized.interiorHref,'/vitriny-store-interior.html?store=ref-a&name=Caf%C3%A9+%C3%81rvore');
 assert.equal(normalized.productCount,12);
 assert.equal(normalized.rating,4.9);
 
@@ -29,4 +30,4 @@ assert.equal(fetched.length,1);
 assert.equal(fetched[0].reference,'ref-a');
 await assert.rejects(()=>fetchSpatialStores({fetchImpl:async()=>new Response('{}',{status:503})}),/spatial_stores_503/);
 
-console.log(JSON.stringify({ok:true,stores:a.length,first:a[0].href}));
+console.log(JSON.stringify({ok:true,stores:a.length,first:a[0].interiorHref}));
