@@ -40,13 +40,19 @@ clock+=2_000;
 assert.equal(tracker.sweep().total,1);
 assert.equal(events.at(-1).total,1);
 
+// Expiration only increments the public version when aggregate counts actually change.
 tracker.heartbeat('session_qrstuvwxyz123456','business');
+const beforeExpirationVersion=tracker.snapshot().version;
 clock+=49_000;
-const previousVersion=tracker.snapshot().version;
+state=tracker.sweep();
+assert.equal(state.total,1);
+assert.ok(state.version>beforeExpirationVersion);
+const versionAfterAggregateChange=state.version;
 clock+=2_000;
 state=tracker.heartbeat('session_qrstuvwxyz123456','business');
-assert.ok(state.version>previousVersion);
-assert.equal(events.at(-1).total,1);
+assert.equal(state.total,1);
+assert.equal(state.districts.business,1);
+assert.equal(state.version,versionAfterAggregateChange);
 
 assert.throws(()=>tracker.heartbeat('short','social'),/invalid_session/);
 assert.throws(()=>tracker.heartbeat('session_valid_123456789','admin'),/invalid_district/);
