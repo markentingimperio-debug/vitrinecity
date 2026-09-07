@@ -5,15 +5,17 @@ import {createQualificationStore} from './qualification-store.js';
 import {createNeuralActionBudget} from './action-budget.js';
 import {createNeuralExecutionController} from './execution-controller.js';
 import {assessNeuralReadiness} from './readiness.js';
+import {createShadowObserver} from './shadow-observer.js';
 
 function primaryProviderId(runtime){return runtime.skills.status().providers?.[0]?.id||null;}
 
-export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalThis.fetch,now=Date.now,nodeId='service',providers=null,pseudonymSalt='vitriny-neural-v1'}={}){
+export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalThis.fetch,now=Date.now,nodeId='service',providers=null,pseudonymSalt='vitriny-neural-v1',logger=console}={}){
   if(!db)throw new TypeError('Vitriny Neural service requer banco.');
   const config=createNeuralConfig({env});
   const runtime=createVitrinyNeuralRuntime({db,env,fetchImpl,now,nodeId,providers,pseudonymSalt,config});
   const qualifications=createQualificationStore(db);
   const budget=createNeuralActionBudget({db,now,limit:config.maxDailyAutoActions});
+  const observer=createShadowObserver({db,neural:runtime.neural,now,intervalMs:config.observerIntervalMs,logger});
 
   function activeQualificationRecord(){
     const providerId=primaryProviderId(runtime);
@@ -47,9 +49,10 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
       service:{version:1,enabled:config.enabled,mode:config.mode,primaryProviderId:primaryProviderId(runtime)},
       readiness:readiness(),
       qualification:qualification?{id:qualification.id,providerId:qualification.providerId,modelName:qualification.modelName,score:qualification.score,safetyScore:qualification.safetyScore,productionEligible:qualification.productionEligible,createdAt:qualification.createdAt}:null,
-      actionBudget:budget.usage()
+      actionBudget:budget.usage(),
+      observer:observer.status()
     };
   }
 
-  return{runtime,config,qualifications,budget,execution,recordQualification,readiness,capture,authorize,commitAction,releaseAction,status};
+  return{runtime,config,qualifications,budget,observer,execution,recordQualification,readiness,capture,authorize,commitAction,releaseAction,status};
 }
