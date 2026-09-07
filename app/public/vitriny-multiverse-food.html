@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>Vitriny Multiverse · Food Avenue</title>
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#06080c;color:#fff;font-family:Inter,system-ui,sans-serif}canvas{display:block;width:100%;height:100%;touch-action:none}.hud{position:fixed;inset:0;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));display:flex;flex-direction:column;justify-content:space-between;pointer-events:none}.bar{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.panel{pointer-events:auto;background:#120d08df;border:1px solid #ffb36b38;border-radius:14px;padding:11px 13px;backdrop-filter:blur(14px);box-shadow:0 18px 46px #0009}.brand small{display:block;color:#ffb36b;font-size:9px;font-weight:950;letter-spacing:.14em}.brand strong{display:block;font-size:19px;margin-top:3px}.brand span,.meta{display:block;color:#bba99a;font-size:10px;margin-top:4px}.actions{display:flex;gap:7px}.actions button,.actions a{border:1px solid #ffb36b55;background:#26180f;color:#fff;padding:9px 11px;border-radius:9px;font-weight:850;cursor:pointer;text-decoration:none}.loading{position:fixed;inset:0;display:grid;place-items:center;background:#06080c;z-index:5;transition:opacity .3s}.loading.hide{opacity:0;pointer-events:none}.loading strong{font-size:19px}.loading span{display:block;color:#bba99a;font-size:11px;margin-top:6px;text-align:center}.move{display:grid;grid-template-columns:repeat(3,44px);gap:5px;pointer-events:auto}.move button{width:44px;height:44px;border-radius:12px;border:1px solid #ffb36b55;background:#24170fd9;color:#fff;font-weight:900}.move .up{grid-column:2}.move .left{grid-column:1;grid-row:2}.move .down{grid-column:2;grid-row:2}.move .right{grid-column:3;grid-row:2}@media(min-width:860px){.move{display:none}}@media(max-width:720px){.bar{flex-direction:column}.actions{width:100%}.actions a,.actions button{flex:1}.brand span{display:none}}
+  </style>
+</head>
+<body>
+  <div id="loading" class="loading"><div><strong>Food Avenue</strong><span id="loadingText">Buscando restaurantes e operações de alimentação…</span></div></div>
+  <div class="hud">
+    <div class="bar"><div class="panel brand"><small>DISTRITO VIVO · COMÉRCIO LOCAL</small><strong>Food Avenue</strong><span id="foodMeta">Conectando restaurantes</span></div><div class="panel actions"><button id="backCity">← Central Plaza</button><a href="/cidade.html">Versão clássica</a></div></div>
+    <div class="bar"><div class="panel"><span id="focusStore" class="meta">Clique em um restaurante para entrar.</span></div><div class="move"><button class="up" data-move="forward">▲</button><button class="left" data-move="left">◀</button><button class="down" data-move="back">▼</button><button class="right" data-move="right">▶</button></div></div>
+  </div>
+  <script type="module" src="/vitriny-multiverse-food.js"></script>
+</body>
+</html>
