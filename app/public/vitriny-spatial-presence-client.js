@@ -46,7 +46,7 @@ export function startSpatialPresence({district=inferSpatialPresenceDistrict(),fe
   let stopped=false,timer=null,inFlight=false,stream=null,lastVersion=-1;
   const render=data=>{
     if(!data)return;const version=Number(data.version??-1);if(version>=0&&version<lastVersion)return;if(version>=0)lastVersion=version;
-    const local=Number(data.count??data.districts?.[district]||0),total=Number(data.total||0);
+    const local=Number((data.count??data.districts?.[district])??0),total=Number(data.total||0);
     if(badge)badge.textContent=`${local} ativos aqui · ${total} no multiverso`;
     try{onSnapshot?.({...data,district,count:local});}catch{}
   };
