@@ -1,3 +1,5 @@
+import {districtExperience} from './district-integrations.js';
+
 export const CENTRAL_PLAZA_ID='central-plaza';
 
 const DISTRICTS=Object.freeze([
@@ -14,8 +16,8 @@ const DISTRICTS=Object.freeze([
 export function centralPlazaLayout({radius=92,portalRadius=68}={}){
   const r=Math.max(40,Math.min(240,Number(radius)||92)),pr=Math.max(24,Math.min(r-10,Number(portalRadius)||68));
   const districts=DISTRICTS.map(item=>{
-    const rad=item.angle*Math.PI/180;
-    return {...item,position:{x:Number((Math.cos(rad)*r).toFixed(3)),y:0,z:Number((Math.sin(rad)*r).toFixed(3))},portal:{x:Number((Math.cos(rad)*pr).toFixed(3)),y:1.5,z:Number((Math.sin(rad)*pr).toFixed(3))}};
+    const rad=item.angle*Math.PI/180,experience=districtExperience(item.id);
+    return {...item,experience,position:{x:Number((Math.cos(rad)*r).toFixed(3)),y:0,z:Number((Math.sin(rad)*r).toFixed(3))},portal:{x:Number((Math.cos(rad)*pr).toFixed(3)),y:1.5,z:Number((Math.sin(rad)*pr).toFixed(3))}};
   });
   return {
     id:CENTRAL_PLAZA_ID,
@@ -33,7 +35,7 @@ export function centralPlazaLayout({radius=92,portalRadius=68}={}){
 }
 
 export function centralPlazaPortals(){
-  return centralPlazaLayout().districts.map(d=>({id:`portal-${d.id}`,label:d.label,from:{country:'br',region:'go',city:'vitrine-city'},to:{country:'br',region:'go',city:'vitrine-city',district:d.id},kind:d.kind}));
+  return centralPlazaLayout().districts.map(d=>({id:`portal-${d.id}`,label:d.label,from:{country:'br',region:'go',city:'vitrine-city'},to:{country:'br',region:'go',city:'vitrine-city',district:d.id},kind:d.kind,experience:d.experience}));
 }
 
 export const spatialDistricts=DISTRICTS;
