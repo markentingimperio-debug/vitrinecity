@@ -4,7 +4,7 @@ const DEFINITIONS=Object.freeze([
   {id:'commerce',label:'Commerce District',spatialPath:'/v/br/go/vitrine-city/commerce',href:'/loja.html',fallbackHref:'/loja.html',description:'Lojas, ofertas e marketplace da Vitrine City.'},
   {id:'social',label:'Social District',spatialPath:'/v/br/go/vitrine-city/social',href:'/vitriny-multiverse-district.html?district=social',fallbackHref:'/social.html',description:'Rede social, perfis, conteúdo e comunidades.'},
   {id:'creator',label:'Creator District',spatialPath:'/v/br/go/vitrine-city/creator',href:'/afiliados.html',fallbackHref:'/afiliados.html',description:'Criadores, afiliados e oportunidades de conteúdo.'},
-  {id:'food',label:'Food Avenue',spatialPath:'/v/br/go/vitrine-city/food',href:'/cidade.html',fallbackHref:'/cidade.html',description:'Ponte atual para negócios e experiências locais da cidade.'},
+  {id:'food',label:'Food Avenue',spatialPath:'/v/br/go/vitrine-city/food',href:'/vitriny-multiverse-food.html',fallbackHref:'/cidade.html',description:'Restaurantes, cardápios e experiências locais de alimentação.'},
   {id:'education',label:'Education District',spatialPath:'/v/br/go/vitrine-city/education',href:'/vitriny-multiverse-district.html?district=education',fallbackHref:'/centro-educacional.html',description:'Cursos, aprendizagem e experiências educacionais.'},
   {id:'entertainment',label:'Entertainment District',spatialPath:'/v/br/go/vitrine-city/entertainment',href:'/passeio-virtual.html',fallbackHref:'/passeio-virtual.html',description:'Passeios, entretenimento e experiências imersivas.'},
   {id:'business',label:'Business District',spatialPath:'/v/br/go/vitrine-city/business',href:'/para-empresas.html',fallbackHref:'/para-empresas.html',description:'Soluções, presença digital e recursos para empresas.'},
@@ -24,7 +24,7 @@ export const DISTRICT_INTEGRATIONS=Object.freeze(DEFINITIONS.map(item=>Object.fr
   spatialPath:safePath(item.spatialPath,'Rota espacial'),
   href:safePath(item.href,'Destino'),
   fallbackHref:safePath(item.fallbackHref,'Fallback'),
-  mode:item.href.includes('vitriny-multiverse-district')?'spatial-live':'bridge',
+  mode:item.href.includes('vitriny-multiverse')?'spatial-live':'bridge',
   enabled:true
 })));
 
