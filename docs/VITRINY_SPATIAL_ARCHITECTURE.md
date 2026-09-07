@@ -66,9 +66,20 @@ Primeiro espaço premium. O núcleo visual é `Vitriny Neural Core`, cercado por
 
 ### Commerce Live Layer
 
-A camada Commerce já pode consultar `/api/marketplace/stores` e transformar lojas publicadas em edifícios espaciais determinísticos. A entidade 3D mantém somente referência, apresentação pública e coordenadas; catálogo, estoque, preço e regras continuam pertencendo ao marketplace.
+A camada Commerce consulta `/api/marketplace/stores` e transforma lojas publicadas em edifícios espaciais determinísticos. A entidade 3D mantém somente referência, apresentação pública e coordenadas; catálogo, estoque, preço e regras continuam pertencendo ao marketplace.
 
-Ao selecionar um edifício de loja, o usuário entra no showroom espacial isolado. O showroom consulta apenas APIs públicas do marketplace, filtra o catálogo pela referência da loja e materializa até 24 produtos como entidades clicáveis. A página pública HTML da loja e as páginas de produto continuam sendo a fonte canônica para SEO e compra.
+Ao selecionar um edifício de loja, o usuário entra no showroom espacial isolado. O showroom consulta apenas APIs públicas do marketplace, filtra o catálogo pela referência da loja e materializa produtos como entidades clicáveis. A página pública HTML da loja e as páginas de produto continuam sendo a fonte canônica para SEO e compra.
+
+### Live District Layer
+
+O mesmo princípio agora começa a ser aplicado fora do Commerce:
+
+- **Social District** consome sugestões públicas de perfis e transforma pessoas/comunidades em entidades espaciais clicáveis;
+- **Education District** consome cursos públicos e materializa experiências educacionais como pavilhões;
+- **Services District** consome serviços digitais públicos e materializa quiosques/edifícios de solução;
+- cada distrito mantém um `fallbackHref` para a experiência HTML clássica.
+
+Esses distritos vivos não copiam banco de dados nem lógica de negócio. Eles apenas projetam dados públicos já existentes no espaço 3D.
 
 ### Spatial Session Return
 
@@ -117,11 +128,12 @@ O mundo 3D não substitui páginas indexáveis. Cada entidade comercial deve con
 2. **Renderer v1** — Three.js, câmera, LOD, ciclo load/unload e descarte de recursos.
 3. **Central Plaza visual** — arquitetura premium e portais.
 4. **Commerce District v1** — Store ID -> Building ID, lojas vivas, showroom 3D, produtos clicáveis e retorno à posição anterior.
-5. **Spatial API** — cidades, chunks e entidades servidos por endpoint versionado dedicado quando o volume justificar.
-6. **Presence** — presença agregada; depois avatares e WebSocket.
-7. **Multicity** — Silvânia, Anápolis, Goiânia e expansão por demanda.
-8. **WebGPU/VR** — somente após métricas provarem necessidade.
+5. **Live Districts v1** — Social, Education e Services conectados aos dados públicos reais; Creator, Food, Entertainment e Business entram na sequência.
+6. **Spatial API** — cidades, chunks e entidades servidos por endpoint versionado dedicado quando o volume justificar.
+7. **Presence** — presença agregada; depois avatares e WebSocket.
+8. **Multicity** — Silvânia, Anápolis, Goiânia e expansão por demanda.
+9. **WebGPU/VR** — somente após métricas provarem necessidade.
 
 ## Critério para produção
 
-O Spatial Core entra primeiro como rota isolada/preview. A cidade atual só passa a depender dele depois de testes de FPS, memória, fallback Lite, navegação por teclado/toque, carregamento progressivo, SEO e rollback. Showrooms espaciais permanecem desacoplados de checkout e pagamentos: qualquer compra continua passando pelas rotas públicas e regras transacionais existentes.
+O Spatial Core entra primeiro como rota isolada/preview. A cidade atual só passa a depender dele depois de testes de FPS, memória, fallback Lite, navegação por teclado/toque, carregamento progressivo, SEO e rollback. Showrooms e distritos espaciais permanecem desacoplados de checkout e pagamentos: qualquer compra ou ação transacional continua passando pelas rotas e regras existentes.
