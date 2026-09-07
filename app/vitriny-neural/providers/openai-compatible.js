@@ -20,7 +20,7 @@ function systemPrompt(capability){
   return `Você é um worker do Vitriny Neural. Execute somente a capacidade ${capability}. Responda em português do Brasil, de forma factual e operacional. Não invente dados ausentes. Não execute pagamentos, alterações destrutivas, deploy ou uso de credenciais. Quando faltarem fatos necessários, declare a limitação. Para código, prefira proposta/diff e testes; não afirme que publicou em produção.`;
 }
 
-export function createOpenAICompatibleProvider({id='local-model',baseUrl,apiKey='',model='local',capabilities=DEFAULT_CAPABILITIES,priority=50,costClass='local',local=true,temperature=.2,maxTokens=1200,fetchImpl=globalThis.fetch}={}){
+export function createOpenAICompatibleProvider({id='local-model',baseUrl,apiKey='',model='local',capabilities=DEFAULT_CAPABILITIES,priority=50,costClass='local',local=true,temperature=.2,maxTokens=1200,disableThinking=local,fetchImpl=globalThis.fetch}={}){
   if(typeof fetchImpl!=='function')throw new TypeError('Provider requer fetch.');
   const url=cleanBaseUrl(baseUrl);
   const providerId=cleanText(id,64,2);
@@ -29,15 +29,21 @@ export function createOpenAICompatibleProvider({id='local-model',baseUrl,apiKey=
   return {
     id:providerId,capabilities:caps,priority,costClass,local,
     async available(){return true;},
-    async invoke({capability,input,signal}){
+    async invoke({capability,input,signal,options={}}){
       if(!caps.includes(capability))throw new Error(`Capacidade não suportada pelo modelo: ${capability}`);
+      const requestedMax=Number(options.maxTokens);
+      const effectiveMax=Number.isFinite(requestedMax)?Math.max(64,Math.min(Number(maxTokens),requestedMax)):Number(maxTokens);
+      const payload={
+        model:modelName,temperature:Number(temperature),max_tokens:effectiveMax,
+        messages:[{role:'system',content:systemPrompt(capability)},{role:'user',content:JSON.stringify(input??{})}]
+      };
+      // llama.cpp + Qwen3 podem gastar quase todo o orçamento em raciocínio oculto. No provider local,
+      // desligamos esse modo para que a console administrativa receba uma resposta útil rapidamente.
+      if(disableThinking)payload.chat_template_kwargs={enable_thinking:false};
       const response=await fetchImpl(`${url}/v1/chat/completions`,{
         method:'POST',signal,
         headers:{'content-type':'application/json',...(apiKey?{authorization:`Bearer ${apiKey}`}:{})},
-        body:JSON.stringify({
-          model:modelName,temperature:Number(temperature),max_tokens:Number(maxTokens),
-          messages:[{role:'system',content:systemPrompt(capability)},{role:'user',content:JSON.stringify(input??{})}]
-        })
+        body:JSON.stringify(payload)
       });
       if(!response.ok){const body=await response.text().catch(()=> '');throw new Error(`Modelo HTTP ${response.status}: ${body.slice(0,240)}`);}
       const data=await response.json();
