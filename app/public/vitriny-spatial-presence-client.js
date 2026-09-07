@@ -40,11 +40,16 @@ function ensureBadge(documentRef){
   documentRef.body.appendChild(badge);return badge;
 }
 
-export function startSpatialPresence({district=inferSpatialPresenceDistrict(),fetchImpl=globalThis.fetch,documentRef=globalThis.document,navigatorRef=globalThis.navigator,heartbeatMs=20_000}={}){
+export function startSpatialPresence({district=inferSpatialPresenceDistrict(),fetchImpl=globalThis.fetch,documentRef=globalThis.document,navigatorRef=globalThis.navigator,EventSourceImpl=globalThis.EventSource,heartbeatMs=20_000,onSnapshot}={}){
   if(!ALLOWED.has(district)||typeof fetchImpl!=='function'||!documentRef)return null;
   const sessionId=spatialPresenceSessionId(),badge=ensureBadge(documentRef),interval=Math.max(10_000,Math.min(40_000,Number(heartbeatMs)||20_000));
-  let stopped=false,timer=null,inFlight=false;
-  const render=data=>{if(!badge||!data)return;const local=Number(data.count||data.districts?.[district]||0),total=Number(data.total||0);badge.textContent=`${local} ativos aqui · ${total} no multiverso`;};
+  let stopped=false,timer=null,inFlight=false,stream=null,lastVersion=-1;
+  const render=data=>{
+    if(!data)return;const version=Number(data.version??-1);if(version>=0&&version<lastVersion)return;if(version>=0)lastVersion=version;
+    const local=Number(data.count??data.districts?.[district]||0),total=Number(data.total||0);
+    if(badge)badge.textContent=`${local} ativos aqui · ${total} no multiverso`;
+    try{onSnapshot?.({...data,district,count:local});}catch{}
+  };
   const beat=async()=>{
     if(stopped||inFlight||documentRef.visibilityState==='hidden')return;
     inFlight=true;
@@ -54,13 +59,23 @@ export function startSpatialPresence({district=inferSpatialPresenceDistrict(),fe
     }catch{if(badge)badge.textContent='Presença espacial reconectando…';}
     finally{inFlight=false;}
   };
+  const connectStream=()=>{
+    if(stopped||typeof EventSourceImpl!=='function')return;
+    try{
+      stream=new EventSourceImpl('/api/spatial/presence/stream',{withCredentials:true});
+      const handler=event=>{try{render(JSON.parse(event.data));}catch{}};
+      stream.addEventListener?.('presence',handler);
+      stream.onmessage=handler;
+      stream.onerror=()=>{if(!stopped&&badge&&documentRef.visibilityState!=='hidden')badge.textContent='Presença espacial reconectando…';};
+    }catch{}
+  };
   const leave=()=>{
-    if(stopped)return;stopped=true;if(timer)clearInterval(timer);
+    if(stopped)return;stopped=true;if(timer)clearInterval(timer);try{stream?.close?.();}catch{}
     try{const body=new Blob([JSON.stringify({sessionId})],{type:'application/json'});navigatorRef?.sendBeacon?.('/api/spatial/presence/leave',body);}catch{}
   };
-  const onVisibility=()=>{if(documentRef.visibilityState==='visible')beat();};
+  const onVisibility=()=>{if(documentRef.visibilityState==='visible'){beat();if(!stream)connectStream();}};
   documentRef.addEventListener('visibilitychange',onVisibility);globalThis.addEventListener?.('pagehide',leave,{once:true});
-  beat();timer=setInterval(beat,interval);
+  beat();connectStream();timer=setInterval(beat,interval);
   return Object.freeze({district,sessionId,beat,stop:()=>{documentRef.removeEventListener('visibilitychange',onVisibility);leave();}});
 }
 
