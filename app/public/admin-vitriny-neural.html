@@ -103,13 +103,33 @@
     </section>
   </div>
 
+  <section class="panel" aria-labelledby="research-neural-title">
+    <div class="section-head"><div><p class="eyebrow">06 / PESQUISA WEB</p><h2 id="research-neural-title">Conhecimento candidato da internet</h2></div><span id="web-research-state" class="tag">CARREGANDO</span></div>
+    <p class="muted">Pesquisa motores públicos via SearXNG, pontua autoridade e concordância entre mecanismos e salva somente candidatos. Nenhum resultado da internet vira verdade ou treinamento automaticamente.</p>
+    <div class="shadow-grid">
+      <article><span>CONFIGURAÇÃO</span><strong id="web-research-config">—</strong><small id="web-research-engines">—</small></article>
+      <article><span>RODADAS HOJE</span><strong id="web-research-runs">—</strong><small id="web-research-limit">—</small></article>
+      <article><span>CANDIDATOS</span><strong id="web-research-pending">—</strong><small>aguardando validação</small></article>
+      <article><span>APROVADOS</span><strong id="web-research-approved">—</strong><small>revisados para uso futuro</small></article>
+    </div>
+    <form id="web-research-form">
+      <label for="web-research-topic">Tema</label>
+      <input id="web-research-topic" maxlength="140" placeholder="Ex.: SEO técnico e indexação">
+      <label for="web-research-query">Consulta específica (opcional)</label>
+      <textarea id="web-research-query" rows="3" maxlength="300" placeholder="Ex.: melhores práticas oficiais de indexação e conteúdo útil para marketplace local"></textarea>
+      <div class="form-foot"><small id="web-research-last">Aguardando estado da pesquisa.</small><button class="primary" id="web-research-start" type="submit">Pesquisar agora ↗</button></div>
+    </form>
+    <h3>Conhecimentos candidatos</h3>
+    <div id="web-research-candidates" class="stack"><p class="muted">Carregando candidatos…</p></div>
+  </section>
+
   <section class="panel" aria-labelledby="precision-title">
-    <div class="section-head"><div><p class="eyebrow">06 / PRECISÃO</p><h2 id="precision-title">Histórico de qualificação</h2></div><span class="tag">POR CAPACIDADE</span></div>
+    <div class="section-head"><div><p class="eyebrow">07 / PRECISÃO</p><h2 id="precision-title">Histórico de qualificação</h2></div><span class="tag">POR CAPACIDADE</span></div>
     <p class="muted">Um modelo pode ser aprovado para uma área e bloqueado em outra. Segurança tem limiar próprio.</p>
     <div id="qualifications"><p class="muted">Nenhuma qualificação carregada.</p></div>
   </section>
 
-  <footer><strong>Vitriny Neural · inteligência mensurável.</strong><p>O console é administrativo. Testes não concedem autonomia e o benchmark não altera o modo operacional automaticamente.</p><a href="/admin-jarvis.html">Voltar ao Jarvis</a></footer>
+  <footer><strong>Vitriny Neural · inteligência mensurável.</strong><p>O console é administrativo. Testes não concedem autonomia e pesquisa web cria candidatos revisáveis, não aprendizado irrestrito.</p><a href="/admin-jarvis.html">Voltar ao Jarvis</a></footer>
 </main>
 </body>
 </html>

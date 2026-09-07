@@ -13,12 +13,12 @@ export function setupVitrinyNeural({app,db,requireAdmin,sameOriginOnly,env=proce
   try{
     const service=createVitrinyNeuralService({db,env,fetchImpl,nodeId,pseudonymSalt:pseudonymSalt(env),logger});
     mountVitrinyNeuralAdmin({app,service,requireAdmin,sameOriginOnly});
-    if(service.config.enabled)service.observer.start();
+    if(service.config.enabled){service.observer.start();service.webResearch?.schedule?.();}
     const capture=(event)=>{
       try{return service.capture(event);}catch(error){logger?.warn?.('[vitriny-neural] event rejected',String(error?.message||error));return{accepted:false,reason:'capture_failed'};}
     };
-    logger?.info?.(`[vitriny-neural] initialized mode=${service.config.mode} enabled=${service.config.enabled}`);
-    return{enabled:service.config.enabled,service,capture,status:()=>service.status(),stop:()=>service.observer.stop()};
+    logger?.info?.(`[vitriny-neural] initialized mode=${service.config.mode} enabled=${service.config.enabled} webResearch=${service.webResearch?.status?.().enabled===true}`);
+    return{enabled:service.config.enabled,service,capture,status:()=>service.status(),stop:()=>{service.observer.stop();service.webResearch?.stop?.();return true;}};
   }catch(error){
     logger?.error?.('[vitriny-neural] initialization failed',String(error?.message||error));
     if(truthy(env.VITRINY_NEURAL_REQUIRED))throw error;

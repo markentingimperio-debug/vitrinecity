@@ -25,6 +25,15 @@ export function mountVitrinyNeuralAdmin({app,runtime=null,service=null,requireAd
     const item=service.benchmarks.get(req.params.id);
     return item?res.json({ok:true,item}):res.status(404).json({error:'Benchmark não encontrado.'});
   });
+  app.get(API+'/web-research/status',(_req,res)=>{
+    if(!service?.webResearch?.status)return res.status(503).json({error:'Pesquisa Neural indisponível.'});
+    return res.json({ok:true,...service.webResearch.status()});
+  });
+  app.get(API+'/web-research/candidates',(req,res)=>{
+    if(!service?.webResearch?.listCandidates)return res.status(503).json({error:'Pesquisa Neural indisponível.'});
+    const status=['candidate','approved','rejected'].includes(String(req.query.status))?String(req.query.status):'candidate';
+    return res.json({ok:true,items:service.webResearch.listCandidates({status,limit:Math.min(100,Number(req.query.limit)||50)})});
+  });
   app.get(API+'/actions',(_req,res)=>{
     if(!service?.budget?.recent)return res.status(503).json({error:'Action budget indisponível.'});
     return res.json({ok:true,usage:service.budget.usage(),items:service.budget.recent(50)});
@@ -35,6 +44,21 @@ export function mountVitrinyNeuralAdmin({app,runtime=null,service=null,requireAd
       const item=service.benchmarks.start({actorId:req.user?.id??null});
       return res.status(202).json({ok:true,item});
     }catch(error){return res.status(error?.status||500).json({error:String(error?.message||'Não foi possível iniciar o benchmark.').slice(0,400)});}
+  });
+  app.post(API+'/web-research/start',async(req,res)=>{
+    try{
+      if(!service?.webResearch?.run)return res.status(503).json({error:'Pesquisa Neural indisponível.'});
+      const body=safeBody(req.body),result=await service.webResearch.run({topic:body.topic,query:body.query,actor:`admin:${req.user?.id||'unknown'}`});
+      return res.json({ok:true,result});
+    }catch(error){return res.status(error?.message==='research_daily_limit'?429:502).json({error:String(error?.message||'Falha na pesquisa Neural.').slice(0,400)});}
+  });
+  app.post(API+'/web-research/candidates/:id/review',(req,res)=>{
+    try{
+      if(!service?.webResearch?.reviewCandidate)return res.status(503).json({error:'Pesquisa Neural indisponível.'});
+      const body=safeBody(req.body),status=String(body.status||'');
+      if(!['approved','rejected','candidate'].includes(status))return res.status(400).json({error:'Status de revisão inválido.'});
+      return res.json({ok:true,item:service.webResearch.reviewCandidate(req.params.id,{status,note:String(body.note||'').slice(0,500)})});
+    }catch(error){return res.status(400).json({error:String(error?.message||'Falha ao revisar candidato.').slice(0,400)});}
   });
   app.post(API+'/readiness',(req,res)=>{
     try{
@@ -73,9 +97,15 @@ export function mountVitrinyNeuralAdmin({app,runtime=null,service=null,requireAd
     try{
       const id=String(req.params.id||'');if(!ALLOWED_SKILLS.has(id))return res.status(404).json({error:'Skill não disponível neste endpoint.'});
       const input=safeBody(req.body);
-      const result=await activeRuntime.skills.run(id,input,{learningContext:{actor:'admin',userId:req.user?.id||null}});
-      return res.json({ok:true,result});
-    }catch(error){return res.status(error?.status||502).json({error:String(error?.message||'Falha na skill.').slice(0,400)});}
+      // A console é um ambiente de avaliação: ela pode testar um provider que tenha sido bloqueado por
+      // benchmark, mas o resultado nunca autoriza execução automática nem altera o modo da Neural.
+      const result=await activeRuntime.skills.run(id,input,{evaluation:true,maxTokens:400,learningContext:{actor:'admin-evaluation',userId:req.user?.id||null}});
+      return res.json({ok:true,evaluation:true,result});
+    }catch(error){
+      const attempts=Array.isArray(error?.attempts)?error.attempts:[];
+      const detail=attempts.length?` ${attempts.map(a=>`${a.provider}: ${a.error}`).join(' | ')}`:'';
+      return res.status(error?.status||502).json({error:(String(error?.message||'Falha na skill.')+detail).slice(0,700)});
+    }
   });
   app.post(API+'/events',(req,res)=>{
     try{
