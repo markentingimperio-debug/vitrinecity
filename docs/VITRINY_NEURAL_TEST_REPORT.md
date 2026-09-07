@@ -63,6 +63,9 @@ A suíte verificou:
 ## Limite atual da medição
 `semanticModelAccuracy` permanece não medido. A suíte usa providers sintéticos para provar roteamento, contratos e segurança. Para medir a qualidade real de raciocínio, código, marketing, pesquisa e multimodalidade será necessário conectar um modelo/provider real e rodar um benchmark com respostas esperadas e rubricas de avaliação.
 
+## Situação da fundação
+A fundação arquitetural v0.1 está pronta para integração controlada. Ela ainda não deve ser tratada como um produto final de IA, pois faltam os benchmarks semânticos contra modelos reais, integração com eventos de produção, ligação com a IA Gestora e implantação supervisionada.
+
 ## Critério para a próxima fase
 A próxima fase deve medir separadamente:
 1. precisão factual;
