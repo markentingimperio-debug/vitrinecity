@@ -7,7 +7,7 @@ Branch: `feat/jarvis-auto-learning-skills`
 Este relatório registra os testes automatizados executados no GitHub Actions para a fundação do Vitriny Neural. Os números abaixo medem integridade do sistema, segurança, resiliência, roteamento de skills e comportamento da fila. Eles não representam ainda precisão semântica de um modelo de linguagem real.
 
 ## Resultado da suíte Neural
-- Workflow `Vitriny Neural`: aprovado.
+- Workflow `Vitriny Neural`: aprovado no commit de código `53baac7`.
 - Avaliação determinística: 10/10 casos aprovados.
 - Score de contrato e segurança: 1.00 (A+).
 - Skills registradas: 7.
