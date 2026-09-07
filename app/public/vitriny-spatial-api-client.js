@@ -15,6 +15,12 @@ function timeoutSignal(timeoutMs){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),Math.max(800,Math.min(20000,Number(timeoutMs)||6000)));
   return{signal:controller.signal,clear:()=>clearTimeout(timer)};
 }
+function normalizeCityRecord(city){
+  const id=normalizeSpatialCityId(city?.id,'');
+  if(!id||String(city?.worldKey||'')!==`br:go:${id}`)return null;
+  const status=String(city?.status||'preview').toLowerCase()==='active'?'active':'preview';
+  return Object.freeze({...spatialFallbackCity(id),...city,id,worldKey:`br:go:${id}`,status,chunkSize:Math.max(16,Math.min(2048,Math.trunc(finite(city?.chunkSize,128))))});
+}
 
 export function normalizeSpatialCityId(value,fallback='vitrine-city'){
   const id=String(value??'').trim().toLowerCase();
@@ -31,9 +37,27 @@ export function spatialFallbackCity(cityId='vitrine-city'){
   return FALLBACK_CITIES[normalizeSpatialCityId(cityId)]||FALLBACK_CITIES['vitrine-city'];
 }
 
+export function spatialFallbackCities(){
+  return Object.freeze(Object.values(FALLBACK_CITIES).map(city=>Object.freeze({...city})));
+}
+
 export function spatialExplorerHref(cityId='vitrine-city',{returnState=false}={}){
   const params=new URLSearchParams({city:normalizeSpatialCityId(cityId)});if(returnState)params.set('return','1');
   return `/vitriny-multiverse-explore.html?${params.toString()}`;
+}
+
+export async function fetchSpatialCities({fetchImpl=globalThis.fetch,timeoutMs=6000,country='br',region='go',status=''}={}){
+  if(typeof fetchImpl!=='function')throw new TypeError('spatial_api_fetch_required');
+  const params=new URLSearchParams();
+  const safeCountry=String(country||'').trim().toLowerCase().replace(/[^a-z0-9-]/g,'').slice(0,40),safeRegion=String(region||'').trim().toLowerCase().replace(/[^a-z0-9-]/g,'').slice(0,40),safeStatus=String(status||'').trim().toLowerCase();
+  if(safeCountry)params.set('country',safeCountry);if(safeRegion)params.set('region',safeRegion);if(['active','preview'].includes(safeStatus))params.set('status',safeStatus);
+  const timer=timeoutSignal(timeoutMs);
+  try{
+    const response=await fetchImpl(`/api/spatial/v1/cities${params.size?`?${params.toString()}`:''}`,{headers:{accept:'application/json'},cache:'no-store',signal:timer.signal});
+    if(!response.ok)throw new Error(`spatial_cities_${response.status}`);
+    const data=await response.json();if(Number(data?.apiVersion)!==1||!Array.isArray(data?.items))throw new Error('spatial_cities_invalid');
+    return Object.freeze(data.items.slice(0,64).map(normalizeCityRecord).filter(Boolean));
+  }finally{timer.clear();}
 }
 
 export async function fetchSpatialCityContext({cityId='vitrine-city',fetchImpl=globalThis.fetch,timeoutMs=6000}={}){
@@ -42,9 +66,9 @@ export async function fetchSpatialCityContext({cityId='vitrine-city',fetchImpl=g
   try{
     const response=await fetchImpl(`/api/spatial/v1/cities/${encodeURIComponent(id)}`,{headers:{accept:'application/json'},cache:'no-store',signal:timer.signal});
     if(!response.ok)throw new Error(`spatial_city_${response.status}`);
-    const data=await response.json(),city=data?.city;
-    if(!city||normalizeSpatialCityId(city.id,'')!==id||String(city.worldKey||'')!==`br:go:${id}`)throw new Error('spatial_city_invalid');
-    return Object.freeze({...spatialFallbackCity(id),...city,id,worldKey:`br:go:${id}`,chunkSize:Math.max(16,Math.min(2048,Math.trunc(finite(city.chunkSize,128))))});
+    const data=await response.json(),city=normalizeCityRecord(data?.city);
+    if(!city||city.id!==id)throw new Error('spatial_city_invalid');
+    return city;
   }finally{timer.clear();}
 }
 
