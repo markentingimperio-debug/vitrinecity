@@ -4,6 +4,7 @@ RUN apk add --no-cache python3 make g++ ffmpeg
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY *.js ./
+COPY vitriny-neural ./vitriny-neural
 COPY affiliate-catalog-seed.json ./
 COPY public ./public
 RUN node prepare-public-highlights.js
