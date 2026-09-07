@@ -23,11 +23,12 @@ export function createSpatialNeuralBridge({capture,telemetry,presence,now=Date.n
       });
     }
     for(const city of SPATIAL_CITIES){
+      const activeCount=Math.max(0,Number(presenceState?.cities?.[city.id]||0));
       const eventCount=Math.max(0,Number(telemetryState?.byCity?.[city.id]||0));
-      if(!eventCount)continue;
+      if(!activeCount&&!eventCount)continue;
       events.push({
         type:'spatial.aggregate',source:'spatial',entityType:'city',entityId:city.id,
-        payload:{eventCount,windowMinutes:Number(telemetryState?.windowMinutes||0),channel:'multiverse-city'},
+        payload:{activeCount,eventCount,windowMinutes:Number(telemetryState?.windowMinutes||0),channel:'multiverse-city'},
         dedupeKey:`spatial:${bucket}:city:${city.id}`,priority:1,occurredAt:new Date(time).toISOString()
       });
     }
