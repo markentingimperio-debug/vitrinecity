@@ -1,3 +1,5 @@
+import {normalizeSpatialCityId,spatialCityFromLocation} from '/vitriny-spatial-api-client.js';
+
 const PRESENCE_KEY='vitrinySpatialPresenceSession';
 const ALLOWED=new Set(['central','commerce','social','creator','food','education','entertainment','business','services']);
 
@@ -40,21 +42,21 @@ function ensureBadge(documentRef){
   documentRef.body.appendChild(badge);return badge;
 }
 
-export function startSpatialPresence({district=inferSpatialPresenceDistrict(),fetchImpl=globalThis.fetch,documentRef=globalThis.document,navigatorRef=globalThis.navigator,EventSourceImpl=globalThis.EventSource,heartbeatMs=20_000,onSnapshot}={}){
+export function startSpatialPresence({district=inferSpatialPresenceDistrict(),cityId=spatialCityFromLocation(),fetchImpl=globalThis.fetch,documentRef=globalThis.document,navigatorRef=globalThis.navigator,EventSourceImpl=globalThis.EventSource,heartbeatMs=20_000,onSnapshot}={}){
   if(!ALLOWED.has(district)||typeof fetchImpl!=='function'||!documentRef)return null;
-  const sessionId=spatialPresenceSessionId(),badge=ensureBadge(documentRef),interval=Math.max(10_000,Math.min(40_000,Number(heartbeatMs)||20_000));
+  const city=normalizeSpatialCityId(cityId),sessionId=spatialPresenceSessionId(),badge=ensureBadge(documentRef),interval=Math.max(10_000,Math.min(40_000,Number(heartbeatMs)||20_000));
   let stopped=false,timer=null,inFlight=false,stream=null,lastVersion=-1;
   const render=data=>{
     if(!data)return;const version=Number(data.version??-1);if(version>=0&&version<lastVersion)return;if(version>=0)lastVersion=version;
-    const local=Number((data.count??data.districts?.[district])??0),total=Number(data.total||0);
-    if(badge)badge.textContent=`${local} ativos aqui · ${total} no multiverso`;
-    try{onSnapshot?.({...data,district,count:local});}catch{}
+    const local=Number((data.count??data.districts?.[district])??0),cityTotal=Number((data.cityCount??data.cities?.[city])??0),total=Number(data.total||0);
+    if(badge)badge.textContent=`${local} aqui · ${cityTotal} na cidade · ${total} no multiverso`;
+    try{onSnapshot?.({...data,district,cityId:city,count:local,cityCount:cityTotal});}catch{}
   };
   const beat=async()=>{
     if(stopped||inFlight||documentRef.visibilityState==='hidden')return;
     inFlight=true;
     try{
-      const response=await fetchImpl('/api/spatial/presence/heartbeat',{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},credentials:'same-origin',cache:'no-store',body:JSON.stringify({district,sessionId}),signal:AbortSignal.timeout(4_000)});
+      const response=await fetchImpl('/api/spatial/presence/heartbeat',{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},credentials:'same-origin',cache:'no-store',body:JSON.stringify({district,cityId:city,sessionId}),signal:AbortSignal.timeout(4_000)});
       if(response.ok)render(await response.json());else if(badge)badge.textContent='Presença espacial temporariamente indisponível';
     }catch{if(badge)badge.textContent='Presença espacial reconectando…';}
     finally{inFlight=false;}
@@ -64,8 +66,7 @@ export function startSpatialPresence({district=inferSpatialPresenceDistrict(),fe
     try{
       stream=new EventSourceImpl('/api/spatial/presence/stream',{withCredentials:true});
       const handler=event=>{try{render(JSON.parse(event.data));}catch{}};
-      stream.addEventListener?.('presence',handler);
-      stream.onmessage=handler;
+      stream.addEventListener?.('presence',handler);stream.onmessage=handler;
       stream.onerror=()=>{if(!stopped&&badge&&documentRef.visibilityState!=='hidden')badge.textContent='Presença espacial reconectando…';};
     }catch{}
   };
@@ -76,7 +77,7 @@ export function startSpatialPresence({district=inferSpatialPresenceDistrict(),fe
   const onVisibility=()=>{if(documentRef.visibilityState==='visible'){beat();if(!stream)connectStream();}};
   documentRef.addEventListener('visibilitychange',onVisibility);globalThis.addEventListener?.('pagehide',leave,{once:true});
   beat();connectStream();timer=setInterval(beat,interval);
-  return Object.freeze({district,sessionId,beat,stop:()=>{documentRef.removeEventListener('visibilitychange',onVisibility);leave();}});
+  return Object.freeze({district,cityId:city,sessionId,beat,stop:()=>{documentRef.removeEventListener('visibilitychange',onVisibility);leave();}});
 }
 
 export function autoStartSpatialPresence(){return startSpatialPresence();}
