@@ -1,5 +1,3 @@
-import {createHash} from 'node:crypto';
-
 const TEMPLATES=Object.freeze({
   retail:{width:[12,24],depth:[10,20],height:[8,22]},
   food:{width:[10,20],depth:[10,18],height:[7,16]},
@@ -10,8 +8,13 @@ const TEMPLATES=Object.freeze({
   residential:{width:[14,28],depth:[14,26],height:[14,44]}
 });
 
+function hashSeed(value){
+  let h=2166136261>>>0;
+  for(const ch of String(value)){h^=ch.codePointAt(0);h=Math.imul(h,16777619)>>>0;}
+  return h||0x9e3779b9;
+}
 function rng(seed){
-  let x=parseInt(createHash('sha256').update(String(seed)).digest('hex').slice(0,8),16)>>>0;
+  let x=hashSeed(seed);
   return()=>{x^=x<<13;x^=x>>>17;x^=x<<5;return(x>>>0)/4294967296;};
 }
 function between(random,[min,max]){return min+(max-min)*random();}
