@@ -42,14 +42,18 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
     return{id,enabled:policy.enabled,allowedCapabilities:allowed?[...allowed]:null,source:policy.source};
   }
 
-  async function candidates(capability,{preferredProviders=[]}={}){
+  async function candidates(capability,{preferredProviders=[],evaluation=false}={}){
     const preferred=new Map(preferredProviders.map((id,index)=>[id,index])),clock=now();
     const rows=[];
     for(const provider of providers.values()){
       if(!provider.capabilities.has(capability))continue;
       const policy=providerPolicies.get(provider.id)||{enabled:true,allowedCapabilities:null};
-      if(!policy.enabled)continue;
-      if(policy.allowedCapabilities&&!policy.allowedCapabilities.has(capability))continue;
+      // Um provider reprovado em benchmark continua bloqueado para operação, mas pode ser chamado
+      // explicitamente pela console administrativa para diagnóstico/benchmark, sem executar ações.
+      if(!evaluation){
+        if(!policy.enabled)continue;
+        if(policy.allowedCapabilities&&!policy.allowedCapabilities.has(capability))continue;
+      }
       const s=statOf(stats,provider.id);
       if(s.openedUntil>clock)continue;
       if(s.openedUntil&&s.openedUntil<=clock){s.openedUntil=0;s.consecutiveFail=0;}
@@ -61,8 +65,8 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
     return rows.sort((a,b)=>a.preferred-b.preferred||a.provider.priority-b.provider.priority||b.reliability-a.reliability).map(x=>x.provider);
   }
 
-  async function invoke(capability,input,{preferredProviders=[],timeoutMs=120000}={}){
-    const list=await candidates(capability,{preferredProviders});
+  async function invoke(capability,input,{preferredProviders=[],timeoutMs=120000,evaluation=false,maxTokens=null}={}){
+    const list=await candidates(capability,{preferredProviders,evaluation});
     if(!list.length)throw new Error(`Nenhum provider disponível para ${capability}.`);
     const attempts=[];
     for(const provider of list){
@@ -70,13 +74,13 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
       try{
         const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);
         try{
-          const output=await provider.invoke({capability,input,signal:controller.signal});
+          const output=await provider.invoke({capability,input,signal:controller.signal,options:{evaluation,maxTokens}});
           const elapsed=Math.max(0,now()-started),s=statOf(stats,provider.id),usage=usageOf(output);s.success++;s.consecutiveFail=0;s.lastMs=elapsed;s.totalMs+=elapsed;s.openedUntil=0;s.inputTokens+=usage.inputTokens;s.outputTokens+=usage.outputTokens;s.totalTokens+=usage.totalTokens;
           return {provider:provider.id,output,durationMs:elapsed,usage,attempts:[...attempts,{provider:provider.id,ok:true}]};
         }finally{clearTimeout(timer);}
       }catch(error){
         const elapsed=Math.max(0,now()-started),s=statOf(stats,provider.id);s.fail++;s.consecutiveFail++;s.lastMs=elapsed;s.totalMs+=elapsed;if(s.consecutiveFail>=threshold)s.openedUntil=now()+cooldown;
-        attempts.push({provider:provider.id,ok:false,error:String(error?.message||'provider_failed').slice(0,240)});
+        attempts.push({provider:provider.id,ok:false,error:String(error?.name==='AbortError'?'provider_timeout':error?.message||'provider_failed').slice(0,240)});
       }
     }
     const error=new Error(`Todos os providers falharam para ${capability}.`);error.attempts=attempts;throw error;
@@ -84,7 +88,10 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
 
   async function run(skillId,input,context={}){
     const skill=skills.get(ensureId(skillId,'Skill'));if(!skill)throw new Error(`Skill ${skillId} não encontrada.`);
-    return skill.execute({input,context,invoke,candidates,registry:{skills,providers,stats,providerPolicies}});
+    const evaluation=context?.evaluation===true;
+    const invokeForSkill=(capability,payload,options={})=>invoke(capability,payload,{...options,evaluation,maxTokens:evaluation?(Number(context.maxTokens)||400):options.maxTokens});
+    const candidatesForSkill=(capability,options={})=>candidates(capability,{...options,evaluation});
+    return skill.execute({input,context,invoke:invokeForSkill,candidates:candidatesForSkill,registry:{skills,providers,stats,providerPolicies}});
   }
 
   function status(){const clock=now();return {skills:[...skills.values()].map(s=>({id:s.id,version:s.version,capabilities:s.capabilities,risk:s.risk})),providers:[...providers.values()].map(p=>{const s=statOf(stats,p.id),calls=s.success+s.fail,policy=providerPolicies.get(p.id)||{enabled:true,allowedCapabilities:null,source:'default'};return{id:p.id,capabilities:[...p.capabilities],priority:p.priority,costClass:p.costClass,local:p.local,policy:{enabled:policy.enabled,allowedCapabilities:policy.allowedCapabilities?[...policy.allowedCapabilities]:null,source:policy.source},stats:{success:s.success,fail:s.fail,consecutiveFail:s.consecutiveFail,reliability:(s.success+1)/(calls+2),avgMs:calls?s.totalMs/calls:0,lastMs:s.lastMs,inputTokens:s.inputTokens,outputTokens:s.outputTokens,totalTokens:s.totalTokens,circuit:s.openedUntil>clock?'open':'closed',openedUntil:s.openedUntil||null}};})};}
