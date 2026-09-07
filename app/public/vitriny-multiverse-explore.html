@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>Vitriny Multiverse · Exploração espacial</title>
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#02050c;color:#eef8ff;font-family:Inter,system-ui,sans-serif}canvas{display:block;width:100%;height:100%;touch-action:none}.hud{position:fixed;inset:0;pointer-events:none;padding:max(14px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) max(14px,env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));display:flex;flex-direction:column;justify-content:space-between}.top,.bottom{display:flex;justify-content:space-between;gap:12px}.panel{pointer-events:auto;background:#07101ccc;border:1px solid #6ee7ff2e;border-radius:14px;padding:11px 13px;backdrop-filter:blur(14px);box-shadow:0 16px 50px #0007}.brand small{display:block;color:#76eaff;font-size:9px;font-weight:900;letter-spacing:.16em}.brand strong{display:block;font-size:18px;margin-top:3px}.brand span,.stat span,.help{display:block;color:#97aabd;font-size:10px;margin-top:3px}.stat{min-width:160px}.stat strong{font-size:12px}.bottom{align-items:end}.help{max-width:420px;line-height:1.45}.portal{display:none}.portal.show{display:block}.portal button{margin-top:8px;border:1px solid #78e8ff55;background:#11243a;color:#eaffff;padding:8px 10px;border-radius:9px;font-weight:800;cursor:pointer}.pad{display:none;grid-template-columns:46px 46px 46px;grid-template-rows:46px 46px;gap:5px;pointer-events:auto}.pad button{border:1px solid #ffffff24;background:#07101cdd;color:#fff;border-radius:10px;font-weight:900;font-size:16px}.pad .up{grid-column:2}.pad .left{grid-column:1;grid-row:2}.pad .down{grid-column:2;grid-row:2}.pad .right{grid-column:3;grid-row:2}.loading{position:fixed;inset:0;display:grid;place-items:center;background:#02050c;z-index:5;transition:opacity .35s}.loading.hide{opacity:0;pointer-events:none}.loading strong{font-size:18px}.loading span{display:block;color:#8da2b9;font-size:11px;margin-top:6px;text-align:center}@media(max-width:760px){.stat{display:none}.pad{display:grid}.help{max-width:260px}.brand span{display:none}}
+  </style>
+</head>
+<body>
+  <div id="loading" class="loading"><div><strong>Vitriny Spatial Runtime</strong><span>Carregando chunks e Central Plaza…</span></div></div>
+  <div class="hud">
+    <div class="top">
+      <div class="panel brand"><small>MULTIVERSE · STREAMING PREVIEW</small><strong>Vitriny City Spatial</strong><span>Chunks carregam e descarregam conforme você se move.</span></div>
+      <div class="panel stat"><strong id="worldStat">br:go:vitrine-city</strong><span id="chunkStat">chunk 0,0 · 0 ativos</span><span id="fpsStat">perfil analisando</span></div>
+    </div>
+    <div class="bottom">
+      <div class="panel"><div class="help">PC: WASD/setas para mover · arraste para olhar · roda para zoom. No celular use o direcional.</div><div id="portal" class="portal"><strong id="portalName">Portal</strong><span id="portalHint">Entrar no distrito</span><button id="enterPortal" type="button">Entrar no portal</button></div></div>
+      <div id="pad" class="pad" aria-label="Controles de movimento"><button class="up" data-move="forward">▲</button><button class="left" data-move="left">◀</button><button class="down" data-move="back">▼</button><button class="right" data-move="right">▶</button></div>
+    </div>
+  </div>
+  <script type="module" src="/vitriny-multiverse-explore.js"></script>
+</body>
+</html>
