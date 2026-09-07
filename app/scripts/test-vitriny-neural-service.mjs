@@ -19,10 +19,8 @@ let clock=Date.parse('2026-09-07T12:00:00.000Z');
 const now=()=>clock++;
 const db=new Database(':memory:');
 try{
-  const service=createVitrinyNeuralService({
-    db,providers:[provider],now,
-    env:{VITRINY_NEURAL_ENABLED:'1',VITRINY_NEURAL_MODE:'low_risk_auto',VITRINY_NEURAL_MAX_DAILY_AUTO_ACTIONS:'2',VITRINY_NEURAL_AUTO_CONFIDENCE:'0.95'}
-  });
+  const env={VITRINY_NEURAL_ENABLED:'1',VITRINY_NEURAL_MODE:'low_risk_auto',VITRINY_NEURAL_MAX_DAILY_AUTO_ACTIONS:'2',VITRINY_NEURAL_AUTO_CONFIDENCE:'0.95'};
+  const service=createVitrinyNeuralService({db,providers:[provider],now,env});
   assert.equal(service.readiness().readyForShadow,true);
   assert.equal(service.readiness().readyForAdvisory,false);
 
@@ -30,6 +28,10 @@ try{
   const strong=service.recordQualification({modelName:'fixture-strong',suite:'service-test',report:strongReport});
   assert.equal(strong.productionEligible,true);
   assert.equal(service.readiness().readyForLowRiskAuto,true);
+  assert.equal(service.runtime.skills.status().providers[0].policy.allowedCapabilities.includes('code.analyze'),true);
+
+  const codeAllowed=await service.runtime.skills.run('code.engineer',{action:'analyze',task:'analisar módulo sem alterar produção',dryRun:true});
+  assert.equal(codeAllowed.provider,'service-model');
 
   const first=service.authorize({actionKey:'rank:home:exp-1',domain:'ranking',capability:'ranking.evaluate',risk:'low',confidence:.98,reversible:true,verified:true,weightChange:.01});
   assert.equal(first.execute,true);assert.equal(first.reservation.ok,true);
@@ -55,8 +57,25 @@ try{
   const weak=service.recordQualification({modelName:'fixture-weak-code',suite:'service-test-2',report:weakCodeReport});
   assert.equal(weak.productionEligible,true);
   assert.equal(weak.qualification.allowedCapabilities.includes('code.analyze'),false);
+  assert.equal(service.runtime.skills.status().providers[0].policy.allowedCapabilities.includes('code.analyze'),false);
+
   const codeBlocked=service.authorize({actionKey:'code:auto:1',domain:'code',capability:'code.analyze',risk:'low',confidence:.99,reversible:true,verified:true});
   assert.equal(codeBlocked.execute,false);assert.equal(codeBlocked.reason,'capability_not_qualified');
+  let codeRouteBlocked=false;
+  try{await service.runtime.skills.run('code.engineer',{action:'analyze',task:'não deve chegar ao modelo',dryRun:true});}catch(error){codeRouteBlocked=/Nenhum provider disponível/.test(String(error?.message||error));}
+  assert.equal(codeRouteBlocked,true);
+  const researchStillAllowed=await service.runtime.skills.run('research.supervised',{action:'verify',question:'Verifique somente com evidência confirmada.',freshnessDays:30});
+  assert.equal(researchStillAllowed.provider,'service-model');
+
+  const restarted=createVitrinyNeuralService({db,providers:[provider],now,env});
+  const restoredPolicy=restarted.runtime.skills.status().providers[0].policy;
+  assert.equal(restoredPolicy.source,'persisted_qualification');
+  assert.equal(restoredPolicy.allowedCapabilities.includes('code.analyze'),false);
+  let restartedCodeBlocked=false;
+  try{await restarted.runtime.skills.run('code.engineer',{action:'analyze',task:'persistência deve bloquear código',dryRun:true});}catch(error){restartedCodeBlocked=/Nenhum provider disponível/.test(String(error?.message||error));}
+  assert.equal(restartedCodeBlocked,true);
+  const restartedResearch=await restarted.runtime.skills.run('research.supervised',{action:'verify',question:'Pesquisa qualificada deve permanecer habilitada.'});
+  assert.equal(restartedResearch.provider,'service-model');
 
   const captured=service.capture({type:'content.view',source:'vitrine-social',entityType:'post',entityId:'p1',actorId:'u1',dedupeKey:'svc:view:1',payload:{watchSeconds:20,completed:true,message:'private'}});
   assert.equal(captured.accepted,true);
@@ -64,5 +83,5 @@ try{
   assert.equal('message' in payload,false);
   assert.equal(typeof payload.actorHash,'string');
 
-  console.log(JSON.stringify({ok:true,readiness:service.readiness(),budget:service.status().actionBudget,qualifications:service.qualifications.list({providerId:'service-model'}).length}));
+  console.log(JSON.stringify({ok:true,readiness:service.readiness(),budget:service.status().actionBudget,qualifications:service.qualifications.list({providerId:'service-model'}).length,routing:{codeBlocked:codeRouteBlocked,researchAllowed:researchStillAllowed.provider,persisted:true}}));
 }finally{db.close();}
