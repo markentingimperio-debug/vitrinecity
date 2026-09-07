@@ -1,144 +1,275 @@
 import * as THREE from '/vendor/three/three.module.js';
 import {createSpatialClientRuntime} from '/vitriny-spatial-client-core.js';
-import {createSpatialApiChunkLoader,fetchSpatialCities,fetchSpatialCityContext,spatialCityFromLocation,spatialFallbackCities,spatialFallbackCity} from '/vitriny-spatial-api-client.js';
-import {planSpatialCityGates,spatialCityGateHint} from '/vitriny-spatial-city-gates.js';
+import {createSpatialApiChunkLoader,fetchSpatialCityContext,spatialCityFromLocation,spatialFallbackCity} from '/vitriny-spatial-api-client.js';
 import {districtExperience} from '/vitriny-district-integrations.js';
 import {fetchSpatialStores} from '/vitriny-spatial-store-registry.js';
-import {SPATIAL_RETURN_KEY,createSpatialReturnState,isSafeInternalHref,parseSpatialReturnState} from '/vitriny-spatial-session.js';
+import {SPATIAL_RETURN_KEY,createSpatialReturnState,isSafeInternalHref} from '/vitriny-spatial-session.js';
+import {TRANSIT_CITY_IDS,fetchCityPortals,loadCityCheckpoint,saveCityCheckpoint,spatialMovementBasis,intersectsTransitPlaza} from '/vitriny-spatial-city-portals.js';
 
 const palette=[0x6ee7ff,0x8f8cff,0xe48cff,0xffb36b,0x85e6a8,0x6f9cff,0xb58cff,0x6edbcf];
-const requestedCityId=spatialCityFromLocation();
+const requested=spatialCityFromLocation(),requestedCityId=TRANSIT_CITY_IDS.includes(requested)?requested:'vitrine-city';
 let cityContext=spatialFallbackCity(requestedCityId),cityApiOnline=false;
-try{cityContext=await fetchSpatialCityContext({cityId:requestedCityId});cityApiOnline=true;}catch{if(cityContext.id!==requestedCityId)cityContext=spatialFallbackCity('vitrine-city');}
-const cityId=cityContext.id,worldKey=cityContext.worldKey,isActiveCity=cityContext.status==='active';
-const profile=(()=>{const memory=Number(navigator.deviceMemory||0),cores=Number(navigator.hardwareConcurrency||2),mobile=matchMedia('(max-width:760px)').matches;let score=(memory>=8?3:memory>=4?2:memory>=2?1:0)+(cores>=8?3:cores>=4?2:1)+(mobile?-1:1);const id=score>=6?'ULTRA':score>=3?'STANDARD':'LITE';return{id,radius:id==='ULTRA'?2:1,pixel:id==='ULTRA'?Math.min(devicePixelRatio,1.6):id==='STANDARD'?Math.min(devicePixelRatio,1.25):1,shadows:id!=='LITE',grid:id==='LITE'?2:3};})();
-
-const cityTitle=document.getElementById('cityTitle'),worldStat=document.getElementById('worldStat'),chunkStat=document.getElementById('chunkStat'),fpsStat=document.getElementById('fpsStat');
-if(cityTitle)cityTitle.textContent=`${cityContext.name} Spatial`;
+try{cityContext=await fetchSpatialCityContext({cityId:requestedCityId,timeoutMs:2000});cityApiOnline=true;}
+catch{if(cityContext.id!==requestedCityId)cityContext=spatialFallbackCity('vitrine-city');}
+const cityId=cityContext.id,worldKey=cityContext.worldKey,isActiveCity=cityId==='vitrine-city'&&cityContext.status==='active';
+const profile=(()=>{
+  const memory=Number(navigator.deviceMemory||0),cores=Number(navigator.hardwareConcurrency||2),mobile=matchMedia('(max-width:760px)').matches;
+  const score=(memory>=8?3:memory>=4?2:memory>=2?1:0)+(cores>=8?3:cores>=4?2:1)+(mobile?-1:1);
+  const id=score>=6?'ULTRA':score>=3?'STANDARD':'LITE';
+  return{id,radius:id==='ULTRA'?2:1,pixel:id==='ULTRA'?Math.min(devicePixelRatio,1.6):id==='STANDARD'?Math.min(devicePixelRatio,1.25):1,shadows:id!=='LITE',grid:id==='LITE'?2:3};
+})();
+const $=id=>document.getElementById(id);
+const worldStat=$('worldStat'),chunkStat=$('chunkStat'),fpsStat=$('fpsStat');
+$('cityTitle').textContent=`${cityContext.name} Spatial`;
+$('cityStatus').textContent=isActiveCity?'Hub do ecossistema':'PRÉVIA PROCEDURAL · sem comércio local ativo';
 document.title=`Vitriny Multiverse · ${cityContext.name}`;
-worldStat.textContent=`${cityContext.name} · ${cityContext.status==='active'?'ATIVA':'PREVIEW'}`;
+worldStat.textContent=`${cityContext.name} · ${isActiveCity?'HUB':'PREVIEW'}`;
 
-const scene=new THREE.Scene();scene.background=new THREE.Color(cityId==='goiania'?0x030711:cityId==='silvania'?0x04100d:cityId==='anapolis'?0x07101a:0x02050c);scene.fog=new THREE.FogExp2(scene.background,0.0026);
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(cityId==='goiania'?0x030711:cityId==='silvania'?0x04100d:cityId==='anapolis'?0x07101a:0x02050c);
+scene.fog=new THREE.FogExp2(scene.background,0.0026);
 const camera=new THREE.PerspectiveCamera(58,innerWidth/innerHeight,.1,1800);
-const renderer=new THREE.WebGLRenderer({antialias:profile.id!=='LITE',powerPreference:'high-performance'});renderer.setPixelRatio(profile.pixel);renderer.setSize(innerWidth,innerHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.1;renderer.shadowMap.enabled=profile.shadows;document.body.prepend(renderer.domElement);
-scene.add(new THREE.HemisphereLight(0xc9f3ff,0x061018,1.25));const sun=new THREE.DirectionalLight(0xffffff,1.9);sun.position.set(120,180,90);sun.castShadow=profile.shadows;scene.add(sun);
-
+let renderer;
+try{renderer=new THREE.WebGLRenderer({antialias:profile.id!=='LITE',powerPreference:'high-performance'});}
+catch(error){$('loadingText').textContent='3D indisponível neste aparelho. Use o World Gate ou a cidade clássica.';throw error;}
+renderer.setPixelRatio(profile.pixel);renderer.setSize(innerWidth,innerHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.1;renderer.shadowMap.enabled=profile.shadows;
+document.body.prepend(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xc9f3ff,0x061018,1.25));
+const sun=new THREE.DirectionalLight(0xffffff,1.9);sun.position.set(120,180,90);sun.castShadow=profile.shadows;scene.add(sun);
 const groundMat=new THREE.MeshStandardMaterial({color:0x09131c,roughness:.86,metalness:.08});
 const roadMat=new THREE.MeshStandardMaterial({color:0x101a24,roughness:.72,metalness:.12});
-const chunkGroups=new Map();
+const sharedMaterials=new Set([groundMat,roadMat]),chunkGroups=new Map();
+function mesh(geometry,material,parent,position){
+  const object=new THREE.Mesh(geometry,material);if(position)object.position.set(...position);parent.add(object);return object;
+}
 function createChunkGroup(chunk){
   const group=new THREE.Group();group.name=chunk.id;
   const size=chunk.chunkSize,baseX=chunk.x*size,baseZ=chunk.z*size;
-  const floor=new THREE.Mesh(new THREE.PlaneGeometry(size,size),groundMat);floor.rotation.x=-Math.PI/2;floor.position.set(baseX+size/2,-.02,baseZ+size/2);floor.receiveShadow=profile.shadows;group.add(floor);
+  const floor=mesh(new THREE.PlaneGeometry(size,size),groundMat,group,[baseX+size/2,-.02,baseZ+size/2]);
+  floor.rotation.x=-Math.PI/2;floor.receiveShadow=profile.shadows;
   for(let i=1;i<profile.grid;i++){
-    const x=baseX+i*(size/profile.grid),z=baseZ+i*(size/profile.grid);
-    const rv=new THREE.Mesh(new THREE.BoxGeometry(4,.08,size),roadMat);rv.position.set(x,.02,baseZ+size/2);group.add(rv);
-    const rh=new THREE.Mesh(new THREE.BoxGeometry(size,.08,4),roadMat);rh.position.set(baseX+size/2,.02,z);group.add(rh);
+    mesh(new THREE.BoxGeometry(4,.08,size),roadMat,group,[baseX+i*size/profile.grid,.02,baseZ+size/2]);
+    mesh(new THREE.BoxGeometry(size,.08,4),roadMat,group,[baseX+size/2,.02,baseZ+i*size/profile.grid]);
   }
-  for(const b of chunk.buildings){
-    const accent=palette[b.accentIndex%palette.length],g=new THREE.Group();g.position.set(b.position.x,0,b.position.z);g.userData={kind:b.kind,buildingId:b.id};
-    const body=new THREE.Mesh(new THREE.BoxGeometry(b.size.width,b.size.height,b.size.depth),new THREE.MeshStandardMaterial({color:0x111c2a,metalness:.48,roughness:.32}));body.position.y=b.size.height/2;body.castShadow=profile.shadows;body.receiveShadow=profile.shadows;g.add(body);
-    const crown=new THREE.Mesh(new THREE.BoxGeometry(b.size.width*.72,.28,b.size.depth*.72),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.72}));crown.position.y=b.size.height+.18;g.add(crown);
-    const bands=Math.min(profile.id==='LITE'?2:5,Math.max(1,Math.floor(b.size.height/9)));for(let i=1;i<=bands;i++){const band=new THREE.Mesh(new THREE.BoxGeometry(b.size.width+.04,.08,b.size.depth+.04),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.18+.08*b.detail}));band.position.y=i*b.size.height/(bands+1);g.add(band);}
+  for(const building of chunk.buildings){
+    if(intersectsTransitPlaza(building))continue;
+    const b=building,accent=palette[b.accentIndex%palette.length],g=new THREE.Group();
+    g.position.set(b.position.x,0,b.position.z);g.userData={kind:b.kind,buildingId:b.id};
+    const body=mesh(new THREE.BoxGeometry(b.size.width,b.size.height,b.size.depth),new THREE.MeshStandardMaterial({color:0x111c2a,metalness:.48,roughness:.32}),g,[0,b.size.height/2,0]);
+    body.castShadow=profile.shadows;body.receiveShadow=profile.shadows;
+    mesh(new THREE.BoxGeometry(b.size.width*.72,.28,b.size.depth*.72),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.72}),g,[0,b.size.height+.18,0]);
+    const bands=Math.min(profile.id==='LITE'?2:5,Math.max(1,Math.floor(b.size.height/9)));
+    for(let i=1;i<=bands;i++)mesh(new THREE.BoxGeometry(b.size.width+.04,.08,b.size.depth+.04),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.18+.08*b.detail}),g,[0,i*b.size.height/(bands+1),0]);
     group.add(g);
   }
-  scene.add(group);chunkGroups.set(chunk.id,group);return group;
+  scene.add(group);chunkGroups.set(chunk.id,group);
 }
-function removeChunk(id){const group=chunkGroups.get(id);if(!group)return;group.traverse(obj=>{obj.geometry?.dispose?.();if(obj.material){for(const material of Array.isArray(obj.material)?obj.material:[obj.material]){material.map?.dispose?.();material.dispose?.();}}});scene.remove(group);chunkGroups.delete(id);}
+function disposeGroup(group,{keepShared=true}={}){
+  const geometries=new Set(),materials=new Set(),textures=new Set();
+  group.traverse(object=>{
+    if(object.geometry)geometries.add(object.geometry);
+    for(const material of Array.isArray(object.material)?object.material:[object.material]){
+      if(!material||(keepShared&&sharedMaterials.has(material)))continue;
+      materials.add(material);if(material.map)textures.add(material.map);
+    }
+  });
+  for(const item of [...textures,...materials,...geometries])item.dispose?.();
+}
+function removeChunk(id){const group=chunkGroups.get(id);if(!group)return;disposeGroup(group);scene.remove(group);chunkGroups.delete(id);}
 
-const districtAngles=[['commerce',0],['social',45],['creator',90],['food',135],['education',180],['entertainment',225],['business',270],['services',315]];
-const districts=districtAngles.map(([id,angle])=>{const experience=districtExperience(id);if(!experience)throw new Error(`Distrito sem integração: ${id}`);return[experience.label,angle,id,experience];});
-const portalTargets=[];
-function addCentralPlaza(){
-  const plaza=new THREE.Group();plaza.name=`central-plaza:${cityId}`;
-  for(const [r,w,c,o] of [[24,1.7,0x6ee7ff,.65],[40,1.1,0x6f85ff,.3],[55,1.3,0xb58cff,.4],[72,1.1,0x6ee7ff,.25]]){const mesh=new THREE.Mesh(new THREE.RingGeometry(r-w,r,96),new THREE.MeshBasicMaterial({color:c,transparent:true,opacity:o,side:THREE.DoubleSide}));mesh.rotation.x=-Math.PI/2;mesh.position.y=.06;plaza.add(mesh);}
-  const coreBase=new THREE.Mesh(new THREE.CylinderGeometry(9,12,4,40),new THREE.MeshStandardMaterial({color:0x121d31,metalness:.72,roughness:.22}));coreBase.position.y=2;plaza.add(coreBase);
-  const core=new THREE.Mesh(new THREE.IcosahedronGeometry(7,2),new THREE.MeshPhysicalMaterial({color:0x74eaff,emissive:0x185f80,emissiveIntensity:isActiveCity?2:1.15,metalness:.2,roughness:.16}));core.position.y=15;core.userData.animate='core';plaza.add(core);
-  for(let i=0;i<districts.length;i++){
-    const [label,deg,id,experience]=districts[i],a=deg*Math.PI/180,r=68,x=Math.cos(a)*r,z=Math.sin(a)*r,accent=palette[i],enabled=isActiveCity;
-    const portal=new THREE.Group();portal.position.set(x,0,z);portal.rotation.y=-a+Math.PI/2;portal.userData={portal:true,portalKind:'district',label,id,path:`/v/br/go/${cityId}/${id}`,href:experience.href,description:enabled?experience.description:`${label} de ${cityContext.name} em preview procedural.`,enabled};
-    const frameMat=new THREE.MeshStandardMaterial({color:0x19263a,metalness:.72,roughness:.22}),glowMat=new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:enabled?.75:.25});
-    for(const px of [-3.7,3.7]){const p=new THREE.Mesh(new THREE.BoxGeometry(.8,7,.8),frameMat);p.position.set(px,3.5,0);portal.add(p);}const top=new THREE.Mesh(new THREE.BoxGeometry(8.2,.8,.8),frameMat);top.position.y=7;portal.add(top);const glow=new THREE.Mesh(new THREE.PlaneGeometry(6.2,5.6),glowMat);glow.position.y=3.8;portal.add(glow);plaza.add(portal);portalTargets.push(portal);
+const portalTargets=[],storeTargets=[],cityDestinations=new Map();
+const plaza=new THREE.Group();plaza.name=`central-plaza:${cityId}`;scene.add(plaza);
+// Ground exists before API chunks arrive, so the first scene is not an empty loading screen.
+const plazaFloor=mesh(new THREE.CircleGeometry(145,64),groundMat,plaza,[0,-.04,0]);plazaFloor.rotation.x=-Math.PI/2;
+for(const [r,w,c,o] of [[24,1.7,0x6ee7ff,.65],[40,1.1,0x6f85ff,.3],[55,1.3,0xb58cff,.4],[72,1.1,0x6ee7ff,.25]]){
+  const ring=mesh(new THREE.RingGeometry(r-w,r,64),new THREE.MeshBasicMaterial({color:c,transparent:true,opacity:o,side:THREE.DoubleSide}),plaza,[0,.06,0]);ring.rotation.x=-Math.PI/2;
+}
+mesh(new THREE.CylinderGeometry(9,12,4,40),new THREE.MeshStandardMaterial({color:0x121d31,metalness:.72,roughness:.22}),plaza,[0,2,0]);
+const neuralCore=mesh(new THREE.IcosahedronGeometry(7,2),new THREE.MeshPhysicalMaterial({color:0x74eaff,emissive:0x185f80,emissiveIntensity:isActiveCity?2:1.15,metalness:.2,roughness:.16}),plaza,[0,15,0]);
+function portalFrame(portal,accent,{city=false,enabled=true}={}){
+  const width=city?10:8.2,height=city?10:7;
+  const frame=new THREE.MeshStandardMaterial({color:0x19263a,metalness:.72,roughness:.22});
+  for(const x of [-width/2,width/2])mesh(new THREE.BoxGeometry(.8,height,.8),frame,portal,[x,height/2,0]);
+  mesh(new THREE.BoxGeometry(width+.8,.8,.8),frame,portal,[0,height,0]);
+  mesh(new THREE.PlaneGeometry(width-1.2,height-1.4),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:enabled?.55:.2,side:THREE.DoubleSide}),portal,[0,height/2,0]);
+}
+const districtIds=['commerce','social','creator','food','education','entertainment','business','services'];
+for(let i=0;i<districtIds.length;i++){
+  const id=districtIds[i],experience=districtExperience(id);if(!experience)continue;
+  const a=i*Math.PI/4,portal=new THREE.Group();portal.position.set(Math.cos(a)*68,0,Math.sin(a)*68);portal.rotation.y=-a+Math.PI/2;
+  portal.userData={portal:true,portalKind:'district',label:experience.label,id,path:`/v/br/go/${cityId}/${id}`,href:experience.href,description:isActiveCity?experience.description:`${experience.label} de ${cityContext.name} em preview procedural.`,enabled:isActiveCity};
+  portalFrame(portal,palette[i],{enabled:isActiveCity});plaza.add(portal);portalTargets.push(portal);
+}
+function addCityPortal(destination,index){
+  const portal=new THREE.Group();portal.name=destination.portalId;portal.position.set(destination.position.x,0,destination.position.z);
+  portal.userData={portal:true,portalKind:'city',cityPortal:true,enabled:true,destinationId:destination.id,label:destination.name,description:destination.description,href:destination.href};
+  const accent=palette[(index+2)%palette.length];
+  const pedestal=mesh(new THREE.CylinderGeometry(6.3,7.4,1.1,profile.id==='LITE'?16:32),new THREE.MeshStandardMaterial({color:0x101c2b,metalness:.68,roughness:.24}),portal,[0,.55,0]);pedestal.receiveShadow=profile.shadows;
+  const ring=mesh(new THREE.TorusGeometry(5.2,.46,profile.id==='LITE'?8:12,profile.id==='LITE'?24:48),new THREE.MeshStandardMaterial({color:0x16283c,emissive:accent,emissiveIntensity:destination.status==='active'?1.35:.72,metalness:.48,roughness:.2}),portal,[0,6.4,0]);ring.name='city-gate-ring';
+  mesh(new THREE.CircleGeometry(4.65,profile.id==='LITE'?20:40),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:destination.status==='active'?.28:.15,side:THREE.DoubleSide}),portal,[0,6.4,.06]);
+  mesh(new THREE.CylinderGeometry(.08,.08,8,6),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.75}),portal,[0,14,0]);
+  const canvas=document.createElement('canvas');canvas.width=512;canvas.height=160;
+  const ctx=canvas.getContext('2d');
+  if(ctx){
+    ctx.fillStyle='#07111e';ctx.fillRect(0,0,512,160);ctx.fillStyle='#eaffff';ctx.font='bold 44px system-ui';ctx.textAlign='center';ctx.fillText(destination.name,256,65,470);
+    ctx.fillStyle='#9fe8ff';ctx.font='24px system-ui';ctx.fillText(destination.status==='preview'?'EXPLORAR PRÉVIA':'VOLTAR AO HUB',256,115,470);
+    const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;
+    const label=new THREE.Sprite(new THREE.SpriteMaterial({map:texture}));label.scale.set(15,4.7,1);label.position.y=14;portal.add(label);
   }
-  scene.add(plaza);
+  plaza.add(portal);portalTargets.push(portal);cityDestinations.set(destination.id,destination);
 }
-addCentralPlaza();
+async function loadCityConnections(){
+  const result=await fetchCityPortals({currentCityId:cityId});
+  if(disposed)return;
+  const nav=$('cityLinks');nav.replaceChildren();
+  for(const [index,destination] of result.portals.entries()){
+    addCityPortal(destination,index);
+    const link=document.createElement('a');link.href=destination.href;
+    link.textContent=`${destination.name} · ${destination.status==='preview'?'prévia':'hub'}`;
+    link.addEventListener('click',event=>{
+      saveSpatialContext();
+      if(event.ctrlKey||event.metaKey||event.shiftKey||event.altKey||event.button!==0)return;
+      event.preventDefault();travelToCity(destination.id);
+    });nav.appendChild(link);
+  }
+  $('travelStatus').textContent=result.source==='api'?'Escolha um portal ou um destino abaixo.':'Catálogo offline · destinos em modo de prévia.';
+}
 
-const cityGateGroup=new THREE.Group();cityGateGroup.name=`city-gates:${cityId}`;scene.add(cityGateGroup);
-function addCityGate(gate,index){
-  const accent=palette[(index+2)%palette.length],group=new THREE.Group();group.position.set(gate.x,0,gate.z);group.rotation.y=-gate.angle;group.userData={portal:true,portalKind:'city',label:gate.name,id:gate.id,path:gate.route,href:gate.href,description:spatialCityGateHint(gate,cityContext.name),enabled:true,cityStatus:gate.status};
-  const pedestal=new THREE.Mesh(new THREE.CylinderGeometry(6.3,7.4,1.1,32),new THREE.MeshStandardMaterial({color:0x101c2b,metalness:.68,roughness:.24}));pedestal.position.y=.55;pedestal.receiveShadow=profile.shadows;group.add(pedestal);
-  const ring=new THREE.Mesh(new THREE.TorusGeometry(5.2,.46,12,48),new THREE.MeshStandardMaterial({color:0x16283c,emissive:accent,emissiveIntensity:gate.status==='active'?1.35:.72,metalness:.48,roughness:.2}));ring.position.y=6.4;ring.userData.animate='city-gate';group.add(ring);
-  const field=new THREE.Mesh(new THREE.CircleGeometry(4.65,40),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:gate.status==='active'?.28:.15,side:THREE.DoubleSide}));field.position.y=6.4;field.position.z=.06;group.add(field);
-  const beacon=new THREE.Mesh(new THREE.CylinderGeometry(.08,.08,8,6),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.75}));beacon.position.y=14;group.add(beacon);
-  cityGateGroup.add(group);portalTargets.push(group);
-}
-async function loadCityGates(){
-  let cities;
-  try{cities=await fetchSpatialCities();}catch{cities=spatialFallbackCities();}
-  const gates=planSpatialCityGates({currentCityId:cityId,cities,radius:118,limit:8});for(let i=0;i<gates.length;i++)addCityGate(gates[i],i);
-}
-await loadCityGates();
-
-const liveStoreGroup=new THREE.Group(),storeTargets=[];liveStoreGroup.name='commerce-live-stores';scene.add(liveStoreGroup);
+const liveStoreGroup=new THREE.Group();liveStoreGroup.name='commerce-live-stores';scene.add(liveStoreGroup);
 function addLiveStore(entity){
-  const accent=palette[entity.accentIndex%palette.length],g=new THREE.Group();g.position.set(entity.position.x,0,entity.position.z);g.userData={store:true,href:entity.href,interiorHref:entity.interiorHref,label:entity.name,reference:entity.reference};
-  const body=new THREE.Mesh(new THREE.BoxGeometry(entity.size.width,entity.size.height,entity.size.depth),new THREE.MeshStandardMaterial({color:0x17304a,metalness:.55,roughness:.26,emissive:accent,emissiveIntensity:.04}));body.position.y=entity.size.height/2;body.castShadow=profile.shadows;body.receiveShadow=profile.shadows;g.add(body);
-  const crown=new THREE.Mesh(new THREE.BoxGeometry(entity.size.width*.82,.42,entity.size.depth*.82),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.95}));crown.position.y=entity.size.height+.25;g.add(crown);
-  const beacon=new THREE.Mesh(new THREE.CylinderGeometry(.08,.08,5,6),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.55}));beacon.position.y=entity.size.height+2.8;g.add(beacon);
+  const accent=palette[entity.accentIndex%palette.length],g=new THREE.Group();g.position.set(entity.position.x,0,entity.position.z);
+  g.userData={store:true,href:entity.href,interiorHref:entity.interiorHref,label:entity.name,reference:entity.reference};
+  const body=mesh(new THREE.BoxGeometry(entity.size.width,entity.size.height,entity.size.depth),new THREE.MeshStandardMaterial({color:0x17304a,metalness:.55,roughness:.26,emissive:accent,emissiveIntensity:.04}),g,[0,entity.size.height/2,0]);body.castShadow=profile.shadows;body.receiveShadow=profile.shadows;
+  mesh(new THREE.BoxGeometry(entity.size.width*.82,.42,entity.size.depth*.82),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.95}),g,[0,entity.size.height+.25,0]);
+  mesh(new THREE.CylinderGeometry(.08,.08,5,6),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.55}),g,[0,entity.size.height+2.8,0]);
   liveStoreGroup.add(g);storeTargets.push(g);
 }
 async function loadLiveStores(){
-  if(cityId!=='vitrine-city'||!isActiveCity){worldStat.textContent=`${cityContext.name} · PREVIEW PROCEDURAL`;return;}
-  try{const entities=await fetchSpatialStores({limit:profile.id==='LITE'?20:48});for(const entity of entities)addLiveStore(entity);worldStat.textContent=`${cityContext.name} · ${entities.length} lojas vivas`;}
-  catch{worldStat.textContent=`${cityContext.name} · lojas em modo offline`;}
+  if(!isActiveCity){worldStat.textContent=`${cityContext.name} · PREVIEW PROCEDURAL`;return;}
+  try{
+    const entities=await fetchSpatialStores({limit:profile.id==='LITE'?20:48});if(disposed)return;
+    for(const entity of entities)addLiveStore(entity);worldStat.textContent=`${cityContext.name} · ${entities.length} lojas vivas`;
+  }catch{worldStat.textContent=`${cityContext.name} · lojas em modo offline`;}
 }
-loadLiveStores();
 
-const position=new THREE.Vector3(0,1.7,112),velocity=new THREE.Vector3(),keys=new Set();let yaw=Math.PI,pitch=-.08,speed=24,dragging=false,lastX=0,lastY=0,pointerStartX=0,pointerStartY=0,activePortal=null,chunkSource=cityApiOnline?'api':'fallback';
+const position=new THREE.Vector3(0,1.7,112),velocity=new THREE.Vector3(),keys=new Set();
+let yaw=Math.PI,pitch=-.08,speed=24,dragging=false,lastX=0,lastY=0,pointerStartX=0,pointerStartY=0,activePortal=null;
+let chunkSource=cityApiOnline?'api':'fallback',disposed=false,navigating=false,raf=0;
 function restoreSpatialContext(){
-  if(new URLSearchParams(location.search).get('return')!=='1')return false;
-  let state=null;try{state=parseSpatialReturnState(sessionStorage.getItem(SPATIAL_RETURN_KEY));}catch{}
-  if(!state||state.worldKey!==worldKey)return false;
+  if(new URLSearchParams(location.search).get('return')!=='1')return;
+  const state=loadCityCheckpoint(cityId);if(!state||state.worldKey!==worldKey)return;
   position.set(state.position.x,state.position.y,state.position.z);yaw=state.yaw;pitch=state.pitch;
-  try{const url=new URL(location.href);url.searchParams.delete('return');history.replaceState({},'',url.pathname+(url.searchParams.size?`?${url.searchParams.toString()}`:''));}catch{}
-  worldStat.textContent=`${cityContext.name} · posição restaurada`;return true;
+  try{const url=new URL(location.href);url.searchParams.delete('return');history.replaceState({},'',url.pathname+url.search);}catch{}
 }
 restoreSpatialContext();
-
-const apiLoader=createSpatialApiChunkLoader({cityId,onSource:source=>{chunkSource=source;}});
-const runtime=createSpatialClientRuntime({worldKey,chunkSize:cityContext.chunkSize||128,radius:profile.radius,maxLoaded:profile.radius===2?25:9,loader:apiLoader,onUnload:id=>removeChunk(id)});
-let updateBusy=false,lastChunkUpdate=0;
-async function syncChunks(force=false){const now=performance.now();if(updateBusy||(!force&&now-lastChunkUpdate<350))return;updateBusy=true;lastChunkUpdate=now;try{const forward={x:-Math.sin(yaw),z:-Math.cos(yaw)},state=await runtime.update({x:position.x,z:position.z},forward);for(const chunk of state.resources)if(!chunkGroups.has(chunk.id))createChunkGroup(chunk);chunkStat.textContent=`chunk ${state.center.x},${state.center.z} · ${state.loaded.length} ativos · ${chunkSource==='api'?'API':'fallback'}`;fpsStat.textContent=`perfil ${profile.id} · raio ${profile.radius}`;}finally{updateBusy=false;}}
-await syncChunks(true);
-
-function setMove(name,on){const map={forward:'KeyW',back:'KeyS',left:'KeyA',right:'KeyD'},code=map[name];if(on)keys.add(code);else keys.delete(code);}
 function saveSpatialContext({spatialPath=cityContext.route||`/v/br/go/${cityId}`,districtId='',targetType='',targetId=''}={}){
-  try{const state=createSpatialReturnState({worldKey,spatialPath,districtId,targetType,targetId,position:{x:Number(position.x.toFixed(3)),y:Number(position.y.toFixed(3)),z:Number(position.z.toFixed(3))},yaw:Number(yaw.toFixed(5)),pitch:Number(pitch.toFixed(5))});sessionStorage.setItem(SPATIAL_RETURN_KEY,JSON.stringify(state));return true;}catch{return false;}
+  const state=createSpatialReturnState({worldKey,spatialPath,districtId,targetType,targetId,position:{x:position.x,y:position.y,z:position.z},yaw,pitch});
+  const saved=saveCityCheckpoint(state);
+  try{sessionStorage.setItem(SPATIAL_RETURN_KEY,JSON.stringify(state));return true;}catch{return saved;}
 }
-function safeNavigate(href){if(!isSafeInternalHref(href))return false;location.assign(href);return true;}
+function safeNavigate(href){if(navigating||!isSafeInternalHref(href))return false;navigating=true;location.assign(href);return true;}
 function spatialEvent(event,targetType){try{dispatchEvent(new CustomEvent('vitriny:spatial-event',{detail:{event,targetType}}));}catch{}}
+function travelToCity(destinationId){
+  const destination=cityDestinations.get(destinationId);if(!destination||destination.id===cityId)return false;
+  saveSpatialContext();spatialEvent('portal_enter','portal');return safeNavigate(destination.href);
+}
 function enterActivePortal(){
-  if(!activePortal)return false;
-  if(activePortal.userData.portalKind==='city'){spatialEvent('city_gate_enter','city');return safeNavigate(activePortal.userData.href);}
-  if(!activePortal.userData.enabled){document.getElementById('portalHint').textContent=`${activePortal.userData.label} está em preview em ${cityContext.name}; a infraestrutura espacial já está carregada, mas os dados locais ainda não foram publicados.`;return false;}
-  saveSpatialContext({spatialPath:activePortal.userData.path,districtId:activePortal.userData.id,targetType:'district',targetId:activePortal.userData.id});spatialEvent('portal_enter','portal');return safeNavigate(activePortal.userData.href);
+  if(!activePortal||!activePortal.userData.enabled)return false;
+  if(activePortal.userData.cityPortal)return travelToCity(activePortal.userData.destinationId);
+  saveSpatialContext({spatialPath:activePortal.userData.path,districtId:activePortal.userData.id,targetType:'district',targetId:activePortal.userData.id});
+  spatialEvent('portal_enter','portal');return safeNavigate(activePortal.userData.href);
 }
-addEventListener('keydown',e=>{keys.add(e.code);if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();if(e.code==='KeyE'&&!e.repeat)enterActivePortal();});addEventListener('keyup',e=>keys.delete(e.code));
-for(const button of document.querySelectorAll('[data-move]')){const name=button.dataset.move;button.addEventListener('pointerdown',e=>{e.preventDefault();setMove(name,true);});for(const evt of ['pointerup','pointercancel','pointerleave'])button.addEventListener(evt,()=>setMove(name,false));}
 
+const apiLoader=createSpatialApiChunkLoader({cityId,timeoutMs:2000,onSource:source=>{chunkSource=source;}});
+const runtime=createSpatialClientRuntime({worldKey,chunkSize:cityContext.chunkSize||128,radius:profile.radius,maxLoaded:profile.radius===2?25:9,loader:apiLoader,onUnload:id=>removeChunk(id)});
+let updateBusy=false,lastChunkUpdate=-Infinity;
+async function syncChunks(){
+  const now=performance.now();if(disposed||updateBusy||now-lastChunkUpdate<350)return;
+  updateBusy=true;lastChunkUpdate=now;
+  try{
+    const {forward}=spatialMovementBasis(yaw),state=await runtime.update({x:position.x,z:position.z},forward);
+    if(disposed){await runtime.clear();return;}
+    for(const chunk of state.resources)if(!chunkGroups.has(chunk.id))createChunkGroup(chunk);
+    chunkStat.textContent=`chunk ${state.center.x},${state.center.z} · ${state.loaded.length} ativos · ${chunkSource==='api'?'API':'fallback'}`;
+  }catch{chunkStat.textContent='Cenário reconectando · portais continuam disponíveis';}
+  finally{updateBusy=false;}
+}
+const moveMap={forward:'KeyW',back:'KeyS',left:'KeyA',right:'KeyD'};
+addEventListener('keydown',event=>{
+  if(event.target?.closest?.('input,textarea,select,button,a,summary,[contenteditable="true"]'))return;
+  keys.add(event.code);if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(event.code))event.preventDefault();
+  if(event.code==='KeyE'&&!event.repeat)enterActivePortal();
+});
+addEventListener('keyup',event=>keys.delete(event.code));
+function releaseControls(){keys.clear();dragging=false;}
+addEventListener('blur',releaseControls);document.addEventListener('visibilitychange',()=>{if(document.hidden)releaseControls();});
+for(const button of document.querySelectorAll('[data-move]')){
+  const code=moveMap[button.dataset.move];
+  button.addEventListener('pointerdown',event=>{event.preventDefault();button.setPointerCapture?.(event.pointerId);keys.add(code);});
+  for(const name of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(name,()=>keys.delete(code));
+}
 const raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2();
-function storeAtPointer(event){pointer.x=event.clientX/innerWidth*2-1;pointer.y=-(event.clientY/innerHeight)*2+1;raycaster.setFromCamera(pointer,camera);const hit=raycaster.intersectObjects(storeTargets,true)[0];let node=hit?.object||null;while(node&&!node.userData?.store)node=node.parent;return node?.userData?.store?node:null;}
-renderer.domElement.addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;pointerStartX=e.clientX;pointerStartY=e.clientY;renderer.domElement.setPointerCapture(e.pointerId);});
-renderer.domElement.addEventListener('pointerup',e=>{const click=Math.hypot(e.clientX-pointerStartX,e.clientY-pointerStartY)<6;dragging=false;if(click){const store=storeAtPointer(e);if(store){const reference=String(store.userData.reference||'');saveSpatialContext({spatialPath:`/v/br/go/${cityId}/commerce/${encodeURIComponent(reference)}`,districtId:'commerce',targetType:'store',targetId:reference});spatialEvent('entity_open','store');safeNavigate(store.userData.interiorHref||store.userData.href);}}});
-renderer.domElement.addEventListener('pointermove',e=>{if(!dragging){const store=storeAtPointer(e);renderer.domElement.style.cursor=store?'pointer':'grab';return;}yaw-=(e.clientX-lastX)*.0045;pitch=Math.max(-.55,Math.min(.45,pitch-(e.clientY-lastY)*.003));lastX=e.clientX;lastY=e.clientY;});renderer.domElement.addEventListener('wheel',e=>{speed=Math.max(8,Math.min(55,speed-e.deltaY*.02));},{passive:true});
-
-document.getElementById('enterPortal').onclick=enterActivePortal;
-function updatePortal(){let best=null,bestD=Infinity;for(const portal of portalTargets){const d=portal.position.distanceTo(position);if(d<13&&d<bestD){best=portal;bestD=d;}}activePortal=best;const box=document.getElementById('portal');if(best){box.classList.add('show');document.getElementById('portalName').textContent=best.userData.portalKind==='city'?`Portal · ${best.userData.label}`:best.userData.label;if(best.userData.portalKind==='city')document.getElementById('portalHint').textContent=`${best.userData.description} · E ou botão para viajar`;else document.getElementById('portalHint').textContent=best.userData.enabled?`${best.userData.description} · E ou botão para abrir`:`${best.userData.description} · exploração local em preview`;}else box.classList.remove('show');}
-
-let frames=0,fpsClock=performance.now(),fps=0,last=performance.now();
-function animate(now){requestAnimationFrame(animate);const dt=Math.min(.05,(now-last)/1000);last=now;frames++;if(now-fpsClock>=1000){fps=Math.round(frames*1000/(now-fpsClock));frames=0;fpsClock=now;fpsStat.textContent=`perfil ${profile.id} · ${fps} FPS`;}
-  const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw)),right=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));velocity.set(0,0,0);if(keys.has('KeyW')||keys.has('ArrowUp'))velocity.add(forward);if(keys.has('KeyS')||keys.has('ArrowDown'))velocity.sub(forward);if(keys.has('KeyD')||keys.has('ArrowRight'))velocity.add(right);if(keys.has('KeyA')||keys.has('ArrowLeft'))velocity.sub(right);if(velocity.lengthSq())velocity.normalize().multiplyScalar(speed*dt);position.add(velocity);
-  const look=new THREE.Vector3(Math.sin(-yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(-yaw)*Math.cos(pitch));camera.position.copy(position);camera.lookAt(position.clone().add(look));scene.traverse(obj=>{if(obj.userData?.animate==='core')obj.rotation.y+=dt*.45;else if(obj.userData?.animate==='city-gate')obj.rotation.z+=dt*.18;});updatePortal();syncChunks();renderer.render(scene,camera);
+function targetAtPointer(event){
+  pointer.x=event.clientX/innerWidth*2-1;pointer.y=-(event.clientY/innerHeight)*2+1;
+  raycaster.setFromCamera(pointer,camera);
+  let node=raycaster.intersectObjects([...storeTargets,...portalTargets],true)[0]?.object||null;
+  while(node&&!node.userData?.store&&!node.userData?.portal)node=node.parent;return node;
 }
-requestAnimationFrame(animate);addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setPixelRatio(profile.pixel);renderer.setSize(innerWidth,innerHeight);});setTimeout(()=>document.getElementById('loading').classList.add('hide'),300);
+renderer.domElement.addEventListener('pointerdown',event=>{
+  dragging=true;lastX=pointerStartX=event.clientX;lastY=pointerStartY=event.clientY;renderer.domElement.setPointerCapture(event.pointerId);
+});
+renderer.domElement.addEventListener('pointerup',event=>{
+  const click=dragging&&Math.hypot(event.clientX-pointerStartX,event.clientY-pointerStartY)<6;dragging=false;
+  if(!click)return;
+  const target=targetAtPointer(event);if(!target)return;
+  if(target.userData.portal){activePortal=target;enterActivePortal();return;}
+  const reference=String(target.userData.reference||'');
+  saveSpatialContext({spatialPath:`/v/br/go/${cityId}/commerce/${encodeURIComponent(reference)}`,districtId:'commerce',targetType:'store',targetId:reference});
+  spatialEvent('entity_open','store');safeNavigate(target.userData.interiorHref||target.userData.href);
+});
+renderer.domElement.addEventListener('pointercancel',()=>{dragging=false;});
+renderer.domElement.addEventListener('lostpointercapture',()=>{dragging=false;});
+renderer.domElement.addEventListener('pointermove',event=>{
+  if(!dragging){const target=targetAtPointer(event);renderer.domElement.style.cursor=target?'pointer':'grab';return;}
+  yaw+=(event.clientX-lastX)*.0045;pitch=Math.max(-.55,Math.min(.45,pitch-(event.clientY-lastY)*.003));lastX=event.clientX;lastY=event.clientY;
+});
+renderer.domElement.addEventListener('wheel',event=>{speed=Math.max(8,Math.min(55,speed-event.deltaY*.02));},{passive:true});
+$('enterPortal').onclick=enterActivePortal;
+$('worldGateLink').addEventListener('click',()=>saveSpatialContext());
+let shownPortal=null;
+function updatePortal(){
+  let best=null,bestDistance=12;
+  for(const portal of portalTargets){const distance=portal.position.distanceTo(position);if(distance<bestDistance){best=portal;bestDistance=distance;}}
+  activePortal=best;if(shownPortal===best)return;shownPortal=best;
+  $('portal').classList.toggle('show',Boolean(best));if(!best)return;
+  $('portalName').textContent=best.userData.label;$('portalHint').textContent=best.userData.description;
+  $('enterPortal').disabled=!best.userData.enabled;
+  $('enterPortal').textContent=best.userData.cityPortal?'Viajar para esta cidade':best.userData.enabled?'Abrir distrito':'Distrito em preparação';
+}
+let frames=0,fpsClock=performance.now(),last=performance.now(),firstFrame=true;
+const forwardVector=new THREE.Vector3(),rightVector=new THREE.Vector3(),lookTarget=new THREE.Vector3();
+function animate(now){
+  if(disposed)return;raf=requestAnimationFrame(animate);
+  const dt=Math.min(.05,(now-last)/1000);last=now;if(document.hidden)return;
+  frames++;if(now-fpsClock>=1000){fpsStat.textContent=`perfil ${profile.id} · ${Math.round(frames*1000/(now-fpsClock))} FPS`;frames=0;fpsClock=now;}
+  const basis=spatialMovementBasis(yaw);forwardVector.set(basis.forward.x,0,basis.forward.z);rightVector.set(basis.right.x,0,basis.right.z);velocity.set(0,0,0);
+  if(keys.has('KeyW')||keys.has('ArrowUp'))velocity.add(forwardVector);if(keys.has('KeyS')||keys.has('ArrowDown'))velocity.sub(forwardVector);
+  if(keys.has('KeyD')||keys.has('ArrowRight'))velocity.add(rightVector);if(keys.has('KeyA')||keys.has('ArrowLeft'))velocity.sub(rightVector);
+  if(velocity.lengthSq())position.add(velocity.normalize().multiplyScalar(speed*dt));
+  position.x=Math.max(-100000,Math.min(100000,position.x));position.z=Math.max(-100000,Math.min(100000,position.z));
+  lookTarget.set(basis.forward.x*Math.cos(pitch),Math.sin(pitch),basis.forward.z*Math.cos(pitch)).add(position);
+  camera.position.copy(position);camera.lookAt(lookTarget);neuralCore.rotation.y+=dt*.45;
+  updatePortal();syncChunks();renderer.render(scene,camera);
+  if(firstFrame){firstFrame=false;$('loading').classList.add('hide');}
+}
+raf=requestAnimationFrame(animate);
+loadCityConnections().catch(()=>{$('travelStatus').textContent='Conexões indisponíveis. Use o World Gate.';});
+loadLiveStores();
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+addEventListener('pagehide',event=>{
+  if(!navigating)saveSpatialContext();releaseControls();
+  if(event.persisted)return; // Keep the scene usable when the browser restores its page cache.
+  disposed=true;cancelAnimationFrame(raf);disposeGroup(scene,{keepShared:false});renderer.dispose();
+});
+addEventListener('pageshow',()=>{navigating=false;last=performance.now();fpsClock=last;frames=0;});
