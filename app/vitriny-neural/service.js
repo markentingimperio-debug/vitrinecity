@@ -7,7 +7,7 @@ import {createNeuralExecutionController} from './execution-controller.js';
 import {assessNeuralReadiness} from './readiness.js';
 import {createShadowObserver} from './shadow-observer.js';
 
-function primaryProviderId(runtime){return runtime.skills.status().providers?.[0]?.id||null;}
+function primaryProviderId(runtime){const providers=runtime.skills.status().providers||[];return providers.find(provider=>provider.policy?.enabled!==false)?.id||providers[0]?.id||null;}
 
 export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalThis.fetch,now=Date.now,nodeId='service',providers=null,pseudonymSalt='vitriny-neural-v1',logger=console}={}){
   if(!db)throw new TypeError('Vitriny Neural service requer banco.');
