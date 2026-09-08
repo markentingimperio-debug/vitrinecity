@@ -6,6 +6,7 @@ import {spawnSync} from 'node:child_process';
 const appRoot=fileURLToPath(new URL('..',import.meta.url));
 const smokePath=`${appRoot}/scripts/smoke-vitriny-multiversal.mjs`;
 const source=readFileSync(smokePath,'utf8');
+const dockerfile=readFileSync(`${appRoot}/Dockerfile`,'utf8');
 const syntax=spawnSync(process.execPath,['--check',smokePath],{encoding:'utf8'});
 assert.equal(syntax.status,0,syntax.stderr||'smoke script syntax invalid');
 
@@ -27,5 +28,6 @@ for(const required of [
 assert.match(source,/redirect:'manual'/);
 assert.match(source,/cache:'no-store'/);
 assert.match(source,/AbortController/);
+assert.match(dockerfile,/COPY scripts\/smoke-vitriny-multiversal\.mjs \.\/scripts\/smoke-vitriny-multiversal\.mjs/,'imagem de produção deve conter o smoke Multiversal');
 
-console.log(JSON.stringify({ok:true,postDeploySmoke:true,health:true,previewIsolation:true,premiumStateIndependent:true,syntax:true}));
+console.log(JSON.stringify({ok:true,postDeploySmoke:true,health:true,previewIsolation:true,premiumStateIndependent:true,productionImageSmoke:true,syntax:true}));
