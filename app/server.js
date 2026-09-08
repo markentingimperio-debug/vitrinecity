@@ -11,7 +11,8 @@ import {setupCityChat} from './city-chat.js';
 import {setupCityRewards} from './city-rewards.js';
 import {setupCourierAccount} from './courier-account.js';
 import { setupMediaCatalog } from './media-catalog.js';
-import { setupWebStories } from './web-stories.js';
+import { setupDailyWebStories } from './web-story-daily.js';
+import { createStoryImageProvider } from './web-story-provider.js';
 import { createCryptoObservability, mountCryptoObservability } from './crypto-observability.js';
 import { mountJarvis } from './jarvis-core.js';
 import { mountJarvisPublic } from './jarvis-public.js';
@@ -2646,8 +2647,12 @@ const publicPage = file => (req, res) => {
     '<script src="/global-market-banner.js?v=5" defer></script></body>'
   ));
 };
-setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft, reviewEditorialDraft });
-const webStories = setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl:SITE_URL,publicDir:path.join(dir,'public'),dataDir});
+let dailyStories;
+setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft, reviewEditorialDraft, automationAllowed:()=>!dailyStories?.automation.status().enabled });
+const webStories = dailyStories = setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl:SITE_URL,publicDir:path.join(dir,'public'),dataDir,
+  services:()=>DIGITAL_SERVICE_PACKAGES,courses:()=>managedCourses(true).filter(course=>courseReady(course.slug)),
+  requestText:requestEditorialText,requestImage:createStoryImageProvider({request:openRouterRequest,model:()=>OPENROUTER_IMAGE_MODEL,outputDir:generatedMediaDir}),
+  isConfigured:()=>AI_PROVIDER==='openrouter'&&aiConfigured()});
 setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover,generateBookIllustration});
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');

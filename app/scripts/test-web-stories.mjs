@@ -67,7 +67,7 @@ test('manual preview and both editorial confirmations gate publication',async t=
 });
 test('draft edits preserve published snapshot and invalidate the preview',async t=>{
   const f=await fixture(t),story=await f.create();await f.preview(story);await f.publish(story);
-  const edited=(await f.call('/api/admin/web-stories/'+story.id,{method:'PUT',data:{revision:1,draft:{...story.draft,title:'Novo título em revisão',cta:false}}})).json();
+  const edited=(await f.call('/api/admin/web-stories/'+story.id,{method:'PUT',data:{revision:1,draft:{...story.draft,title:'Novo título em revisão',cta:false,homeCta:false}}})).json();
   assert.equal(edited.revision,2);assert.equal((await f.publish(edited)).status,409);assert.ok(!(await f.call(story.url)).raw.includes('Novo título em revisão'));
   const preview=await f.preview(edited);assert.ok(!preview.json().html.includes('amp-story-page-outlink'));await f.publish(edited);
   assert.ok((await f.call(story.url)).raw.includes('Novo título em revisão'));
@@ -101,7 +101,7 @@ test('a publication waiting for image validation cannot undo a concurrent withdr
 });
 test('source listing excludes unpublished articles and the template bounds long content',async t=>{
   const f=await fixture(t);f.db.prepare("UPDATE editorial_articles SET status='draft'").run();assert.deepEqual((await f.call('/api/admin/web-stories/sources')).json().items,[]);assert.equal((await f.call('/api/admin/web-stories',{method:'POST',data:{articleId:'fixture'}})).status,404);
-  assert.throws(()=>splitStoryText('a '.repeat(4000)),/39 páginas/);assert.throws(()=>splitStoryText('a'.repeat(146)),/sem espaços/);
+  assert.throws(()=>splitStoryText('a '.repeat(4000)),/textos muito longos/);assert.throws(()=>splitStoryText('a'.repeat(146)),/sem espaços/);
 });
 test('local raster validation reads actual JPEG/WebP/PNG dimensions',async t=>{
   const f=await fixture(t);

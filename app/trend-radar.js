@@ -102,7 +102,7 @@ function renderArticle(row, products = []) {
     ...String(row.title).toLowerCase().split(/\s+/).filter(word => word.length > 3),
     "VitrineCity",
   ])].slice(0, 12).join(", ");
-  const paragraphs = String(row.body || "")
+  const paragraphs = (String(row.id||'').startsWith('story-companion:')?'<p class="review">Imagem de capa: ilustração gerada por IA.</p>':'') + String(row.body || "")
     .split(/\n{2,}/)
     .filter(Boolean)
     .map((p) => `<p>${esc(p)}</p>`)
@@ -146,6 +146,7 @@ export function setupTrendRadar({
   publicPage,
   generateEditorialDraft,
   reviewEditorialDraft,
+  automationAllowed = () => true,
 }) {
   db.exec(`CREATE TABLE IF NOT EXISTS trend_topics(id TEXT PRIMARY KEY,title TEXT NOT NULL UNIQUE,traffic TEXT NOT NULL DEFAULT '',published_at TEXT,portal TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new',source_url TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS editorial_articles(id TEXT PRIMARY KEY,trend_id TEXT,slug TEXT NOT NULL UNIQUE,portal TEXT NOT NULL,title TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',body TEXT NOT NULL DEFAULT '',image_url TEXT NOT NULL DEFAULT '',sources_json TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL DEFAULT 'draft',published_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -312,7 +313,7 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
   }
   async function runEditorialAutomation() {
     if (
-      automationRunning ||
+      automationRunning || !automationAllowed() ||
       process.env.EDITORIAL_AUTOMATION_ENABLED === "false"
     )
       return;
@@ -325,6 +326,7 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
     try {
       await syncTrendFeed();
       for (const portal of editorialPortals) {
+        if (!automationAllowed()) break;
         const today = Number(
           db
             .prepare(
