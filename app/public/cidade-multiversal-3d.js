@@ -70,15 +70,15 @@ let pinchDistance=0;
 let hoveredMesh=null;
 const target=new THREE.Vector3(0,3,0);
 
-function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));}
 function safeJson(response){return response.json().catch(()=>({}));}
 function selectedCity(){return cities.find(city=>city.slug===activeCitySlug)||cities[0]||null;}
 function appendCity(entryPath,citySlug){const url=new URL(entryPath,location.origin);url.searchParams.set('cidade',citySlug);return `${url.pathname}${url.search}${url.hash}`;}
 function normalizeRealm(realm){const entryPath=realm.entryPath||realm.href||'/multiversal.html';return{...realm,category:realm.category||realm.type||'experience',categoryLabel:realm.categoryLabel||realm.typeLabel||realm.category||'Universo',entryPath,href:realm.href||appendCity(entryPath,activeCitySlug),imagePath:realm.imagePath||realm.image||'/assets/vitriny-city-master.jpg'};}
 function readLastRealm(){try{return JSON.parse(localStorage.getItem(LAST_REALM_KEY)||'{}');}catch{return{};}}
-function rememberRealm(realm){try{localStorage.setItem(LAST_REALM_KEY,JSON.stringify({slug:realm.slug,citySlug:activeCitySlug,visitedAt:Date.now()}));}catch{}}
-function rememberCity(slug){try{localStorage.setItem(LAST_CITY_KEY,slug);}catch{}}
+function rememberRealm(realm){try{localStorage.setItem(LAST_REALM_KEY,JSON.stringify({slug:realm.slug,citySlug:activeCitySlug,visitedAt:Date.now()}));}catch{/* A URL mantém a navegação funcional sem localStorage. */}}
+function rememberCity(slug){try{localStorage.setItem(LAST_CITY_KEY,slug);}catch{/* A cidade permanece na URL quando o armazenamento local está indisponível. */}}
 function updateLocationCity(slug){const url=new URL(location.href);url.searchParams.set('cidade',slug);history.replaceState({},'',`${url.pathname}${url.search}${url.hash}`);}
+function make(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node;}
 
 async function sendMultiversalEvent(body){
   try{
@@ -91,7 +91,8 @@ function currentRealmFromUrl(){const slug=new URLSearchParams(location.search).g
 
 async function loadContext(){
   const params=new URLSearchParams(location.search);
-  let saved='';try{saved=localStorage.getItem(LAST_CITY_KEY)||'';}catch{}
+  let saved='';
+  try{saved=localStorage.getItem(LAST_CITY_KEY)||'';}catch{/* URL é o fallback de contexto. */}
   try{
     const response=await fetch('/api/multiversal/cities',{headers:{Accept:'application/json'}});
     if(!response.ok)throw new Error('cities');
@@ -124,7 +125,8 @@ async function loadRealms(citySlug){
 }
 
 function renderCitySelect(){
-  citySelect.innerHTML=cities.map(city=>`<option value="${escapeHtml(city.slug)}"${city.slug===activeCitySlug?' selected':''}>${escapeHtml(city.name)} — ${escapeHtml(city.stateCode||city.state||'')}</option>`).join('');
+  const options=cities.map(city=>{const option=make('option','',`${city.name} — ${city.stateCode||city.state||''}`);option.value=city.slug;option.selected=city.slug===activeCitySlug;return option;});
+  citySelect.replaceChildren(...options);
 }
 function renderCityMeta(){
   const city=selectedCity();
@@ -132,12 +134,22 @@ function renderCityMeta(){
   dockCity.textContent=`${city?.name||'VitrineCity'} • ${city?.stateCode||''}`;
   realmSummary.textContent=`${realms.length} universos conectados`;
   realmCity.textContent=`${city?.name||'VitrineCity'} — ${city?.stateCode||city?.state||''}`;
-  realmDock.innerHTML=realms.map(realm=>{const config=DISTRICTS[realm.slug]||{};const accent=`#${Number(config.accent||0x67e8f9).toString(16).padStart(6,'0')}`;return`<button class="dock-realm" type="button" data-realm="${escapeHtml(realm.slug)}" style="--accent:${accent}"><i></i>${escapeHtml(realm.title)}</button>`}).join('');
-  realmDock.querySelectorAll('[data-realm]').forEach(button=>button.onclick=()=>{const realm=realms.find(item=>item.slug===button.dataset.realm);if(realm)focusRealm(realm);});
+  const buttons=realms.map(realm=>{
+    const config=DISTRICTS[realm.slug]||{};
+    const accent=`#${Number(config.accent||0x67e8f9).toString(16).padStart(6,'0')}`;
+    const button=make('button','dock-realm');button.type='button';button.dataset.realm=realm.slug;button.style.setProperty('--accent',accent);
+    button.append(make('i'),document.createTextNode(realm.title));
+    button.onclick=()=>focusRealm(realm);
+    return button;
+  });
+  realmDock.replaceChildren(...buttons);
 }
 
 function showWebglFallback(){
-  stage.innerHTML='<div class="webgl-fallback"><div><h1>Seu navegador não abriu a cidade 3D.</h1><p>O restante da VitrineCity continua disponível normalmente.</p><a href="/multiversal.html">Abrir Portal Multiversal</a></div></div>';
+  const fallback=make('div','webgl-fallback');
+  const copy=make('div');
+  copy.append(make('h1','', 'Seu navegador não abriu a cidade 3D.'),make('p','', 'O restante da VitrineCity continua disponível normalmente.'));
+  const link=make('a','', 'Abrir Portal Multiversal');link.href='/multiversal.html';copy.append(link);fallback.append(copy);stage.replaceChildren(fallback);
 }
 
 function initThree(){
@@ -212,7 +224,9 @@ function createRealmBuilding(realm,index){
   }else{
     const beacon=new THREE.Mesh(new THREE.SphereGeometry(.32,12,12),accentMat);beacon.position.set(0,height+1.25,0);group.add(beacon);
   }
-  const label=document.createElement('button');label.type='button';label.className='realm-label';label.dataset.realm=realm.slug;label.innerHTML=`<small>${escapeHtml(cfg.label||realm.badge)}</small>${escapeHtml(realm.title)}`;label.onclick=()=>focusRealm(realm);labelsLayer.append(label);labels.push({element:label,realm,anchor:new THREE.Vector3(x,height+2.5,z)});
+  const label=make('button','realm-label');label.type='button';label.dataset.realm=realm.slug;
+  label.append(make('small','',cfg.label||realm.badge),document.createTextNode(realm.title));
+  label.onclick=()=>focusRealm(realm);labelsLayer.append(label);labels.push({element:label,realm,anchor:new THREE.Vector3(x,height+2.5,z)});
   realmGroups.set(realm.slug,group);world.add(group);
 }
 
@@ -263,12 +277,18 @@ async function enterActiveRealm(){
   try{
     const response=await fetch('/api/multiversal/transition',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({citySlug:activeCitySlug,fromRealm:previous?.citySlug===activeCitySlug&&previous?.slug!==activeRealm.slug?previous?.slug:null,toRealm:activeRealm.slug,sourcePath:`${location.pathname}${location.search}`})});
     const data=response.ok?await safeJson(response):null;if(data?.href)destination=data.href;
-  }catch{}
+  }catch{/* Telemetria não pode impedir a entrada no universo. */}
   location.assign(destination);
 }
 
 async function switchCity(nextSlug){
   if(nextSlug===activeCitySlug||!cities.some(city=>city.slug===nextSlug))return;const previous=activeCitySlug;activeCitySlug=nextSlug;rememberCity(nextSlug);updateLocationCity(nextSlug);renderCitySelect();panel.classList.remove('show');activeRealm=null;await loadRealms(nextSlug);sendMultiversalEvent({kind:'city-change',citySlug:nextSlug,fromCitySlug:previous});
+}
+
+function setNeuralState(online){
+  neuralState.classList.toggle('online',online);
+  const indicator=make('i');
+  neuralState.replaceChildren(indicator,document.createTextNode(online?'Vitriny Neural conectada':'Neural em modo de navegação'));
 }
 
 citySelect.onchange=()=>switchCity(citySelect.value);
@@ -280,8 +300,8 @@ async function bootstrap(){
   initThree();await loadContext();
   try{
     const response=await fetch(`/api/multiversal/context?cidade=${encodeURIComponent(activeCitySlug)}`,{headers:{Accept:'application/json'}}),data=response.ok?await safeJson(response):{};
-    const online=data.neuralCapture===true;neuralState.classList.toggle('online',online);neuralState.innerHTML=`<i></i>${online?'Vitriny Neural conectada':'Neural em modo de navegação'}`;
-  }catch{neuralState.innerHTML='<i></i>Neural em modo de navegação';}
+    setNeuralState(data.neuralCapture===true);
+  }catch{setNeuralState(false);}
   sendMultiversalEvent({kind:'enter',citySlug:activeCitySlug,realmSlug:currentRealmFromUrl()?.slug||''});
 }
 
