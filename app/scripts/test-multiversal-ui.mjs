@@ -45,6 +45,14 @@ assert.match(city3dJs,/multiversal\.place-visit|place-visit/);
 assert.match(city3dCss,/\.realm-label/);
 assert.match(city3dCss,/@media\(max-width:600px\)/);
 
+// Dados recebidos do registry/API nunca voltam ao DOM via HTML interpretado.
+assert.doesNotMatch(js,/\.innerHTML\s*=/,'Portal Multiversal não deve usar innerHTML dinâmico.');
+assert.doesNotMatch(city3dJs,/\.innerHTML\s*=/,'Cidade 3D não deve usar innerHTML dinâmico.');
+assert.match(js,/function localPath\(/,'Portal precisa validar caminhos locais.');
+assert.match(city3dJs,/function localPath\(/,'Cidade 3D precisa validar caminhos locais.');
+assert.match(js,/url\.origin !== window\.location\.origin/,'Portal precisa bloquear destino externo.');
+assert.match(city3dJs,/url\.origin!==location\.origin/,'Cidade 3D precisa bloquear destino externo.');
+
 const destinationFiles=[
   'cidade-multiversal-3d.html','cidade-25d-demo.html','mapa-real.html','social.html','loja.html','entregas.html',
   'centro-educacional.html','jarvis-public.html','navegar.html'
@@ -64,4 +72,4 @@ assert.match(compose,/api\/multiversal\/health/);
 assert.match(caddy,/handle \/api\/multiversal\/\*/);
 assert.match(caddy,/reverse_proxy multiversal:3001/);
 
-console.log(JSON.stringify({ok:true,destinations:destinationFiles.length,cities:3,apis:4,webgl:true}));
+console.log(JSON.stringify({ok:true,destinations:destinationFiles.length,cities:3,apis:4,webgl:true,domHardened:true,sameOrigin:true}));
