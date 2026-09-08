@@ -1,6 +1,7 @@
-import {normalizeSpatialCityId,spatialFallbackCities,spatialFallbackCity} from './vitriny-spatial-api-client.js';
+import {spatialFallbackCities,spatialFallbackCity} from './vitriny-spatial-api-client.js';
 
 const KNOWN_CITY_IDS=new Set(spatialFallbackCities().map(city=>city.id));
+const CITY_RE=/^[a-z0-9][a-z0-9-]{0,79}$/;
 const BLOCKED_PREFIXES=Object.freeze(['/admin','/api','/checkout','/pagamento','/wallet','/carteira']);
 const DESTINATIONS=Object.freeze([
   Object.freeze({id:'social',label:'Vitriny Social',href:'/social.html',activeOnly:false}),
@@ -9,6 +10,10 @@ const DESTINATIONS=Object.freeze([
   Object.freeze({id:'deliveries',label:'Vitrine Entregas',href:'/entregas.html',activeOnly:true})
 ]);
 
+function strictCityId(value){
+  const id=String(value??'').trim().toLowerCase();
+  return CITY_RE.test(id)&&KNOWN_CITY_IDS.has(id)?id:null;
+}
 function safeInternalPath(value){
   const raw=String(value||'').trim();
   if(!raw.startsWith('/')||raw.startsWith('//')||/[\\\u0000-\u001f]/.test(raw))return null;
@@ -25,20 +30,17 @@ function timeoutSignal(timeoutMs){
   return{signal:controller.signal,clear:()=>clearTimeout(timer)};
 }
 
-export function isKnownSpatialContextCity(value){
-  const id=normalizeSpatialCityId(value,'');return Boolean(id&&KNOWN_CITY_IDS.has(id));
-}
+export function isKnownSpatialContextCity(value){return Boolean(strictCityId(value));}
 
 export function spatialContextCityFromLocation(locationLike=globalThis.location){
   try{
     const params=new URLSearchParams(String(locationLike?.search||''));
-    const requested=params.get('cidade')||params.get('city')||'vitrine-city';
-    return isKnownSpatialContextCity(requested)?normalizeSpatialCityId(requested):'vitrine-city';
+    return strictCityId(params.get('cidade')||params.get('city')||'vitrine-city')||'vitrine-city';
   }catch{return'vitrine-city';}
 }
 
 export function withSpatialCityContext(href,cityId='vitrine-city'){
-  const id=normalizeSpatialCityId(cityId,'');if(!id||!KNOWN_CITY_IDS.has(id))return null;
+  const id=strictCityId(cityId);if(!id)return null;
   const safe=safeInternalPath(href);if(!safe)return null;
   const url=new URL(safe,'https://vitrinecity.local');
   url.searchParams.set('cidade',id);
@@ -47,7 +49,7 @@ export function withSpatialCityContext(href,cityId='vitrine-city'){
 
 export function spatialEcosystemDestination(destinationId,{cityId='vitrine-city',cityStatus=''}={}){
   const definition=DESTINATIONS.find(item=>item.id===String(destinationId||'').trim().toLowerCase());if(!definition)return null;
-  const id=normalizeSpatialCityId(cityId,'');if(!id||!KNOWN_CITY_IDS.has(id))return null;
+  const id=strictCityId(cityId);if(!id)return null;
   const fallbackCity=spatialFallbackCity(id);
   const canonicalActive=fallbackCity.id===id&&fallbackCity.status==='active';
   const serverActive=String(cityStatus||fallbackCity.status).trim().toLowerCase()==='active';
@@ -64,8 +66,8 @@ export function spatialEcosystemDestinations(options={}){
 }
 
 export function normalizeSpatialNavigationContext(data,{cityId='vitrine-city'}={}){
-  const id=normalizeSpatialCityId(cityId,'');
-  if(!id||!KNOWN_CITY_IDS.has(id)||Number(data?.apiVersion)!==1||data?.contextMode!=='navigation-only'||String(data?.city?.id||'').trim().toLowerCase()!==id)throw new Error('spatial_context_invalid');
+  const id=strictCityId(cityId);
+  if(!id||Number(data?.apiVersion)!==1||data?.contextMode!=='navigation-only'||strictCityId(data?.city?.id)!==id)throw new Error('spatial_context_invalid');
   const fallbackCity=spatialFallbackCity(id),serverStatus=String(data.city.status||'preview').trim().toLowerCase()==='active'?'active':'preview';
   const city=Object.freeze({...fallbackCity,name:String(data.city.name||fallbackCity.name).trim().slice(0,100)||fallbackCity.name,status:serverStatus});
   const modules=spatialEcosystemDestinations({cityId:id,cityStatus:serverStatus});
@@ -74,7 +76,7 @@ export function normalizeSpatialNavigationContext(data,{cityId='vitrine-city'}={
 
 export async function fetchSpatialNavigationContext({cityId='vitrine-city',fetchImpl=globalThis.fetch,timeoutMs=1800}={}){
   if(typeof fetchImpl!=='function')throw new TypeError('spatial_context_fetch_required');
-  const id=normalizeSpatialCityId(cityId,'');if(!id||!KNOWN_CITY_IDS.has(id))throw new Error('spatial_context_city_invalid');
+  const id=strictCityId(cityId);if(!id)throw new Error('spatial_context_city_invalid');
   const timer=timeoutSignal(timeoutMs);
   try{
     const response=await fetchImpl(`/api/spatial/v1/context?city=${encodeURIComponent(id)}`,{headers:{accept:'application/json'},cache:'no-store',signal:timer.signal});
