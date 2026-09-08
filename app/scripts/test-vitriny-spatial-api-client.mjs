@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {adaptSpatialApiChunk,createSpatialApiChunkLoader,fetchSpatialCities,fetchSpatialCityContext,normalizeSpatialCityId,spatialCityFromLocation,spatialExplorerHref,spatialFallbackCities,spatialFallbackCity} from '../public/vitriny-spatial-api-client.js';
+import {isKnownSpatialContextCity,spatialContextCityFromLocation,spatialEcosystemDestination,spatialEcosystemDestinations,withSpatialCityContext} from '../public/vitriny-spatial-city-context.js';
 
 assert.equal(normalizeSpatialCityId('ANAPOLIS'),'anapolis');
 assert.equal(normalizeSpatialCityId('../admin'),'vitrine-city');
@@ -10,6 +11,26 @@ assert.equal(spatialExplorerHref('vianopolis',{returnState:true}),'/vitriny-mult
 assert.equal(spatialFallbackCity('goiania').worldKey,'br:go:goiania');
 assert.equal(spatialFallbackCity('vianopolis').name,'Vianópolis');
 assert.equal(spatialFallbackCities().length,5);
+
+assert.equal(isKnownSpatialContextCity('vianopolis'),true);
+assert.equal(isKnownSpatialContextCity('nao-existe'),false);
+assert.equal(spatialContextCityFromLocation({search:'?cidade=vianopolis'}),'vianopolis');
+assert.equal(spatialContextCityFromLocation({search:'?city=goiania'}),'goiania');
+assert.equal(spatialContextCityFromLocation({search:'?cidade=nao-existe'}),'vitrine-city');
+assert.equal(withSpatialCityContext('/social.html?tab=local#top','anapolis'),'/social.html?tab=local&cidade=anapolis#top');
+assert.equal(withSpatialCityContext('/mapa-real.html','vianopolis'),'/mapa-real.html?cidade=vianopolis');
+assert.equal(withSpatialCityContext('https://example.com','anapolis'),null);
+assert.equal(withSpatialCityContext('/checkout/order','anapolis'),null);
+assert.equal(withSpatialCityContext('/social.html','nao-existe'),null);
+const previewDestinations=spatialEcosystemDestinations({cityId:'vianopolis',cityStatus:'active'});
+assert.equal(previewDestinations.length,4);
+assert.equal(previewDestinations.find(item=>item.id==='social').enabled,true);
+assert.equal(previewDestinations.find(item=>item.id==='map').enabled,true);
+assert.equal(previewDestinations.find(item=>item.id==='marketplace').enabled,false);
+assert.equal(previewDestinations.find(item=>item.id==='deliveries').enabled,false);
+assert.equal(previewDestinations.find(item=>item.id==='marketplace').href,'/loja.html?cidade=vianopolis');
+assert.equal(spatialEcosystemDestination('marketplace',{cityId:'vitrine-city',cityStatus:'active'}).enabled,true);
+assert.equal(spatialEcosystemDestination('missing',{cityId:'vitrine-city'}),null);
 
 const listed=await fetchSpatialCities({fetchImpl:async url=>{
   assert.equal(url,'/api/spatial/v1/cities?country=br&region=go');
@@ -57,4 +78,4 @@ assert.equal(fallbackChunk.source,'local-fallback');
 assert.equal(fallbackChunk.worldKey,'br:go:vianopolis');
 assert.deepEqual(fallbackSources,['fallback']);
 
-console.log(JSON.stringify({ok:true,city:city.id,cities:listed.length,chunk:adapted.id,fallback:fallbackChunk.source,vianopolis:true}));
+console.log(JSON.stringify({ok:true,city:city.id,cities:listed.length,chunk:adapted.id,fallback:fallbackChunk.source,vianopolis:true,cityContext:true}));
