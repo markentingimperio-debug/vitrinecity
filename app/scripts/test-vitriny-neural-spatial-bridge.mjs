@@ -16,20 +16,20 @@ const captured=[];
 const telemetry={snapshot:()=>({
   windowMinutes:60,
   byDistrict:{central:0,commerce:3,social:5,creator:0,food:0,education:0,entertainment:0,business:0,services:0},
-  byCity:{'vitrine-city':3,silvania:0,anapolis:5,goiania:0},
+  byCity:{'vitrine-city':3,silvania:0,anapolis:5,vianopolis:4,goiania:0},
   byEvent:{render_sample:8},
   byFps:{poor:1,constrained:2,good:3,excellent:2}
 })};
 const presence={snapshot:()=>({
   districts:{central:1,commerce:0,social:2,creator:0,food:0,education:0,entertainment:0,business:0,services:0},
-  cities:{'vitrine-city':1,silvania:0,anapolis:2,goiania:0}
+  cities:{'vitrine-city':1,silvania:0,anapolis:2,vianopolis:1,goiania:0}
 })};
 const bridge=createSpatialNeuralBridge({capture:event=>{captured.push(event);return{accepted:true};},telemetry,presence,now:()=>clock,intervalMs:60_000});
 const result=bridge.pulse();
-assert.equal(result.attempted,6);
-assert.equal(result.accepted,6);
+assert.equal(result.attempted,7);
+assert.equal(result.accepted,7);
 assert.equal(captured.filter(event=>event.entityType==='district').length,3);
-assert.equal(captured.filter(event=>event.entityType==='city').length,2);
+assert.equal(captured.filter(event=>event.entityType==='city').length,3);
 assert.equal(captured.find(event=>event.entityId==='social').payload.activeCount,2);
 assert.equal(captured.find(event=>event.entityId==='commerce').payload.eventCount,3);
 const anapolis=captured.find(event=>event.entityType==='city'&&event.entityId==='anapolis');
@@ -37,6 +37,11 @@ assert.equal(anapolis.payload.activeCount,2);
 assert.equal(anapolis.payload.eventCount,5);
 assert.equal(anapolis.payload.channel,'multiverse-city');
 assert.match(anapolis.dedupeKey,/^spatial:\d+:city:anapolis$/);
+const vianopolis=captured.find(event=>event.entityType==='city'&&event.entityId==='vianopolis');
+assert.equal(vianopolis.payload.activeCount,1);
+assert.equal(vianopolis.payload.eventCount,4);
+assert.equal(vianopolis.payload.channel,'multiverse-city');
+assert.match(vianopolis.dedupeKey,/^spatial:\d+:city:vianopolis$/);
 const render=captured.find(event=>event.entityType==='runtime');
 assert.equal(render.payload.renderSamples,8);
 assert.equal(render.payload.fpsPoor,1);
@@ -51,4 +56,4 @@ assert.equal(bridge.start(),false);
 assert.equal(bridge.stop(),true);
 assert.equal(bridge.stop(),false);
 
-console.log(JSON.stringify({ok:true,captured:captured.length,cities:captured.filter(event=>event.entityType==='city').length,policy:platform.policy.rawPersonalData}));
+console.log(JSON.stringify({ok:true,captured:captured.length,cities:captured.filter(event=>event.entityType==='city').length,vianopolis:true,policy:platform.policy.rawPersonalData}));
