@@ -86,6 +86,14 @@ try {
   result=await get('/api/discovery/search','plantas','cidade inexistente');assert.ok(result.contents.some(item=>item.kind==='book'),'The city filter applies to local inventory, not digital content');
   result=await get('/api/discovery/search/suggestions','plantas');assert.ok(result.suggestions.some(item=>item.category==='Livro digital'));assert.ok(result.suggestions.every(item=>!/rascunho|secretas|futebol/i.test(item.label)));
   result=await get('/api/discovery/search','astronomia marciana');assert.equal(result.contents.length+result.products.length+result.stores.length,0,'An external-only query gets no unrelated internal promotion');
+  db.prepare("UPDATE editorial_articles SET image_url='/assets/vitriny-city-master.jpg' WHERE slug='cuidar-de-plantas'").run();
+  result=await get('/api/discovery/search','plantas');
+  assert.equal(result.contents.find(item=>item.url==='/artigo/cuidar-de-plantas').imageUrl,'','A generic city cover is removed without suppressing the article');
+  assert.equal(result.contents.find(item=>item.url==='/livro/livro-plantas').imageUrl,'/assets/livro.webp','Book covers are not changed by the editorial policy');
+  db.prepare("UPDATE editorial_articles SET image_url='/assets/recipes/bolo-cenoura.jpg' WHERE slug='cuidar-de-plantas'").run();
+  result=await get('/api/discovery/search','plantas');assert.equal(result.contents.find(item=>item.url==='/artigo/cuidar-de-plantas').imageUrl,'/assets/recipes/bolo-cenoura.jpg','Non-placeholder editorial photos remain available');
+  db.prepare("UPDATE editorial_articles SET image_url='/uploads/generated-videos/editorial-ai-a7150844-9ec1-4972-a3b4-10bd7da19a09.png' WHERE slug='cuidar-de-plantas'").run();
+  result=await get('/api/discovery/search','plantas');assert.equal(result.contents.find(item=>item.url==='/artigo/cuidar-de-plantas').imageCredit,'Ilustração por IA');
   db.exec('DROP TABLE editorial_articles; DROP TABLE digital_books;');
   result=await get('/api/discovery/search','plantas');assert.ok(result.contents.some(item=>item.kind==='course'),'An installation without optional editorial tables still searches existing courses and catalogs');
   console.log('discovery-search: relevant official inventory, published articles/books/courses/affiliate pages, strict matching, drafts, city filtering and external-only fallback passed');

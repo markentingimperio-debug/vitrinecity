@@ -26,7 +26,7 @@ test('public feed projects only published editorial cards, includes companions a
   const before=f.db.prepare('SELECT total_changes() n').get().n,result=await f.get();
   assert.equal(result.status,200);assert.equal(result.headers.get('cache-control'),'public,max-age=60');assert.equal(result.headers.get('x-content-type-options'),'nosniff');assert.equal(result.headers.get('set-cookie'),null);
   assert.equal(result.data.total,2);assert.equal(result.data.pageSize,12);assert.ok(result.data.items.some(item=>item.slug==='materia-com-story'));
-  assert.deepEqual(Object.keys(result.data.items[0]).sort(),['slug','category','title','summary','imageUrl','url','publishedAt','updatedAt'].sort());
+  assert.deepEqual(Object.keys(result.data.items[0]).sort(),['slug','category','title','summary','imageUrl','imageCredit','url','publishedAt','updatedAt'].sort());
   assert.doesNotMatch(JSON.stringify(result.data),/PRIVATE_|BODY_NOT_IN_DTO/);assert.equal(f.db.prepare('SELECT total_changes() n').get().n,before);
   assert.deepEqual(f.db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all(),[{name:'editorial_articles'}]);
 });
@@ -66,6 +66,20 @@ test('unsafe images and destination overrides cannot escape to external, private
 test('withdrawn articles disappear on the next read and invalid dates are not replaced by a fabricated fresh timestamp',async t=>{
   const f=await fixture(t);f.insert({published_at:null,updated_at:'not-a-date'});let result=await f.get();assert.equal(result.data.items[0].publishedAt,null);assert.equal(result.data.items[0].updatedAt,null);
   f.db.prepare("UPDATE editorial_articles SET status='draft'").run();result=await f.get();assert.equal(result.data.total,0);assert.deepEqual(result.data.items,[]);
+});
+
+test('repeated city covers are omitted while recipe photos and credited AI covers remain',async t=>{
+  const f=await fixture(t);
+  f.insert({id:'generic-news',slug:'generic-news',image_url:'/assets/vitriny-city-master.jpg'});
+  f.insert({id:'generic-sports',slug:'generic-sports',portal:'esportes',image_url:'https://vitrinecity.test/assets/vitriny-city-master.jpg'});
+  f.insert({id:'recipe',slug:'recipe',portal:'receitas',image_url:'/assets/recipes/bolo-cenoura.jpg'});
+  f.insert({id:'ai',slug:'ai',image_url:'/uploads/generated-videos/story-ai-a7150844-9ec1-4972-a3b4-10bd7da19a09.png'});
+  const {items}= (await f.get()).data;
+  assert.equal(items.length,4);
+  for(const item of items.filter(item=>item.slug.startsWith('generic-'))){assert.equal(item.imageUrl,'');assert.equal(item.imageCredit,'');}
+  assert.equal(items.find(item=>item.slug==='recipe').imageUrl,'/assets/recipes/bolo-cenoura.jpg');assert.equal(items.find(item=>item.slug==='recipe').imageCredit,'');
+  assert.equal(items.find(item=>item.slug==='ai').imageCredit,'Ilustração por IA');
+  assert.equal(f.db.prepare("SELECT image_url FROM editorial_articles WHERE id='generic-news'").get().image_url,'/assets/vitriny-city-master.jpg');
 });
 
 test('invalid query/category/page parameters return controlled errors; writes are not routed',async t=>{

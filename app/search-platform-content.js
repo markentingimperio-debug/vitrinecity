@@ -1,3 +1,5 @@
+import {editorialImage} from './editorial-image-policy.js';
+
 // Search only public editorial records. Article bodies help matching but are never
 // returned as search snippets; drafts and unpublished books stay outside the index.
 export function normalizeSearch(value) {
@@ -28,7 +30,7 @@ const publicGuides = Object.freeze([
   {kind:'article',title:'Plantas em vasos: checklist para começar',description:'Organize os cuidados com suas plantas em vasos: luz, rega, drenagem e escolha do substrato. Checklist gratuito, sem cadastro obrigatório.',keywords:'guia jardim jardinagem cuidar planta água adubo',url:'/guias/plantas-em-vasos.html'}
 ]);
 
-export function publishedPlatformContent(db, query) {
+export function publishedPlatformContent(db, query, {siteUrl=process.env.SITE_URL||'https://vitrinecity.com'}={}) {
   const terms = searchTerms(query);
   if (!terms.length || normalizeSearch(query).length < 2) return [];
   const hasTable = name => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
@@ -39,7 +41,10 @@ export function publishedPlatformContent(db, query) {
       FROM editorial_articles WHERE status='published' AND ${match("title||' '||summary||' '||portal||' '||body")}
       ORDER BY CASE WHEN vc_normalize(title)=? THEN 0 WHEN instr(vc_normalize(title),?)=1 THEN 1 ELSE 2 END,published_at DESC,slug LIMIT 40`)
       .all(...values,normalizeSearch(query),normalizeSearch(query))
-      .map(item => ({...item,kind:'article',url:'/artigo/'+encodeURIComponent(item.slug)})));
+      .map(item => {
+        const image=editorialImage(item.imageUrl,{siteUrl});
+        return {...item,imageUrl:image.url,imageCredit:image.credit,kind:'article',url:'/artigo/'+encodeURIComponent(item.slug)};
+      }));
   }
   if (hasTable('digital_books')) {
     rows.push(...db.prepare(`SELECT slug,title,summary description,category,keywords_json keywords,cover_url imageUrl,price_cents priceCents

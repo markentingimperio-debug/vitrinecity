@@ -50,3 +50,13 @@ test('bookmark filters accept bounded valid values without trusting category or 
   for(const query of ['?categoria=constructor&page=Infinity','?categoria=admin&page=-1','?page=10001','?page=1.5'])assert.deepEqual(stationFilters(query),filters());
   assert.equal(stationFilters('?q='+('a'.repeat(150))).query.length,120);
 });
+
+test('an omitted editorial image keeps the article visible without a substitute or false photo credit',async()=>{
+  const payload=data(),states=[];
+  payload.items[0].imageUrl='';payload.items[0].imageCredit='Ilustração por IA';
+  payload.items.push({...data().items[0],slug:'ai-cover',url:'/artigo/ai-cover',imageUrl:'/uploads/generated-videos/story-ai-a7150844-9ec1-4972-a3b4-10bd7da19a09.png',imageCredit:'Ilustração por IA'});
+  payload.items.push({...data().items[0],slug:'recipe',url:'/artigo/recipe',imageUrl:'/assets/recipes/bolo-cenoura.jpg',imageCredit:'FOTO JORNALÍSTICA VERIFICADA'});
+  const loader=createStationLoader({onState:state=>states.push(state),fetchImpl:async()=>response(payload)});
+  await loader.load(filters());const {items}=states.at(-1).data;assert.equal(items.length,3);
+  assert.equal(items[0].imageUrl,'');assert.equal(items[0].imageCredit,'');assert.equal(items[1].imageCredit,'Ilustração por IA');assert.equal(items[2].imageCredit,'');loader.close();
+});

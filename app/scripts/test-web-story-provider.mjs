@@ -29,6 +29,35 @@ test('OpenAI selection is deferred, uses one standard vertical image payload and
   assert.match(await provider('Imagem vertical'),/\.png$/);assert.equal(calls,1);selected='unsupported';await assert.rejects(provider('Imagem'),error=>error.code==='story_provider_invalid');assert.equal(calls,1);
 }));
 
+test('landscape editorial images use the selected provider format and an isolated validated prefix',()=>directory(async outputDir=>{
+  const bytes=png(1536,1024);
+  for(const selected of ['openai','openrouter']){
+    let calls=0;
+    const generate=createStoryImageProvider({provider:selected,format:'landscape',prefix:'editorial-ai',outputDir,request:async(url,options)=>{
+      calls++;assert.equal(options.redirect,'error');
+      const body=JSON.parse(options.body);assert.equal(body.n,1);
+      if(selected==='openai'){assert.equal(url,'https://api.openai.com/v1/images/generations');assert.equal(body.size,'1536x1024');assert.equal(body.quality,'medium');}
+      else {assert.equal(url,'https://openrouter.ai/api/v1/images');assert.equal(body.aspect_ratio,'16:9');}
+      return {data:{data:[{b64_json:bytes.toString('base64')}]}};
+    }});
+    const url=await generate('Capa editorial sobre os ingredientes da receita');
+    assert.match(url,/^\/uploads\/generated-videos\/editorial-ai-[a-f0-9-]+\.png$/);
+    assert.deepEqual(await fs.readFile(path.join(outputDir,path.basename(url))),bytes);assert.equal(calls,1);
+  }
+}));
+
+test('invalid orientation and filename configuration fail before requests; landscape retains safety and quality bounds',()=>directory(async outputDir=>{
+  let calls=0;const request=async()=>{calls++;throw Error('should_not_request');};
+  for(const format of ['square','../../landscape','',null])assert.throws(()=>createStoryImageProvider({format,outputDir,request}),error=>error.code==='story_image_configuration_invalid');
+  for(const prefix of ['../editorial-ai','editorial-ai/other','story-ai.exe','',null,'C:\\tmp\\image'])assert.throws(()=>createStoryImageProvider({prefix,outputDir,request}),error=>error.code==='story_image_configuration_invalid');
+  assert.equal(calls,0);
+  for(const item of [{b64_json:png(640,1024).toString('base64')},{b64_json:png(640,640).toString('base64')},{b64_json:png(1024,639).toString('base64')},{image_url:{url:'http://127.0.0.1/private.png'}},{b64_json:'data:image/svg+xml;base64,PHN2Zy8+'}]){
+    const generate=createStoryImageProvider({format:'landscape',prefix:'editorial-ai',outputDir,request:async()=>{calls++;return {data:{data:[item]}};}});
+    await assert.rejects(generate('Capa sobre o tema da matéria'));
+  }
+  assert.equal(calls,5);assert.deepEqual(await fs.readdir(outputDir),[]);
+}));
+
 const endpoint='https://api.openai.com/v1/images/generations',options={method:'POST',body:JSON.stringify({model:'gpt-image-2',prompt:'Teste',n:1,size:'1024x1536',quality:'medium'})};
 test('direct OpenAI wrapper uses only its own authorization, prevents redirects and rejects other destinations before reading credentials',async()=>{
   let keyReads=0,calls=0;const request=createOpenAIStoryRequest({apiKey:()=>{keyReads++;return 'fixture-secret';},fetchImpl:async(url,input)=>{calls++;assert.equal(url,endpoint);assert.equal(input.headers.Authorization,'Bearer fixture-secret');assert.equal(input.headers['Content-Type'],'application/json');assert.equal(input.redirect,'error');assert.equal(input.body,options.body);assert.ok(input.signal instanceof AbortSignal);return new Response('{"data":[]}',{headers:{'content-type':'application/json'}});}});

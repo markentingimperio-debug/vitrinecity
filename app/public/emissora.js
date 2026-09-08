@@ -17,7 +17,7 @@ export function createStationLoader({fetchImpl=globalThis.fetch,onState,timeoutM
       if(!response.ok)throw Error('unavailable');const data=await response.json();
       if(closed||own!==current)return;
       if(!Array.isArray(data.items)||!Number.isSafeInteger(data.total)||data.total<0||!Number.isSafeInteger(data.pages)||data.pages<1||!Number.isSafeInteger(data.page)||data.page!==filters.page)throw Error('invalid');
-      const items=data.items.filter(item=>item&&typeof item.title==='string'&&item.title.trim()&&articlePath(item.url)&&Object.hasOwn(categories,item.category)&&item.category!=='total').map(item=>({...item,imageUrl:articleImage(item.imageUrl)}));
+      const items=data.items.filter(item=>item&&typeof item.title==='string'&&item.title.trim()&&articlePath(item.url)&&Object.hasOwn(categories,item.category)&&item.category!=='total').map(item=>({...item,imageUrl:articleImage(item.imageUrl),imageCredit:articleImage(item.imageUrl)&&['Ilustração por IA','Foto de arquivo · 2024','ArionStar · CC0'].includes(item.imageCredit)?item.imageCredit:''}));
       if(data.items.length&&!items.length)throw Error('invalid');
       onState({phase:'ready',filters,data:{...data,items}});
     }catch(error){if(!closed&&own===current)onState({phase:'error',filters,timeout:timedOut});}
@@ -32,13 +32,13 @@ export function mountStation(document,window){
   const dateFormat=new Intl.DateTimeFormat('pt-BR',{day:'numeric',month:'short',year:'numeric',timeZone:'America/Sao_Paulo'});
   function card(item,index){
     const article=make('article',null,'station-article'),link=make('a',null,'article-link');link.href=articlePath(item.url);
-    const art=make('div',null,'article-art');art.dataset.category=item.category;
+    const art=make('div',null,'article-art');art.dataset.category=item.category;if(!item.imageUrl)link.classList.add('text-only');
     const fallback=make('div',null,'graphic-art');fallback.setAttribute('aria-hidden','true');fallback.append(make('span','VITRINECITY · '+categories[item.category].toUpperCase()));art.append(fallback);
-    if(item.imageUrl){const image=make('img');image.src=articleImage(item.imageUrl);image.alt='';image.width=960;image.height=540;image.loading=index?'lazy':'eager';image.decoding='async';if(!index)image.setAttribute('fetchpriority','high');image.addEventListener('load',()=>{fallback.hidden=true;});image.addEventListener('error',()=>{image.remove();fallback.hidden=false;},{once:true});art.append(image);}
+    if(item.imageUrl){const image=make('img');image.src=articleImage(item.imageUrl);image.alt='';image.width=960;image.height=540;image.loading=index?'lazy':'eager';image.decoding='async';const credit=item.imageCredit?make('small',item.imageCredit,'image-credit'):null;if(credit)credit.hidden=true;if(!index)image.setAttribute('fetchpriority','high');image.addEventListener('load',()=>{fallback.hidden=true;if(credit)credit.hidden=false;});image.addEventListener('error',()=>{art.remove();link.classList.add('text-only');},{once:true});art.append(image);if(credit)art.append(credit);}
     const meta=make('p',null,'article-meta');meta.append(make('strong',categories[item.category]));
     const time=Date.parse(item.publishedAt);if(Number.isFinite(time)){const date=make('time',dateFormat.format(time));date.dateTime=new Date(time).toISOString();meta.append(date);}
     const title=make('h3',item.title,'article-title');title.id='article-title-'+index;link.setAttribute('aria-labelledby',title.id);
-    link.append(art,meta,title);if(typeof item.summary==='string'&&item.summary)link.append(make('p',item.summary,'article-summary'));
+    if(item.imageUrl)link.append(art);link.append(meta,title);if(typeof item.summary==='string'&&item.summary)link.append(make('p',item.summary,'article-summary'));
     link.append(make('span',item.category==='receitas'?'Ver receita →':'Ler matéria →','article-read'));article.append(link);return article;
   }
   function show(state){

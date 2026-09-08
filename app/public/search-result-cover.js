@@ -13,11 +13,15 @@ export function attachResultCover(container, item, {document, origin}) {
   image.loading = 'lazy';
   image.decoding = 'async';
   image.referrerPolicy = 'no-referrer';
+  const credit=item.kind==='article'&&['Ilustração por IA','Foto de arquivo · 2024','ArionStar · CC0'].includes(item.imageCredit)?document.createElement('small'):null;
+  if(credit){credit.className='result-image-credit';credit.textContent=item.imageCredit;credit.hidden=true;}
   image.addEventListener('error', () => cover.remove(), {once:true});
   image.addEventListener('load', () => {
     if (image.naturalWidth < 2 || image.naturalHeight < 2) cover.remove();
+    else if(credit)credit.hidden=false;
   }, {once:true});
   image.src = src;
   cover.append(image);
+  if(credit)cover.append(credit);
   container.append(cover);
 }
