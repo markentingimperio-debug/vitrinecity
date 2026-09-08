@@ -53,7 +53,7 @@ export function createStoryAssets({publicDir,dataDir,siteUrl}) {
   let conversions=0;
   const outputDir=path.join(dataDir,'web-stories');
   const roots=[['/assets/',path.join(publicDir,'assets')],['/uploads/generated-videos/',path.join(dataDir,'generated-videos')],['/uploads/store-assets/',path.join(dataDir,'store-assets')]];
-  async function image(url,{logo=false}={}) {
+  async function image(url,{logo=false,catalog=false}={}) {
     url=normalizeStoryImagePath(url,siteUrl);
     const mapping=roots.find(([prefix])=>url.startsWith(prefix));
     if(!mapping)throw assetError('A imagem deve pertencer à biblioteca local da VitrineCity.');
@@ -63,7 +63,8 @@ export function createStoryAssets({publicDir,dataDir,siteUrl}) {
     if(!stat.isFile()||stat.size>8*1024*1024)throw assetError('Use uma imagem de até 8 MB.');
     const bytes=await fs.readFile(file), size=rasterSize(bytes);
     if(size.width>10000||size.height>10000||size.width*size.height>40000000)throw assetError('Dimensões da imagem excedem o limite.');
-    if(logo?(size.width!==size.height||size.width<96):(Math.min(size.width,size.height)<640))throw assetError(logo?'O logo deve ser quadrado, com pelo menos 96 pixels.':'Use uma imagem com pelo menos 640 pixels em cada lado.');
+    const tooSmall=catalog===true?(size.width<640||size.height<360||size.width*size.height<230400):Math.min(size.width,size.height)<640;
+    if(logo?(size.width!==size.height||size.width<96):tooSmall)throw assetError(logo?'O logo deve ser quadrado, com pelo menos 96 pixels.':catalog===true?'A foto do catálogo precisa ter pelo menos 640 × 360 pixels.':'Use uma imagem com pelo menos 640 pixels em cada lado.');
     return {...size,url,file,hash:createHash('sha256').update(bytes).digest('hex')};
   }
   async function poster(asset) {

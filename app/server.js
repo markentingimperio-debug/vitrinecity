@@ -12,7 +12,7 @@ import {setupCityRewards} from './city-rewards.js';
 import {setupCourierAccount} from './courier-account.js';
 import { setupMediaCatalog } from './media-catalog.js';
 import { setupDailyWebStories } from './web-story-daily.js';
-import { createStoryImageProvider } from './web-story-provider.js';
+import { createStoryImageProvider, createOpenAIStoryRequest } from './web-story-provider.js';
 import { createCryptoObservability, mountCryptoObservability } from './crypto-observability.js';
 import { mountJarvis } from './jarvis-core.js';
 import { mountJarvisPublic } from './jarvis-public.js';
@@ -2649,10 +2649,11 @@ const publicPage = file => (req, res) => {
 };
 let dailyStories;
 setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft, reviewEditorialDraft, automationAllowed:()=>!dailyStories?.automation.status().enabled });
+const storyOpenAIRequest=createOpenAIStoryRequest({apiKey:()=>process.env.OPENAI_API_KEY});
 const webStories = dailyStories = setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl:SITE_URL,publicDir:path.join(dir,'public'),dataDir,
   services:()=>DIGITAL_SERVICE_PACKAGES,courses:()=>managedCourses(true).filter(course=>courseReady(course.slug)),
-  requestText:requestEditorialText,requestImage:createStoryImageProvider({request:openRouterRequest,model:()=>OPENROUTER_IMAGE_MODEL,outputDir:generatedMediaDir}),
-  isConfigured:()=>AI_PROVIDER==='openrouter'&&aiConfigured()});
+  requestText:requestEditorialText,requestImage:createStoryImageProvider({provider:()=>process.env.OPENAI_API_KEY?'openai':'openrouter',request:(url,...args)=>url==='https://api.openai.com/v1/images/generations'?storyOpenAIRequest(url,...args):openRouterRequest(url,...args),model:()=>process.env.OPENAI_API_KEY?'gpt-image-2':OPENROUTER_IMAGE_MODEL,outputDir:generatedMediaDir}),
+  isConfigured:()=>aiConfigured()});
 setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover,generateBookIllustration});
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
