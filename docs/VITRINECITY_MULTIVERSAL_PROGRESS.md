@@ -45,7 +45,7 @@ Durante a retomada do projeto foi identificado que o PR #144 já continha a fund
 - runtime adaptativo/LOD por desempenho;
 - fallback HTML para dispositivos/navegadores sem experiência 3D adequada.
 
-### Distritos já integrados ao ecossistema
+### Distritos integrados ao ecossistema
 
 1. Commerce;
 2. Social;
@@ -58,63 +58,125 @@ Durante a retomada do projeto foi identificado que o PR #144 já continha a fund
 
 As integrações públicas mantêm denylist para rotas administrativas, checkout, pagamentos, carteira e outras áreas transacionais. A cidade espacial atua como interface/orquestração, não como substituta das regras de negócio dos módulos.
 
-### Cidades já presentes na linha #144
+### Cidades presentes na linha #144
 
-- Vitrine City;
-- Silvânia;
-- Anápolis;
-- Goiânia.
-
-Vianópolis, que aparecia na retomada do #145, deverá ser acrescentada posteriormente ao registry do #144 sem remover Goiânia ou reconstruir a arquitetura multicidade.
-
----
-
-## 2026-09-07 — Diagnóstico do CI do PR #144
-
-**Estado:** EM VALIDAÇÃO.
-
-### Evidência encontrada
-
-No head anterior `49ee3fadb4024fc765d9e2b937ca301d72f5e21b`:
-
-- workflow **Vitriny Neural**: aprovado;
-- workflow **Verify release**: reprovado em um teste específico do ambiente espacial;
-- navegação multicidade, rotas e testes anteriores ao ponto de falha estavam aprovados.
-
-### Causa da falha
-
-`test-vitriny-spatial-environment.mjs` esperava os 8 distritos representados em `LITE.districtLights`, mas recebia 7.
-
-O gerador criava 8 luzes distritais. A luz do setor voltado ao `transit-forecourt` caía dentro do corredor reservado aos portais intermunicipais e era descartada por `safeTransitPoint()`. A regra de segurança estava correta ao manter o corredor livre; o erro era perder a identidade visual de um distrito em vez de reposicioná-la.
+- Vitrine City — `active`;
+- Silvânia — `preview`;
+- Anápolis — `preview`;
+- Vianópolis — `preview`;
+- Goiânia — `preview`.
 
 ---
 
 ## 2026-09-07 — Correção das luzes distritais e proteção do corredor
 
-**Estado:** EM VALIDAÇÃO CI.
+**Estado:** CONCLUÍDO NO GIT.
 
 ### Implementação
 
-- Commit `4bdfa9310b651bf324a3ce7f021d2a716ed5ecf1` — `fix(spatial): preserva luzes distritais fora do corredor`
-  - adiciona reposicionamento determinístico somente quando uma luz distrital cair dentro do corredor intermunicipal;
-  - mantém o corredor `transit-forecourt` desobstruído;
-  - preserva as oito identidades de distrito em todos os perfis.
+- Commit `4bdfa9310b651bf324a3ce7f021d2a716ed5ecf1` — preserva luzes distritais fora do corredor;
+- Commit `91d074aafd446e17959cca093e71a4d94874d70d` — protege o corredor e as oito identidades de distrito por teste.
 
-- Commit `91d074aafd446e17959cca093e71a4d94874d70d` — `test(spatial): protege corredor e oito distritos`
-  - exige exatamente 8 distritos no perfil LITE;
-  - exige 8 luzes distritais no LITE;
-  - verifica que nenhuma luz distrital de LITE/ULTRA invade a área do corredor;
-  - preserva teste de determinismo do ambiente.
+A luz que coincidia com o `transit-forecourt` passou a ser reposicionada de forma determinística em vez de descartada. O corredor intermunicipal continua livre e os oito distritos permanecem representados.
 
-### CI atual
+---
 
-No head `91d074aafd446e17959cca093e71a4d94874d70d`, os workflows **Vitriny Neural** e **Verify release** foram disparados automaticamente e estão aguardando/conduzindo validação no momento deste registro.
+## 2026-09-08 — Vianópolis integrada à arquitetura espacial canônica
+
+**Estado:** CONCLUÍDO NO GIT / produção não alterada.
+
+### Implementação
+
+Vianópolis foi incorporada como quinta cidade, em `preview`, sem remover Goiânia e sem criar uma segunda engine Multiversal.
+
+A integração cobre:
+
+- registry multicidade;
+- `worldKey` e rota canônica;
+- identidade visual e landmark Portal do Cerrado;
+- ambiente procedural;
+- fallback do cliente;
+- portais intermunicipais e checkpoints de retorno;
+- Spatial API;
+- Premium Zones;
+- telemetria/Presence agregadas;
+- sinais agregados da Vitriny Neural.
+
+### Correção de Premium Zones
+
+A primeira execução do release após a expansão para cinco cidades revelou que `premium-zone-registry.js` ainda mantinha uma allowlist de quatro cidades. A correção preservou a política rígida e apenas adicionou `vianopolis` como cidade conhecida.
+
+Commits principais:
+
+- `29545682da12b45b0ec3cef140a1289765a01e4c` — reconhece Vianópolis nas Premium Zones;
+- `c2ed20a37c17cb5d6c1e696c9b90c92a1fed6dd4` — cobertura de regressão das Premium Zones de Vianópolis.
+
+Cidades arbitrárias continuam rejeitadas e slots `reserved` não expõem patrocinador.
+
+---
+
+## 2026-09-08 — Contexto cross-module seguro por cidade
+
+**Estado:** CONCLUÍDO NO GIT / produção não alterada.
+
+### Objetivo
+
+Propagar a cidade selecionada para os módulos existentes sem transformar `city`/`cidade`, URL ou armazenamento local em fonte de autorização.
+
+### Implementação
+
+- `30d524a33e453fd3e8965b25ec2eb07701a7ee0c` — camada `vitriny-spatial-city-context.js`;
+- `d41b24a6d3b4e4291d3c852a2a7e5264bedc650f` — testes de contexto e hardening;
+- `f4882cc285db31bf7ce86c2b46259936f4cd397c` — runtime do contexto no explorador;
+- `b07584b70c420466da004339eddce5377eaabce7` — HUD “Ecossistema da cidade”;
+- `57939c3145317f4081727ef02cccfeef83f2fe2e` — syntax checks no release gate;
+- `49e1b9242fc308ee953a4cef376a72f1bc27483c` — teste de wiring do HUD;
+- `050583ea486230c3353a6503057f19ef9b3d80d2` — endpoint read-only `/api/spatial/v1/context`;
+- `06bd4517869bba62708c1a4d7437e9c2e0c2790f` — cobertura da API de contexto.
+
+### Contrato
+
+O contexto usa `contextMode: navigation-only`.
+
+Em cidades `preview`:
+
+- Social: navegação contextual disponível;
+- Mapa real: navegação contextual disponível;
+- Marketplace: indisponível para operação local;
+- Entregas: indisponível para operação local.
+
+Na Vitrine City `active`, os quatro destinos são habilitados como navegação.
+
+O cliente não consegue tornar uma cidade preview operacional apenas informando `cityStatus=active`: o frontend cruza o status com o catálogo canônico e o backend deriva as capacidades do registry espacial.
+
+Rotas administrativas, `/api`, checkout, pagamentos e carteiras permanecem na denylist de contexto público.
+
+---
+
+## 2026-09-08 — Vitriny Neural cross-city
+
+**Estado:** CONCLUÍDO NO GIT / produção não alterada.
+
+A arquitetura do PR #144 já possuía `spatial.aggregate`, que envia apenas contagens agregadas por distrito, cidade e runtime. Por isso os eventos individuais `multiversal.place-visit`, `multiversal.realm-transition` e equivalentes experimentados no PR #145 não foram portados.
+
+A decisão preserva menor exposição de dados e evita uma segunda taxonomia concorrente de eventos.
+
+- Commit `2023048b014963a531ab24023f090b0b3b395af5` adiciona regressão explícita para agregados de Vianópolis.
+- O teste exige presença/eventos agregados de Vianópolis e dedupe key `spatial:<bucket>:city:vianopolis`.
+
+### Evidência CI do head `2023048b014963a531ab24023f090b0b3b395af5`
+
+- **Vitriny Neural #383: SUCCESS**;
+- **Verify release #385: SUCCESS**;
+- build da aplicação: aprovado;
+- build do runtime de live studio: aprovado;
+- testes isolados de aplicação/live studio: aprovados.
 
 ---
 
 ## Relação PR #144 × PR #145
 
-### Manter no #144
+### Mantido no #144
 
 - arquitetura espacial principal;
 - World Router/chunks;
@@ -123,35 +185,50 @@ No head `91d074aafd446e17959cca093e71a4d94874d70d`, os workflows **Vitriny Neura
 - Presence/telemetria;
 - Spatial API;
 - integrações de distritos;
-- bridge espacial com Vitriny Neural;
-- adaptive LOD e renderização do ambiente.
+- bridge espacial agregada com Vitriny Neural;
+- adaptive LOD e renderização ambiental;
+- contexto city-aware de navegação.
 
-### Avaliar para portar do #145
+### Portado seletivamente do #145
 
-- inventário consolidado do ecossistema;
-- diário/checkpoint de retomada;
-- hardening adicional de URLs/DOM/origens onde fizer sentido;
-- contexto de cidade para módulos legados;
-- métricas cross-realm complementares;
-- Vianópolis como cidade adicional;
-- quaisquer testes que cubram lacunas reais sem duplicar arquitetura.
+- conceito de contexto de cidade para módulos legados;
+- compatibilidade com parâmetro `cidade`;
+- hardening de URLs internas;
+- checkpoint/diário de retomada;
+- testes que cobrem lacunas reais.
 
-### Não portar como sistema paralelo
+### Não portado como sistema paralelo
 
-- segundo servidor Multiversal independente se a Spatial API já resolver a mesma função;
+- segundo servidor Multiversal independente;
 - segunda cidade Three.js separada da engine espacial do #144;
-- segundo registry de universos concorrente com districts/worlds do Spatial Core.
+- segundo registry de universos concorrente com districts/worlds;
+- eventos individuais de visita/transição quando os agregados existentes já atendem o aprendizado de baixo risco.
+
+---
+
+## Bloqueio operacional — issue #146
+
+**Estado:** PENDENTE / obrigatório antes de deploy.
+
+A árvore efetiva da VPS precisa ser reconciliada com GitHub antes de qualquer publicação ampla. A reconciliação deve ser somente leitura até preservar snapshot e identificar diferenças.
+
+Não fazer:
+
+- `git reset --hard` na VPS;
+- limpeza abrangente de arquivos/containers;
+- restauração de banco antigo sobre dados novos;
+- cópia da árvore Git por cima de `/opt/vitrinecity` sem diff e backup.
+
+A integração disponível nesta sessão não expõe shell/arquivos da VPS, portanto a reconciliação de `/opt/vitrinecity` ainda não foi executada nem simulada.
 
 ---
 
 ## Próxima sequência
 
-1. Confirmar CI do head `91d074a...`.
-2. Corrigir qualquer falha residual sem ampliar escopo.
-3. Comparar PR #145 por domínio e portar apenas o que não existe no #144.
-4. Adicionar Vianópolis ao registry multicidade do #144, mantendo as cidades existentes.
-5. Propagar contexto de cidade para Social, Marketplace, Mapa e Entregas usando a arquitetura espacial já existente.
-6. Ampliar sinais seguros da Vitriny Neural com métricas cross-district/cross-city, sem automatizar pagamentos ou ações destrutivas.
-7. Executar validação mobile/WebGL e jornadas E2E.
-8. Reconciliar GitHub × VPS.
-9. Só depois planejar publicação da experiência espacial como entrada oficial da VitrineCity.
+1. Validar mobile/WebGL e jornadas E2E da experiência espacial, incluindo fallback e HUD city-aware.
+2. Reconciliar GitHub × VPS conforme issue #146 quando houver acesso de leitura ao runtime/arquivos do servidor.
+3. Registrar branch/commit da VPS, diferenças rastreadas/não rastreadas e arquivos exclusivos sem expor segredos.
+4. Preservar snapshot/tag/imagem saudável antes de qualquer alteração operacional.
+5. Consolidar diferenças válidas em branch revisável e executar `ops/verify-release.sh` no candidato reconciliado.
+6. Validar `/api/health`, páginas públicas e jornadas críticas.
+7. Só então avaliar merge do PR #144, entrada oficial na home e deploy do Multiversal.
