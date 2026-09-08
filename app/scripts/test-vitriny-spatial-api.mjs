@@ -28,11 +28,14 @@ const base=`http://127.0.0.1:${server.address().port}`;
 async function request(path){const response=await fetch(base+path);return{status:response.status,cache:response.headers.get('cache-control'),json:await response.json()};}
 try{
   const root=await request('/api/spatial/v1');
-  assert.equal(root.status,200);assert.equal(root.json.apiVersion,1);assert.equal(root.json.cityCount,4);
+  assert.equal(root.status,200);assert.equal(root.json.apiVersion,1);assert.equal(root.json.cityCount,4);assert.equal(root.json.capabilities.includes('themed-environment'),true);
   const cities=await request('/api/spatial/v1/cities?status=preview&region=go');
   assert.equal(cities.status,200);assert.equal(cities.json.count,3);assert.ok(cities.cache.includes('public'));
   const city=await request('/api/spatial/v1/cities/silvania');
   assert.equal(city.json.city.route,'/v/br/go/silvania');assert.equal(city.json.city.physicalIntegration,'logical');
+  const environment=await request('/api/spatial/v1/cities/silvania/environment?profile=LITE');
+  assert.equal(environment.status,200);assert.equal(environment.json.environment.cityId,'silvania');assert.equal(environment.json.environment.profileId,'LITE');assert.equal(environment.json.environment.skyline.length,12);assert.ok(environment.cache.includes('public'));
+  assert.equal((await request('/api/spatial/v1/cities/silvania/environment?profile=MEGA')).status,400);
   const districts=await request('/api/spatial/v1/cities/anapolis/districts');
   assert.equal(districts.json.items.length,8);
   const district=await request('/api/spatial/v1/cities/anapolis/districts/food');
