@@ -19,6 +19,7 @@ function publicCity(city){
 }
 function cache(res,seconds=60){return res.set('Cache-Control',`public, max-age=${seconds}, stale-while-revalidate=${Math.max(seconds,300)}`);}
 function noSniff(res){res.set('X-Content-Type-Options','nosniff');return res;}
+function profileFromQuery(req){const profile=String(req.query.profile||'STANDARD').trim().toUpperCase();return ['LITE','STANDARD','ULTRA'].includes(profile)?profile:null;}
 
 export function spatialApiChunk(cityId,x,z){
   const city=spatialCity(cityId);if(!city)throw new Error('city_not_found');
@@ -36,7 +37,7 @@ export function setupSpatialApi(app){
   if(!app||typeof app.get!=='function')throw new TypeError('spatial_api_app_required');
   app.get('/api/spatial/v1',(_req,res)=>cache(noSniff(res),300).json({
     apiVersion:1,name:'Vitriny Spatial API',worlds:'/api/spatial/v1/worlds',cities:'/api/spatial/v1/cities',
-    cityCount:SPATIAL_CITIES.length,capabilities:['multicity-registry','district-registry','procedural-chunks','city-identity','themed-environment']
+    cityCount:SPATIAL_CITIES.length,capabilities:['multicity-registry','district-registry','procedural-chunks','city-identity','themed-environment','premium-zone-registry']
   }));
   app.get('/api/spatial/v1/worlds',(_req,res)=>cache(noSniff(res),300).json({apiVersion:1,items:SPATIAL_WORLDS}));
   app.get('/api/spatial/v1/cities',(req,res)=>{
@@ -51,10 +52,17 @@ export function setupSpatialApi(app){
   });
   app.get('/api/spatial/v1/cities/:cityId/environment',(req,res)=>{
     const city=spatialCity(req.params.cityId);if(!city)return noSniff(res).status(404).json({error:'city_not_found'});
-    const profile=String(req.query.profile||'STANDARD').trim().toUpperCase();
-    if(!['LITE','STANDARD','ULTRA'].includes(profile))return noSniff(res).status(400).json({error:'profile_invalid'});
+    const profile=profileFromQuery(req);if(!profile)return noSniff(res).status(400).json({error:'profile_invalid'});
     try{return cache(noSniff(res),300).json({apiVersion:1,environment:publicSpatialCityEnvironment(city.id,{profileId:profile})});}
     catch(error){return noSniff(res).status(400).json({error:String(error?.message||'environment_invalid').slice(0,80)});}
+  });
+  app.get('/api/spatial/v1/cities/:cityId/premium-zones',(req,res)=>{
+    const city=spatialCity(req.params.cityId);if(!city)return noSniff(res).status(404).json({error:'city_not_found'});
+    const profile=profileFromQuery(req);if(!profile)return noSniff(res).status(400).json({error:'profile_invalid'});
+    try{
+      const environment=publicSpatialCityEnvironment(city.id,{profileId:profile}),items=environment.premiumSlots||[];
+      return cache(noSniff(res),60).json({apiVersion:1,cityId:city.id,profileId:profile,items,count:items.length,activeCount:items.filter(item=>item.status==='active').length});
+    }catch(error){return noSniff(res).status(400).json({error:String(error?.message||'premium_zones_invalid').slice(0,80)});}
   });
   app.get('/api/spatial/v1/cities/:cityId/districts',(req,res)=>{
     const city=spatialCity(req.params.cityId);if(!city)return noSniff(res).status(404).json({error:'city_not_found'});
