@@ -39,15 +39,6 @@
   cityStyles.href = "/multiversal-city.css?v=1";
   document.head.appendChild(cityStyles);
 
-  function escapeHtml(value) {
-    return String(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
-
   function safeJson(response) {
     return response.json().catch(() => ({}));
   }
@@ -82,8 +73,11 @@
   }
 
   function readLastRealm() {
-    try { return JSON.parse(window.localStorage.getItem(LAST_REALM_KEY) || "{}"); }
-    catch { return {}; }
+    try {
+      return JSON.parse(window.localStorage.getItem(LAST_REALM_KEY) || "{}");
+    } catch {
+      return {};
+    }
   }
 
   function rememberRealm(realm) {
@@ -92,11 +86,17 @@
         LAST_REALM_KEY,
         JSON.stringify({ slug:realm.slug, citySlug:activeCitySlug, visitedAt:Date.now() }),
       );
-    } catch (_) {}
+    } catch {
+      // Navegação continua funcional quando o navegador bloqueia armazenamento local.
+    }
   }
 
   function rememberCity(citySlug) {
-    try { window.localStorage.setItem(LAST_CITY_KEY, citySlug); } catch (_) {}
+    try {
+      window.localStorage.setItem(LAST_CITY_KEY, citySlug);
+    } catch {
+      // A cidade continua presente na URL mesmo sem armazenamento local.
+    }
   }
 
   function updateUrlCity(citySlug) {
@@ -105,23 +105,41 @@
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   }
 
+  function make(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
   function buildCityControl() {
     const heroCopy = document.querySelector(".hero-copy");
     if (!heroCopy) return;
-    cityControl = document.createElement("div");
-    cityControl.className = "city-context";
+
+    cityControl = make("div", "city-context");
     cityControl.dataset.loading = "false";
-    cityControl.innerHTML = `
-      <div class="city-context-icon" aria-hidden="true">⌖</div>
-      <div class="city-context-copy">
-        <small>CIDADE ATIVA</small>
-        <strong id="multiversalCityName">VitrineCity</strong>
-        <span id="multiversalCityStatus">Contexto local do ecossistema</span>
-      </div>
-      <label class="city-context-select-wrap">
-        <span class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Selecionar cidade</span>
-        <select id="multiversalCitySelect" aria-label="Selecionar cidade"></select>
-      </label>`;
+
+    const icon = make("div", "city-context-icon", "⌖");
+    icon.setAttribute("aria-hidden", "true");
+
+    const copy = make("div", "city-context-copy");
+    copy.append(
+      make("small", "", "CIDADE ATIVA"),
+      make("strong", "", "VitrineCity"),
+      make("span", "", "Contexto local do ecossistema"),
+    );
+    copy.children[1].id = "multiversalCityName";
+    copy.children[2].id = "multiversalCityStatus";
+
+    const label = make("label", "city-context-select-wrap");
+    const accessible = make("span", "sr-only", "Selecionar cidade");
+    accessible.style.cssText = "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)";
+    const select = make("select");
+    select.id = "multiversalCitySelect";
+    select.setAttribute("aria-label", "Selecionar cidade");
+    label.append(accessible, select);
+
+    cityControl.append(icon, copy, label);
     const eyebrow = heroCopy.querySelector(".eyebrow");
     eyebrow?.insertAdjacentElement("afterend", cityControl);
   }
@@ -132,7 +150,15 @@
     const select = cityControl.querySelector("#multiversalCitySelect");
     const name = cityControl.querySelector("#multiversalCityName");
     const status = cityControl.querySelector("#multiversalCityStatus");
-    select.innerHTML = CITIES.map(city => `<option value="${escapeHtml(city.slug)}"${city.slug === activeCitySlug ? " selected" : ""}>${escapeHtml(city.name)} — ${escapeHtml(city.stateCode || city.state || "")}</option>`).join("");
+
+    const options = CITIES.map(city => {
+      const option = make("option", "", `${city.name} — ${city.stateCode || city.state || ""}`);
+      option.value = city.slug;
+      option.selected = city.slug === activeCitySlug;
+      return option;
+    });
+    select.replaceChildren(...options);
+
     const city = selectedCity();
     if (city) {
       name.textContent = `${city.name} — ${city.stateCode || city.state}`;
@@ -142,23 +168,33 @@
     select.onchange = () => switchCity(select.value);
   }
 
-  function realmCard(realm, focusedSlug) {
-    const isTarget = realm.slug === focusedSlug;
-    return `
-      <article class="realm-card${isTarget ? " is-target" : ""}" data-realm="${escapeHtml(realm.slug)}">
-        <div class="realm-media">
-          <img src="${escapeHtml(realm.image)}" alt="" loading="lazy" decoding="async" />
-          <span class="realm-badge">${escapeHtml(realm.badge)}</span>
-        </div>
-        <div class="realm-body">
-          <small>${escapeHtml(realm.typeLabel)}</small>
-          <h3>${escapeHtml(realm.title)}</h3>
-          <p>${escapeHtml(realm.description)}</p>
-          <a class="realm-enter" href="${escapeHtml(realm.href)}" data-enter="${escapeHtml(realm.slug)}">
-            <span>Entrar neste universo</span><span aria-hidden="true">→</span>
-          </a>
-        </div>
-      </article>`;
+  function createRealmCard(realm, focusedSlug) {
+    const article = make("article", "realm-card");
+    article.dataset.realm = realm.slug;
+    article.classList.toggle("is-target", realm.slug === focusedSlug);
+
+    const media = make("div", "realm-media");
+    const image = make("img");
+    image.src = realm.image;
+    image.alt = "";
+    image.loading = "lazy";
+    image.decoding = "async";
+    media.append(image, make("span", "realm-badge", realm.badge));
+
+    const body = make("div", "realm-body");
+    const type = make("small", "", realm.typeLabel);
+    const title = make("h3", "", realm.title);
+    const description = make("p", "", realm.description);
+    const link = make("a", "realm-enter");
+    link.href = realm.href;
+    link.dataset.enter = realm.slug;
+    const label = make("span", "", "Entrar neste universo");
+    const arrow = make("span", "", "→");
+    arrow.setAttribute("aria-hidden", "true");
+    link.append(label, arrow);
+    body.append(type, title, description, link);
+    article.append(media, body);
+    return article;
   }
 
   function render() {
@@ -171,7 +207,7 @@
       return matchesFilter && (!query || haystack.includes(query));
     });
 
-    grid.innerHTML = visible.map((realm) => realmCard(realm, focusedSlug)).join("");
+    grid.replaceChildren(...visible.map(realm => createRealmCard(realm, focusedSlug)));
     empty.hidden = visible.length > 0;
 
     grid.querySelectorAll("[data-enter]").forEach((link) => {
@@ -199,7 +235,9 @@
             new Promise(resolve => window.setTimeout(() => resolve(null), 500)),
           ]);
           if (result?.href) destination = result.href;
-        } catch (_) {}
+        } catch {
+          // Falha de telemetria nunca bloqueia a navegação para o módulo de destino.
+        }
         window.location.assign(destination);
       });
     });
@@ -215,29 +253,27 @@
   function loadResume() {
     resumeCard.hidden = true;
     resumeRealm = null;
-    try {
-      const saved = readLastRealm();
-      if (!saved.slug || (saved.citySlug && saved.citySlug !== activeCitySlug)) return;
-      resumeRealm = REALMS.find(realm => realm.slug === saved.slug) || null;
-      if (!resumeRealm) return;
-      resumeTitle.textContent = resumeRealm.title;
-      resumeDescription.textContent = resumeRealm.description;
-      resumeCard.hidden = false;
-    } catch (_) {}
+    const saved = readLastRealm();
+    if (!saved.slug || (saved.citySlug && saved.citySlug !== activeCitySlug)) return;
+    resumeRealm = REALMS.find(realm => realm.slug === saved.slug) || null;
+    if (!resumeRealm) return;
+    resumeTitle.textContent = resumeRealm.title;
+    resumeDescription.textContent = resumeRealm.description;
+    resumeCard.hidden = false;
   }
 
   async function loadRealms(citySlug) {
-    cityControl && (cityControl.dataset.loading = "true");
+    if (cityControl) cityControl.dataset.loading = "true";
     try {
       const response = await fetch(`/api/multiversal/realms?cidade=${encodeURIComponent(citySlug)}`, { headers:{ Accept:"application/json" } });
       if (!response.ok) throw new Error("multiversal_realms_unavailable");
       const payload = await safeJson(response);
       REALMS = Array.isArray(payload.items) ? payload.items.map(normalizeRealm) : [];
       if (!REALMS.length) throw new Error("multiversal_realms_empty");
-    } catch (_) {
+    } catch {
       REALMS = FALLBACK_REALMS.map(realm => normalizeRealm({ ...realm, href:appendCity(realm.entryPath, citySlug) }));
     } finally {
-      cityControl && (cityControl.dataset.loading = "false");
+      if (cityControl) cityControl.dataset.loading = "false";
     }
     render();
     loadResume();
@@ -255,7 +291,11 @@
   async function bootstrap() {
     const params = new URLSearchParams(window.location.search);
     let savedCity = "";
-    try { savedCity = window.localStorage.getItem(LAST_CITY_KEY) || ""; } catch (_) {}
+    try {
+      savedCity = window.localStorage.getItem(LAST_CITY_KEY) || "";
+    } catch {
+      // A URL continua sendo a fonte de contexto quando o armazenamento está indisponível.
+    }
 
     try {
       const response = await fetch("/api/multiversal/cities", { headers:{ Accept:"application/json" } });
@@ -264,7 +304,7 @@
       CITIES = Array.isArray(payload.items) && payload.items.length ? payload.items : FALLBACK_CITIES;
       const requested = params.get("cidade") || savedCity || payload.defaultCity || "silvania-go";
       activeCitySlug = CITIES.some(city => city.slug === requested) ? requested : (payload.defaultCity || CITIES[0].slug);
-    } catch (_) {
+    } catch {
       CITIES = FALLBACK_CITIES;
       const requested = params.get("cidade") || savedCity || "silvania-go";
       activeCitySlug = CITIES.some(city => city.slug === requested) ? requested : "silvania-go";
