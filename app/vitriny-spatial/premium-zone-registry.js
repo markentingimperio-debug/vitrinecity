@@ -19,7 +19,7 @@ export function sanitizePremiumZoneAssignment(raw,{now=Date.now()}={}){
   const activeAllowed=requestedStatus==='active'&&approved&&Boolean(sponsor)&&validWindow&&(!campaignRef||REF_RE.test(campaignRef));
   const status=activeAllowed?'active':requestedStatus==='available'?'available':'reserved';
   return Object.freeze({
-    slotId,cityId,districtId,status,
+    slotId,cityId,districtId,status,approved,
     sponsor:status==='active'?sponsor:'',campaignRef:status==='active'&&REF_RE.test(campaignRef)?campaignRef:'',
     startsAt:startsAt==null?'':new Date(startsAt).toISOString(),endsAt:endsAt==null?'':new Date(endsAt).toISOString()
   });
