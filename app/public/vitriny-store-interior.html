@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>Vitriny Spatial · Interior da loja</title>
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#030813;color:#eef8ff;font-family:Inter,system-ui,sans-serif}canvas{display:block;width:100%;height:100%;touch-action:none}.hud{position:fixed;inset:0;pointer-events:none;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));display:flex;flex-direction:column;justify-content:space-between}.top,.bottom{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.panel{pointer-events:auto;background:#07111ed9;border:1px solid #68e7ff2d;border-radius:14px;padding:11px 13px;backdrop-filter:blur(14px);box-shadow:0 16px 45px #0008}.brand small{display:block;color:#76eaff;font-size:9px;font-weight:900;letter-spacing:.15em}.brand strong{display:block;font-size:18px;margin-top:3px}.brand span,.meta,.hint{display:block;color:#9db0c5;font-size:10px;margin-top:4px}.actions{display:flex;gap:7px;flex-wrap:wrap}.actions button,.actions a{border:1px solid #78e8ff55;background:#11243a;color:#effcff;padding:9px 11px;border-radius:9px;font-weight:850;cursor:pointer;text-decoration:none}.actions .primary{background:#1768e6}.bottom{align-items:end}.hint{max-width:430px;line-height:1.45}.loading{position:fixed;inset:0;display:grid;place-items:center;background:#030813;z-index:5;transition:opacity .3s}.loading.hide{opacity:0;pointer-events:none}.loading strong{font-size:18px}.loading span{display:block;color:#8da2b9;font-size:11px;margin-top:6px;text-align:center}.error{color:#ffb7c4}@media(max-width:720px){.top{flex-direction:column}.actions{width:100%}.actions a,.actions button{flex:1}.hint{max-width:280px}.brand span{display:none}}
+  </style>
+</head>
+<body>
+  <div id="loading" class="loading"><div><strong>Vitriny Store Interior</strong><span id="loadingText">Carregando loja e produtos…</span></div></div>
+  <div class="hud">
+    <div class="top">
+      <div class="panel brand"><small>COMMERCE DISTRICT · INTERIOR</small><strong id="storeName">Loja Vitriny</strong><span id="storeMeta">Preparando vitrine espacial</span></div>
+      <div class="panel actions"><button id="backCity" type="button">← Voltar à cidade</button><a id="openStore" class="primary" href="/loja">Abrir loja completa</a></div>
+    </div>
+    <div class="bottom"><div class="panel"><span id="focusProduct" class="meta">Clique em um produto para abrir os detalhes.</span><span class="hint">Arraste para olhar · roda/pinça aproxima · WASD ou setas movem dentro da loja.</span></div></div>
+  </div>
+  <script type="module" src="/vitriny-store-interior.js"></script>
+</body>
+</html>

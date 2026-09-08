@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { affiliateArticles } from './affiliate-articles.js';
 import { setupAffiliateIndexNow } from './affiliate-indexnow.js';
 import { setupPlatformOperations } from './platform-operations.js';
+import { setupAffiliateCenters } from './affiliate-centers.js';
 
 export const platforms = { mercadolivre: 'Mercado Livre', shopee: 'Shopee', tiktok: 'TikTok', cakto: 'Cakto', kiwify: 'Kiwify' };
 const hosts = {
@@ -52,11 +53,12 @@ const queryText = (value, max) => typeof value === 'string' ? value.trim().slice
 // These partner platforms can sell digital or physical products. Do not infer
 // delivery, access duration or recurring billing solely from the platform name.
 const flexibleFormat = p => ['cakto', 'kiwify'].includes(p.platform);
-function selectionUrl({ platform = '', category = '', query = '' } = {}) {
+function selectionUrl({ platform = '', category = '', query = '', page=1 } = {}) {
   const params = new URLSearchParams();
   if (platform) params.set('plataforma', platform);
   if (category) params.set('categoria', category);
   if (query) params.set('q', query);
+  if (page>1) params.set('p',String(page));
   return '/ofertas' + (params.size ? '?' + params.toString() : '');
 }
 
@@ -86,7 +88,7 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
   const all = () => db.prepare('SELECT * FROM affiliate_catalog ORDER BY title').all();
   const indexnow = setupAffiliateIndexNow({db,siteUrl,rows:all,fetcher,start:startMonitor});
   setupPlatformOperations({app,db,requireAdmin,sameOriginOnly,publicDir});
-  const published = () => all().filter(p => p.status === 'published');
+  const published = () => db.prepare("SELECT * FROM affiliate_catalog WHERE status='published' ORDER BY title").all();
   const audit = (slug, action, detail) => db.prepare('INSERT INTO affiliate_catalog_audit(slug,action,detail) VALUES (?,?,?)').run(slug,action,detail);
   const origin = new URL(siteUrl).origin;
   const pagePath = p => '/ofertas/'+p.slug;
@@ -114,8 +116,13 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
   initial?.unref();
 
   app.get('/admin-vendas-afiliadas.html', requireAdmin, (_req,res) => res.sendFile(publicDir+'/admin-vendas-afiliadas.html'));
-  app.get('/api/admin/affiliate-catalog',requireAdmin,(_req,res) => res.set('Cache-Control','no-store').json({ items:all(), running,
-    audit:db.prepare('SELECT * FROM affiliate_catalog_audit ORDER BY id DESC LIMIT 60').all() }));
+  app.get('/api/admin/affiliate-catalog',requireAdmin,(req,res) => {
+    const platform=queryText(req.query.plataforma,30),query=queryText(req.query.q,120),clauses=[],values=[];
+    if(Object.hasOwn(platforms,platform)){clauses.push('platform=?');values.push(platform);}
+    if(query){clauses.push('instr(lower(title || \' \' || slug),lower(?))>0');values.push(query);}
+    const where=clauses.length?' WHERE '+clauses.join(' AND '):'',total=db.prepare('SELECT COUNT(*) total FROM affiliate_catalog'+where).get(...values).total,pageSize=50,pages=Math.max(1,Math.ceil(total/pageSize)),page=Math.min(pages,Math.max(1,Number.parseInt(String(req.query.p||'1'),10)||1));
+    return res.set('Cache-Control','no-store').json({items:db.prepare('SELECT * FROM affiliate_catalog'+where+' ORDER BY title,slug LIMIT ? OFFSET ?').all(...values,pageSize,(page-1)*pageSize),total,page,pages,running,audit:db.prepare('SELECT * FROM affiliate_catalog_audit ORDER BY id DESC LIMIT 60').all()});
+  });
   app.put('/api/admin/affiliate-catalog/:slug',requireAdmin,sameOriginOnly,(req,res) => {
     const slug = req.params.slug, b = req.body || {};
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || slug.length>100) return res.status(400).json({error:'Identificador inválido.'});
@@ -130,7 +137,7 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
     }
     const old = db.prepare('SELECT * FROM affiliate_catalog WHERE slug=?').get(slug);
     if (old && Number(b.revision)!==old.revision) return res.status(409).json({error:'O produto foi alterado. Recarregue antes de salvar.'});
-    if (!old && all().length>=1000) return res.status(400).json({error:'Limite de 1.000 produtos atingido.'});
+    if (!old && db.prepare('SELECT COUNT(*) total FROM affiliate_catalog').get().total>=50000) return res.status(400).json({error:'Limite de capacidade do catálogo atingido. Consulte a administração da plataforma.'});
     db.transaction(() => {
       db.prepare(`INSERT INTO affiliate_catalog (slug,platform,title,description,category,keywords,image,affiliate_url,status,availability,evidence)
         VALUES (@slug,@platform,@title,@description,@category,@keywords,@image,@affiliate_url,@status,@availability,@evidence)
@@ -154,6 +161,7 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
   function card(p) {
     return `<article class="card"><a class="card-media" href="${pagePath(p)}" aria-label="${esc(p.title)}">${p.image?`<img src="${esc(p.image)}" alt="" loading="lazy" decoding="async" width="360" height="240">`:'<span class="image-placeholder">Imagem não informada</span>'}</a><div><span class="eyebrow">${esc(p.category)} · ${platforms[p.platform]}</span><h2><a href="${pagePath(p)}">${esc(p.title)}</a></h2><p class="card-description">${esc(p.description)}</p><p class="card-condition">${canBuy(p)?(flexibleFormat(p)?'Preço e condições na plataforma parceira':'Preço e frete na loja parceira'):'Oferta em revisão'}</p><a class="button secondary" href="${pagePath(p)}">Ver detalhes e oferta <span aria-hidden="true">→</span></a></div></article>`;
   }
+  const centers=setupAffiliateCenters({app,db,document,card,siteUrl});
   app.get('/api/affiliate-highlights', (_req,res) => res.set('Cache-Control','public, max-age=60').json({items:
     published().filter(canBuy).slice(0,12).map(p=>({title:p.title,description:p.description,image:p.image,url:pagePath(p),platform:platforms[p.platform]}))}));
   app.get('/ofertas', (req,res) => {
@@ -165,6 +173,8 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
     const terms = searchText(query).split(/\s+/).filter(Boolean);
     const items = rows.filter(p=>(!platform || p.platform===platform) && (!category || p.category===category) &&
       terms.every(term=>searchText(p.title+' '+p.description+' '+p.keywords+' '+p.category+' '+platforms[p.platform]).includes(term)));
+    const pages=Math.max(1,Math.ceil(items.length/24)),page=Math.min(pages,Math.max(1,Number.parseInt(String(req.query.p||'1'),10)||1)),pageItems=items.slice((page-1)*24,page*24);
+    const pagination=pages>1?`<nav class="filters" aria-label="Páginas de produtos">${page>1?`<a href="${esc(selectionUrl({platform,category,query,page:page-1}))}">← Anterior</a>`:''}<span>Página ${page} de ${pages}</span>${page<pages?`<a href="${esc(selectionUrl({platform,category,query,page:page+1}))}">Próxima →</a>`:''}</nav>`:'';
     const body = `<section class="intro catalog-intro"><span class="eyebrow">Curadoria VitrineCity</span><h1>Escolhas para o seu dia a dia</h1><p>Explore produtos por categoria, descubra os detalhes e confira as condições diretamente na loja parceira.</p><p class="disclosure">Publicidade · Alguns links são de afiliado e podem gerar comissão para a VitrineCity.</p></section>
       <form class="catalog-search" action="/ofertas" method="get" role="search" aria-label="Buscar produtos da seleção">
         ${platform?`<input type="hidden" name="plataforma" value="${platform}">`:''}
@@ -174,7 +184,7 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
       </form>
       <nav class="filters" aria-label="Plataformas"><a href="${esc(selectionUrl({category,query}))}" ${!platform?'aria-current="page"':''}>Todas</a>${Object.entries(platforms).map(([id,label])=>`<a href="${esc(selectionUrl({platform:id,category,query}))}" ${platform===id?'aria-current="page"':''}>${label}</a>`).join('')}</nav>
       <div class="results-heading"><h2>${items.length} ${items.length===1?'produto encontrado':'produtos encontrados'}</h2>${query||category||platform?'<a href="/ofertas">Limpar filtros</a>':'<span class="muted">Conheça antes de escolher</span>'}</div>
-      <section class="grid" aria-label="Produtos encontrados">${items.map(card).join('') || '<div class="empty-selection"><h2>Nenhum produto nesta combinação</h2><p>Tente outra palavra, categoria ou plataforma.</p><a class="button secondary" href="/ofertas">Ver todos os produtos</a></div>'}</section><section class="note"><h2>Guias para escolher e usar</h2><p>${affiliateArticles.map(article=>`<a href="${esc(article.url)}">${esc(article.title)}</a>`).join(' · ')}</p></section><section class="note"><h2>Como selecionamos</h2><p>As informações de cada produto indicam sua fonte e data de consulta. Em cursos e softwares, confira o conteúdo ou plano incluído, requisitos, acesso e eventual cobrança recorrente. A presença no catálogo não representa garantia de resultados.</p><p>A seleção inicial do Mercado Livre reúne produtos identificados como “Mais vendido” na central de afiliados em 05/09/2026. Isso não representa um ranking de todo o mercado nem um teste de uso da VitrineCity. Confira vendedor, modelo, voltagem, frete, garantia e preço antes de comprar.</p></section>`;
+      <section class="grid" aria-label="Produtos encontrados">${pageItems.map(card).join('') || '<div class="empty-selection"><h2>Nenhum produto nesta combinação</h2><p>Tente outra palavra, categoria ou plataforma.</p><a class="button secondary" href="/ofertas">Ver todos os produtos</a></div>'}</section>${pagination}<section class="note"><h2>Guias para escolher e usar</h2><p>${affiliateArticles.map(article=>`<a href="${esc(article.url)}">${esc(article.title)}</a>`).join(' · ')}</p></section><section class="note"><h2>Como selecionamos</h2><p>As informações de cada produto indicam sua fonte e data de consulta. Em cursos e softwares, confira o conteúdo ou plano incluído, requisitos, acesso e eventual cobrança recorrente. A presença no catálogo não representa garantia de resultados.</p><p>A seleção inicial do Mercado Livre reúne produtos identificados como “Mais vendido” na central de afiliados em 05/09/2026. Isso não representa um ranking de todo o mercado nem um teste de uso da VitrineCity. Confira vendedor, modelo, voltagem, frete, garantia e preço antes de comprar.</p></section>`;
     return res.type('html').send(document('Seleção de produtos',body,origin+'/ofertas'));
   });
   app.get('/ofertas/:slug',(req,res) => {
@@ -184,7 +194,7 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
     const destination = (['shopee','cakto','kiwify'].includes(p.platform)?'na ':'no ')+platforms[p.platform];
     const conditions = flexible ? 'Confira formato, preço total, prazo de acesso ou entrega e suporte. Se for assinatura, confira também renovação, cobrança recorrente e cancelamento antes de contratar.' : 'Preço, frete, estoque e condições são confirmados na plataforma de compra.';
     const checklist = flexible ? '<li>Confira quem é o produtor e o que está incluído no produto ou plano escolhido.</li><li>Verifique requisitos, formato e prazo de acesso ou entrega.</li><li>Se for assinatura, confira valor total, frequência de cobrança, renovação e cancelamento.</li><li>Leia as regras de suporte e reembolso apresentadas pelo produtor e pela plataforma.</li>' : '<li>Confira o modelo, as medidas e a quantidade da variação.</li><li>Verifique o vendedor, o frete e o prazo para o seu endereço.</li><li>Compare os acessórios incluídos e as condições de garantia.</li><li>Para aparelhos elétricos, confirme a voltagem e a alimentação.</li>';
-    const body = `<nav class="breadcrumbs" aria-label="Caminho da página"><a href="/ofertas">Seleção de produtos</a><span aria-hidden="true">/</span><a href="${esc(selectionUrl({category:p.category}))}">${esc(p.category)}</a></nav>
+    const body = `<nav class="breadcrumbs" aria-label="Caminho da página"><a href="/ofertas">Seleção de produtos</a>${centers.paths.includes(`/centros/${p.platform}`)?`<span aria-hidden="true">/</span><a href="/centros/${p.platform}">${platforms[p.platform]}</a>`:''}<span aria-hidden="true">/</span><a href="${esc(selectionUrl({category:p.category}))}">${esc(p.category)}</a></nav>
       <section class="detail product-detail"><figure class="product-media">${p.image?`<img src="${esc(p.image)}" alt="${esc(p.title)}" width="540" height="420" fetchpriority="high">`:'<div class="image-placeholder">Imagem não informada</div>'}<figcaption>${flexible?'Imagem do produto. Confira a apresentação completa na plataforma.':'Confira a variação e as imagens completas no anúncio.'}</figcaption></figure>
         <div class="product-summary"><span class="platform-label">${platforms[p.platform]}</span><h1>${esc(p.title)}</h1>
           <dl class="product-facts"><div><dt>Categoria</dt><dd><a href="${esc(selectionUrl({category:p.category}))}">${esc(p.category)}</a></dd></div><div><dt>${flexible?'Plataforma de compra':'Compra e atendimento'}</dt><dd>${platforms[p.platform]}</dd></div></dl>
@@ -213,7 +223,7 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
   });
   return {
     searchContent: () => [...affiliateArticles,...published().map(p=>({kind:'article',title:p.title,description:'Seleção com link de afiliado. '+p.description,keywords:p.keywords+' '+p.category+' '+platforms[p.platform],url:pagePath(p)}))],
-    sitemapPaths: () => ['/ofertas',...affiliateArticles.map(article=>article.url),...published().map(pagePath)],
+    sitemapPaths: () => ['/ofertas',...centers.paths,...affiliateArticles.map(article=>article.url),...published().map(pagePath)],
     checkDue, indexnow, close: () => { clearInterval(timer);clearTimeout(initial);indexnow.close(); }
   };
 }

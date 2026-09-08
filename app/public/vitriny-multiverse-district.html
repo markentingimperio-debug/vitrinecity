@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>Vitriny Multiverse · Distrito Vivo</title>
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#02050c;color:#eef8ff;font-family:Inter,system-ui,sans-serif}canvas{display:block;width:100%;height:100%;touch-action:none}.hud{position:fixed;inset:0;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));display:flex;flex-direction:column;justify-content:space-between;pointer-events:none}.top,.bottom{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.panel{pointer-events:auto;background:#07111ee3;border:1px solid #68e7ff2d;border-radius:14px;padding:11px 13px;backdrop-filter:blur(14px);box-shadow:0 18px 48px #0009}.brand small{display:block;color:#79eaff;font-size:9px;font-weight:950;letter-spacing:.14em}.brand strong{display:block;font-size:19px;margin-top:3px}.brand span,.meta{display:block;color:#9eb0c5;font-size:10px;margin-top:4px}.actions{display:flex;gap:7px;flex-wrap:wrap}.actions button,.actions a{border:1px solid #78e8ff55;background:#10243b;color:#effcff;padding:9px 11px;border-radius:9px;font-weight:850;cursor:pointer;text-decoration:none}.bottom{align-items:end}.legend{max-width:430px;line-height:1.45}.loading{position:fixed;inset:0;display:grid;place-items:center;background:#02050c;z-index:5;transition:opacity .3s}.loading.hide{opacity:0;pointer-events:none}.loading strong{font-size:19px}.loading span{display:block;color:#8da2b9;font-size:11px;margin-top:6px;text-align:center}.move{display:grid;grid-template-columns:repeat(3,44px);gap:5px;pointer-events:auto}.move button{width:44px;height:44px;border-radius:12px;border:1px solid #72e8ff42;background:#0b1828d9;color:white;font-size:17px;font-weight:900}.move .up{grid-column:2}.move .left{grid-column:1;grid-row:2}.move .down{grid-column:2;grid-row:2}.move .right{grid-column:3;grid-row:2}@media(min-width:860px){.move{display:none}}@media(max-width:720px){.top{flex-direction:column}.actions{width:100%}.actions a,.actions button{flex:1}.brand span{display:none}.legend{max-width:270px}}
+  </style>
+</head>
+<body>
+  <div id="loading" class="loading"><div><strong>Vitriny Multiverse</strong><span id="loadingText">Materializando distrito vivo…</span></div></div>
+  <div class="hud">
+    <div class="top">
+      <div class="panel brand"><small>DISTRITO VIVO · DADOS REAIS</small><strong id="districtName">Vitriny District</strong><span id="districtMeta">Conectando ecossistema</span></div>
+      <div class="panel actions"><button id="backCity" type="button">← Central Plaza</button><a id="fallbackLink" href="/cidade.html">Abrir versão clássica</a></div>
+    </div>
+    <div class="bottom">
+      <div class="panel legend"><span id="focusEntity" class="meta">Toque ou clique em uma entidade para abrir.</span><span class="meta">Arraste para olhar · WASD/setas para mover.</span></div>
+      <div class="move"><button class="up" data-move="forward">▲</button><button class="left" data-move="left">◀</button><button class="down" data-move="back">▼</button><button class="right" data-move="right">▶</button></div>
+    </div>
+  </div>
+  <script type="module" src="/vitriny-multiverse-district.js"></script>
+</body>
+</html>

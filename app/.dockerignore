@@ -11,6 +11,7 @@ uploads
 coverage
 scripts/*
 !scripts/run-vitriny-neural-live-benchmark.mjs
+!scripts/smoke-vitriny-multiversal.mjs
 *.bak*
 backups
 inspect-*.mjs

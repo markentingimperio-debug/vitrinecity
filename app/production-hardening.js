@@ -1,3 +1,7 @@
+import {setupSpatialPresence} from './spatial-presence.js';
+import {setupSpatialTelemetry} from './spatial-telemetry.js';
+import {setupSpatialApi} from './spatial-api.js';
+
 // Narrow protections compatible with existing inline scripts, maps and payment providers.
 // A script-src policy requires a separate nonce migration; this is not a complete XSS defence.
 export function setupProductionHardening(app, {now=Date.now}={}) {
@@ -16,4 +20,10 @@ export function setupProductionHardening(app, {now=Date.now}={}) {
     for(const [key] of keys){const value=windows.get(key)||{count:0,expires:time+duration};value.count++;windows.set(key,value);}
     res.setHeader('Cache-Control','no-store');return next();
   });
+  if(typeof app?.get==='function'&&typeof app?.post==='function'){
+    const presence=setupSpatialPresence(app,{now});
+    const telemetry=setupSpatialTelemetry(app,{now});
+    setupSpatialApi(app);
+    if(app.locals){app.locals.spatialPresence=presence;app.locals.spatialTelemetry=telemetry;}
+  }
 }

@@ -5,11 +5,13 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 COPY *.js ./
 COPY vitriny-neural ./vitriny-neural
+COPY vitriny-spatial ./vitriny-spatial
 RUN mkdir -p ./scripts
 COPY scripts/run-vitriny-neural-live-benchmark.mjs ./scripts/run-vitriny-neural-live-benchmark.mjs
+COPY scripts/smoke-vitriny-multiversal.mjs ./scripts/smoke-vitriny-multiversal.mjs
 COPY affiliate-catalog-seed.json ./
 COPY public ./public
 RUN node prepare-public-highlights.js
 RUN mkdir -p /data
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["node", "--import", "./security-fetch-guard.js", "server.js"]

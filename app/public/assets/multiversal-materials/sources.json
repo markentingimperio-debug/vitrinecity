@@ -1,0 +1,44 @@
+[
+  {
+    "asset": "pavement_02",
+    "map": "Diffuse",
+    "bytes": 1178347,
+    "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/pavement_02/pavement_02_diff_1k.jpg",
+    "md5": "aa8b6d83c9005d001db57cd76646981a"
+  },
+  {
+    "asset": "pavement_02",
+    "map": "nor_gl",
+    "bytes": 738746,
+    "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/pavement_02/pavement_02_nor_gl_1k.jpg",
+    "md5": "9a244f2fdee3ad5c7c1cd6cef81713e6"
+  },
+  {
+    "asset": "pavement_02",
+    "map": "Rough",
+    "bytes": 574371,
+    "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/pavement_02/pavement_02_rough_1k.jpg",
+    "md5": "8fb04c2d33342684cad58154b88bb72e"
+  },
+  {
+    "asset": "wood_floor",
+    "map": "Diffuse",
+    "bytes": 734493,
+    "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/wood_floor/wood_floor_diff_1k.jpg",
+    "md5": "b7e927d2bf2f8f103820ff3890c8407c"
+  },
+  {
+    "asset": "wood_floor",
+    "map": "nor_gl",
+    "bytes": 423303,
+    "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/wood_floor/wood_floor_nor_gl_1k.jpg",
+    "md5": "620f174d2c09b579c5d02d37b2106668"
+  },
+  {
+    "asset": "wood_floor",
+    "map": "Rough",
+    "bytes": 527754,
+    "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/wood_floor/wood_floor_rough_1k.jpg",
+    "md5": "36146634f1dbd1bc30cd071857584c10"
+  }
+]

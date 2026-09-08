@@ -13,7 +13,7 @@ services:
       SEARCH_AI_GEMINI_DAILY: ${SEARCH_AI_GEMINI_DAILY:-20}
       SEARCH_AI_GROQ_DAILY: ${SEARCH_AI_GROQ_DAILY:-100}
   search:
-    image: docker.io/searxng/searxng:${SEARXNG_VERSION:-latest}
+    image: searxng/searxng@sha256:8bb6a6f677a758cefa4ae2c9f5da1012876e428a4388e3e86f34be4ca715330a
     restart: unless-stopped
     env_file:
       - .env.search
