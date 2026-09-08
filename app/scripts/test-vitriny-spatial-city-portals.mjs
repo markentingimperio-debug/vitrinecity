@@ -11,13 +11,20 @@ const now=Date.parse('2026-09-07T21:00:00Z');
 function storage(){const map=new Map();return{map,getItem:key=>map.get(key)||null,setItem:(key,value)=>map.set(key,value),removeItem:key=>map.delete(key)};}
 function state(id,x){return createSpatialReturnState({worldKey:`br:go:${id}`,spatialPath:`/v/br/go/${id}`,position:{x,y:1.7,z:96},yaw:Math.PI,pitch:0,createdAt:new Date(now).toISOString()});}
 
-test('all four cities connect to exactly the other three with deterministic layout',()=>{
+test('all five cities connect to exactly the other four with deterministic layout',()=>{
+  assert.deepEqual(TRANSIT_CITY_IDS,['vitrine-city','silvania','anapolis','vianopolis','goiania']);
   for(const currentCityId of TRANSIT_CITY_IDS){
     const a=layoutCityPortals(cities,{currentCityId}),b=layoutCityPortals([...cities].reverse(),{currentCityId});
-    assert.deepEqual(a,b);assert.equal(a.length,3);assert.ok(a.every(p=>p.id!==currentCityId));
-    assert.equal(new Set(a.map(p=>p.position.x)).size,3);
+    assert.deepEqual(a,b);assert.equal(a.length,4);assert.ok(a.every(p=>p.id!==currentCityId));
+    assert.equal(new Set(a.map(p=>p.position.x)).size,4);
     assert.ok(a.every(p=>p.href===cityTransitHref(p.id)));
   }
+});
+test('Vianopolis is a preview-only destination with canonical route',()=>{
+  const portal=layoutCityPortals(cities,{currentCityId:'silvania'}).find(item=>item.id==='vianopolis');
+  assert.ok(portal);assert.equal(portal.name,'Vianópolis');assert.equal(portal.status,'preview');
+  assert.equal(portal.route,'/v/br/go/vianopolis');assert.equal(portal.href,'/vitriny-multiverse-explore.html?city=vianopolis&return=1');
+  assert.match(portal.description,/sem comércio local ativo/);
 });
 test('unknown, prototype, traversal and cross-world destinations cannot create URLs',()=>{
   for(const invalid of ['constructor','__proto__','toString','/admin','//evil.example','anapolis&checkout=1','%2e%2e','br:go:anapolis',null,{}]){
@@ -40,12 +47,12 @@ test('city catalogue uses the existing read-only spatial API',async()=>{
     calls++;assert.equal(url,'/api/spatial/v1/cities');assert.equal(options.method,undefined);assert.ok(options.signal);
     return new Response(JSON.stringify({apiVersion:1,items:cities}),{status:200});
   }});
-  assert.equal(calls,1);assert.equal(result.source,'api');assert.equal(result.portals.length,3);
+  assert.equal(calls,1);assert.equal(result.source,'api');assert.equal(result.portals.length,4);
 });
 test('API failure and invalid JSON give safe offline previews without enabling commerce',async()=>{
   for(const fetchImpl of [async()=>{throw new Error('offline');},async()=>new Response('{}',{status:503}),async()=>new Response('invalid'),async()=>new Response(JSON.stringify({apiVersion:99,items:cities}))]){
     const result=await fetchCityPortals({fetchImpl});assert.equal(result.source,'fallback');
-    assert.equal(result.portals.length,3);assert.ok(result.portals.every(p=>p.status==='preview'));
+    assert.equal(result.portals.length,4);assert.ok(result.portals.every(p=>p.status==='preview'));
   }
 });
 test('catalogue timeout aborts its request and does not block fallback travel',async()=>{
@@ -53,25 +60,27 @@ test('catalogue timeout aborts its request and does not block fallback travel',a
   const result=await fetchCityPortals({timeoutMs:100,fetchImpl:(_url,{signal})=>new Promise((_resolve,reject)=>{
     signal.addEventListener('abort',()=>{aborted=true;reject(new Error('aborted'));},{once:true});
   })});
-  assert.equal(aborted,true);assert.equal(result.source,'fallback');
+  assert.equal(aborted,true);assert.equal(result.source,'fallback');assert.equal(result.portals.length,4);
 });
 test('A to B to A preserves distinct per-city checkpoints; legacy remains compatible',()=>{
   const s=storage(),options={storage:s,now};
   assert.equal(saveCityCheckpoint(state('anapolis',31),options),true);
+  assert.equal(saveCityCheckpoint(state('vianopolis',48),options),true);
   assert.equal(saveCityCheckpoint(state('goiania',72),options),true);
   assert.equal(loadCityCheckpoint('anapolis',options).position.x,31);
+  assert.equal(loadCityCheckpoint('vianopolis',options).position.x,48);
   assert.equal(loadCityCheckpoint('goiania',options).position.x,72);
   assert.equal(loadCityCheckpoint('silvania',options),null);
   s.setItem(SPATIAL_RETURN_KEY,JSON.stringify(state('silvania',9)));
   assert.equal(loadCityCheckpoint('silvania',options).position.x,9);
   assert.equal(loadCityCheckpoint('vitrine-city',options),null);
 });
-test('checkpoint storage is bounded, excludes metadata and respects expiry',()=>{
+test('checkpoint storage is bounded to the city catalogue, excludes metadata and respects expiry',()=>{
   const s=storage();
   for(const id of TRANSIT_CITY_IDS)for(let n=0;n<5;n++)saveCityCheckpoint({...state(id,n),token:'not-stored',actorId:'not-stored',targetId:'not-stored'},{storage:s,now});
-  assert.equal(s.map.size,4);assert.ok(![...s.map.values()].join('').includes('not-stored'));
+  assert.equal(s.map.size,5);assert.ok(![...s.map.values()].join('').includes('not-stored'));
   assert.equal(loadCityCheckpoint('anapolis',{storage:s,now:now+2*60*60*1000+1}),null);
-  assert.equal(s.map.size,3);
+  assert.equal(s.map.size,4);
 });
 test('corrupt, mismatched or unavailable storage never blocks travel',()=>{
   const s=storage(),options={storage:s,now};
