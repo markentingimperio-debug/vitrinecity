@@ -5,6 +5,7 @@ const FALLBACK_CITIES=Object.freeze({
   'vitrine-city':Object.freeze({id:'vitrine-city',worldKey:'br:go:vitrine-city',name:'Vitrine City',country:'br',countryName:'Brasil',region:'go',regionName:'Goiás',status:'active',chunkSize:128,route:'/v/br/go/vitrine-city'}),
   'silvania':Object.freeze({id:'silvania',worldKey:'br:go:silvania',name:'Silvânia',country:'br',countryName:'Brasil',region:'go',regionName:'Goiás',status:'preview',chunkSize:128,route:'/v/br/go/silvania'}),
   'anapolis':Object.freeze({id:'anapolis',worldKey:'br:go:anapolis',name:'Anápolis',country:'br',countryName:'Brasil',region:'go',regionName:'Goiás',status:'preview',chunkSize:128,route:'/v/br/go/anapolis'}),
+  'vianopolis':Object.freeze({id:'vianopolis',worldKey:'br:go:vianopolis',name:'Vianópolis',country:'br',countryName:'Brasil',region:'go',regionName:'Goiás',status:'preview',chunkSize:128,route:'/v/br/go/vianopolis'}),
   'goiania':Object.freeze({id:'goiania',worldKey:'br:go:goiania',name:'Goiânia',country:'br',countryName:'Brasil',region:'go',regionName:'Goiás',status:'preview',chunkSize:128,route:'/v/br/go/goiania'})
 });
 
