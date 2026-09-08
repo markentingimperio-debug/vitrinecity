@@ -4,10 +4,15 @@ const TYPES=new Set([
   'content.view','content.complete','content.share','search.query','search.click',
   'commerce.product-view','commerce.add-to-cart','commerce.purchase',
   'ads.impression','ads.click','ads.conversion','support.resolved',
-  'platform.error','platform.performance','social.follow'
+  'platform.error','platform.performance','social.follow',
+  'multiversal.enter','multiversal.city-change','multiversal.realm-transition','multiversal.place-visit'
 ]);
-const SOURCES=new Set(['vitrine-social','marketplace','search','ads','support','platform','admin-neural']);
-const SAFE_KEYS=new Set(['watchSeconds','completed','position','resultCount','valueCents','quantity','latencyMs','statusCode','campaignId','productId','postId','queryLength','conversion','errorClass','channel']);
+const SOURCES=new Set(['vitrine-social','marketplace','search','ads','support','platform','admin-neural','multiversal']);
+const SAFE_KEYS=new Set([
+  'watchSeconds','completed','position','resultCount','valueCents','quantity','latencyMs','statusCode',
+  'campaignId','productId','postId','queryLength','conversion','errorClass','channel',
+  'citySlug','fromCitySlug','toCitySlug','realmSlug','fromRealm','toRealm','placeType'
+]);
 const SECRET=/-----BEGIN .*PRIVATE KEY-----|\b(?:sk-proj-|ghp_|github_pat_|AKIA)[A-Za-z0-9_\-]{10,}/;
 
 function cleanText(v,max,min=0){const s=String(v??'').trim();if(s.length<min||s.length>max||SECRET.test(s))throw new Error('Evento da plataforma inválido.');return s;}
