@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import express from 'express';
+import Database from 'better-sqlite3';
+import {setupCityChat,chatViolation} from '../city-chat.js';
+const db=new Database(':memory:');db.pragma('foreign_keys=ON');db.exec("CREATE TABLE users(id INTEGER PRIMARY KEY,name TEXT,email TEXT,account_status TEXT); INSERT INTO users VALUES(1,'Admin','private@example.test','active'),(2,'Ana Silva','ana@example.test','active'),(3,'Bia','bia@example.test','active'),(4,'Cris','c@example.test','active'),(5,'Dani','d@example.test','active');");
+let time=Date.now();const app=express();app.use(express.json());
+const user=(req,res,next)=>{req.user=db.prepare('SELECT * FROM users WHERE id=?').get(Number(req.get('user'))||0);return req.user?next():res.sendStatus(401);},admin=(req,res,next)=>user(req,res,()=>req.user.id===1?next():res.sendStatus(403)),origin=(req,res,next)=>req.get('origin')==='https://vitrinecity.com'?next():res.sendStatus(403);
+setupCityChat({app,db,requireUser:user,requireAdmin:admin,sameOriginOnly:origin,publicDir:'.',now:()=>time});
+const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const base=`http://127.0.0.1:${server.address().port}`;
+let seq=0;const request=(path,{id=2,method='GET',body,foreign=false}={})=>fetch(base+path,{method,headers:{user:String(id),origin:foreign?'https://evil.example':'https://vitrinecity.com','Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+const post=(body,id=2)=>{time+=4000;return request('/api/city-chat/rooms/vitrine-city/messages',{id,method:'POST',body:{body,key:'message-test-'+(++seq)}});};
+try{
+  for(const text of ['p.o.r.r.a','v@i se f0der','vai tomar no cu','preto imundo','vou te matar','https://golpe.com','p\u200borra'])assert.ok(chatViolation(text),text);
+  for(const text of ['Bom dia, cidade!','Vamos combater o racismo','Sou negro e tenho orgulho.','Conheci uma nova loja em Silvânia.'])assert.equal(chatViolation(text),'',text);
+  assert.equal((await request('/api/city-chat/rooms',{id:0})).status,401);assert.equal((await request('/api/admin/city-chat')).status,403);
+  assert.equal((await request('/api/city-chat/rooms/vitrine-city/messages',{method:'POST',foreign:true,body:{body:'Olá',key:'message-origin-test'}})).status,403);
+  let response=await post('Olá, pessoal!');assert.equal(response.status,201);const first=(await response.json()).id;
+  response=await request('/api/city-chat/rooms/vitrine-city/messages');const data=await response.json();assert.equal(data.messages[0].name,'Ana');assert.ok(!JSON.stringify(data).includes('@example'));assert.equal((await request('/api/city-chat/rooms/musica/messages')).status,200);
+  assert.equal((await request('/api/city-chat/rooms/vitrine-city/messages',{method:'POST',body:{body:'Olá, pessoal!',key:'message-test-1'}})).status,200,'Replay returns original message');
+  assert.equal((await request('/api/city-chat/messages/'+first,{id:3,method:'DELETE'})).status,404);
+  await request('/api/city-chat/blocks/2',{id:3,method:'PUT',body:{blocked:true}});assert.equal((await (await request('/api/city-chat/rooms/vitrine-city/messages',{id:3})).json()).messages.length,0);
+  await request('/api/city-chat/blocks/2',{id:3,method:'PUT',body:{blocked:false}});assert.equal((await (await request('/api/city-chat/rooms/vitrine-city/messages',{id:3})).json()).messages.length,1);
+  for(const id of [3,4,5])assert.equal((await request('/api/city-chat/messages/'+first+'/report',{id,method:'POST',body:{reason:'assedio'}})).status,200);
+  assert.equal((await (await request('/api/city-chat/rooms/vitrine-city/messages')).json()).messages.length,0,'Three distinct reports hide the message');
+  assert.equal((await request('/api/admin/city-chat',{id:1,method:'POST',body:{action:'restore',target:first,reason:'Revisão de contexto'}})).status,200);
+  assert.equal((await (await request('/api/city-chat/rooms/vitrine-city/messages')).json()).messages.length,1);
+  for(let i=0;i<3;i++)assert.equal((await post('porra')).status,422);
+  assert.equal((await post('Mensagem comum')).status,403,'Repeated violations temporarily mute');
+  time+=600001;assert.equal((await post('Voltei para conversar com respeito')).status,201);
+  await request('/api/admin/city-chat',{id:1,method:'POST',body:{action:'add_rule',target:'frase teste',reason:'Expressão de teste'}});assert.equal((await post('FRÁSE TÊSTE')).status,422);
+  time+=31*86400000;assert.equal((await (await request('/api/city-chat/rooms/vitrine-city/messages')).json()).messages.length,0,'Retention removes old messages');assert.equal(db.prepare('SELECT COUNT(*) n FROM city_chat_reports').get().n,0);
+  console.log('city-chat: auth, CSRF, normalized filtering, contextual safe text, replay, reports, blocks, moderation, mute expiry and retention passed');
+}finally{await new Promise(r=>server.close(r));db.close();}

@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+import express from 'express';
+import Database from 'better-sqlite3';
+import {setupAffiliateCatalog} from '../affiliate-catalog.js';
+const db=new Database(':memory:');db.pragma('foreign_keys=ON');
+db.exec(`CREATE TABLE users(id INTEGER PRIMARY KEY,account_status TEXT NOT NULL DEFAULT 'active');
+CREATE TABLE affiliates(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),code TEXT UNIQUE COLLATE NOCASE,status TEXT DEFAULT 'active');
+INSERT INTO users(id) VALUES(1),(2),(3);INSERT INTO affiliates(id,user_id,code) VALUES(1,1,'ana123'),(2,2,'bia456'),(3,3,'pausa789');UPDATE affiliates SET status='paused' WHERE id=3;
+CREATE TABLE affiliate_commissions(id INTEGER PRIMARY KEY);`);
+const app=express();app.use(express.json());
+const requireUser=(req,res,next)=>{const id=Number(req.headers['x-test-user']);if(![1,2,3].includes(id))return res.sendStatus(401);req.user={id};next();};
+const catalog=setupAffiliateCatalog({app,db,requireUser,requireAdmin:(req,res,next)=>req.headers['x-test-admin']==='yes'?next():res.sendStatus(403),sameOriginOnly:(_req,_res,next)=>next(),siteUrl:'https://vitrinecity.com',publicDir:new URL('../public/',import.meta.url).pathname,startMonitor:false,fetcher:async()=>{throw Error('No provider requests in test');}});
+const initial=db.prepare("SELECT * FROM affiliate_catalog WHERE status='published' ORDER BY slug LIMIT 1").get();
+db.prepare("UPDATE affiliate_catalog SET availability='available' WHERE slug=?").run(initial.slug);
+const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));const origin=`http://127.0.0.1:${server.address().port}`;
+const get=(path,headers={})=>fetch(origin+path,{headers,redirect:'manual'});
+try{
+  assert.equal((await get('/api/affiliates/me/products')).status,401);
+  const first=await (await get('/api/affiliates/me/products',{'x-test-user':'1'})).json();assert.equal(first.showcaseUrl,'https://vitrinecity.com/parceiros/ana123');assert.equal(first.metrics.confirmedSales,null);assert.equal(first.metrics.commissionCents,null);assert.ok(first.items.length>0&&first.items.length<=24);assert.ok(first.items.every(p=>p.shareUrl.includes('/indicar/ana123/')&&!('affiliate_url' in p)));
+  const page=await get('/parceiros/ana123');assert.equal(page.status,200);assert.match(page.headers.get('cache-control'),/no-store/);const html=await page.text();assert.ok(html.includes('/indicar/ana123/'+initial.slug));assert.ok(!html.includes('user_id'));assert.equal((await get('/parceiros/pausa789')).status,404);
+  const referral=await get('/indicar/ana123/'+initial.slug);assert.equal(referral.status,302);assert.equal(referral.headers.get('location'),'/ofertas/'+initial.slug+'?parceiro=ana123');
+  const detail=await (await get(referral.headers.get('location'))).text();assert.ok(detail.includes('href="/ir/ana123/'+initial.slug+'"'));assert.ok(detail.includes('href="/parceiros/ana123"'));assert.ok(!detail.includes('href="'+initial.affiliate_url+'" data-affiliate-id'));
+  const outgoing=await get('/ir/ana123/'+initial.slug+'?url=https://evil.invalid');assert.equal(outgoing.status,302);assert.equal(outgoing.headers.get('location'),initial.affiliate_url,'Provider tracking URL is preserved exactly and custom redirects ignored');
+  const mine=await (await get('/api/affiliates/me/products?affiliate_id=2',{'x-test-user':'1'})).json();assert.equal(mine.metrics.showcaseViews,1);assert.equal(mine.metrics.productViews,1);assert.equal(mine.metrics.outboundClicks,1);
+  const other=await (await get('/api/affiliates/me/products',{'x-test-user':'2'})).json();assert.equal(other.metrics.productViews,0,'No cross-partner attribution');assert.equal(other.metrics.outboundClicks,0);
+  await get('/ir/ana123/'+initial.slug,{'user-agent':'facebookexternalhit/1.1'});const afterPreview=await (await get('/api/affiliates/me/products',{'x-test-user':'1'})).json();assert.equal(afterPreview.metrics.outboundClicks,1,'Link previews do not count as user clicks');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM affiliate_commissions').get().n,0,'Views and clicks never create financial credits');
+  db.prepare("UPDATE affiliate_catalog SET status='paused' WHERE slug=?").run(initial.slug);assert.equal((await get('/indicar/ana123/'+initial.slug)).status,404);assert.equal((await get('/ir/ana123/'+initial.slug)).status,404);const paused=await(await get('/api/affiliates/me/products',{'x-test-user':'1'})).json();assert.ok(paused.items.every(p=>p.slug!==initial.slug));
+  db.prepare("UPDATE affiliate_catalog SET status='published',affiliate_url='https://evil.invalid/redirect' WHERE slug=?").run(initial.slug);assert.equal((await get('/ir/ana123/'+initial.slug)).status,404,'Destination must belong to the provider');
+  db.prepare("UPDATE users SET account_status='suspended' WHERE id=1").run();assert.equal((await get('/parceiros/ana123')).status,404);assert.equal((await get('/api/affiliates/me/products',{'x-test-user':'1'})).status,403);
+  assert.equal((await get('/api/admin/affiliate-partners')).status,403);const admin=await(await get('/api/admin/affiliate-partners',{'x-test-admin':'yes'})).json();assert.equal(admin.total,3);assert.equal(admin.items.find(p=>p.code==='ana123').metrics.outboundClicks,1);
+  const injection=await(await get('/parceiros/bia456?q=%3Cscript%3Ealert%281%29%3C%2Fscript%3E')).text();assert.ok(!injection.includes('<script>alert(1)</script>'));assert.equal((await get('/parceiros/constructor')).status,404);
+  console.log('affiliate-partners: automatic pages, protected own dashboard, referral continuity, exact provider URLs, separate counts, preview filtering, suspended/unpublished isolation and zero financial writes passed');
+}finally{catalog.close();await new Promise(resolve=>server.close(resolve));db.close();}

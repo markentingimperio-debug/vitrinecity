@@ -1,16 +1,18 @@
 import * as THREE from '/vendor/three/three.module.js';
 
-export function createPremiumFacades(){
+export function createPremiumFacades({mobile=false}={}){
   return [0,1,2].map(variant=>{
-    const canvas=document.createElement('canvas');canvas.width=256;canvas.height=512;const ctx=canvas.getContext('2d');
+    const canvas=document.createElement('canvas');canvas.width=mobile?512:1024;canvas.height=mobile?1024:2048;const ctx=canvas.getContext('2d');ctx.scale(mobile?2:4,mobile?2:4);
+    const emission=document.createElement('canvas');emission.width=512;emission.height=1024;const light=emission.getContext('2d');light.scale(2,2);light.fillStyle='#000000';light.fillRect(0,0,256,512);
     const reflection=ctx.createLinearGradient(0,0,256,512);reflection.addColorStop(0,['#7197ab','#9aa59f','#90a6b3'][variant]);reflection.addColorStop(.48,'#3d5b69');reflection.addColorStop(.7,'#7d9399');reflection.addColorStop(1,'#233e4a');ctx.fillStyle=reflection;ctx.fillRect(0,0,256,512);
     for(let row=0;row<8;row++)for(let col=0;col<4;col++){
       const x=col*64,y=row*64,lit=(row*7+col*11+variant)%13<2;
-      if(lit){ctx.fillStyle='#d2b584';ctx.fillRect(x+3,y+7,58,47);ctx.fillStyle='#615441';ctx.fillRect(x+12,y+38,18,16);ctx.fillRect(x+38,y+44,16,10);ctx.fillStyle='#f4dfb0';ctx.fillRect(x+8,y+11,47,2);}
+      if(lit){ctx.fillStyle='#d2b584';ctx.fillRect(x+3,y+7,58,47);ctx.fillStyle='#615441';ctx.fillRect(x+12,y+38,18,16);ctx.fillRect(x+38,y+44,16,10);ctx.fillStyle='#f4dfb0';ctx.fillRect(x+8,y+11,47,2);light.fillStyle=['#f9d39a','#fce6ba','#a8cede'][(row+col)%3];light.fillRect(x+3,y+7,58,47);light.fillStyle='#423723';light.fillRect(x+12,y+38,18,16);light.fillRect(x+38,y+44,16,10);}
       ctx.fillStyle='#142e3d';ctx.fillRect(x,y,2,64);ctx.fillRect(x,y+57,64,7);ctx.fillStyle='#a5b4b777';ctx.fillRect(x+2,y,1,57);ctx.fillRect(x,y+56,64,1);ctx.fillStyle='#26465388';ctx.fillRect(x+31,y,1,56);
     }
     const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=8;texture.wrapS=texture.wrapT=THREE.RepeatWrapping;
-    return new THREE.MeshStandardMaterial({map:texture,color:'#d7dddf',emissiveMap:texture,emissive:'#b2a588',emissiveIntensity:.1,metalness:.42,roughness:.3});
+    const emissiveMap=new THREE.CanvasTexture(emission);emissiveMap.colorSpace=THREE.SRGBColorSpace;emissiveMap.wrapS=emissiveMap.wrapT=THREE.RepeatWrapping;
+    return new THREE.MeshStandardMaterial({map:texture,color:'#e4edf4',emissiveMap,emissive:'#ffffff',emissiveIntensity:.6,metalness:.5,roughness:.22});
   });
 }
 
@@ -45,7 +47,7 @@ export function mountPremiumAtmosphere({scene,identity,profileId='STANDARD'}){
   for(let i=0;i<12;i++){const a=i/11*Math.PI;add(box,metal,group,Math.cos(a)*260,14,-Math.sin(a)*260,1.1,28,1.1);}
   const train=add(new THREE.CapsuleGeometry(1,8,3,8),luminous,group,260,30,0);train.rotation.z=Math.PI/2;
   const sky=new THREE.Group();sky.name='orbital-horizon';group.add(sky);
-  const dome=new THREE.Mesh(new THREE.SphereGeometry(1450,24,16),new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,uniforms:{top:{value:new THREE.Color('#284d7e')},horizon:{value:new THREE.Color('#e7bba0')}},vertexShader:'varying vec3 vDirection;void main(){vDirection=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',fragmentShader:'uniform vec3 top;uniform vec3 horizon;varying vec3 vDirection;void main(){float t=pow(max(normalize(vDirection).y,0.0),0.48);gl_FragColor=vec4(mix(horizon,top,t),1.0);\n#include <colorspace_fragment>\n}'}));dome.renderOrder=-10;sky.add(dome);
+  const dome=new THREE.Mesh(new THREE.SphereGeometry(1450,24,16),new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,uniforms:{top:{value:new THREE.Color('#024e92')},horizon:{value:new THREE.Color('#ffa06c')}},vertexShader:'varying vec3 vDirection;void main(){vDirection=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',fragmentShader:'uniform vec3 top;uniform vec3 horizon;varying vec3 vDirection;void main(){float t=pow(max(normalize(vDirection).y,0.0),0.48);gl_FragColor=vec4(mix(horizon,top,t),1.0);\n#include <colorspace_fragment>\n}'}));dome.renderOrder=-10;sky.add(dome);
   scene.add(new THREE.AmbientLight('#bdcddd',.36));
   const planet=new THREE.Mesh(new THREE.SphereGeometry(48,lite?24:48,lite?18:32),new THREE.MeshStandardMaterial({color:'#8195ad',emissive:'#263646',emissiveIntensity:.25,roughness:.94,fog:false}));planet.position.set(-600,365,-950);sky.add(planet);
   const ring=new THREE.Mesh(new THREE.TorusGeometry(74,.45,6,lite?100:180),new THREE.MeshBasicMaterial({color:'#bacbd6',transparent:true,opacity:.5,fog:false}));ring.position.copy(planet.position);ring.rotation.set(.8,.3,-.5);sky.add(ring);

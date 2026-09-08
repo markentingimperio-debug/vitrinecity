@@ -16,12 +16,16 @@ const request=(url,options={})=>fetch(origin+url,{...options,redirect:'manual',h
 let db;
 try{
   let ready=false;for(let i=0;i<100;i++){try{if((await request('/api/health')).ok){ready=true;break;}}catch{}if(child.exitCode!==null)break;await new Promise(r=>setTimeout(r,100));}assert.ok(ready,output.slice(-2500));
-  for(const page of ['/vitriny-multiverse-explore.html?city=silvania','/vitriny-games.html','/vitriny-mini-fazenda.html','/vitriny-music-arena.html','//vitriny-games.html','/%76itriny-mini-fazenda.html']){const response=await request(page);assert.equal(response.status,302,page);assert.match(response.headers.get('location'),/^\/entrar-cidade\.html\?returnTo=/);assert.match(response.headers.get('cache-control'),/no-store/);}
+  for(const page of ['/vitriny-multiverse-explore.html?city=silvania','/vitriny-games.html','/vitriny-mini-fazenda.html','/vitriny-music-arena.html','/vitriny-cinema.html','/central-creditos.html','//vitriny-games.html','/%76itriny-mini-fazenda.html']){const response=await request(page);assert.equal(response.status,302,page);assert.match(response.headers.get('location'),/^\/entrar-cidade\.html\?returnTo=/);assert.match(response.headers.get('cache-control'),/no-store/);}
   for(const page of ['/loja','/centros/mercadolivre','/centros/shopee','/centros/cakto','/centros/kiwify','/api/affiliate-centers','/entrar-cidade.html','/vitriny-multiverse-worlds.html'])assert.equal((await request(page)).status,200,page);
   assert.equal((await request('/api/games/farm')).status,401);
   const account={name:'Pessoa de teste',email:'city-member@example.test',password:'isolated-password-2026',adultConfirmed:true,termsAccepted:true,accountContext:'city',whatsapp:'5562999990000',communications:{email:true,whatsapp:false}};
   let response=await request('/api/auth/register',{method:'POST',body:JSON.stringify(account)});assert.equal(response.status,201,await response.clone().text());const cookie=response.headers.get('set-cookie').split(';')[0],headers={cookie};
   response=await request('/api/privacy/communications',{headers});assert.deepEqual((await response.json()).preferences,{email:true,whatsapp:false});
+  response=await request('/api/affiliates/register',{method:'POST',headers,body:'{"termsAccepted":true}'});assert.equal(response.status,201);const partnerCode=(await response.json()).affiliate.code;
+  response=await request('/api/affiliates/me',{headers});const partnerAccount=await response.json();assert.ok(partnerAccount.links.showcase.endsWith('/parceiros/'+partnerCode));assert.ok(partnerAccount.links.products.endsWith('/painel-divulgacao.html'));
+  assert.equal((await request('/parceiros/'+partnerCode)).status,200,'Registration immediately exposes the public partner showcase');
+  response=await request('/api/affiliates/me/products',{headers});assert.equal(response.status,200);assert.ok((await response.json()).items.every(item=>item.shareUrl.includes('/indicar/'+partnerCode+'/')));
   assert.equal((await request('/vitriny-mini-fazenda.html',{headers})).status,200);
   response=await request('/api/games/farm/action',{method:'POST',headers,body:JSON.stringify({type:'plant',plot:0,crop:'carrot'})});assert.equal(response.status,200);assert.equal((await response.json()).state.coins,58);
   response=await request('/api/games/farm',{headers});assert.equal((await response.json()).state.plots[0].crop,'carrot','Progress is stored in the account');

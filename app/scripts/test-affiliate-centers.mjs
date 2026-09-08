@@ -18,7 +18,7 @@ try{
   data=await (await fetch(base+'/api/affiliate-centers/cakto/products?departamento=Produtividade&p=9999999')).json();assert.equal(data.page,data.pages);assert.ok(data.items.length<=24&&data.items.every(p=>p.category==='Produtividade'&&p.platform==='cakto'));
   const html=await (await fetch(base+'/centros/shopee?q=%3Cscript%3Ealert%281%29%3C%2Fscript%3E')).text();assert.ok(!html.includes('<script>alert(1)</script>'));assert.match(html,/noindex,follow/);assert.match(html,/Shopee Center/);assert.match(html,/links de afiliado/);
   assert.equal((await fetch(base+'/centros/invalid')).status,404);assert.equal((await fetch(base+'/api/affiliate-centers/constructor/products')).status,404);
-  data=await (await fetch(base+'/api/affiliate-centers')).json();assert.equal(data.centers.length,4);assert.equal(data.centers.find(c=>c.id==='kiwify').total,0);
+  data=await (await fetch(base+'/api/affiliate-centers')).json();assert.equal(data.centers.length,5);assert.equal(data.centers.find(c=>c.id==='kiwify').total,0);
   for(const center of data.centers){assert.match(center.logo,/^\/assets\/affiliate-brands\//);const branded=await (await fetch(base+center.href)).text();assert.ok(branded.includes(`alt="Logo ${center.name}"`));assert.ok(branded.includes(center.logo));}
   assert.equal((await fetch(base+'/api/admin/affiliate-catalog')).status,401);
   const adminHeaders={'x-test-admin':'1'};

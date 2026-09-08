@@ -5,6 +5,10 @@ import {setupCampaignPreferences} from './campaign-preferences.js';
 import { integrationObserver, openRouterOperation } from './integration-health.js';
 import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
+import {ADS_TERMS_VERSION,ADS_VALIDITY_DAYS,creditExpiryForOrder} from './credits-policy.js';
+import {setupCityChat} from './city-chat.js';
+import {setupCityRewards} from './city-rewards.js';
+import { setupMediaCatalog } from './media-catalog.js';
 import { createCryptoObservability, mountCryptoObservability } from './crypto-observability.js';
 import { mountJarvis } from './jarvis-core.js';
 import { mountJarvisPublic } from './jarvis-public.js';
@@ -1884,7 +1888,7 @@ function managedCourses(activeOnly = false) {
 const COURSE_FILE_EXTENSIONS = new Set(['.pdf', '.mp4', '.webm', '.m4v', '.mp3', '.jpg', '.jpeg', '.png', '.zip']);
 const SESSION_COOKIE = 'vc_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
-const CREDIT_VALIDITY_MS = 90 * 24 * 60 * 60 * 1000;
+const CREDIT_VALIDITY_MS = ADS_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
 const checkoutAttempts = new Map();
 const authAttempts = new Map();
 const aiAttempts = new Map();
@@ -2036,6 +2040,7 @@ function recordAdminLogin(req,email,success,reason){
 }
 
 const ADMIN_HTML_PATHS=new Set(['/admin-vendas-afiliadas.html','/admin','/admin.html','/admin-agentes.html','/admin-sales-agents.html','/admin-crypto-matrix.html','/admin-quizzes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html','/admin-conteudos.html','/admin-entregas.html']);
+for(const page of ['admin-midia','admin-parceiros','admin-chat-cidade','admin-recompensas']){ADMIN_HTML_PATHS.add('/'+page+'.html');ADMIN_HTML_PATHS.add('/'+page);}
 ADMIN_HTML_PATHS.add('/admin-live.html');
 ADMIN_HTML_PATHS.add('/admin-jarvis.html');
 ADMIN_HTML_PATHS.add('/admin-jarvis-public.html');
@@ -2526,7 +2531,7 @@ const expireCreditBatches = db.transaction((userId) => {
     db.prepare(`INSERT INTO wallet_ledger
       (user_id,delta_units,balance_after_units,kind,description,order_reference)
       VALUES (?,?,?,?,?,?)`).run(userId, delta, balanceAfter, 'expiration',
-        'Créditos Vitrine expirados após 60 dias', batch.order_reference);
+        'Créditos Vitrine expirados conforme o vencimento contratado', batch.order_reference);
   }
 });
 
@@ -2540,7 +2545,7 @@ function publicWallet(userId) {
   return {
     balanceUnits: wallet?.balance_units || 0,
     updatedAt: wallet?.updated_at || null,
-    validityDays: 60,
+    validityDays: ADS_VALIDITY_DAYS,
     nextExpirationAt: batches[0]?.expires_at || null,
     batches,
     transactions
@@ -2584,7 +2589,25 @@ app.use((req, res, next) => {
   if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });
-setupCityMembership(app,{db,currentUser,requireUser,sameOriginOnly,isAdministrativeUser});
+const cityRewards=setupCityRewards({app,db,requireUser,requireAdmin,sameOriginOnly,publicDir:path.join(dir,'public'),
+  affiliateFor:req=>referralAffiliate(req,req.user.email,req.user.id)?.id||null,
+  getCourse:slug=>{const c=managedCourse(slug);return c?.status==='active'&&courseReady(slug)?c:null;},
+  paymentReady:()=>!!(process.env.MERCADOPAGO_ACCESS_TOKEN&&process.env.MERCADOPAGO_WEBHOOK_SECRET),
+  searchPayments:async order=>{const query=new URLSearchParams({external_reference:order.reference,limit:'50',sort:'date_last_updated',criteria:'desc'});
+    const response=await fetch('https://api.mercadopago.com/v1/payments/search?'+query,{headers:mpHeaders(),signal:AbortSignal.timeout(10000)});
+    const data=await response.json();if(!response.ok||!Array.isArray(data.results))throw Error('Consulta indisponível');return {payments:data.results,complete:Number.isFinite(data.paging?.total)&&data.paging.total<=data.results.length};},
+  onSettlement:(result,payment)=>{if(result?.kind==='course'&&result.status!=='review_required'){const courseOrder=db.prepare('SELECT affiliate_id FROM course_orders WHERE reference=?').get(result.reference);syncAffiliateCommission({affiliateId:courseOrder?.affiliate_id,orderType:'course',orderReference:result.reference,grossAmountCents:result.pay_cents,rateBps:COURSE_REFERRAL_RATE_BPS,payment:{...payment,status:result.status}});}if(result?.status==='approved')adminAnalytics.recordPurchase(result.reference,result.kind==='avatar'?'avatar_premium':'course',result.pay_cents);},
+  createPreference:async(order,user)=>{const response=await fetch('https://api.mercadopago.com/checkout/preferences',{
+    method:'POST',headers:{...mpHeaders(),'X-Idempotency-Key':order.reference},
+    body:JSON.stringify({items:[{id:order.reference,title:order.title,quantity:1,currency_id:'BRL',unit_price:order.pay_cents/100}],
+      payer:{name:user.name,email:user.email},external_reference:order.reference,
+      notification_url:`${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(order.reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(order.reference))}`,
+      back_urls:{success:`${SITE_URL}/central-creditos.html?ref=${order.reference}`,pending:`${SITE_URL}/central-creditos.html?ref=${order.reference}`,failure:`${SITE_URL}/central-creditos.html?ref=${order.reference}`},
+      auto_return:'approved',statement_descriptor:'VITRINECITY',expires:true,expiration_date_from:new Date().toISOString(),expiration_date_to:new Date(Date.now()+24*60*60*1000).toISOString()}),signal:AbortSignal.timeout(12000)});
+    const data=await response.json();if(!response.ok)throw Error('Pagamento indisponível');return data;}
+});
+const cityChat=setupCityChat({app,db,requireUser,requireAdmin,sameOriginOnly,publicDir:path.join(dir,'public')});
+setupCityMembership(app,{db,currentUser,requireUser,sameOriginOnly,isAdministrativeUser,grantGameReward:cityRewards.grantGame});
 const campaignPreferences=setupCampaignPreferences(app,{db,requireUser,sameOriginOnly,recordConsent});
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 const cryptoObservability = createCryptoObservability(db);
@@ -2593,7 +2616,8 @@ mountCryptoObservability({ app, requireAdmin, observability: cryptoObservability
 mountJarvis({ app, db, requireAdmin, sameOriginOnly, researchSchedule: true });
 setupOrganicAcquisition({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly, allowAttempt });
-const affiliateCatalog = setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, siteUrl: SITE_URL, publicDir: path.join(dir, 'public') });
+const affiliateCatalog = setupAffiliateCatalog({ app, db, requireAdmin, requireUser, sameOriginOnly, siteUrl: SITE_URL, publicDir: path.join(dir, 'public') });
+const mediaCatalog = setupMediaCatalog({app,db,requireAdmin,sameOriginOnly,siteUrl:SITE_URL,publicDir:path.join(dir,'public')});
 app.use('/vendor/three', express.static(path.join(dir, 'node_modules/three/build')));
 app.use('/uploads/social-media', express.static(socialMediaDir, { maxAge: '30d', immutable: true, fallthrough: false }));
 app.use('/uploads/store-assets', express.static(path.join(dataDir, 'store-assets'), {
@@ -2721,6 +2745,7 @@ app.get('/sitemap.xml', (_req, res) => {
   const books = db.prepare("SELECT slug FROM digital_books WHERE status='published' ORDER BY published_at DESC LIMIT 2000").all();
   const dynamicPaths = [
     ...affiliateCatalog.sitemapPaths(),
+    ...mediaCatalog.sitemapPaths(),
     ...stores.map(store => publicStorePath(store)),
     ...products.map(product => `/produto/${product.id}/${marketplaceSlug(product.name, 'produto')}`),
     ...categories.map(row => `/categoria/${marketplaceSlug(row.category, 'categoria')}`),
@@ -3497,7 +3522,10 @@ app.post('/api/privacy/requests',sameOriginOnly,requireUser,(req,res)=>{
 app.get('/api/privacy/export',requireUser,(req,res)=>{
   const userId=req.user.id;
   const exportData={generatedAt:new Date().toISOString(),account:{name:req.user.name,email:req.user.email,whatsapp:req.user.whatsapp||'',createdAt:req.user.created_at},
+    cityChat:cityChat.exportUser(userId),
+    cityRewards:cityRewards.exportUser(userId),
     farmProgress:db.prepare('SELECT state_json stateJson,updated_at updatedAt FROM city_farm_progress WHERE user_id=?').get(userId)||null,
+    partnerTraffic:db.prepare('SELECT day,slug,kind,events FROM affiliate_partner_daily WHERE affiliate_id IN (SELECT id FROM affiliates WHERE user_id=?) ORDER BY day DESC').all(userId),
     addresses:db.prepare('SELECT label,recipient_name recipientName,postal_code postalCode,street,number,complement,neighborhood,city,state,is_default isDefault,created_at createdAt FROM customer_addresses WHERE user_id=?').all(userId),
     ageVerification:publicAgeVerification(db.prepare('SELECT status,over_18,verified_at,expires_at FROM age_verifications WHERE user_id=?').get(userId)),
     orders:db.prepare('SELECT reference,payment_status paymentStatus,fulfillment_status fulfillmentStatus,total_cents totalCents,created_at createdAt FROM marketplace_orders WHERE buyer_user_id=? ORDER BY id DESC').all(userId),
@@ -6248,7 +6276,9 @@ app.get('/api/affiliates/me', requireUser, (req, res) => {
     links: {
       lot: `${SITE_URL}/r/${affiliate.code}?to=lot`,
       courses: `${SITE_URL}/r/${affiliate.code}?to=courses`,
-      videos: `${SITE_URL}/r/${affiliate.code}?to=videos`
+      videos: `${SITE_URL}/r/${affiliate.code}?to=videos`,
+      showcase: `${SITE_URL}/parceiros/${encodeURIComponent(affiliate.code)}`,
+      products: `${SITE_URL}/painel-divulgacao.html`
     }, totals, commissions, content, contentTotals
   });
 });
@@ -6490,7 +6520,8 @@ app.post('/api/credits/quote', requireUser, sameOriginOnly, (req,res) => {
   catch(error){return res.status(400).json({error:error.message==='amount_limit'?'O planejamento ultrapassa o limite de recarga.':'Informe entre 48 e 48.000 Créditos Ads por dia e período de até 60 dias.'});}
 });
 
-app.post('/api/credits/checkout', requireUser, async (req, res) => {
+app.post('/api/credits/checkout', requireUser, sameOriginOnly, async (req, res) => {
+  if(req.body?.termsVersion!==ADS_TERMS_VERSION)return res.status(409).json({error:'Os termos dos créditos foram atualizados. Atualize a página e confira o prazo de 60 dias antes de pagar.'});
   if (!process.env.MERCADOPAGO_ACCESS_TOKEN || !process.env.MERCADOPAGO_WEBHOOK_SECRET) {
     return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
   }
@@ -6499,7 +6530,7 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
     return res.status(403).json({ error: 'Verifique sua maioridade em Minha conta antes de comprar Créditos Ads.', verificationRequired: true });
   }
   if (!req.body?.termsAccepted) return res.status(400).json({ error: 'Aceite os termos dos Créditos Ads.' });
-  recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'ads_credits_terms',version:'ads-credits-2026-08-19',source:'credits_checkout'});
+  recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'ads_credits_terms',version:ADS_TERMS_VERSION,source:'credits_checkout'});
   if (!allowAttempt(checkoutAttempts, `credits:${req.user.id}`, 5, 10 * 60 * 1000)) {
     return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
   }
@@ -6549,8 +6580,8 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   if(targetAudience.length<4)return res.status(400).json({error:'Descreva o público que deseja alcançar.'});
   if(!Number.isInteger(reachKm)||reachKm<1||reachKm>100)return res.status(400).json({error:'Escolha um alcance entre 1 e 100 km.'});
   if(!/^\d{4}-\d{2}-\d{2}$/.test(startsOn)||Number.isNaN(Date.parse(`${startsOn}T12:00:00Z`)))return res.status(400).json({error:'Escolha uma data de início válida.'});
-  const today=new Date().toISOString().slice(0,10),latestStart=new Date(Date.now()+90*24*60*60*1000).toISOString().slice(0,10);
-  if(startsOn<today||startsOn>latestStart)return res.status(400).json({error:'A data de início deve ficar entre hoje e os próximos 90 dias.'});
+  const today=new Date().toISOString().slice(0,10),latestStart=new Date(Date.now()+(ADS_VALIDITY_DAYS-durationDays)*24*60*60*1000).toISOString().slice(0,10);
+  if(startsOn<today||startsOn>latestStart)return res.status(400).json({error:'A campanha precisa caber na validade de 60 dias dos créditos. Antecipe o início ou reduza a duração.'});
   if (imageUrl) {
     try { const parsedImage = new URL(imageUrl); if (!['http:','https:'].includes(parsedImage.protocol)) throw new Error(); }
     catch (_) { return res.status(400).json({ error: 'Informe uma URL de imagem válida ou deixe o campo vazio.' }); }
@@ -6576,7 +6607,7 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
   const createOrder = db.transaction(() => {
     db.prepare(`INSERT INTO credit_orders
       (reference,user_id,amount_cents,fee_cents,credit_units,status,terms_version,terms_accepted_at)
-      VALUES (?,?,?,?,?,'created','2026-08-19-ads',CURRENT_TIMESTAMP)`)
+      VALUES (?,?,?,?,?,'created','2026-09-08-ads-60',CURRENT_TIMESTAMP)`)
       .run(reference, req.user.id, amountCents, feeCents, netCredits);
     db.prepare(`INSERT INTO ad_campaigns
       (user_id,order_reference,objective,destination_type,destination_url,daily_budget_cents,duration_days,
@@ -6596,7 +6627,7 @@ app.post('/api/credits/checkout', requireUser, async (req, res) => {
       method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
       body: JSON.stringify({
         items: [{ id: 'vitrinecity-ads-credits', title: `${(netCredits / 100).toFixed(2)} Créditos Ads líquidos`,
-          description: '1 real = 9,6 créditos brutos; gestão de 15%; validade de 90 dias',
+          description: '1 real = 9,6 créditos brutos; gestão de 15%; validade de 60 dias',
           category_id: 'services', quantity: 1, currency_id: 'BRL', unit_price: amountCents / 100 }],
         payer: { name: req.user.name, email: req.user.email },
         external_reference: reference,
@@ -6834,13 +6865,14 @@ const applyCreditPayment = db.transaction((order, payment) => {
         delta > 0 ? 'Compra de Créditos Ads aprovada (gestão de 15% já descontada)' : 'Ajuste de Créditos Ads por cancelamento ou estorno',
         order.reference, String(payment.id));
     if (delta > 0) {
-      const expiresAt = Date.now() + CREDIT_VALIDITY_MS;
+      const priorBatch=db.prepare('SELECT expires_at FROM credit_batches WHERE order_reference=?').get(order.reference);
+      const expiresAt = creditExpiryForOrder(order,Date.now(),priorBatch?.expires_at);
       db.prepare(`INSERT INTO credit_batches
         (user_id,order_reference,original_units,remaining_units,expires_at,status)
         VALUES (?,?,?,?,?,'active')
         ON CONFLICT(order_reference) DO UPDATE SET
           remaining_units=credit_batches.remaining_units+excluded.remaining_units,
-          expires_at=excluded.expires_at,status='active',updated_at=CURRENT_TIMESTAMP`)
+          status='active',updated_at=CURRENT_TIMESTAMP`)
         .run(order.user_id, order.reference, order.credit_units, delta, expiresAt);
     } else {
       db.prepare(`UPDATE credit_batches SET remaining_units=MAX(0,remaining_units+?),
@@ -6986,6 +7018,15 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
         else if(reversed)db.prepare("DELETE FROM store_ad_events WHERE order_reference=? AND event_type='conversion'").run(reference);
       }
       if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'marketplace', order.total_cents);
+      return res.sendStatus(200);
+    }
+    if(reference.startsWith('cityperk_')){
+      const result=cityRewards.settle(reference,payment);
+      if(result?.kind==='course'&&result.status!=='review_required'){
+        const courseOrder=db.prepare('SELECT affiliate_id FROM course_orders WHERE reference=?').get(result.reference);
+        syncAffiliateCommission({affiliateId:courseOrder?.affiliate_id,orderType:'course',orderReference:result.reference,grossAmountCents:result.pay_cents,rateBps:COURSE_REFERRAL_RATE_BPS,payment:{...payment,status:result.status}});
+      }
+      if(result?.status==='approved')adminAnalytics.recordPurchase(result.reference,result.kind==='avatar'?'avatar_premium':'course',result.pay_cents);
       return res.sendStatus(200);
     }
     if (reference.startsWith('coin_')) {

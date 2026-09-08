@@ -3,6 +3,7 @@ import { affiliateArticles } from './affiliate-articles.js';
 import { setupAffiliateIndexNow } from './affiliate-indexnow.js';
 import { setupPlatformOperations } from './platform-operations.js';
 import { setupAffiliateCenters } from './affiliate-centers.js';
+import {setupAffiliatePartners,partnerPagePath,partnerOutboundPath,partnerSharePath} from './affiliate-partners.js';
 
 export const platforms = { mercadolivre: 'Mercado Livre', shopee: 'Shopee', tiktok: 'TikTok', cakto: 'Cakto', kiwify: 'Kiwify' };
 const hosts = {
@@ -62,7 +63,7 @@ function selectionUrl({ platform = '', category = '', query = '', page=1 } = {})
   return '/ofertas' + (params.size ? '?' + params.toString() : '');
 }
 
-export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, siteUrl, publicDir, startMonitor = true, fetcher = fetch }) {
+export function setupAffiliateCatalog({ app, db, requireAdmin, requireUser, sameOriginOnly, siteUrl, publicDir, startMonitor = true, fetcher = fetch }) {
   db.exec(`CREATE TABLE IF NOT EXISTS affiliate_catalog (
     slug TEXT PRIMARY KEY, platform TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL,
     category TEXT NOT NULL, keywords TEXT NOT NULL, image TEXT NOT NULL DEFAULT '',
@@ -162,6 +163,7 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
     return `<article class="card"><a class="card-media" href="${pagePath(p)}" aria-label="${esc(p.title)}">${p.image?`<img src="${esc(p.image)}" alt="" loading="lazy" decoding="async" width="360" height="240">`:'<span class="image-placeholder">Imagem não informada</span>'}</a><div><span class="eyebrow">${esc(p.category)} · ${platforms[p.platform]}</span><h2><a href="${pagePath(p)}">${esc(p.title)}</a></h2><p class="card-description">${esc(p.description)}</p><p class="card-condition">${canBuy(p)?(flexibleFormat(p)?'Preço e condições na plataforma parceira':'Preço e frete na loja parceira'):'Oferta em revisão'}</p><a class="button secondary" href="${pagePath(p)}">Ver detalhes e oferta <span aria-hidden="true">→</span></a></div></article>`;
   }
   const centers=setupAffiliateCenters({app,db,document,card,siteUrl});
+  const partners=typeof requireUser==='function'?setupAffiliatePartners({app,db,requireUser,requireAdmin,siteUrl,document,platforms,validAffiliateUrl,publicDir}):null;
   app.get('/api/affiliate-highlights', (_req,res) => res.set('Cache-Control','public, max-age=60').json({items:
     published().filter(canBuy).slice(0,12).map(p=>({title:p.title,description:p.description,image:p.image,url:pagePath(p),platform:platforms[p.platform]}))}));
   app.get('/ofertas', (req,res) => {
@@ -190,6 +192,8 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
   app.get('/ofertas/:slug',(req,res) => {
     const p = db.prepare('SELECT * FROM affiliate_catalog WHERE slug=?').get(req.params.slug);
     if (!p || p.status==='draft') return res.status(404).type('html').send(document('Produto não encontrado','<h1>Produto não encontrado</h1><a href="/ofertas">Ver seleção de produtos</a>',origin+'/ofertas'));
+    const partner=partners?.find(req.query.parceiro);
+    if(partner&&canBuy(p))partners.record(req,partner,'product_view',p.slug);
     const flexible = flexibleFormat(p);
     const destination = (['shopee','cakto','kiwify'].includes(p.platform)?'na ':'no ')+platforms[p.platform];
     const conditions = flexible ? 'Confira formato, preço total, prazo de acesso ou entrega e suporte. Se for assinatura, confira também renovação, cobrança recorrente e cancelamento antes de contratar.' : 'Preço, frete, estoque e condições são confirmados na plataforma de compra.';
@@ -208,7 +212,16 @@ export function setupAffiliateCatalog({ app, db, requireAdmin, sameOriginOnly, s
     const sameCategory=alternatives.filter(other=>other.category===p.category);
     const related=(sameCategory.length?sameCategory:alternatives).slice(0,3);
     const relatedHtml=related.length?`<section class="related-products"><div class="results-heading"><h2>${sameCategory.length?'Veja também nesta categoria':'Outros produtos da seleção'}</h2><a href="/ofertas">Ver seleção completa</a></div><div class="grid">${related.map(card).join('')}</div></section>`:'';
-    return res.type('html').set('Cache-Control','no-store').send(document(p.title,body+relatedHtml,origin+pagePath(p),p.image,p.description.slice(0,180)));
+    let html=document(p.title,body+relatedHtml,origin+pagePath(p),p.image,p.description.slice(0,180));
+    if(partner){
+      html=html.replace(`href="${esc(p.affiliate_url)}" data-affiliate-id`, `href="${partnerOutboundPath(partner.code,p.slug)}" data-affiliate-id`)
+        .replaceAll('href="/ofertas"',`href="${partnerPagePath(partner.code)}"`)
+        .replaceAll('href="/ofertas?',`href="${partnerPagePath(partner.code)}?`)
+        .replace(/href="\/centros\/[a-z]+"/g,`href="${partnerPagePath(partner.code)}"`)
+        .replace('<section class="detail product-detail">',`<p class="disclosure">Indicação de <a href="${partnerPagePath(partner.code)}">${esc(partner.code)}</a></p><section class="detail product-detail">`);
+      for(const other of related)html=html.replaceAll(`href="${pagePath(other)}"`,`href="${partnerSharePath(partner.code,other.slug)}"`);
+    }
+    return res.type('html').set('Cache-Control','no-store').send(html);
   });
   // Aggregate button events only: these are not unique visitors, orders or commissions.
   const clickWindows = new Map();

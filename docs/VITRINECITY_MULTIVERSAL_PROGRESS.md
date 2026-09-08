@@ -329,3 +329,9 @@ Validação: `npm test` e `npm run test:release` passaram, incluindo **135/135 s
 Reconciliação de leitura novamente confirmou produção `c7cfe8092f09da22c0aa64b94a4fd6ab925bb41b`, app saudável na imagem `sha256:0a5c9e20fd2dfe1e459020a812df4b7d13412a472d356539e6eb8e272b402b9f`. A única chave divergente de ambiente continua `ASAAS_API_KEY`; preservar o valor efetivo sem registrar seu conteúdo.
 
 **Atualização operacional 13:46 UTC:** snapshot completo, imagem saudável e cópia consistente do banco preservados. A aparente diferença de `ASAAS_API_KEY` foi identificada como escape na serialização do Compose, não mudança de valor efetivo; nenhuma alteração de credenciais é necessária. Evidência detalhada em [VPS_MULTIVERSAL_RECONCILIATION_20260908.md](VPS_MULTIVERSAL_RECONCILIATION_20260908.md). Seguem verificação isolada e publicação apenas do app.
+
+## 2026-09-08 — Atualização de estado e cidade viva
+
+A PR #144 foi publicada no commit `b4b24803389d125a47dc376cc8895ea3639a013b`. As notas anteriores de publicação pendente são checkpoints históricos. Leitura atual confirmou app saudável e código limpo na VPS.
+
+O candidato seguinte está na branch `feat/affiliate-partner-showcases`: prédios próprios para lojas, avenida com vida ambiente, HUD recolhível, portas, TikTok Shop, cinema, catálogo musical sem Spotify, chat moderado, vitrines pessoais de afiliados e recompensas parciais. Consulte `VITRINECITY_CITY_BUILDINGS_AUDIT.md` para a auditoria visual e `VITRINECITY_CITY_REWARDS.md` para regras, estados financeiros e validação. Este candidato ainda não está em produção neste checkpoint.

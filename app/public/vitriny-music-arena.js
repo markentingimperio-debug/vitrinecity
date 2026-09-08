@@ -1,7 +1,38 @@
 import {explorerReturnHref} from './vitriny-spatial-session.js';
-const player=document.getElementById('musicPlayer'),status=document.getElementById('playerStatus'),stop=document.getElementById('stopPlayer'),buttons=[...document.querySelectorAll('[data-source]')];
-document.getElementById('backCity').href=explorerReturnHref();
-const sources={youtube:{url:'https://www.youtube-nocookie.com/embed/98ovJs-Ibd4?autoplay=0&playsinline=1&rel=0',title:'YouTube · Música eletrônica'},spotify:{url:'https://open.spotify.com/embed/playlist/3d7eXh3ohl1YeaKHVCKNsU',title:'Spotify · Playlist ALOK 2026'}};
-function closePlayer(){player.replaceChildren();player.classList.remove('spotify');const hint=document.createElement('p');hint.textContent='Escolha uma fonte para voltar a ouvir.';player.append(hint);stop.hidden=true;buttons.forEach(button=>button.setAttribute('aria-pressed','false'));status.textContent='Player fechado. O som foi interrompido.';}
-for(const button of buttons){button.setAttribute('aria-pressed','false');button.addEventListener('click',()=>{const id=button.dataset.source,source=sources[id];if(!source)return;closePlayer();const frame=document.createElement('iframe');frame.title=source.title;frame.allow='autoplay; encrypted-media; fullscreen; picture-in-picture';frame.referrerPolicy='strict-origin-when-cross-origin';frame.allowFullscreen=true;frame.src=source.url;player.classList.toggle('spotify',id==='spotify');player.append(frame);player.querySelector('p')?.remove();button.setAttribute('aria-pressed','true');stop.hidden=false;status.textContent=`${id==='spotify'?'Spotify':'YouTube'} aberto. Use o botão de reprodução do player. Se ele não estiver disponível, use o link direto abaixo.`;player.scrollIntoView({behavior:'instant',block:'center'});});}
-stop.addEventListener('click',closePlayer);addEventListener('pagehide',closePlayer);
+import {youtubeSource} from './vitriny-music-core.js';
+const $=id=>document.getElementById(id),scope=document.body.dataset.mediaScope==='cinema'?'cinema':'music',player=$('musicPlayer'),status=$('playerStatus'),stop=$('stopPlayer');
+let page=1,pages=1,requestController,selected=null;
+$('backCity').href=explorerReturnHref();
+const node=(tag,text,className)=>{const element=document.createElement(tag);if(text)element.textContent=text;if(className)element.className=className;return element;};
+function closePlayer(){player.replaceChildren(node('p','Escolha uma seleção e toque em reproduzir.'));stop.hidden=true;$('selectedActions').hidden=true;selected=null;document.querySelectorAll('[data-media-slug]').forEach(b=>b.setAttribute('aria-pressed','false'));status.textContent='Player fechado. O som foi interrompido.';}
+function openPlayer(item){
+  const source=youtubeSource(item.url,item.kind);if(!source)return;
+  closePlayer();const frame=document.createElement('iframe');frame.title=item.title+' · YouTube';frame.allow='autoplay; encrypted-media; fullscreen; picture-in-picture';frame.referrerPolicy='strict-origin-when-cross-origin';frame.allowFullscreen=true;frame.src=source.embedUrl;player.replaceChildren(frame);selected=item;stop.hidden=false;$('selectedActions').hidden=false;
+  $('selectionTitle').textContent=item.title;$('directVideo').href=source.url;$('selectionPage').href=item.pagePath;
+  status.textContent=item.kind==='live'?'Rádio aberta. Toque em reproduzir; o canal informa se a transmissão está disponível.':item.label+' aberto. Toque em reproduzir no player do YouTube.';
+  document.querySelectorAll('[data-media-slug]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mediaSlug===item.slug)));
+  const next=new URL(location.href);next.searchParams.set('selecao',item.slug);history.replaceState(null,'',next.pathname+next.search);
+  player.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'});
+}
+function render(items){
+  const cards=items.map(item=>{const card=node('article',null,'media-card'),art=node('div',null,'card-art'+(scope==='cinema'?' cinema-art':''));art.setAttribute('aria-hidden','true');art.append(node('span',item.genreLabel),node('b',scope==='cinema'?'▻':'♫'));const copy=node('div',null,'card-copy');copy.append(node('small',item.label+' · '+item.artist),node('h3',item.title),node('p',item.description));const play=node('button',scope==='cinema'?'Assistir à sessão →':'Ouvir agora →','media-button');play.type='button';play.dataset.mediaSlug=item.slug;play.setAttribute('aria-label',(scope==='cinema'?'Assistir: ':'Ouvir: ')+item.title);play.setAttribute('aria-pressed',String(selected?.slug===item.slug));play.addEventListener('click',()=>openPlayer(item));copy.append(play);card.append(art,copy);return card;});
+  $('mediaResults').replaceChildren(...(cards.length?cards:[node('p','Nenhuma seleção encontrada. Tente outra categoria ou palavra-chave.')]));
+}
+async function load(){
+  requestController?.abort();const controller=new AbortController();requestController=controller;$('catalogStatus').textContent='Carregando seleções…';
+  const params=new URLSearchParams(new FormData($('mediaFilters')));params.set('p',String(page));
+  try{const response=await fetch('/api/media/'+scope+'?'+params,{signal:controller.signal});if(!response.ok)throw Error('Não foi possível carregar. Tente novamente.');const data=await response.json();
+    if(!$('genreFilter').dataset.ready){for(const [value,label]of Object.entries(data.allGenres)){const option=node('option',label);option.value=value;$('genreFilter').append(option);}$('genreFilter').dataset.ready='true';for(const [value,label]of Object.entries(data.formats)){const option=node('option',label);option.value=value;$('kindFilter').append(option);}}
+    page=data.page;pages=data.pages;render(data.items);$('catalogStatus').textContent=data.total+' seleções encontradas';$('pageStatus').textContent='Página '+page+' de '+pages;$('previousPage').disabled=page<=1;$('nextPage').disabled=page>=pages;
+  }catch(error){if(error.name!=='AbortError'){$('catalogStatus').textContent=error.message;$('mediaResults').replaceChildren();}}
+}
+$('mediaFilters').addEventListener('submit',event=>{event.preventDefault();page=1;load();});
+$('genreFilter').addEventListener('change',()=>{page=1;load();});$('kindFilter').addEventListener('change',()=>{page=1;load();});
+$('previousPage').addEventListener('click',()=>{if(page>1){page--;load();}});$('nextPage').addEventListener('click',()=>{if(page<pages){page++;load();}});
+$('shareSelection').addEventListener('click',async()=>{if(!selected)return;const url=new URL(selected.pagePath,location.origin).href;try{if(navigator.share)await navigator.share({title:selected.title,url});else{await navigator.clipboard.writeText(url);status.textContent='Link da página copiado.';}}catch(error){if(error.name!=='AbortError')status.textContent='Use o link “Página desta seleção” para copiar o endereço.';}});
+$('directVideo').addEventListener('click',()=>closePlayer());
+stop.addEventListener('click',closePlayer);addEventListener('pagehide',()=>{requestController?.abort();closePlayer();});
+load();
+// A shared page selects a card, but never loads third-party media on arrival.
+const slug=new URLSearchParams(location.search).get('selecao');
+if(slug&&/^[a-z0-9-]{1,100}$/.test(slug))fetch('/api/media/'+scope+'/'+slug).then(r=>r.ok?r.json():null).then(item=>{if(!item)return;const box=$('sharedSelection'),button=node('button',(scope==='cinema'?'Assistir: ':'Ouvir: ')+item.title,'media-button');button.type='button';button.addEventListener('click',()=>openPlayer(item));box.replaceChildren(node('p','Você escolheu · '+item.label),button);box.hidden=false;}).catch(()=>{});
