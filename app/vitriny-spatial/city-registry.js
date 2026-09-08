@@ -16,6 +16,7 @@ const CITY_DEFINITIONS=[
   {id:'vitrine-city',name:'Vitrine City',status:'active',seed:'vitrine-city-v1',mix:['retail','food','office','services']},
   {id:'silvania',name:'Silvânia',status:'preview',seed:'silvania-go-v1',mix:['retail','food','services','residential']},
   {id:'anapolis',name:'Anápolis',status:'preview',seed:'anapolis-go-v1',mix:['retail','office','services','education']},
+  {id:'vianopolis',name:'Vianópolis',status:'preview',seed:'vianopolis-go-v1',mix:['retail','services','food','residential']},
   {id:'goiania',name:'Goiânia',status:'preview',seed:'goiania-go-v1',mix:['office','retail','entertainment','services']}
 ];
 
