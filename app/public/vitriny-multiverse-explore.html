@@ -12,7 +12,7 @@
     .hud{position:fixed;inset:0;z-index:2;pointer-events:none;padding:max(14px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) max(48px,env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));display:flex;flex-direction:column;justify-content:space-between}
     .top,.bottom{display:flex;justify-content:space-between;gap:12px}.top{align-items:flex-start;flex-wrap:wrap}.panel{pointer-events:auto;background:#07101ce8;border:1px solid color-mix(in srgb,var(--spatial-accent) 28%,transparent);border-radius:14px;padding:11px 13px;backdrop-filter:blur(14px);box-shadow:0 16px 50px #0007}
     .brand small{display:block;color:var(--spatial-accent);font-size:9px;font-weight:900;letter-spacing:.16em}.brand strong{display:block;font-size:18px;margin-top:3px}.brand span,.stat span,.help,.portal span{display:block;color:#adc0d3;font-size:11px;margin-top:4px}.brand #cityIdentityLine{color:color-mix(in srgb,var(--spatial-accent) 72%,white);max-width:330px;font-size:10px;line-height:1.35}.stat{min-width:160px}.stat strong{font-size:12px}
-    .travel{max-width:320px}.travel[open]{max-height:min(60dvh,420px);overflow:auto}.travel summary{cursor:pointer;min-height:32px;font-weight:800}.travel p{font-size:11px;color:#b4c8da}.travel nav{display:grid;gap:7px;margin-top:8px}.travel a,.loading a{display:block;color:#eaffff;text-decoration:none;border:1px solid color-mix(in srgb,var(--spatial-accent) 36%,transparent);border-radius:9px;padding:12px;font-size:12px;min-height:44px;background:#10243b}
+    .travel{max-width:320px}.travel[open]{max-height:min(70dvh,520px);overflow:auto}.travel summary{cursor:pointer;min-height:32px;font-weight:800}.travel p{font-size:11px;color:#b4c8da}.travel nav{display:grid;gap:7px;margin-top:8px}.travel a,.travel .context-disabled,.loading a{display:block;color:#eaffff;text-decoration:none;border:1px solid color-mix(in srgb,var(--spatial-accent) 36%,transparent);border-radius:9px;padding:12px;font-size:12px;min-height:44px;background:#10243b}.travel .context-disabled{color:#8598aa;background:#0b1521;border-style:dashed;cursor:not-allowed}.travel .ecosystem-title{margin:14px 0 2px;color:var(--spatial-accent);font-weight:800}
     a:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid var(--spatial-secondary);outline-offset:3px}.bottom{align-items:end}.help{max-width:410px;line-height:1.45}.portal{display:none}.portal.show{display:block;margin-top:9px}.portal button{min-height:44px;margin-top:8px;border:1px solid color-mix(in srgb,var(--spatial-accent) 40%,transparent);background:#11243a;color:#eaffff;padding:10px 12px;border-radius:9px;font-weight:800;cursor:pointer}.portal button:disabled{opacity:.5;cursor:not-allowed}
     .pad{display:none;grid-template-columns:46px 46px 46px;grid-template-rows:46px 46px;gap:5px;pointer-events:auto}.pad button{touch-action:none;border:1px solid #ffffff24;background:#07101cdd;color:#fff;border-radius:10px;font-weight:900;font-size:16px}.pad .up{grid-column:2}.pad .left{grid-column:1;grid-row:2}.pad .down{grid-column:2;grid-row:2}.pad .right{grid-column:3;grid-row:2}
     .loading{position:fixed;inset:0;display:grid;place-items:center;background:var(--spatial-bg);z-index:5}.loading.hide{display:none}.loading>div{max-width:360px;padding:18px}.loading strong{font-size:18px}.loading span{display:block;color:#9eb3c8;font-size:12px;margin:10px 0}.loading a{margin-top:10px}
@@ -25,7 +25,7 @@
   <div class="hud">
     <div class="top">
       <div class="panel brand"><small>MULTIVERSE · PRÉVIA ESPACIAL</small><strong id="cityTitle">Vitriny City Spatial</strong><span id="cityStatus">Conectando ao ecossistema</span></div>
-      <details class="panel travel" id="cityTravel"><summary>Viajar entre cidades</summary><p id="travelStatus" role="status">Carregando destinos…</p><nav id="cityLinks" aria-label="Destinos interligados"></nav><nav><a id="worldGateLink" href="/vitriny-multiverse-worlds.html">Abrir World Gate</a></nav></details>
+      <details class="panel travel" id="cityTravel"><summary>Viajar entre cidades</summary><p id="travelStatus" role="status">Carregando destinos…</p><nav id="cityLinks" aria-label="Destinos interligados"></nav><nav><a id="worldGateLink" href="/vitriny-multiverse-worlds.html">Abrir World Gate</a></nav><p class="ecosystem-title">Ecossistema da cidade</p><p id="ecosystemContextStatus" role="status">Validando contexto local…</p><nav id="ecosystemLinks" aria-label="Módulos conectados à cidade"></nav></details>
       <div class="panel stat"><strong id="worldStat">br:go:vitrine-city</strong><span id="chunkStat">Carregando cenário</span><span id="fpsStat">perfil analisando</span></div>
     </div>
     <div class="bottom">
@@ -34,6 +34,7 @@
     </div>
   </div>
   <script type="module" src="/vitriny-multiverse-explore.js"></script>
+  <script type="module" src="/vitriny-spatial-city-context-runtime.js"></script>
   <script type="module" src="/vitriny-spatial-city-identity-runtime.js"></script>
 </body>
 </html>
