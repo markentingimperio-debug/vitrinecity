@@ -58,6 +58,10 @@ try{
   assert.equal(realms.body.city.slug,'vianopolis-go');
   assert.equal(realms.body.items.length,8);
   assert.ok(realms.body.items.every(item=>item.href.includes('cidade=vianopolis-go')));
+  assert.ok(realms.body.items.every(item=>item.href.startsWith('/')));
+  assert.ok(realms.body.items.every(item=>!item.href.startsWith('//')));
+  assert.ok(realms.body.items.every(item=>item.entryPath.startsWith('/')));
+  assert.ok(realms.body.items.every(item=>item.imagePath.startsWith('/')));
   assert.ok(realms.body.items.some(item=>item.slug==='vitriny-social'));
   assert.ok(realms.body.items.some(item=>item.slug==='mercado'));
 
@@ -66,6 +70,12 @@ try{
   assert.equal(fallback.body.city.slug,'silvania-go');
   assert.equal(fallback.body.realm.slug,'centro-25d');
   assert.match(fallback.body.multiversalPath,/cidade=silvania-go/);
+
+  const noOrigin=await json('/api/multiversal/transition',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({citySlug:'anapolis-go',toRealm:'mercado',sourcePath:'/multiversal.html'})
+  });
+  assert.equal(noOrigin.response.status,403);
 
   const invalidCity=await json('/api/multiversal/transition',{
     method:'POST',headers:{'Content-Type':'application/json',Origin:base},
@@ -107,7 +117,7 @@ try{
     sourcePath:'/multiversal.html?cidade=anapolis-go'
   });
 
-  console.log(JSON.stringify({ok:true,cities:cities.body.items.length,realms:realms.body.items.length,transition:saved}));
+  console.log(JSON.stringify({ok:true,cities:cities.body.items.length,realms:realms.body.items.length,transition:saved,originGuard:true,localPaths:true}));
 } finally {
   if(child.exitCode===null)child.kill('SIGTERM');
   await Promise.race([
