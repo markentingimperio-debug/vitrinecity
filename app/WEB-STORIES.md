@@ -51,4 +51,6 @@ Para verificar também o preparo real de imagem, defina `WEB_STORY_FFMPEG_TEST=1
 
 Para reproduzir a validação AMP, defina `WEB_STORY_VALIDATOR_FIXTURE` com um caminho de arquivo temporário ao executar os testes e depois execute `npx --yes --package=amphtml-validator amphtml-validator --format=text <arquivo>`. O validador oficial atual retornou **PASS** na fixture gerada. A ferramenta é apenas de verificação e não foi adicionada às dependências da aplicação.
 
-Ainda requer revisão visual móvel/desktop e teste de ponta a ponta com sessão administrativa no ambiente integrado antes da disponibilização. Não houve deploy nem envio ao Google por esta implementação.
+A integração foi conferida com o servidor completo, base descartável e sessão administrativa de teste: geração, escolha visual de capa, prévia AMP, publicação local e navegação até a última página. O teste `test-web-stories-integration.mjs` verifica login, segundo fator, mesma origem, privacidade de prévias, sitemaps e os cabeçalhos reais. Somente stories públicas válidas liberam incorporação; as prévias administrativas mantêm a restrição de origem.
+
+O validador usado foi `amphtml-validator@1.0.38`, com o motor oficial disponível em 08/09/2026. O teste não garante indexação, qualidade editorial ou desempenho em aparelhos físicos. Nenhuma história de teste é publicada em produção e nenhum endereço é enviado ao Google automaticamente.
