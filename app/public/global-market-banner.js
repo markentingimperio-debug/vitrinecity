@@ -1,6 +1,6 @@
 (() => {
   // The 3D city has its own building billboards; page-wide banners cover its controls.
-  if(window.__vcGlobalMarketBannerLoaded || location.pathname.startsWith('/admin') || /^\/vitriny-multiverse-(?:explore|district)(?:\.html)?\/?$/.test(location.pathname))return;
+  if(window.__vcGlobalMarketBannerLoaded || location.pathname.startsWith('/admin') || location.pathname==='/recuperar-acesso-entregador.html' || location.pathname==='/multiverso' || /^\/vitriny-multiverse-(?:explore|district)(?:\.html)?\/?$/.test(location.pathname))return;
   window.__vcGlobalMarketBannerLoaded=true;
   window.__vcMarketStylesReady=new Promise(resolve=>{
     let css=document.querySelector('link[data-vc-market-styles]');
@@ -16,7 +16,7 @@
     else if(css.sheet)finish(true);
   });
   import('/platform-performance.js?v=1').catch(()=>{});
-  import('/market-outdoor.js?v=6').catch(()=>{});
+  import('/market-outdoor.js?v=7').catch(()=>{});
   // Preserve the existing paid advertising placement, separately labelled.
   window.__vcMarketStylesReady.then(ready=>ready?fetch('/api/ads/serve?placement=banner'):null).then(r=>r?.ok?r.json():{}).then(data=>{
     if(!data.ads?.length || document.getElementById('vc-paid-sponsor-strip'))return;
@@ -24,6 +24,6 @@
     const label=document.createElement('b');label.textContent='Publicidade';aside.append(label);
     for(const item of data.ads){try{const url=new URL(item.clickUrl,location.origin);if(url.protocol!=='https:')continue;
       const a=document.createElement('a');a.href=url.href;a.rel='nofollow sponsored';a.textContent='Patrocinado · '+item.title;aside.append(a);}catch{}}
-    document.body.prepend(aside);
+    const slot=document.getElementById('home-promotions');if(slot)slot.append(aside);else document.body.prepend(aside);
   }).catch(()=>{});
 })();

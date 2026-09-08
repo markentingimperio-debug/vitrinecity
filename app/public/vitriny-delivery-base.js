@@ -2,7 +2,7 @@ import * as THREE from '/vendor/three/three.module.js';
 
 export function mountDeliveryBase({scene,architecture,cityId,cityName}){
   const group=new THREE.Group();group.name=`vc-entregas-${cityId}`;group.position.set(104,0,-90);group.rotation.y=-.85;
-  group.userData={deliveryBase:true,label:`VC Entregas · ${cityName}`,operating:false};
+  group.userData={deliveryBase:true,label:`VC Entregas · ${cityName}`,href:'/entregas',reference:`vc-entregas-${cityId}`};
   const {part,stone,graphite,wood,brass,warm,textSign,tree}=architecture;
   const blue=new THREE.MeshStandardMaterial({color:'#174577',metalness:.25,roughness:.4});
   const glass=new THREE.MeshStandardMaterial({color:'#80b4c5',transparent:true,opacity:.34,metalness:.4,roughness:.15,depthWrite:false});
@@ -33,6 +33,6 @@ export function mountDeliveryBase({scene,architecture,cityId,cityName}){
     part(bike,brass,0,1.5,.75,1,.06,.09);part(bike,blue,0,1.5,-.9,.85,.65,.75);
   }
   for(const x of [-27,27])for(const z of [-14,7,25])tree(group,x,z,1.15);
-  textSign(group,'EM IMPLANTAÇÃO',{width:17,height:1.5,y:2.5,z:35});
+  textSign(group,'CONSULTE ENTREGAS',{width:17,height:1.5,y:2.5,z:35});
   scene.add(group);return group;
 }

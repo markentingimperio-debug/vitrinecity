@@ -6,10 +6,10 @@ const outdoor = fs.readFileSync(new URL('../public/market-outdoor.js', import.me
 const prepare = fs.readFileSync(new URL('../prepare-public-highlights.js', import.meta.url), 'utf8');
 
 assert.ok(loader.includes("css.href='/market-outdoor.css?v=4'"), 'O CSS deve começar a carregar no loader global.');
-assert.ok(loader.includes("import('/market-outdoor.js?v=6')"), 'O módulo atualizado deve invalidar o cache anterior.');
+assert.ok(loader.includes("import('/market-outdoor.js?v=7')"), 'O módulo atualizado deve invalidar o cache anterior.');
 assert.ok(loader.includes('window.__vcMarketStylesReady.then'), 'A publicidade deve aguardar o CSS antes de entrar no DOM.');
 assert.ok(outdoor.includes('!await window.__vcMarketStylesReady'), 'O banner deve aguardar o CSS antes de entrar no DOM.');
 assert.ok(!outdoor.includes("document.head.append(css)"), 'O módulo não deve inserir uma segunda folha de estilo tardiamente.');
-assert.ok(prepare.includes('global-market-banner.js?v=7'), 'A versão do loader deve invalidar o cache antigo.');
+assert.ok(prepare.includes('global-market-banner.js?v=8'), 'A versão do loader deve invalidar o cache antigo.');
 
 console.log('Banner mobile: conteúdo dinâmico aguarda o CSS e evita flash sem estilo.');

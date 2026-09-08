@@ -7,9 +7,10 @@ export function mergeSuggestions(groups) {
   const official = rows.filter(item => item.category === officialCategory);
   const web = rows.filter(item => item.type === 'web' && item.category !== officialCategory);
   const local = rows.filter(item => item.type !== 'web' && item.category !== officialCategory);
-  // Show the official store first, while keeping general search phrases near the top.
-  return [...official.slice(0,1),...web.slice(0,4),...official.slice(1),...local,...web.slice(4)]
-    .filter(item => {const key=item.label.toLocaleLowerCase('pt-BR');if(seen.has(key))return false;seen.add(key);return true;}).slice(0,10);
+  // Relevant platform inventory and content come before web phrases. The two
+  // requests still publish independently, so an unavailable source blocks none.
+  return [...official,...local,...web]
+    .filter(item => {const key=item.label.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('pt-BR').replace(/\s+/g,' ');if(seen.has(key))return false;seen.add(key);return true;}).slice(0,10);
 }
 
 export async function loadSuggestions({value,city='',signal,fetcher=fetch,onUpdate}) {

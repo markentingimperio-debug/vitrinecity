@@ -6,7 +6,7 @@ import {memberPage} from '../public/vitriny-membership-core.js';
 import {setupMediaCatalog} from '../media-catalog.js';
 import {youtubeSource} from '../public/vitriny-music-core.js';
 const source=readFileSync(new URL('../public/vitriny-music-arena.js',import.meta.url),'utf8');
-assert.equal(memberPage('/vitriny-music-arena.html'),true);assert.equal(memberPage('/vitriny-cinema.html'),true);assert.match(source,/closePlayer\(\);const frame/);assert.match(source,/addEventListener\('pagehide'/);assert.doesNotMatch(source,/spotify|playVideo\(|\.play\(/);
+assert.equal(memberPage('/vitriny-music-arena.html'),true);assert.equal(memberPage('/vitriny-cinema.html'),true);assert.match(source,/mountMediaPlayback/);assert.match(source,/playback.close\(\)/);assert.match(source,/addEventListener\('pagehide'/);assert.doesNotMatch(source,/spotify|playVideo\(|\.play\(/);
 for(const url of ['https://evil.test/watch?v=98ovJs-Ibd4','https://youtube.com@evil.test/watch?v=98ovJs-Ibd4','javascript:alert(1)','http://youtube.com/watch?v=98ovJs-Ibd4','https://www.youtube.com/embed/nope'])assert.equal(youtubeSource(url),null);
 assert.match(youtubeSource('https://youtu.be/98ovJs-Ibd4?si=test').embedUrl,/98ovJs-Ibd4\?autoplay=0&playsinline=1/);
 const db=new Database(':memory:'),app=express();app.use(express.json());const options={app,db,requireAdmin:(req,res,next)=>req.get('admin')==='yes'?next():res.sendStatus(401),sameOriginOnly:(req,res,next)=>req.get('origin')==='https://vitrinecity.com'?next():res.sendStatus(403),siteUrl:'https://vitrinecity.com',publicDir:'.'};

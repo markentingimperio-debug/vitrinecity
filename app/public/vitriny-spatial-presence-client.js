@@ -1,4 +1,5 @@
 import {normalizeSpatialCityId,spatialCityFromLocation} from './vitriny-spatial-api-client.js';
+import {toLegacyPublicPath} from './vitriny-public-routes.js';
 
 const PRESENCE_KEY='vitrinySpatialPresenceSession';
 const ALLOWED=new Set(['central','commerce','social','creator','food','education','entertainment','business','services']);
@@ -11,7 +12,7 @@ function randomSession(){
 }
 
 export function inferSpatialPresenceDistrict(locationLike=globalThis.location){
-  const pathname=String(locationLike?.pathname||'').toLowerCase(),search=String(locationLike?.search||'');
+  const pathname=toLegacyPublicPath(String(locationLike?.pathname||'').toLowerCase()),search=String(locationLike?.search||'');
   if(pathname.endsWith('/vitriny-multiverse-explore.html'))return'central';
   if(pathname.endsWith('/vitriny-store-interior.html'))return'commerce';
   if(pathname.endsWith('/vitriny-multiverse-food.html'))return'food';

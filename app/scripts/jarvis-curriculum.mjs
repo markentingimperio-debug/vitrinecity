@@ -6,12 +6,12 @@ import {fileURLToPath} from 'node:url';
 import Database from 'better-sqlite3';
 import {createJarvis} from '../jarvis-core.js';
 
-export function validateCurriculum(pack) {
+export function validateCurriculum(pack,{now=Date.now}={}) {
   assert.match(pack.id,/^[a-z0-9-]{3,64}$/);assert.match(pack.verifiedCommit,/^[a-f0-9]{40}$/);
   assert.ok(typeof pack.authorization==='string' && pack.authorization.length>=30);
   assert.ok(Array.isArray(pack.documents)&&pack.documents.length<=10);
   assert.ok(Array.isArray(pack.corrections)&&pack.corrections.length<=2);
-  const temp=new Database(':memory:'),core=createJarvis(temp,{env:{JARVIS_LOCAL_MODEL:'0'}}),seen=new Set();
+  const temp=new Database(':memory:'),core=createJarvis(temp,{env:{JARVIS_LOCAL_MODEL:'0'},now}),seen=new Set();
   try {
     for(const doc of [...pack.documents,...pack.corrections.map(c=>c.document)]) {
       assert.ok(doc.source.startsWith(`Jarvis ${pack.id}/`));assert.ok(!seen.has(doc.source));seen.add(doc.source);
@@ -28,8 +28,8 @@ export function validateCurriculum(pack) {
   return pack;
 }
 
-export function planCurriculum(db,pack) {
-  validateCurriculum(pack);
+export function planCurriculum(db,pack,{now=Date.now}={}) {
+  validateCurriculum(pack,{now});
   const operations=[],skipped=[];
   for(const correction of pack.corrections){
     const existing=db.prepare('SELECT * FROM jarvis_documents WHERE source=?').get(correction.document.source);
@@ -51,10 +51,10 @@ export function planCurriculum(db,pack) {
   return {id:pack.id,operations,skipped};
 }
 
-export function applyCurriculum(db,pack,{confirmed=false}={}) {
+export function applyCurriculum(db,pack,{confirmed=false,now=Date.now}={}) {
   assert.equal(confirmed,true,'Operator review and approval are required.');
   return db.transaction(()=>{
-    const plan=planCurriculum(db,pack),at=new Date().toISOString(),changes=[];
+    const plan=planCurriculum(db,pack,{now}),at=new Date(now()).toISOString(),changes=[];
     const event=(kind,id,revision)=>db.prepare('INSERT INTO jarvis_events(kind,document_id,revision,actor_id,created_at) VALUES(?,?,?,0,?)').run(kind,id,revision,at);
     for(const op of plan.operations){
       const d=op.document;let id=op.id,revision=op.revision;
@@ -72,8 +72,8 @@ export function applyCurriculum(db,pack,{confirmed=false}={}) {
   }).immediate();
 }
 
-export async function evaluateCurriculum(pack,{localModel=false,guard=()=>{}}={}) {
-  const db=new Database(':memory:'),core=createJarvis(db,{env:{JARVIS_LOCAL_MODEL:localModel?'1':'0'},
+export async function evaluateCurriculum(pack,{localModel=false,guard=()=>{},now=Date.now}={}) {
+  const db=new Database(':memory:'),core=createJarvis(db,{env:{JARVIS_LOCAL_MODEL:localModel?'1':'0'},now,
     fetchImpl:async(url,options)=>{
       const response=await fetch(url,{...options,signal:AbortSignal.any([options.signal,AbortSignal.timeout(25000)])});
       if(url.endsWith('/v1/chat/completions')&&response.ok){
@@ -86,7 +86,7 @@ export async function evaluateCurriculum(pack,{localModel=false,guard=()=>{}}={}
   for(const c of pack.corrections)db.prepare('UPDATE jarvis_documents SET body=?,source=?,status=?,revision=?,updated_by=? WHERE title=?').run(c.expected.body,c.expected.source,c.expected.status,c.expected.revision,c.expected.updated_by,c.expected.title);
   try{
     const baseline=pack.questions.map(q=>({question:q.question,expected:q.title,sourceFound:core.retrieve(q.question).some(s=>s.title===q.title)}));
-    const installed=applyCurriculum(db,pack,{confirmed:true}),results=[];
+    const installed=applyCurriculum(db,pack,{confirmed:true,now}),results=[];
     for(const q of pack.questions){
       await guard();const sources=core.retrieve(q.question),sourceFound=sources.some(s=>s.title===q.title);
       const answer=localModel?await core.ask({question:q.question},0):null;

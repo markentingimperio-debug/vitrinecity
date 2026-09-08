@@ -38,8 +38,8 @@ async function start() {
     const title=document.createElement('b');title.textContent=item.title;a.append(label,title);
     if(copy){a.setAttribute('aria-hidden','true');a.tabIndex=-1;}track.append(a);
   }
-  document.querySelector('#marketTicker')?.remove();document.body.prepend(banner);
-  configureStickyHighlights(banner);
+  document.querySelector('#marketTicker')?.remove();const homeSlot=document.getElementById('home-promotions');
+  if(homeSlot)homeSlot.append(banner);else{document.body.prepend(banner);configureStickyHighlights(banner);}
   let index=0, paused=matchMedia('(prefers-reduced-motion: reduce)').matches, hover=false, focused=false, visible=true;
   const motion=matchMedia('(prefers-reduced-motion: reduce)');
   const $=s=>root.querySelector(s), pause=$('[data-action="pause"]'), image=$('img');
@@ -71,7 +71,7 @@ export function configureStickyHighlights(banner, {
   document=globalThis.document, pathname=globalThis.location.pathname, ResizeObserver=globalThis.ResizeObserver
 } = {}) {
   const home=pathname==='/' || pathname==='/index.html';
-  if(!home && pathname!=='/pesquisar.html')return;
+  if(!home && pathname!=='/pesquisar.html' && pathname!=='/pesquisar')return;
   const page=document.documentElement;
   banner.classList.add('vc-hb-sticky');
   page.classList.add('vc-hb-sticky-page');

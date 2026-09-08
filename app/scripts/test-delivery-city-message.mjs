@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {deliveryAvailabilityMessage,loadDeliveryAvailability} from '../public/vitriny-delivery-availability.js';
+const data={enabled:true,cities:[{city:'Silvânia',state:'GO'},{city:'Anápolis',state:'GO'}]};
+assert.match(deliveryAvailabilityMessage(data,'silvania'),/habilitada em Silvânia/);
+assert.match(deliveryAvailabilityMessage(data,'anapolis'),/habilitada em Anápolis/);
+assert.match(deliveryAvailabilityMessage(data,'vianopolis'),/ainda não está habilitada/);
+assert.match(deliveryAvailabilityMessage({...data,enabled:false},'silvania'),/não está habilitada no momento/);
+assert.match(deliveryAvailabilityMessage(data,'vitrine-city'),/Silvânia \(GO\), Anápolis \(GO\)/);
+assert.match(deliveryAvailabilityMessage({enabled:true,cities:[{city:'Silvânia',state:'SP'}]},'silvania'),/ainda não está habilitada/);
+assert.doesNotMatch(deliveryAvailabilityMessage({enabled:'true',cities:[]},'silvania'),/está habilitada em/);
+assert.match(deliveryAvailabilityMessage(null,'silvania'),/confirmada/);
+assert.equal(await loadDeliveryAvailability({fetchImpl:async()=>{throw Error('offline');}}),null);
+assert.equal(await loadDeliveryAvailability({fetchImpl:async()=>({ok:false})}),null);
+assert.deepEqual(await loadDeliveryAvailability({fetchImpl:async(path,options)=>{assert.equal(path,'/api/marketplace/local-delivery/availability');assert.equal(options.cache,'no-store');return {ok:true,json:async()=>data};}}),data);
+console.log('Delivery city availability messages passed.');

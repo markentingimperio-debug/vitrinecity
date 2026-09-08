@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {toCleanPublicHref,toLegacyPublicPath} from '../public/vitriny-public-routes.js';
 
 const page=fs.readFileSync(new URL('../public/solucoes.html',import.meta.url),'utf8');
 const home=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
@@ -15,7 +16,8 @@ assert.match(page,/\/api\/opportunities\/status/);
 assert.match(page,/\/api\/opportunities\/revise/);
 assert.match(page,/application\/ld\+json/);
 assert.match(page,/https:\/\/vitrinecity\.com\/solucoes\.html/);
-assert.match(home,/href="\/solucoes\.html"/);
+assert.ok(home.includes(`href="${toCleanPublicHref('/solucoes.html')}"`),'A página inicial continua oferecendo o catálogo de serviços pelo endereço público');
+assert.equal(toLegacyPublicPath('/solucoes'),'/solucoes.html','O endereço limpo usa o catálogo existente');
 assert.match(server,/'\/solucoes\.html'/);
 assert.match(server,/CREATE TABLE IF NOT EXISTS business_opportunities/);
 assert.match(server,/app\.post\('\/api\/opportunities'/);
