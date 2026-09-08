@@ -20,6 +20,8 @@ import {mountVisitorAvatar} from './vitriny-visitor-avatar.js';
 import {mountStorefrontDisplays} from './vitriny-storefront-displays.js';
 import {mountGamesBuilding} from './vitriny-city-games-building.js';
 import {mountCinemaBuilding} from './vitriny-cinema-building.js';
+import {mountEmissoraBuilding} from './vitriny-emissora-building.js';
+import {EMISSORA_BUILDING,intersectsEmissoraLot} from './vitriny-emissora-core.js';
 import {mountCreditsBuilding} from './vitriny-credits-building.js';
 import {mountCityLife} from './vitriny-city-life.js';
 import {mountCommerceAvenue,mountMusicArena} from './vitriny-commerce-avenue.js';
@@ -93,6 +95,7 @@ function createChunkGroup(chunk){
   }
   for(const building of chunk.buildings){
     if(intersectsTransitPlaza(building))continue;
+    if(isActiveCity&&intersectsEmissoraLot(building))continue;
     if(storeBuildingLots.some(store=>intersectsStoreBuilding(building,store)))continue;
     const px=building.position.x,pz=building.position.z;
     if((Math.abs(px)<320&&pz>82&&pz<120)||(px>-40&&px<50&&pz>122&&pz<180)||(px>70&&px<164&&pz>122&&pz<190)||(px>-95&&px<-20&&pz>170&&pz<230)||(px>85&&px<166&&pz>-225&&pz<-148))continue;
@@ -179,8 +182,10 @@ const centers=isActiveCity?mountCommerceAvenue({scene,architecture,billboards,fa
 for(const {group,center,anchor} of centers){storeTargets.push(group);const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=center.href;entry.setAttribute('aria-label',`Entrar em ${center.title}`);const label=document.createElement('small'),action=document.createElement('strong');label.textContent=center.title;action.textContent='Explorar departamentos →';entry.append(label,action);entry.addEventListener('click',()=>saveSpatialContext());entranceLayer.append(entry);storeEntrances.push({element:entry,anchor,normal:new THREE.Vector3(0,0,1).transformDirection(group.matrixWorld),href:center.href,reference:`center-${center.id}`});}
 const musicArena=mountMusicArena({scene,architecture});storeTargets.push(musicArena);
 const cinemaBuilding=mountCinemaBuilding({scene,architecture});storeTargets.push(cinemaBuilding);
+const emissoraBuilding=isActiveCity?mountEmissoraBuilding({scene,architecture}):null;
+if(emissoraBuilding)storeTargets.push(emissoraBuilding);
 const creditsBuilding=mountCreditsBuilding({scene,architecture});storeTargets.push(creditsBuilding);
-for(const [group,z,x=0]of [[cinemaBuilding,24],[musicArena,16],[creditsBuilding,18],[deliveryBase,12,-15]]){const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=group.userData.href;entry.textContent='Entrar em '+group.userData.label;entry.addEventListener('click',()=>saveSpatialContext());entranceLayer.append(entry);const anchor=group.localToWorld(new THREE.Vector3(x,2,z));storeEntrances.push({element:entry,anchor,normal:new THREE.Vector3(0,0,1).transformDirection(group.matrixWorld),href:group.userData.href,reference:group.userData.reference});}
+for(const [group,z,x=0]of [[cinemaBuilding,24],[musicArena,16],[creditsBuilding,18],[deliveryBase,12,-15],...(emissoraBuilding?[[emissoraBuilding,EMISSORA_BUILDING.entrance.z]]:[])]){const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=group.userData.href;entry.textContent='Entrar em '+group.userData.label;entry.addEventListener('click',()=>saveSpatialContext());entranceLayer.append(entry);const anchor=group.localToWorld(new THREE.Vector3(x,2,z));storeEntrances.push({element:entry,anchor,normal:new THREE.Vector3(0,0,1).transformDirection(group.matrixWorld),href:group.userData.href,reference:group.userData.reference});}
 $('openCredits').addEventListener('click',()=>{saveSpatialContext();location.assign('/meus-creditos');});
 $('openCinema').addEventListener('click',()=>{saveSpatialContext();location.assign('/sala-de-cinema');});
 $('openMusic').addEventListener('click',()=>{saveSpatialContext();location.assign('/arena-musical');});
@@ -346,10 +351,11 @@ addEventListener('vitriny:guide-visit',event=>{
   if(!isActiveCity)return;
   const {place,storeReference,title}=event.detail||{};
   const store=storeReference?storeBuildingLots.find(s=>s.reference===storeReference):place==='education'?storeBuildingLots.find(s=>/educacional/i.test(s.name)):null;
-  const landmark={headquarters,delivery:deliveryBase,games:gamesBuilding,music:musicArena,cinema:cinemaBuilding,credits:creditsBuilding}[place];
+  const landmark={headquarters,delivery:deliveryBase,games:gamesBuilding,music:musicArena,cinema:cinemaBuilding,emissora:emissoraBuilding,credits:creditsBuilding}[place];
   releaseControls();avatarMode=false;doorEntry.reset();
   if(store){const offset=innerWidth<=760?60:48;position.set(store.position.x-38,16,store.position.z+offset);yaw=-Math.PI/2-Math.atan2(offset,38);pitch=.2;}
   else if(place==='commerce'){position.set(-164,7,170);yaw=Math.PI;pitch=.14;}
+  else if(place==='emissora'&&landmark){position.copy(landmark.localToWorld(new THREE.Vector3(18,14,innerWidth<=760?72:58)));yaw=Math.atan2(position.x-landmark.position.x,landmark.position.z-position.z);pitch=.11;}
   else if(landmark){const p=landmark.position,distance=place==='headquarters'?170:innerWidth<=760?85:65;position.set(p.x+32,place==='headquarters'?52:14,p.z+distance);yaw=Math.PI-Math.atan2(32,distance);pitch=place==='headquarters'?.2:.13;}
   else{const portal=portalTargets.find(target=>target.userData.id===place);if(!portal)return;const p=portal.getWorldPosition(new THREE.Vector3());position.set(p.x*1.55,9,p.z*1.55);yaw=Math.atan2(p.x,-p.z);pitch=.1;}
   updateViewButton();renderer.domElement.focus({preventScroll:true});const notice=$('guideArrival');notice.textContent='Você está perto de '+String(title||'seu destino').slice(0,100)+'.';clearTimeout(guideArrivalTimer);guideArrivalTimer=setTimeout(()=>notice.textContent='',5000);

@@ -11,6 +11,7 @@ import {setupCityChat} from './city-chat.js';
 import {setupCityRewards} from './city-rewards.js';
 import {setupCourierAccount} from './courier-account.js';
 import { setupMediaCatalog } from './media-catalog.js';
+import { setupEmissora } from './emissora.js';
 import { setupDailyWebStories } from './web-story-daily.js';
 import { createStoryImageProvider, createOpenAIStoryRequest } from './web-story-provider.js';
 import { createCryptoObservability, mountCryptoObservability } from './crypto-observability.js';
@@ -2649,6 +2650,7 @@ const publicPage = file => (req, res) => {
 };
 let dailyStories;
 setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft, reviewEditorialDraft, automationAllowed:()=>!dailyStories?.automation.status().enabled });
+setupEmissora({app,db,siteUrl:SITE_URL});
 const storyOpenAIRequest=createOpenAIStoryRequest({apiKey:()=>process.env.OPENAI_API_KEY});
 const webStories = dailyStories = setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl:SITE_URL,publicDir:path.join(dir,'public'),dataDir,
   services:()=>DIGITAL_SERVICE_PACKAGES,courses:()=>managedCourses(true).filter(course=>courseReady(course.slug)),
@@ -2737,7 +2739,7 @@ app.get('/sitemap.xml', (_req, res) => {
     '/guias/plantas-em-vasos.html',
     '/', '/cidade', '/cidade/bairro-premium', '/cidade/praca-central', '/cidade/avenida-premium',
     '/social', '/descobrir', '/loja', '/centro-educacional.html', '/afiliados.html', '/grupos-whatsapp.html',
-    '/conteudo', '/noticias', '/esportes', '/receitas', '/plantas-e-jardinagem', '/tecnologia', '/inteligencia-artificial', '/entretenimento', '/livros',
+    '/emissora', '/conteudo', '/noticias', '/esportes', '/receitas', '/plantas-e-jardinagem', '/tecnologia', '/inteligencia-artificial', '/entretenimento', '/livros',
     '/para-empresas.html', '/solucoes.html', '/como-funciona.html', '/comprar-lote.html', '/sobre.html',
     '/contato.html', '/privacy.html', '/termos-predio-digital.html', '/termos-marketplace.html',
     '/politica-vendedor-marketplace.html', '/politica-comprador-marketplace.html',

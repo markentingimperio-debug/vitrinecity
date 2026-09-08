@@ -19,6 +19,16 @@ const pages=[
 const copy=()=>({title:'Como observar o cultivo em casa',description:'Um guia de observação para conhecer o ambiente e consultar as necessidades de cada planta.',pages:pages.map(text=>({text})),imagePrompt:'Um jardim doméstico conceitual, luz suave, composição vertical.'});
 const approved=()=>({approved:true,grounded:true,original:true,complete:true,nonRepetitive:true,commerceBalanced:true,risk:'low',notes:'Conteúdo coerente com a fonte; qualidade editorial revisada.'});
 const source=()=>({id:'article-public',kind:'article',group:'trends',portal:'plantas-e-jardinagem',title:'Cuidados com plantas',summary:'Observe o ambiente e as necessidades de cada espécie antes de cuidar de plantas em casa.',body:pages.slice(1,9).join(' '),sourcePath:'/artigo/cultivo',sources:[{title:'Guia próprio',url:'https://vitrinecity.com/artigo/cultivo'}],facts:{},commercial:false});
+const recipeBody=`Tempo aproximado: 1 hora. Rendimento: 12 fatias.
+
+Ingredientes da massa: 3 cenouras médias descascadas e cortadas; 3 ovos; 1 xícara de óleo; 2 xícaras de açúcar; 2 e meia xícaras de farinha de trigo; 1 colher de sopa de fermento químico. Para a cobertura: 4 colheres de sopa de chocolate em pó; 4 colheres de sopa de açúcar; 2 colheres de sopa de manteiga; meia xícara de leite.
+
+Preparo: aqueça o forno a 180 °C e unte uma forma média. Bata no liquidificador as cenouras, os ovos e o óleo até obter uma mistura uniforme. Em uma tigela, misture o açúcar e a farinha. Adicione o líquido aos poucos e mexa somente até incorporar. Por último, acrescente o fermento delicadamente.
+
+Asse por aproximadamente 35 a 45 minutos. O tempo varia conforme o forno; faça o teste do palito no centro e retire quando ele sair sem massa crua. Espere amornar antes de desenformar.
+
+Para a cobertura, leve todos os ingredientes ao fogo baixo, mexendo até engrossar levemente. Espalhe sobre o bolo ainda morno. Use utensílios secos, conserve o bolo coberto e, em dias quentes, mantenha sob refrigeração se a cobertura levar leite. A farinha deve ser medida sem compactar para evitar uma massa pesada.`;
+const recipeSource=()=>({...source(),group:'recipes',portal:'receitas',title:'Bolo de cenoura com cobertura de chocolate',summary:'Bolo caseiro com as quantidades e o modo de preparo completos.',body:recipeBody,sourcePath:'/artigo/bolo-de-cenoura'});
 function setup({generation=copy(),review=approved(),imageError=false}={}) {
   const calls={text:[],image:[],assets:[]};
   const ai=createWebStoryAI({siteUrl:'https://vitrinecity.com',requestText:async(system,user,tokens)=>{calls.text.push({system,user,tokens});return JSON.stringify(calls.text.length===1?generation:review);},requestImage:async prompt=>{calls.image.push(prompt);if(imageError)throw Error('provider-private-detail');return '/uploads/generated-videos/story.png';},assets:{image:async(url,options)=>{calls.assets.push(url);if(!url.startsWith('/'))throw Error('remote');return {url,width:options?.logo?192:1080,height:options?.logo?192:1920,hash:'a'.repeat(64)};},poster:async()=>'/story-assets/poster.jpg'}});
@@ -60,17 +70,52 @@ test('store stories require and display their actual public photo before generat
   const missing=setup(),held=await missing.ai.generate({...store,image_url:''});assert.equal(held.notes,'catalog_photo_missing');assert.equal(missing.calls.text.length,0);assert.equal(missing.calls.image.length,0);
 });
 
-test('recipe generation ends with a compact character contract and requires complete quantities or an insufficient result',async()=>{
-  const fixture=setup({generation:{insufficient:true}}),recipe={...source(),group:'recipes',portal:'receitas'};
+test('recipe generation requests only bounded metadata because the complete procedure is already laid out locally',async()=>{
+  const fixture=setup({generation:{insufficient:true}}),recipe=recipeSource();
   const result=await fixture.ai.generate(recipe);assert.equal(result.notes,'source_insufficient_for_ten_pages');assert.equal(fixture.calls.text.length,1);assert.equal(fixture.calls.image.length,0);
-  const instructions=fixture.calls.text[0].system.slice(fixture.calls.text[0].system.indexOf('CONFERÊNCIA FINAL DO JSON:'));
-  assert.match(instructions,/exatamente 12 objetos/);assert.match(instructions,/UMA FRASE CURTA/);assert.match(instructions,/CARACTERES COM ESPAÇOS, não de palavras/);assert.match(instructions,/entre 650 e 1100 caracteres/);assert.match(instructions,/quantidades de TODOS os ingredientes/);assert.match(instructions,/Não substitua medidas/);assert.match(instructions,/receita completa dentro dos limites/);
+  const instructions=fixture.calls.text[0].system.slice(fixture.calls.text[0].system.indexOf('CONTRATO ESPECÍFICO DESTA RECEITA:'));
+  assert.match(instructions,/preservando todas as palavras/);assert.match(instructions,/quantidades de TODOS os ingredientes/);assert.match(instructions,/Retorne somente JSON com title, description e imagePrompt/);assert.match(instructions,/NÃO escreva pages/);assert.match(instructions,/retorne somente \{"insufficient":true\}/);assert.equal(fixture.calls.text[0].tokens,700);
 });
 
 test('observed twelve-paragraph response stays rejected without dropping content or paying for an image',async()=>{
   const lengths=[202,163,172,146,161,146,177,135,155,141,164,164];
   const generation={...copy(),pages:lengths.map((length,i)=>({text:('Parágrafo '+String.fromCharCode(65+i)+' '+('informação extensa '.repeat(20))).slice(0,length)}))};
   const fixture=setup({generation}),result=await fixture.ai.generate(source());assert.equal(generation.pages.map(p=>p.text).join(' ').length,1937);assert.equal(result.notes,'ai_ten_pages_required');assert.equal(fixture.calls.text.length,1);assert.equal(fixture.calls.image.length,0);assert.equal(result.draft,null);
+});
+
+test('a complete published recipe keeps every source word and amount when the model returns an oversized incomplete recap',async()=>{
+  const generation={...copy(),title:'Bolo de cenoura completo',description:'Conheça as quantidades e todas as etapas desta receita caseira.',pages:Array.from({length:12},(_,i)=>({text:('Resumo '+String.fromCharCode(65+i)+' '+('Um comentário genérico sobre sabor. '.repeat(8))).slice(0,170)}))};
+  const fixture=setup({generation}),result=await fixture.ai.generate(recipeSource());assert.equal(result.approved,true,result.notes);assert.ok(result.draft.pages.length>=10&&result.draft.pages.length<=20);
+  const exactBody=result.draft.pages.slice(1,-2).map(p=>p.text).join(' ');assert.equal(exactBody,recipeBody.replace(/\s+/g,' '));assert.ok(!exactBody.includes('comentário genérico'));
+  for(const quantity of ['3 cenouras','3 ovos','2 e meia xícaras','meia xícara de leite','180 °C','35 a 45 minutos'])assert.ok(exactBody.includes(quantity),quantity);
+  assert.equal(fixture.calls.text.length,2);assert.equal(fixture.calls.image.length,1);assert.deepEqual(JSON.parse(fixture.calls.text[1].user).story.pages,result.draft.pages.map(p=>({text:p.text})));assert.equal(result.draft.cta,'Ver modo de preparo');assert.ok(result.draft.pages.every((_,i)=>[...storyPageVisibleText(result.draft,i)].length<=180));
+});
+
+test('metadata-only recipe output reaches independent review with the complete locally prepared pages',async()=>{
+  const generation={title:'Bolo de cenoura completo',description:'Ingredientes, quantidades e preparo da receita caseira de bolo de cenoura.',imagePrompt:'Ilustração conceitual vertical de um bolo.'};
+  const fixture=setup({generation}),result=await fixture.ai.generate(recipeSource());assert.equal(result.approved,true,result.notes);assert.equal(fixture.calls.text.length,2);assert.equal(fixture.calls.text[0].tokens,700);assert.equal(fixture.calls.text[1].tokens,1000);assert.equal(fixture.calls.image.length,1);assert.equal(JSON.parse(fixture.calls.text[1].user).story.pages.slice(1,-2).map(p=>p.text).join(' '),recipeBody.replace(/\s+/g,' '));
+});
+
+test('recipe review distinguishes internal layout from third-party copying without bypassing originality approval',async()=>{
+  const recipe=setup(),result=await recipe.ai.generate(recipeSource());assert.equal(result.approved,true);
+  const prompt=recipe.calls.text[1].system;
+  assert.match(prompt,/CONTEXTO DE DIAGRAMAÇÃO/);assert.match(prompt,/receita já publicada na própria plataforma/);
+  assert.match(prompt,/não é, por si só, motivo para reprovar originalidade/);assert.match(prompt,/cópia extensa de terceiros/);
+  assert.match(prompt,/não presuma autoria, licença ou exclusividade/);assert.match(prompt,/continuam motivo de reprovação/);
+  const other=setup();await other.ai.generate(source());assert.doesNotMatch(other.calls.text[1].system,/CONTEXTO DE DIAGRAMAÇÃO/);assert.match(other.calls.text[1].system,/cópia extensa;/);
+  const denied=setup({review:{...approved(),original:false}}),held=await denied.ai.generate(recipeSource());assert.equal(held.notes,'ai_review_held');assert.equal(held.approved,false);assert.equal(denied.calls.text.length,2);assert.equal(denied.calls.image.length,0);
+});
+
+test('recipe layout never invents missing structure, truncates long sources or forces short content',async()=>{
+  for(const body of [recipeBody.replace('Ingredientes da massa:','Lista da massa:'),recipeBody.replace('Preparo:','Observações:'),recipeBody.repeat(2),'Ingredientes: 1 ovo. Preparo: misture.']){
+    const fixture=setup(),result=await fixture.ai.generate({...recipeSource(),body});assert.equal(result.notes,'source_insufficient_for_ten_pages');assert.equal(fixture.calls.text.length,0);assert.equal(fixture.calls.image.length,0);assert.equal(result.draft,null);
+  }
+});
+
+test('source-based recipe layout still requires truthful metadata, approval and a current source',async()=>{
+  const metadata=setup({generation:{...copy(),title:'Bolo com 999 benefícios'}});assert.equal((await metadata.ai.generate(recipeSource())).notes,'ai_unbacked_numbers');assert.equal(metadata.calls.image.length,0);
+  const unapproved=setup({review:{...approved(),complete:false}});assert.equal((await unapproved.ai.generate(recipeSource())).notes,'ai_review_held');assert.equal(unapproved.calls.image.length,0);assert.equal(unapproved.calls.text.length,2);
+  const stopped=setup();await assert.rejects(stopped.ai.generate(recipeSource(),{isCurrent:()=>stopped.calls.text.length===0}),/ai_source_changed/);assert.equal(stopped.calls.text.length,1);assert.equal(stopped.calls.image.length,0);
 });
 test('affiliate disclosure repair reserves final space and keeps displaced text',async()=>{
   const {ai,calls}=setup();const result=await ai.generate({...source(),kind:'affiliate',commercial:true,facts:{affiliate:true},sourcePath:'/ofertas/plantas',image_url:'/assets/planta.jpg'});
@@ -81,7 +126,7 @@ test('affiliate disclosure repair reserves final space and keeps displaced text'
 test('AI contextual final buttons use only the internal source and never claim a discount',async()=>{
   for(const [kind,group,label] of [['article','recipes','Ver modo de preparo'],['product','products','Ver oferta'],['affiliate','products','Ver oferta'],['store','services','Visitar loja'],['course','services','Ver curso'],['service','services','Ver serviço'],['city','trends','Explorar cidade']]){
     const generation={...copy(),cta:'Cupom secreto',homeCta:'Clique para ganhar',sourcePath:'https://evil.test/offer'};
-    const fixture=setup({generation}),item={...source(),kind,group,portal:group==='recipes'?'receitas':'guia',commercial:!['article','city'].includes(kind),image_url:'/assets/catalog.jpg'};
+    const fixture=setup({generation}),item={...(group==='recipes'?recipeSource():source()),kind,group,portal:group==='recipes'?'receitas':'guia',commercial:!['article','city'].includes(kind),image_url:'/assets/catalog.jpg'};
     const result=await fixture.ai.generate(item);assert.equal(result.approved,true,kind+': '+result.notes);assert.equal(result.draft.cta,label);assert.equal(result.draft.homeCta,'');assert.equal(result.draft.sourcePath,item.sourcePath);assert.doesNotMatch(result.draft.cta,/cupom|desconto|ganhar/i);
     assert.match(fixture.calls.text[0].system,/página relacionada do nosso site/);assert.match(fixture.calls.text[0].system,/não esconda etapas, ingredientes ou fatos/);assert.match(fixture.calls.text[0].system,/sem confirmação explícita na fonte/);
     assert.match(fixture.calls.text[1].system,/não aprove teasers incompletos/);
