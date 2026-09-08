@@ -1,0 +1,87 @@
+.city-context {
+  display: flex;
+  align-items: center;
+  gap: .85rem;
+  width: fit-content;
+  max-width: 100%;
+  margin: 1rem 0 .25rem;
+  padding: .72rem .8rem;
+  border: 1px solid rgba(117,167,255,.2);
+  border-radius: 16px;
+  background: rgba(8,18,31,.6);
+  box-shadow: 0 14px 38px rgba(0,0,0,.18);
+  backdrop-filter: blur(12px);
+}
+.city-context-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(110,231,249,.25);
+  border-radius: 12px;
+  background: rgba(110,231,249,.08);
+  font-size: 1rem;
+}
+.city-context-copy {
+  display: grid;
+  gap: .12rem;
+  min-width: 0;
+}
+.city-context-copy small {
+  color: #6ee7f9;
+  font-size: .58rem;
+  font-weight: 900;
+  letter-spacing: .14em;
+}
+.city-context-copy span {
+  color: #9eb0c7;
+  font-size: .68rem;
+  line-height: 1.25;
+}
+.city-context-select-wrap {
+  position: relative;
+  min-width: 180px;
+}
+.city-context select {
+  width: 100%;
+  appearance: none;
+  padding: .7rem 2.2rem .7rem .8rem;
+  border: 1px solid rgba(144,196,255,.2);
+  border-radius: 11px;
+  outline: 0;
+  background: #0d1b2e;
+  color: #f4f8ff;
+  font-size: .78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.city-context-select-wrap::after {
+  content: "⌄";
+  position: absolute;
+  top: 50%;
+  right: .8rem;
+  color: #6ee7f9;
+  pointer-events: none;
+  transform: translateY(-55%);
+}
+.city-context[data-loading="true"] select { opacity: .62; cursor: progress; }
+.city-context[data-loading="true"] .city-context-icon { animation: multiversalPulse 1s ease-in-out infinite alternate; }
+.city-context-status-pilot {
+  color: #7ef0bd !important;
+}
+@keyframes multiversalPulse { to { box-shadow: 0 0 22px rgba(110,231,249,.22); } }
+@media (max-width: 840px) {
+  .city-context { margin-inline: auto; text-align: left; }
+}
+@media (max-width: 520px) {
+  .city-context {
+    width: 100%;
+    display: grid;
+    grid-template-columns: auto 1fr;
+  }
+  .city-context-select-wrap { grid-column: 1 / -1; min-width: 0; width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .city-context[data-loading="true"] .city-context-icon { animation: none; }
+}
