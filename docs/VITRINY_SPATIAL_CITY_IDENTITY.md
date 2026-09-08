@@ -30,23 +30,25 @@ Esses conceitos são identidades digitais do produto, não réplicas urbanístic
 
 O explorer aplica a paleta validada ao ambiente, HUD, chão e vias e materializa um landmark 3D específico por cidade. O nível geométrico do marco respeita os perfis Lite, Standard e Ultra: aparelhos simples recebem menos segmentos e efeitos, enquanto dispositivos mais capazes recebem anéis e detalhes adicionais.
 
-Os landmarks atuais são procedurais e declarativos: `spire`, `crown`, `arch` e `orbital`. Eles funcionam como assinatura visual da cidade sem controlar regras de negócio.
+A camada `Environment v1` já consome a identidade para gerar skyline temático, vegetação, iluminação, mobiliário e uma zona Premium Ring. O plano é determinístico por cidade e perfil; o renderer usa `InstancedMesh` para reduzir draw calls das categorias repetitivas.
 
-O landmark é decorativo/navegacional: não controla checkout, permissões, autenticação ou outras operações críticas.
+Os landmarks atuais são procedurais e declarativos: `spire`, `crown`, `arch` e `orbital`. Eles funcionam como assinatura visual da cidade sem controlar regras de negócio.
 
 ## Segurança e escala
 
 - somente quatro IDs de cidade conhecidos são aceitos no cliente v1;
 - somente cores hexadecimais `#RRGGBB` entram no tema;
 - landmark kind usa enum fechado (`spire`, `crown`, `arch`, `orbital`);
+- descritores Environment validam tipos, coordenadas e dimensões antes de renderizar;
 - fallback offline nunca ativa comércio de cidade em preview;
 - o tema pode ser cacheado porque não contém informação pessoal;
 - a identidade fica separada de Presence e telemetria.
 
 ## Próximos passos
 
-1. gerar skyline procedural coerente com o tema;
-2. adicionar vegetação, iluminação e mobiliário por perfil de dispositivo;
-3. criar zonas premium e marcos secundários sem bloquear streaming de chunks;
-4. permitir novas cidades por registry versionado, mantendo validação e fallback;
-5. usar métricas agregadas para otimizar desempenho, nunca para alterar identidade cultural automaticamente.
+1. LOD por distância para skyline e vegetação;
+2. iluminação por período do dia sem rastrear localização individual;
+3. mobiliário e linguagem visual por distrito;
+4. zonas premium patrocináveis com inventário espacial controlado;
+5. novas cidades por registry versionado, mantendo validação e fallback;
+6. usar métricas agregadas para otimizar desempenho, nunca para alterar identidade cultural automaticamente.
