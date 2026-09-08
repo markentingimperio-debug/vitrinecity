@@ -3,9 +3,9 @@ import {spatialCity} from './city-registry.js';
 import {loadPremiumZoneAssignments,resolvePremiumZoneSlots} from './premium-zone-registry.js';
 
 const PROFILE_COUNTS=Object.freeze({
-  LITE:Object.freeze({skyline:12,vegetation:14,lights:12,furniture:8,districtFurniture:8,premiumSlots:4}),
-  STANDARD:Object.freeze({skyline:22,vegetation:28,lights:24,furniture:14,districtFurniture:16,premiumSlots:6}),
-  ULTRA:Object.freeze({skyline:36,vegetation:48,lights:40,furniture:24,districtFurniture:24,premiumSlots:8})
+  LITE:Object.freeze({skyline:12,vegetation:14,lights:12,furniture:8,districtFurniture:8,districtLights:8,premiumSlots:4}),
+  STANDARD:Object.freeze({skyline:22,vegetation:28,lights:24,furniture:14,districtFurniture:16,districtLights:12,premiumSlots:6}),
+  ULTRA:Object.freeze({skyline:36,vegetation:48,lights:40,furniture:24,districtFurniture:24,districtLights:16,premiumSlots:8})
 });
 const CITY_STYLE=Object.freeze({
   'vitrine-city':Object.freeze({height:[24,72],skyline:['neural-tower','glass-spire','terrace'],vegetation:['canopy','garden'],furniture:['bench','kiosk']}),
@@ -50,6 +50,13 @@ export function planSpatialCityEnvironment(cityId,{profileId='STANDARD',premiumA
     if(!safeTransitPoint(p))continue;
     districtFurniture.push(Object.freeze({id:`district-furniture:${city.id}:${i}`,districtId,kind:pick(random,DISTRICT_FURNITURE[districtId]),position:Object.freeze({...p,y:0}),rotationY:num(-sector+Math.PI/2,5)}));
   }
+  const districtLights=[];
+  for(let i=0;i<counts.districtLights;i++){
+    const districtIndex=i%DISTRICTS.length,districtId=DISTRICTS[districtIndex],ring=Math.floor(i/DISTRICTS.length),sector=districtIndex*Math.PI/4;
+    const angle=sector+(ring?0.075:-0.075),radius=84+ring*7,p={x:num(Math.cos(angle)*radius),z:num(Math.sin(angle)*radius)};
+    if(!safeTransitPoint(p))continue;
+    districtLights.push(Object.freeze({id:`district-light:${city.id}:${i}`,districtId,accentIndex:districtIndex,height:num(5.4+ring*.8),intensity:num(.72+random()*.22),position:Object.freeze({...p,y:0})}));
+  }
   const premiumBase=[];
   for(let i=0;i<counts.premiumSlots;i++){
     const angle=i*Math.PI*2/counts.premiumSlots+.39,p={x:num(Math.cos(angle)*138),z:num(Math.sin(angle)*138)};if(!safeTransitPoint(p))continue;
@@ -62,7 +69,7 @@ export function planSpatialCityEnvironment(cityId,{profileId='STANDARD',premiumA
     Object.freeze({id:'transit-forecourt',kind:'mobility',bounds:Object.freeze({minX:-58,maxX:58,minZ:74,maxZ:128}),label:'Intercity Transit'}),
     Object.freeze({id:'premium-ring',kind:'premium',innerRadius:122,outerRadius:154,label:'Premium Ring'})
   ]);
-  return Object.freeze({cityId:city.id,worldKey:city.worldKey,profileId:quality,themeId:identity.themeId,skyline:Object.freeze(skyline),vegetation:Object.freeze(vegetation),lights:Object.freeze(lights),furniture:Object.freeze(furniture),districtFurniture:Object.freeze(districtFurniture),premiumSlots,zones});
+  return Object.freeze({cityId:city.id,worldKey:city.worldKey,profileId:quality,themeId:identity.themeId,skyline:Object.freeze(skyline),vegetation:Object.freeze(vegetation),lights:Object.freeze(lights),furniture:Object.freeze(furniture),districtFurniture:Object.freeze(districtFurniture),districtLights:Object.freeze(districtLights),premiumSlots,zones});
 }
 export function publicSpatialCityEnvironment(cityId,{profileId='STANDARD',premiumAssignments,now=Date.now()}={}){
   return planSpatialCityEnvironment(cityId,{profileId,premiumAssignments:premiumAssignments??loadPremiumZoneAssignments({now}),now});
