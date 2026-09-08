@@ -16,6 +16,11 @@ const DEFINITIONS=Object.freeze({
     palette:Object.freeze({background:'#06101b',fog:'#0a1d30',ground:'#0d1b2a',road:'#162334',accent:'#6f9cff',secondary:'#ffb36b'}),
     landmark:Object.freeze({id:'connection-arch',label:'Arco Conector',kind:'arch',height:46,radius:17,detail:'transit-beacons'})
   }),
+  vianopolis:Object.freeze({
+    themeId:'cerrado-crossroads',tagline:'Conexões do Cerrado, comércio local e vida digital',
+    palette:Object.freeze({background:'#06100b',fog:'#102219',ground:'#13231a',road:'#263126',accent:'#f0c96b',secondary:'#75d6a5'}),
+    landmark:Object.freeze({id:'cerrado-gateway',label:'Portal do Cerrado',kind:'arch',height:40,radius:16,detail:'route-lights'})
+  }),
   goiania:Object.freeze({
     themeId:'green-metropolis',tagline:'Metrópole verde, criativa e conectada',
     palette:Object.freeze({background:'#050711',fog:'#101328',ground:'#121827',road:'#1a2030',accent:'#b58cff',secondary:'#85e6a8'}),
