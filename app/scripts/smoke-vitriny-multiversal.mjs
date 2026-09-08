@@ -60,7 +60,12 @@ const premium=await request('/api/spatial/v1/cities/vianopolis/premium-zones?pro
 assert.equal(premium.response.status,200);
 assert.equal(premium.body?.cityId,'vianopolis');
 assert.equal(premium.body?.profileId,'LITE');
-assert.equal(premium.body?.activeCount,0);
+assert.ok(Array.isArray(premium.body?.items));
+assert.equal(premium.body?.count,premium.body?.items?.length);
+for(const item of premium.body?.items||[]){
+  assert.ok(['available','reserved','active'].includes(item.status),`status premium inválido: ${item.status}`);
+  if(item.status==='reserved')assert.equal(Object.hasOwn(item,'sponsor'),false,'slot reservado não deve expor patrocinador');
+}
 
 const invalid=await request('/api/spatial/v1/context?city=missing',{expectJson:true});
 assert.equal(invalid.response.status,404,'cidade desconhecida deve ser rejeitada');
