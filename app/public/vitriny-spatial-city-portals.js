@@ -2,9 +2,9 @@ import {parseSpatialReturnState,SPATIAL_RETURN_KEY} from './vitriny-spatial-sess
 import {planSpatialCityGates} from './vitriny-spatial-city-gates.js';
 import {resolveCityReturnState} from './vitriny-spatial-city-navigation.js';
 
-// Four explicit destinations for the preview. API strings never become navigation URLs.
+// Five validated cities; each station exposes at most the other four destinations.
 const CITY_NAMES=Object.freeze({
-  'vitrine-city':'Vitrine City',silvania:'Silvânia',anapolis:'Anápolis',goiania:'Goiânia'
+  'vitrine-city':'Vitrine City',silvania:'Silvânia',anapolis:'Anápolis',vianopolis:'Vianópolis',goiania:'Goiânia'
 });
 export const TRANSIT_CITY_IDS=Object.freeze(Object.keys(CITY_NAMES));
 const CHECKPOINT_PREFIX='vitrinySpatialCheckpoint:v1:';
