@@ -1,0 +1,75 @@
+import assert from 'node:assert/strict';
+import {existsSync,readFileSync} from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {spawnSync} from 'node:child_process';
+
+const appDir=fileURLToPath(new URL('..',import.meta.url));
+const repoDir=path.resolve(appDir,'..');
+const publicDir=path.join(appDir,'public');
+const html=readFileSync(path.join(publicDir,'multiversal.html'),'utf8');
+const js=readFileSync(path.join(publicDir,'multiversal.js'),'utf8');
+const css=readFileSync(path.join(publicDir,'multiversal.css'),'utf8');
+const cityCss=readFileSync(path.join(publicDir,'multiversal-city.css'),'utf8');
+const city3dHtml=readFileSync(path.join(publicDir,'cidade-multiversal-3d.html'),'utf8');
+const city3dJs=readFileSync(path.join(publicDir,'cidade-multiversal-3d.js'),'utf8');
+const city3dCss=readFileSync(path.join(publicDir,'cidade-multiversal-3d.css'),'utf8');
+
+for(const id of ['realmGrid','realmSearch','realmFilters','resumeCard','realmCount']){
+  assert.match(html,new RegExp(`id=["']${id}["']`),`multiversal.html precisa de #${id}`);
+}
+assert.match(html,/multiversal\.js\?v=1/);
+assert.match(html,/cidade-multiversal-3d\.html/);
+assert.match(css,/\.realm-grid/);
+assert.match(css,/@media \(max-width: 620px\)/);
+assert.match(cityCss,/\.city-context/);
+
+const syntax=spawnSync(process.execPath,['--check',path.join(publicDir,'multiversal.js')],{encoding:'utf8'});
+assert.equal(syntax.status,0,syntax.stderr||syntax.stdout);
+const citySyntax=spawnSync(process.execPath,['--check',path.join(publicDir,'cidade-multiversal-3d.js')],{encoding:'utf8'});
+assert.equal(citySyntax.status,0,citySyntax.stderr||citySyntax.stdout);
+
+for(const city of ['silvania-go','anapolis-go','vianopolis-go'])assert.ok(js.includes(city),`cidade ausente: ${city}`);
+for(const api of ['/api/multiversal/cities','/api/multiversal/realms','/api/multiversal/transition'])assert.ok(js.includes(api),`API ausente: ${api}`);
+
+for(const id of ['cityCanvas','citySelect','realmPanel','enterRealm','realmDock']){
+  assert.match(city3dHtml,new RegExp(`id=["']${id}["']`),`cidade 3D precisa de #${id}`);
+}
+assert.match(city3dHtml,/type="module" src="\/cidade-multiversal-3d\.js\?v=1"/);
+assert.match(city3dJs,/from '\/vendor\/three\/three\.module\.js'/);
+assert.match(city3dJs,/THREE\.WebGLRenderer/);
+assert.match(city3dJs,/THREE\.Raycaster/);
+assert.match(city3dJs,/\/api\/multiversal\/event/);
+assert.match(city3dJs,/\/api\/multiversal\/transition/);
+assert.match(city3dJs,/multiversal\.place-visit|place-visit/);
+assert.match(city3dCss,/\.realm-label/);
+assert.match(city3dCss,/@media\(max-width:600px\)/);
+
+// Dados recebidos do registry/API nunca voltam ao DOM via HTML interpretado.
+assert.doesNotMatch(js,/\.innerHTML\s*=/,'Portal Multiversal não deve usar innerHTML dinâmico.');
+assert.doesNotMatch(city3dJs,/\.innerHTML\s*=/,'Cidade 3D não deve usar innerHTML dinâmico.');
+assert.match(js,/function localPath\(/,'Portal precisa validar caminhos locais.');
+assert.match(city3dJs,/function localPath\(/,'Cidade 3D precisa validar caminhos locais.');
+assert.match(js,/url\.origin !== window\.location\.origin/,'Portal precisa bloquear destino externo.');
+assert.match(city3dJs,/url\.origin!==location\.origin/,'Cidade 3D precisa bloquear destino externo.');
+
+const destinationFiles=[
+  'cidade-multiversal-3d.html','cidade-25d-demo.html','mapa-real.html','social.html','loja.html','entregas.html',
+  'centro-educacional.html','jarvis-public.html','navegar.html'
+];
+for(const file of destinationFiles)assert.equal(existsSync(path.join(publicDir,file)),true,`destino Multiversal ausente: ${file}`);
+
+const legacy3d=readFileSync(path.join(publicDir,'cidade-3d.html'),'utf8');
+const legacyAlive=readFileSync(path.join(publicDir,'cidade-3d-viva.html'),'utf8');
+assert.match(legacy3d,/cidade-multiversal-3d\.html/);
+assert.match(legacyAlive,/cidade-multiversal-3d\.html/);
+
+const compose=readFileSync(path.join(repoDir,'docker-compose.yml'),'utf8');
+const caddy=readFileSync(path.join(repoDir,'Caddyfile'),'utf8');
+assert.match(compose,/\n  multiversal:\n/);
+assert.match(compose,/multiversal-server\.js/);
+assert.match(compose,/api\/multiversal\/health/);
+assert.match(caddy,/handle \/api\/multiversal\/\*/);
+assert.match(caddy,/reverse_proxy multiversal:3001/);
+
+console.log(JSON.stringify({ok:true,destinations:destinationFiles.length,cities:3,apis:4,webgl:true,domHardened:true,sameOrigin:true}));

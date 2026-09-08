@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="description" content="Explore a VitrineCity Multiversal em 3D e entre nos universos Social, Marketplace, Entregas, Educação, Mapa e Vitriny Neural." />
+  <meta name="theme-color" content="#050b16" />
+  <title>VitrineCity Multiversal 3D</title>
+  <link rel="stylesheet" href="/cidade-multiversal-3d.css?v=1" />
+  <script src="/analytics.js" defer></script>
+  <script type="module" src="/cidade-multiversal-3d.js?v=1"></script>
+</head>
+<body>
+  <header class="city-topbar">
+    <a class="city-brand" href="/multiversal.html">
+      <img src="/assets/vitrinecity-logo.png" alt="" />
+      <span><strong>VitrineCity</strong><small>MULTIVERSAL 3D</small></span>
+    </a>
+    <div class="city-context">
+      <label>
+        <span>CIDADE</span>
+        <select id="citySelect" aria-label="Selecionar cidade"></select>
+      </label>
+      <span class="neural-state" id="neuralState"><i></i> Neural aguardando</span>
+    </div>
+    <nav>
+      <a href="/multiversal.html">Portais</a>
+      <a href="/social.html">Social</a>
+      <a href="/loja.html">Mercado</a>
+    </nav>
+  </header>
+
+  <main class="city-shell">
+    <section class="city-stage" id="cityStage" aria-label="Cidade Multiversal tridimensional">
+      <canvas id="cityCanvas"></canvas>
+      <div class="city-loading" id="cityLoading">
+        <div class="loader-orbit"></div>
+        <strong>Construindo a cidade Multiversal…</strong>
+        <span>Conectando os universos existentes.</span>
+      </div>
+      <div class="city-labels" id="cityLabels" aria-hidden="false"></div>
+
+      <div class="city-hud city-intro" id="cityIntro">
+        <button id="closeIntro" aria-label="Fechar introdução">×</button>
+        <small>CIDADE VIVA • ECOSSISTEMA CONECTADO</small>
+        <h1>Entre na VitrineCity.</h1>
+        <p>Arraste para girar, use a pinça ou roda para aproximar e toque nos prédios para abrir cada universo.</p>
+        <div><span>↔ Girar</span><span>⊕ Zoom</span><span>● Entrar</span></div>
+      </div>
+
+      <div class="city-hud city-toolbar" aria-label="Controles da cidade">
+        <button id="zoomIn" type="button" aria-label="Aproximar">+</button>
+        <button id="resetView" type="button" aria-label="Centralizar">⌂</button>
+        <button id="zoomOut" type="button" aria-label="Afastar">−</button>
+      </div>
+
+      <div class="city-hud city-status" id="cityStatus">
+        <span><i></i><b id="activeCityName">Silvânia</b></span>
+        <small id="realmSummary">Carregando universos…</small>
+      </div>
+
+      <aside class="realm-panel" id="realmPanel" aria-live="polite" aria-hidden="true">
+        <button class="panel-close" id="closePanel" type="button" aria-label="Fechar painel">×</button>
+        <img id="realmImage" alt="" hidden />
+        <small id="realmBadge">UNIVERSO</small>
+        <h2 id="realmTitle">VitrineCity</h2>
+        <p id="realmDescription"></p>
+        <div class="realm-meta">
+          <span id="realmCategory">Ecossistema</span>
+          <span id="realmCity">Silvânia — GO</span>
+        </div>
+        <button class="enter-realm" id="enterRealm" type="button">Entrar neste universo <span>→</span></button>
+      </aside>
+    </section>
+
+    <section class="city-dock" aria-label="Atalhos dos universos">
+      <div class="dock-copy">
+        <small>UNIVERSOS CONECTADOS</small>
+        <strong id="dockCity">Silvânia • VitrineCity</strong>
+      </div>
+      <div class="dock-realms" id="realmDock"></div>
+      <a class="dock-all" href="/multiversal.html">Ver todos</a>
+    </section>
+  </main>
+
+  <noscript>Ative o JavaScript para explorar a cidade 3D. Você também pode usar o <a href="/multiversal.html">Portal Multiversal</a>.</noscript>
+</body>
+</html>
