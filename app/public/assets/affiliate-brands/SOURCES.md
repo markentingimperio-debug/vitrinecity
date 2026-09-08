@@ -14,7 +14,7 @@ SHA-256 dos arquivos originais:
 ```
 mercadolivre.png 6afd983f89db2ced37287757499c168ebe85032dd7fd51e9275d615f0cce79d0
 shopee.svg 3a15506fbbeaf7d7f75181687513ae4b14d08eb15642c063cc9c7e95f90b4a35
-cakto.png c5eec4e31dc71efbaae89f16551298bc68df76f57827d25fc41e5a7dcdbc624b1
+cakto.png c5eec4e31dc71efbae89f16551298bc68df76f57827d25fc41e5a7dcdbc624b1
 kiwify.png 41018735113c7b9541aa3a9c5e3c8740de80c4ec8d75bc1dcb06820edf8c1e51
 ```
 
