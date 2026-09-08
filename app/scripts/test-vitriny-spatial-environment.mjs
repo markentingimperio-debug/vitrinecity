@@ -3,7 +3,7 @@ import {planSpatialCityEnvironment} from '../vitriny-spatial/city-environment.js
 
 const isInsideTransit=position=>Math.abs(position.x)<58&&position.z>74&&position.z<128;
 
-for(const cityId of ['vitrine-city','silvania','anapolis','goiania']){
+for(const cityId of ['vitrine-city','silvania','anapolis','vianopolis','goiania']){
   const lite=planSpatialCityEnvironment(cityId,{profileId:'LITE'});
   const standard=planSpatialCityEnvironment(cityId,{profileId:'STANDARD'});
   const ultra=planSpatialCityEnvironment(cityId,{profileId:'ULTRA'});
@@ -48,6 +48,8 @@ for(const cityId of ['vitrine-city','silvania','anapolis','goiania']){
   assert.deepEqual(repeat,standard);
 }
 
+assert.equal(planSpatialCityEnvironment('vianopolis',{profileId:'STANDARD'}).themeId,'cerrado-crossroads');
+
 const sponsored=planSpatialCityEnvironment('vitrine-city',{
   profileId:'STANDARD',now:Date.parse('2026-09-08T12:00:00Z'),premiumAssignments:[
     {slotId:'premium:vitrine-city:0',districtId:'commerce',status:'active',sponsor:'Loja Jardim',campaignRef:'campaign:123',approved:true},
@@ -60,4 +62,4 @@ assert.equal(sponsored.premiumSlots.find(slot=>slot.slotId==='premium:vitrine-ci
 assert.equal(sponsored.premiumSlots.find(slot=>slot.slotId==='premium:vitrine-city:1')?.sponsor,'');
 
 assert.throws(()=>planSpatialCityEnvironment('nao-existe'),/city_not_found/);
-console.log(JSON.stringify({ok:true,cities:4,profiles:3,premium:true,districtFurniture:true,districtLights:true,premiumOverlay:true,transitProtected:true}));
+console.log(JSON.stringify({ok:true,cities:5,profiles:3,premium:true,districtFurniture:true,districtLights:true,premiumOverlay:true,transitProtected:true,vianopolis:true}));
