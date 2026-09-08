@@ -38,6 +38,7 @@ for(const path of [
   '/centros/tiktok',
   '/musicas',
   '/cinema',
+  '/stories',
   '/mapa-real.html?cidade=vianopolis'
 ])await expectHtml(path);
 
@@ -61,6 +62,9 @@ const centers=await request('/api/affiliate-centers',{expectJson:true});assert.e
 for(const center of centers.body.centers){const catalog=await request(`/api/affiliate-centers/${center.id}/products`,{expectJson:true});assert.equal(catalog.response.status,200);assert.ok(catalog.body.items.length<=24);assert.ok(catalog.body.items.every(item=>item.platform===center.id&&item.href.startsWith('/ofertas/')));assert.equal((await request(center.logo)).response.status,200);}
 
 const home=await request('/',{expectText:true});assert.equal(home.response.status,200);assert.match(home.body,/vitrinecity-avenida-premium.webp/);assert.match(home.body,/Visite sem cadastro/);assert.match(home.body,/action="\/pesquisar"/);
+for(const path of ['/admin-web-stories','/admin-web-stories.html']){const {response}=await request(path);assert.equal(response.status,302);assert.equal(response.headers.get('location'),'/admin-login.html');}
+assert.equal((await request('/api/admin/web-stories')).response.status,401);
+for(const path of ['/sitemap-stories.xml','/sitemap-index.xml']){const {response,contentType,body}=await request(path,{expectText:true});assert.equal(response.status,200);assert.match(contentType,/xml/);assert.ok(body.includes('sitemaps.org/schemas/sitemap/0.9'));}
 for(const path of ['/assets/vitrinecity-avenida-premium.webp','/vitriny-city-guide.js','/vitriny-home.css'])assert.equal((await request(path)).response.status,200,path+' disponível');
 const availability=await request('/api/marketplace/local-delivery/availability',{expectJson:true});assert.equal(availability.response.status,200);assert.equal(typeof availability.body.enabled,'boolean');assert.deepEqual(Object.keys(availability.body).sort(),['cities','enabled']);
 const relatedSearch=await request('/api/discovery/search?q=plantas',{expectJson:true});assert.equal(relatedSearch.response.status,200);assert.ok(relatedSearch.body.contents.some(item=>item.url==='/guias/plantas-em-vasos.html'),'Busca inclui guia publicado da plataforma');
@@ -110,5 +114,5 @@ assert.equal(invalid.response.status,404,'cidade desconhecida deve ser rejeitada
 console.log(JSON.stringify({
   ok:true,
   base,
-  checks:{health:true,publicCityAndCommerce:true,publicMediaCatalogs:true,memberGamesAndArenas:true,privateFarm:true,privateRewards:true,privateChat:true,privatePartners:true,privatePreferences:true,spatialApi:true,activeCity:true,previewIsolation:true,premiumZones:true}
+  checks:{health:true,publicCityAndCommerce:true,publicMediaCatalogs:true,webStoriesDirectoryAndSitemaps:true,privateStoriesAdmin:true,memberGamesAndArenas:true,privateFarm:true,privateRewards:true,privateChat:true,privatePartners:true,privatePreferences:true,spatialApi:true,activeCity:true,previewIsolation:true,premiumZones:true}
 }));

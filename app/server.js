@@ -11,6 +11,7 @@ import {setupCityChat} from './city-chat.js';
 import {setupCityRewards} from './city-rewards.js';
 import {setupCourierAccount} from './courier-account.js';
 import { setupMediaCatalog } from './media-catalog.js';
+import { setupWebStories } from './web-stories.js';
 import { createCryptoObservability, mountCryptoObservability } from './crypto-observability.js';
 import { mountJarvis } from './jarvis-core.js';
 import { mountJarvisPublic } from './jarvis-public.js';
@@ -2043,7 +2044,7 @@ function recordAdminLogin(req,email,success,reason){
 }
 
 const ADMIN_HTML_PATHS=new Set(['/admin-vendas-afiliadas.html','/admin','/admin.html','/admin-agentes.html','/admin-sales-agents.html','/admin-crypto-matrix.html','/admin-quizzes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html','/admin-conteudos.html','/admin-entregas.html']);
-for(const page of ['admin-midia','admin-parceiros','admin-chat-cidade','admin-recompensas']){ADMIN_HTML_PATHS.add('/'+page+'.html');ADMIN_HTML_PATHS.add('/'+page);}
+for(const page of ['admin-midia','admin-parceiros','admin-chat-cidade','admin-recompensas','admin-web-stories']){ADMIN_HTML_PATHS.add('/'+page+'.html');ADMIN_HTML_PATHS.add('/'+page);}
 ADMIN_HTML_PATHS.add('/admin-live.html');
 ADMIN_HTML_PATHS.add('/admin-jarvis.html');
 ADMIN_HTML_PATHS.add('/admin-jarvis-public.html');
@@ -2562,7 +2563,7 @@ app.use((req, res, next) => {
     const type = String(res.getHeader('content-type') || '');
     const candidate = Buffer.isBuffer(body) ? body.toString('utf8') : body;
     const looksLikeHtml = typeof candidate === 'string' && /^\s*(?:<!doctype\s+html|<html\b)/i.test(candidate);
-    if (req.method !== 'GET' || req.path.startsWith('/admin') || (!type.includes('text/html') && !looksLikeHtml)) return send(body);
+    if (res.locals.vcAmpStory === true || req.method !== 'GET' || req.path.startsWith('/admin') || (!type.includes('text/html') && !looksLikeHtml)) return send(body);
     const wasBuffer = Buffer.isBuffer(body);
     let page = injectPublicMeasurement(candidate, req.path);
     if (typeof page !== 'string') return send(body);
@@ -2646,6 +2647,7 @@ const publicPage = file => (req, res) => {
   ));
 };
 setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft, reviewEditorialDraft });
+const webStories = setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl:SITE_URL,publicDir:path.join(dir,'public'),dataDir});
 setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover,generateBookIllustration});
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
@@ -2753,6 +2755,7 @@ app.get('/sitemap.xml', (_req, res) => {
   const dynamicPaths = [
     ...affiliateCatalog.sitemapPaths(),
     ...mediaCatalog.sitemapPaths(),
+    ...webStories.sitemapPaths(),
     ...stores.map(store => publicStorePath(store)),
     ...products.map(product => `/produto/${product.id}/${marketplaceSlug(product.name, 'produto')}`),
     ...categories.map(row => `/categoria/${marketplaceSlug(row.category, 'categoria')}`),
