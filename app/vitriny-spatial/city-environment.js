@@ -11,6 +11,7 @@ const CITY_STYLE=Object.freeze({
   'vitrine-city':Object.freeze({height:[24,72],skyline:['neural-tower','glass-spire','terrace'],vegetation:['canopy','garden'],furniture:['bench','kiosk']}),
   silvania:Object.freeze({height:[12,42],skyline:['garden-tower','terrace','arcade'],vegetation:['cerrado-tree','garden','canopy'],furniture:['bench','garden-seat']}),
   anapolis:Object.freeze({height:[18,58],skyline:['axis-tower','arcade','terrace'],vegetation:['canopy','garden'],furniture:['bench','transit-seat']}),
+  vianopolis:Object.freeze({height:[14,46],skyline:['terrace','arcade','garden-tower'],vegetation:['cerrado-tree','garden','canopy'],furniture:['bench','garden-seat','kiosk']}),
   goiania:Object.freeze({height:[22,66],skyline:['green-tower','glass-spire','terrace'],vegetation:['canopy','garden','palm'],furniture:['bench','garden-seat','kiosk']})
 });
 const DISTRICTS=Object.freeze(['commerce','social','creator','food','education','entertainment','business','services']);
