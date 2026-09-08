@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta
+      name="description"
+      content="Portal Multiversal da VitrineCity: cidade 2.5D, mapa real, Vitriny Social, comércio, entregas, educação e inteligência conectados em uma única experiência."
+    />
+    <meta name="theme-color" content="#07111f" />
+    <title>VitrineCity Multiversal</title>
+    <link rel="stylesheet" href="/multiversal.css" />
+    <script src="/analytics.js" defer></script>
+    <script src="/multiversal.js?v=1" defer></script>
+  </head>
+  <body>
+    <div class="ambient ambient-a" aria-hidden="true"></div>
+    <div class="ambient ambient-b" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="VitrineCity — início">
+        <img src="/assets/vitrinecity-logo.png" alt="" />
+        <span><strong>VitrineCity</strong><small>MULTIVERSAL</small></span>
+      </a>
+      <nav aria-label="Navegação principal">
+        <a href="/cidade-25d-demo.html">Cidade</a>
+        <a href="/social.html">Social</a>
+        <a href="/mapa-real.html">Mapa</a>
+        <a href="/loja.html">Mercado</a>
+      </nav>
+      <a class="top-cta" href="#universos">Explorar universos</a>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="heroTitle">
+        <div class="hero-copy">
+          <div class="eyebrow"><i></i> NÚCLEO MULTIVERSAL CONECTADO</div>
+          <h1 id="heroTitle">Uma cidade.<br /><span>Múltiplos universos.</span></h1>
+          <p>
+            A VitrineCity Multiversal conecta a cidade digital, o mundo real, a rede social,
+            o comércio, as entregas, a educação e a inteligência da plataforma. Você muda de
+            universo sem sair do mesmo ecossistema.
+          </p>
+          <div class="hero-actions">
+            <a class="primary" href="#universos">Entrar no Multiversal</a>
+            <a class="secondary" href="/cidade-25d-demo.html">Abrir Centro Vitrine 2.5D</a>
+          </div>
+          <div class="hero-stats" aria-label="Estrutura do Multiversal">
+            <div><b id="realmCount">8</b><span>universos conectados</span></div>
+            <div><b>1</b><span>identidade VitrineCity</span></div>
+            <div><b>∞</b><span>expansão por cidades</span></div>
+          </div>
+        </div>
+
+        <div class="hero-visual" aria-label="Visão do núcleo urbano da VitrineCity">
+          <div class="portal-ring ring-a"></div>
+          <div class="portal-ring ring-b"></div>
+          <figure>
+            <img src="/assets/vitriny-city-master.jpg" alt="Visão aérea da VitrineCity" />
+            <figcaption><span></span>NÚCLEO CENTRAL • ONLINE</figcaption>
+          </figure>
+          <div class="orbit orbit-social">Social</div>
+          <div class="orbit orbit-market">Mercado</div>
+          <div class="orbit orbit-real">Mundo real</div>
+          <div class="orbit orbit-ai">Neural</div>
+        </div>
+      </section>
+
+      <section class="resume-card" id="resumeCard" hidden aria-live="polite">
+        <div>
+          <small>CONTINUAR EXPLORAÇÃO</small>
+          <strong id="resumeTitle">Seu último universo</strong>
+          <span id="resumeDescription"></span>
+        </div>
+        <button id="resumeButton" type="button">Continuar</button>
+      </section>
+
+      <section class="realms" id="universos" aria-labelledby="realmsTitle">
+        <div class="section-heading">
+          <div>
+            <span class="kicker">PORTAIS</span>
+            <h2 id="realmsTitle">Escolha seu universo</h2>
+            <p>Cada portal é uma camada funcional da mesma VitrineCity.</p>
+          </div>
+          <label class="realm-search">
+            <span>⌕</span>
+            <input id="realmSearch" type="search" placeholder="Buscar universo" aria-label="Buscar universo" />
+          </label>
+        </div>
+
+        <div class="filters" id="realmFilters" aria-label="Filtrar universos">
+          <button class="active" type="button" data-filter="all">Todos</button>
+          <button type="button" data-filter="experience">Experiência</button>
+          <button type="button" data-filter="social">Social</button>
+          <button type="button" data-filter="commerce">Comércio</button>
+          <button type="button" data-filter="mobility">Mobilidade</button>
+          <button type="button" data-filter="intelligence">Inteligência</button>
+        </div>
+
+        <div class="realm-grid" id="realmGrid" aria-live="polite"></div>
+        <p class="empty" id="realmEmpty" hidden>Nenhum universo encontrado com esse filtro.</p>
+      </section>
+
+      <section class="continuum" aria-labelledby="continuumTitle">
+        <div class="continuum-copy">
+          <span class="kicker">CONTINUUM</span>
+          <h2 id="continuumTitle">Tudo conectado pela mesma identidade</h2>
+          <p>
+            O Multiversal não cria plataformas isoladas. Ele funciona como uma camada de
+            orquestração: a pessoa pode descobrir uma loja no Social, visitá-la na cidade 2.5D,
+            localizar o endereço no mapa real, comprar e acompanhar a entrega.
+          </p>
+        </div>
+        <div class="flow" aria-label="Fluxo entre universos">
+          <span>Descobrir</span><i>→</i><span>Visitar</span><i>→</i><span>Comprar</span><i>→</i><span>Entregar</span><i>→</i><span>Relacionar</span>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <a href="/">VitrineCity</a>
+      <span>•</span>
+      <span>Multiversal Core</span>
+      <span class="footer-status"><i></i> ecossistema conectado</span>
+    </footer>
+  </body>
+</html>
