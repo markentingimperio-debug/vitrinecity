@@ -43,14 +43,26 @@
     return response.json().catch(() => ({}));
   }
 
+  function localPath(value, fallback) {
+    try {
+      const url = new URL(String(value || ""), window.location.origin);
+      if (url.origin !== window.location.origin || !["http:", "https:"].includes(url.protocol)) return fallback;
+      return `${url.pathname}${url.search}${url.hash}`;
+    } catch {
+      return fallback;
+    }
+  }
+
   function appendCity(path, citySlug) {
-    const url = new URL(path, window.location.origin);
+    const safePath = localPath(path, "/multiversal.html");
+    const url = new URL(safePath, window.location.origin);
     url.searchParams.set("cidade", citySlug);
     return `${url.pathname}${url.search}${url.hash}`;
   }
 
   function normalizeRealm(realm) {
-    const entryPath = realm.entryPath || realm.href || "/multiversal.html";
+    const entryPath = localPath(realm.entryPath || realm.href, "/multiversal.html");
+    const fallbackHref = appendCity(entryPath, activeCitySlug);
     return {
       slug: realm.slug,
       title: realm.title,
@@ -58,8 +70,8 @@
       typeLabel: realm.typeLabel || realm.categoryLabel || realm.category || "Universo",
       badge: realm.badge || "VITRINECITY",
       entryPath,
-      href: realm.href || appendCity(entryPath, activeCitySlug),
-      image: realm.image || realm.imagePath || "/assets/vitriny-city-master.jpg",
+      href: localPath(realm.href, fallbackHref),
+      image: localPath(realm.image || realm.imagePath, "/assets/vitriny-city-master.jpg"),
       description: realm.description || "",
     };
   }
@@ -234,11 +246,11 @@
             request,
             new Promise(resolve => window.setTimeout(() => resolve(null), 500)),
           ]);
-          if (result?.href) destination = result.href;
+          if (result?.href) destination = localPath(result.href, destination);
         } catch {
           // Falha de telemetria nunca bloqueia a navegação para o módulo de destino.
         }
-        window.location.assign(destination);
+        window.location.assign(localPath(destination, "/multiversal.html"));
       });
     });
 
@@ -328,7 +340,7 @@
   resumeButton?.addEventListener("click", () => {
     if (!resumeRealm) return;
     rememberRealm(resumeRealm);
-    window.location.assign(resumeRealm.href);
+    window.location.assign(localPath(resumeRealm.href, "/multiversal.html"));
   });
 
   bootstrap();
