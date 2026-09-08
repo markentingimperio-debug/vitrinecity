@@ -5,7 +5,8 @@ import path from 'node:path';
 import {createVitrinyNeuralRuntime} from './vitriny-neural/bootstrap.js';
 
 const app = express();
-const port = Number(process.env.MULTIVERSAL_PORT || process.env.PORT || 3001);
+const requestedPort = Number(process.env.MULTIVERSAL_PORT || process.env.PORT || 3001);
+const port = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535 ? requestedPort : 3001;
 const dataDir = process.env.DATA_DIR || '/data';
 fs.mkdirSync(dataDir, { recursive: true });
 const db = new Database(path.join(dataDir, 'vitrinecity.db'));
@@ -107,15 +108,15 @@ seed();
 function truthy(value){return ['1','true','yes','on'].includes(String(value??'').trim().toLowerCase());}
 let neuralRuntime=null;
 if(truthy(process.env.VITRINY_NEURAL_ENABLED)){
-  try{
-    neuralRuntime=createVitrinyNeuralRuntime({
-      db,
-      env:process.env,
-      nodeId:'multiversal-core',
-      pseudonymSalt:String(process.env.VITRINY_NEURAL_PSEUDONYM_SALT||'multiversal-no-personal-events')
-    });
-  }catch(error){
-    console.warn('[multiversal] Neural capture unavailable',String(error?.message||error));
+  const pseudonymSalt=String(process.env.VITRINY_NEURAL_PSEUDONYM_SALT||'').trim();
+  if(pseudonymSalt.length<16){
+    console.warn('[multiversal] Neural capture disabled: VITRINY_NEURAL_PSEUDONYM_SALT is required.');
+  }else{
+    try{
+      neuralRuntime=createVitrinyNeuralRuntime({db,env:process.env,nodeId:'multiversal-core',pseudonymSalt});
+    }catch(error){
+      console.warn('[multiversal] Neural capture unavailable',String(error?.message||error));
+    }
   }
 }
 
@@ -141,6 +142,12 @@ app.use((req,res,next) => {
 function safeSlug(value) {
   const slug = String(value || '').trim().toLowerCase();
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) ? slug : '';
+}
+
+function safeLocalPath(value, fallback='/multiversal.html'){
+  const candidate=String(value||'').trim();
+  if(!candidate.startsWith('/')||candidate.startsWith('//')||/[\u0000-\u001F\\]/.test(candidate))return fallback;
+  return candidate.slice(0,500);
 }
 
 function exactCityBySlug(value) {
@@ -169,17 +176,19 @@ function realmBySlug(value, citySlug) {
 }
 
 function appendCity(entryPath, citySlug) {
-  const separator = entryPath.includes('?') ? '&' : '?';
-  return `${entryPath}${separator}cidade=${encodeURIComponent(citySlug)}`;
+  const safePath=safeLocalPath(entryPath);
+  const separator = safePath.includes('?') ? '&' : '?';
+  return `${safePath}${separator}cidade=${encodeURIComponent(citySlug)}`;
 }
 
 function publicRealm(row, citySlug) {
-  return { ...row, href:appendCity(row.entryPath, citySlug) };
+  const entryPath=safeLocalPath(row.entryPath);
+  return { ...row, entryPath, imagePath:safeLocalPath(row.imagePath,'/assets/vitriny-city-master.jpg'), href:appendCity(entryPath, citySlug) };
 }
 
 function sameOrigin(req) {
   const origin = String(req.get('origin') || '');
-  if (!origin) return true;
+  if (!origin) return false;
   try { return new URL(origin).host === String(req.get('host') || ''); }
   catch { return false; }
 }
@@ -300,18 +309,25 @@ app.post('/api/multiversal/transition', (req,res) => {
   });
 });
 
-app.use((req,res) => res.status(404).json({ error:'Rota Multiversal não encontrada.' }));
+app.use((_req,res) => res.status(404).json({ error:'Rota Multiversal não encontrada.' }));
 
 const server = app.listen(port, '0.0.0.0', () => {
   console.log(`VitrineCity Multiversal Core listening on ${port}`);
 });
 
+let shuttingDown=false;
 function shutdown() {
+  if(shuttingDown)return;
+  shuttingDown=true;
   server.close(() => {
-    try { db.close(); } catch {}
-    process.exit(0);
+    try { db.close(); }
+    catch(error){ console.warn('[multiversal] Database close failed',String(error?.message||error)); }
   });
-  setTimeout(() => process.exit(1), 5000).unref();
+  setTimeout(() => {
+    console.error('[multiversal] Forced connection cleanup after shutdown timeout.');
+    server.closeAllConnections?.();
+    process.exitCode=1;
+  }, 5000).unref();
 }
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
