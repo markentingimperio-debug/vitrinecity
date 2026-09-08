@@ -1,12 +1,72 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Estúdio de Web Stories · VitrineCity</title><link rel="stylesheet" href="/vitriny-web-stories.css"><script src="/admin-web-stories.js" type="module"></script></head>
-<body><header><a href="/admin.html">VITRINECITY / ADMIN</a><nav><a href="/admin-conteudos.html">Artigos</a><a href="/stories">Histórias publicadas</a></nav></header><main>
-<p class="eyebrow">ESTÚDIO EDITORIAL</p><h1>Uma história,<br>página por página.</h1><p class="intro">Transforme um artigo publicado em uma leitura visual. Revise o conteúdo, confira a prévia e escolha quando publicar.</p>
-<details class="help"><summary>Como funciona e o que aparece no Google</summary><p>Esta versão monta histórias por modelo editorial, usando o texto real do artigo. Não utiliza geração por IA nem publica automaticamente. Todo o conteúdo deve fazer sentido dentro da história; o botão final apenas leva ao artigo e às fontes.</p><p>Escolha imagens próprias ou com licença para publicação, da biblioteca local. Cada lado precisa ter pelo menos 640 pixels. A capa vertical é preparada automaticamente; confira o enquadramento na prévia.</p><p>Após publicar, a história recebe endereço próprio e entra no sitemap. A indexação e a exibição no Google dependem da avaliação do buscador. Você pode enviar <a href="/sitemap-index.xml">o índice de sitemaps</a> no Search Console; este painel não faz o envio.</p><p>No Search Console, use a Inspeção de URL para conferir uma história. O filtro Web Stories em Desempenho → Aparência na pesquisa depende de haver impressões registradas; ele pode ainda não aparecer. <a href="https://support.google.com/webmasters/answer/17011259?hl=en" target="_blank" rel="noopener">Entenda o relatório</a> · <a href="https://support.google.com/webmasters/answer/9012289?hl=en" target="_blank" rel="noopener">Inspeção de URL</a>.</p><p><a href="https://developers.google.com/search/docs/appearance/enable-web-stories" target="_blank" rel="noopener">Orientações oficiais do Google</a> · <a href="https://search.google.com/test/amp" target="_blank" rel="noopener">Testar um endereço público</a></p></details>
-<p id="status" role="status" aria-live="polite"></p>
-<section class="panel" aria-labelledby="source-heading"><h2 id="source-heading">1. Escolha o artigo</h2><form id="source-search" class="actions"><label>Título do artigo<input name="q" type="search" maxlength="80" placeholder="Buscar nos artigos publicados"></label><button>Buscar artigos</button></form><form id="create-story" class="actions"><label>Artigo publicado<select id="source" required><option value="">Carregando…</option></select></label><button id="create-button">Montar rascunho</button></form><p class="muted">Um rascunho por artigo. A primeira versão trabalha com artigos; produtos e cursos continuam nos seus catálogos.</p></section>
-<section class="panel"><h2>Suas histórias</h2><div id="story-list" class="draft-list"><p>Carregando…</p></div></section>
-<section id="editor" class="panel" hidden aria-labelledby="editor-heading"><div class="section-head"><h2 id="editor-heading">2. Edite a história</h2><a id="public-link" target="_blank" rel="noopener" hidden>Abrir publicação ↗</a></div><p id="revision-note" class="muted"></p><form id="story-form"><label>Título · até 90 caracteres<input name="title" maxlength="90" required></label><label>Descrição para descoberta · de 30 a 160 caracteres<textarea name="description" minlength="30" maxlength="160" required rows="2"></textarea></label><label class="check"><input type="checkbox" name="cta" checked> Mostrar “Artigo e fontes” na última página</label><p>Use frases curtas, sem inventar informações. Revise se a história contém todo o conteúdo necessário, inclusive cuidados, etapas e contexto.</p><div id="pages" class="page-editor"></div><div class="actions"><button type="button" id="add-page" class="secondary">Adicionar página</button><button id="save-story">Salvar alterações</button><button type="button" id="preview-story" class="secondary">Salvar e abrir prévia</button></div></form>
-<details class="help"><summary>Atualizar a partir do artigo original</summary><p>Substitui as edições do rascunho pelo texto atual do artigo. A versão publicada permanece até você publicar novamente.</p><button type="button" id="regenerate" class="secondary">Recriar rascunho</button></details>
-<section id="preview-area" hidden><h2>3. Confira a prévia</h2><p>Percorra todas as páginas. Confira texto, imagem, enquadramento e botão final antes de publicar.</p><iframe id="preview" title="Prévia da Web Story" sandbox="allow-scripts allow-same-origin allow-popups" referrerpolicy="strict-origin-when-cross-origin"></iframe><div class="review-box"><label class="check"><input type="checkbox" id="reviewed"> Revisei todas as páginas. A história está completa, correta e não é apenas uma propaganda ou chamada para outro site.</label><label class="check"><input type="checkbox" id="rights"> Confirmei que temos os direitos de publicar todos os textos e imagens.</label><button type="button" id="publish" disabled>Publicar esta versão</button></div></section><div class="actions end-actions"><button type="button" id="unpublish" class="secondary" hidden>Retirar publicação</button></div></section>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
+  <title>Estúdio de Web Stories · VitrineCity</title>
+  <link rel="stylesheet" href="/vitriny-web-stories.css">
+  <script src="/admin-web-stories.js" type="module"></script><script src="/admin-web-story-automation.js" type="module"></script>
+</head>
+<body>
+<header><a href="/admin.html">VITRINECITY / ADMIN</a><nav><a href="/admin-conteudos.html">Conteúdos</a><a href="/stories">Histórias publicadas</a></nav></header>
+<main>
+  <p class="eyebrow">ESTÚDIO EDITORIAL</p><h1>Uma história,<br>página por página.</h1>
+  <p class="intro">Transforme conteúdos e ofertas da VitrineCity em histórias visuais. Organize a publicação diária ou prepare uma história no editor.</p>
+  <details class="help"><summary>Como funciona e o que aparece no Google</summary>
+    <p>A rotina diária prepara histórias com a IA Gestora, usa as fontes disponíveis e publica as que passam pelas checagens automáticas. Conteúdos com pendências ficam separados para atenção, sem liberação de uma história incompleta. Você também pode revisar e editar as histórias pelo painel.</p>
+    <p>Notícias e celebridades exigem fontes verificáveis. Boatos e afirmações sem confirmação não devem ser publicados; consulte as fontes da história para conferir o contexto.</p>
+    <p>Cada história deve ter de 10 a 40 páginas, com frases convidativas e informações úteis. O convite final leva à página principal da VitrineCity; a página anterior pode levar ao conteúdo ou produto relacionado.</p>
+    <p>As imagens da rotina usam a integração da IA Gestora. No editor, escolha imagens próprias ou com licença da biblioteca local e confira o recorte vertical na prévia. As checagens automáticas não substituem a confirmação dos direitos de uso.</p>
+    <p>Após publicar, a história recebe endereço próprio e entra no sitemap. A indexação e a exibição no Google dependem da avaliação do buscador. Você pode enviar <a href="/sitemap-index.xml">o índice de sitemaps</a> no Search Console; este painel não faz o envio.</p>
+    <p>No Search Console, use a Inspeção de URL para conferir uma história. O filtro Web Stories em Desempenho → Aparência na pesquisa depende de haver impressões registradas; ele pode ainda não aparecer. <a href="https://support.google.com/webmasters/answer/17011259?hl=en" target="_blank" rel="noopener">Entenda o relatório</a> · <a href="https://support.google.com/webmasters/answer/9012289?hl=en" target="_blank" rel="noopener">Inspeção de URL</a>.</p>
+    <p><a href="https://developers.google.com/search/docs/appearance/enable-web-stories" target="_blank" rel="noopener">Orientações oficiais do Google</a> · <a href="https://search.google.com/test/amp" target="_blank" rel="noopener">Testar um endereço público</a></p>
+  </details>
+  <section id="story-automation" class="panel automation-panel" aria-labelledby="automation-heading" aria-busy="true">
+    <div class="section-head"><div><p class="eyebrow">SEU CALENDÁRIO EDITORIAL</p><h2 id="automation-heading">Publicação diária</h2></div><span id="automation-state" class="automation-state">Carregando…</span></div>
+    <p>Defina o ritmo da publicação e os assuntos que podem entrar nas próximas histórias.</p>
+    <p id="automation-message" class="automation-message" role="status" aria-live="polite">Consultando a rotina…</p>
+    <div class="automation-summary">
+      <div><small>PRÓXIMA RODADA</small><strong id="automation-next">Carregando…</strong><span>Horário de Brasília</span></div>
+      <div><small>PREPARAÇÕES DE HOJE</small><strong id="automation-quota">—</strong><span id="automation-results">Aguardando informações</span></div>
+      <div><small>PREPARAÇÃO AUTOMÁTICA</small><strong id="automation-provider">Consultando…</strong><span>Texto e imagens pela IA Gestora</span></div>
+    </div>
+    <form id="automation-form">
+      <label class="check automation-enabled"><input id="automation-enabled" name="enabled" type="checkbox" disabled> Ativar publicação diária</label>
+      <div class="automation-settings">
+        <label>Até quantas histórias por dia?<input id="automation-limit" name="dailyLimit" type="number" min="1" max="24" step="1" value="6" required disabled></label>
+        <label>Horário de início<select id="automation-hour" name="hour" disabled><option value="9">09:00 · Brasília</option></select></label>
+      </div>
+      <p class="muted">Cada preparação utiliza uma tentativa do limite diário, inclusive quando precisa de ajustes. O painel não apresenta custos ou saldo do provedor de IA.</p>
+      <fieldset class="automation-groups"><legend>Quais assuntos podem ser publicados?</legend>
+        <label class="check"><input type="checkbox" name="groups" value="products" checked disabled> Produtos e ofertas</label>
+        <label class="check"><input type="checkbox" name="groups" value="services" checked disabled> Serviços e cursos</label>
+        <label class="check"><input type="checkbox" name="groups" value="news" checked disabled> Notícias e celebridades</label>
+        <label class="check"><input type="checkbox" name="groups" value="recipes" checked disabled> Receitas</label>
+        <label class="check"><input type="checkbox" name="groups" value="sports" checked disabled> Esportes</label>
+        <label class="check"><input type="checkbox" name="groups" value="trends" checked disabled> Tendências e outros assuntos</label>
+      </fieldset>
+      <div class="actions"><button id="automation-save" disabled>Salvar rotina</button><button id="automation-pause" type="button" class="secondary" disabled hidden>Pausar agora</button><button id="automation-run" type="button" class="secondary" disabled>Executar rodada agora</button><button id="automation-refresh" type="button" class="secondary">Atualizar status</button></div>
+      <p class="muted">“Executar rodada agora” usa as mesmas categorias e o mesmo limite diário. A rotina precisa estar ativa.</p>
+    </form>
+    <div class="automation-history"><h3>Últimas preparações</h3><ol id="automation-history"><li>Carregando histórico…</li></ol></div>
+  </section>
+  <p id="status" role="status" aria-live="polite"></p>
+  <section id="source-manual" class="panel" aria-labelledby="source-heading">
+    <p class="eyebrow">EDIÇÃO MANUAL</p><h2 id="source-heading">1. Escolha o conteúdo</h2>
+    <form id="source-search" class="actions"><label>Título ou assunto<input name="q" type="search" maxlength="80" placeholder="Buscar conteúdos e ofertas publicados"></label><label>Categoria<select name="group" id="source-group"><option value="all">Todas</option><option value="products">Produtos e ofertas</option><option value="services">Serviços e cursos</option><option value="news">Notícias e celebridades</option><option value="recipes">Receitas</option><option value="sports">Esportes</option><option value="trends">Tendências e outros assuntos</option></select></label><button>Buscar conteúdos</button></form>
+    <form id="create-story" class="actions"><label>Conteúdo disponível<select id="source" required><option value="">Carregando…</option></select></label><button id="create-button">Montar rascunho</button></form>
+    <nav class="actions source-pagination" aria-label="Páginas de conteúdos"><button id="source-previous" type="button" class="secondary" disabled>← Anteriores</button><span id="source-page">Página 1</span><button id="source-next" type="button" class="secondary" disabled>Próximos →</button></nav>
+    <p class="muted">Escolha entre artigos, notícias, receitas, esportes, tendências, produtos, ofertas de afiliados, serviços e cursos disponíveis. O rascunho manual organiza o texto existente e deve ser completado e revisado antes de publicar.</p>
+  </section>
+  <section id="story-library" class="panel"><h2>Suas histórias</h2><div id="story-list" class="draft-list"><p>Carregando…</p></div></section>
+  <section id="editor" class="panel" hidden aria-labelledby="editor-heading">
+    <div class="section-head"><h2 id="editor-heading">2. Edite a história</h2><a id="public-link" target="_blank" rel="noopener" hidden>Abrir publicação ↗</a></div><p id="revision-note" class="muted"></p>
+    <form id="story-form"><label>Título · até 90 caracteres<input name="title" maxlength="90" required></label><label>Descrição para descoberta · de 30 a 160 caracteres<textarea name="description" minlength="30" maxlength="160" required rows="2"></textarea></label>
+      <label class="check"><input type="checkbox" name="cta" checked> Incluir botão para o conteúdo ou produto na penúltima página</label><label class="check"><input type="checkbox" name="homeCta" checked> Convidar a visitar a página principal na última página</label>
+      <p>Crie de 10 a 40 páginas com frases curtas, interessantes e fiéis às fontes. Inclua contexto, etapas e cuidados necessários para que a história seja útil por si só.</p><div id="pages" class="page-editor"></div>
+      <div class="actions"><button type="button" id="add-page" class="secondary">Adicionar página</button><button id="save-story">Salvar alterações</button><button type="button" id="preview-story" class="secondary">Salvar e abrir prévia</button></div>
+    </form>
+    <details class="help"><summary>Atualizar a partir do conteúdo original</summary><p>Substitui as edições do rascunho pelo texto atual da origem. A versão publicada permanece até você publicar novamente.</p><button type="button" id="regenerate" class="secondary">Recriar rascunho</button></details>
+    <section id="preview-area" hidden><h2>3. Confira a prévia</h2><p>Percorra todas as páginas. Confira texto, imagem, enquadramento e os convites finais antes de publicar.</p><iframe id="preview" title="Prévia da Web Story" sandbox="allow-scripts allow-same-origin allow-popups" referrerpolicy="strict-origin-when-cross-origin"></iframe><div class="review-box"><label class="check"><input type="checkbox" id="reviewed"> Revisei todas as páginas. A história está completa, correta e não é apenas uma propaganda ou chamada para outro site.</label><label class="check"><input type="checkbox" id="rights"> Confirmei que temos os direitos de publicar todos os textos e imagens.</label><button type="button" id="publish" disabled>Publicar esta versão</button></div></section>
+    <div class="actions end-actions"><button type="button" id="unpublish" class="secondary" hidden>Retirar publicação</button></div>
+  </section>
 </main></body></html>
