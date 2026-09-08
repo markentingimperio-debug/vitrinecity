@@ -1,5 +1,5 @@
-import {fetchSpatialCityContext,spatialFallbackCity} from './vitriny-spatial-api-client.js';
-import {spatialContextCityFromLocation,spatialEcosystemDestinations} from './vitriny-spatial-city-context.js';
+import {spatialFallbackCity} from './vitriny-spatial-api-client.js';
+import {fetchSpatialNavigationContext,spatialContextCityFromLocation,spatialEcosystemDestinations} from './vitriny-spatial-city-context.js';
 
 const nav=document.getElementById('ecosystemLinks');
 const statusNode=document.getElementById('ecosystemContextStatus');
@@ -8,9 +8,9 @@ function textNode(tag,className,text){
   const node=document.createElement(tag);if(className)node.className=className;node.textContent=text;return node;
 }
 
-function render(city){
+function render(context,{offline=false}={}){
   if(!nav)return;
-  const items=spatialEcosystemDestinations({cityId:city.id,cityStatus:city.status});
+  const city=context.city,items=context.modules;
   const nodes=[];
   for(const item of items){
     if(item.enabled){
@@ -20,16 +20,19 @@ function render(city){
     disabled.setAttribute('aria-disabled','true');disabled.title=item.reason;nodes.push(disabled);
   }
   nav.replaceChildren(...nodes);
-  if(statusNode)statusNode.textContent=`Contexto: ${city.name} · ${city.status==='active'?'operação ativa':'preview seguro'}`;
+  if(statusNode)statusNode.textContent=`${offline?'Contexto offline':'Contexto'}: ${city.name} · ${city.status==='active'?'operação ativa':'preview seguro'}`;
   document.documentElement.dataset.vitrinyCityContext=city.id;
 }
 
-const cityId=spatialContextCityFromLocation();
-let city=spatialFallbackCity(cityId);
-render(city);
+const cityId=spatialContextCityFromLocation(),fallbackCity=spatialFallbackCity(cityId);
+const fallback=Object.freeze({
+  apiVersion:1,contextMode:'navigation-only',source:'local-fallback',city:fallbackCity,
+  modules:spatialEcosystemDestinations({cityId:fallbackCity.id,cityStatus:fallbackCity.status})
+});
+render(fallback,{offline:true});
 try{
-  const live=await fetchSpatialCityContext({cityId,timeoutMs:1800});
-  if(live?.id===cityId){city=live;render(city);}
+  const live=await fetchSpatialNavigationContext({cityId,timeoutMs:1800});
+  render(live);
 }catch{
-  if(statusNode)statusNode.textContent=`Contexto offline: ${city.name} · ${city.status==='active'?'operação ativa':'preview seguro'}`;
+  render(fallback,{offline:true});
 }
