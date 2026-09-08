@@ -6,6 +6,7 @@ import {fetchSpatialStores} from '/vitriny-spatial-store-registry.js';
 import {SPATIAL_RETURN_KEY,createSpatialReturnState,isSafeInternalHref} from '/vitriny-spatial-session.js';
 import {TRANSIT_CITY_IDS,fetchCityPortals,loadCityCheckpoint,saveCityCheckpoint,spatialMovementBasis,intersectsTransitPlaza} from '/vitriny-spatial-city-portals.js';
 import {fallbackSpatialCityIdentity,normalizeSpatialCityIdentity} from './vitriny-spatial-city-identity.js';
+import {mountSpatialCityEnvironment} from './vitriny-spatial-environment-renderer.js';
 
 const palette=[0x6ee7ff,0x8f8cff,0xe48cff,0xffb36b,0x85e6a8,0x6f9cff,0xb58cff,0x6edbcf];
 const requested=spatialCityFromLocation(),requestedCityId=TRANSIT_CITY_IDS.includes(requested)?requested:'vitrine-city';
@@ -82,7 +83,6 @@ function removeChunk(id){const group=chunkGroups.get(id);if(!group)return;dispos
 
 const portalTargets=[],storeTargets=[],cityDestinations=new Map();
 const plaza=new THREE.Group();plaza.name=`central-plaza:${cityId}`;scene.add(plaza);
-// Ground exists before API chunks arrive, so the first scene is not an empty loading screen.
 const plazaFloor=mesh(new THREE.CircleGeometry(145,64),groundMat,plaza,[0,-.04,0]);plazaFloor.rotation.x=-Math.PI/2;
 for(const [r,w,c,o] of [[24,1.7,cityIdentity.palette.accent,.65],[40,1.1,cityIdentity.palette.secondary,.3],[55,1.3,cityIdentity.palette.accent,.4],[72,1.1,cityIdentity.palette.secondary,.25]]){
   const ring=mesh(new THREE.RingGeometry(r-w,r,64),new THREE.MeshBasicMaterial({color:c,transparent:true,opacity:o,side:THREE.DoubleSide}),plaza,[0,.06,0]);ring.rotation.x=-Math.PI/2;
@@ -112,6 +112,8 @@ function createCityLandmark(identity){
   plaza.add(group);return group;
 }
 const cityLandmark=createCityLandmark(cityIdentity);
+let cityEnvironmentMount=null;
+mountSpatialCityEnvironment({scene,cityId,identity:cityIdentity,profileId:profile.id,shadows:profile.shadows}).then(result=>{if(disposed){result.dispose();return;}cityEnvironmentMount=result;}).catch(()=>{cityEnvironmentMount=null;});
 function portalFrame(portal,accent,{city=false,enabled=true}={}){
   const width=city?10:8.2,height=city?10:7;
   const frame=new THREE.MeshStandardMaterial({color:0x19263a,metalness:.72,roughness:.22});
@@ -294,7 +296,7 @@ loadLiveStores();
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
 addEventListener('pagehide',event=>{
   if(!navigating)saveSpatialContext();releaseControls();
-  if(event.persisted)return; // Keep the scene usable when the browser restores its page cache.
-  disposed=true;cancelAnimationFrame(raf);disposeGroup(scene,{keepShared:false});renderer.dispose();
+  if(event.persisted)return;
+  disposed=true;cancelAnimationFrame(raf);cityEnvironmentMount=null;disposeGroup(scene,{keepShared:false});renderer.dispose();
 });
 addEventListener('pageshow',()=>{navigating=false;last=performance.now();fpsClock=last;frames=0;});
