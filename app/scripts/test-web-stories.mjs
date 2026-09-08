@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import Database from 'better-sqlite3';
 import express from 'express';
 import {setupWebStories,splitStoryText} from '../web-stories.js';
-import {createStoryAssets,rasterSize} from '../web-story-assets.js';
+import {createStoryAssets,rasterSize,normalizeStoryImagePath} from '../web-story-assets.js';
 import {renderWebStory} from '../web-story-render.js';
 
 const appDir=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),publicDir=path.join(appDir,'public');
@@ -16,7 +16,7 @@ async function fixture(t){
   const dataDir=await fs.mkdtemp(path.join(os.tmpdir(),'vc-web-story-test-')),db=new Database(':memory:'),app=express();
   db.exec("CREATE TABLE editorial_articles(id TEXT PRIMARY KEY,slug TEXT,title TEXT,summary TEXT,body TEXT,image_url TEXT,portal TEXT,status TEXT,published_at TEXT,updated_at TEXT)");
   db.prepare('INSERT INTO editorial_articles VALUES(?,?,?,?,?,?,?,?,?,?)').run('fixture','guia-de-teste','Guia de teste: conteúdo completo','Uma descrição de teste com contexto completo para acompanhar cada uma das páginas.',body,'/assets/recipes/bolo-cenoura.jpg','receitas','published','2026-09-08','2026-09-08');
-  const realAssets=createStoryAssets({publicDir,dataDir});await fs.mkdir(realAssets.outputDir,{recursive:true});
+  const realAssets=createStoryAssets({publicDir,dataDir,siteUrl:'https://vitrinecity.test'});await fs.mkdir(realAssets.outputDir,{recursive:true});
   const state={beforeImage:null};const assets={...realAssets,image:async(...args)=>{if(state.beforeImage)await state.beforeImage();return realAssets.image(...args);},poster:async()=>'/story-assets/0123456789abcdef0123456789abcdef.jpg'};
   app.use(express.json());app.use((_req,res,next)=>{res.set('X-Frame-Options','SAMEORIGIN');res.set('Content-Security-Policy',"base-uri 'self'; object-src 'none'; frame-ancestors 'self'");const send=res.send.bind(res);res.send=html=>send(typeof html==='string'&&html.startsWith('<!doctype')&&!res.locals.vcAmpStory?html.replace('</body>','<script src="/ordinary-site-script.js"></script></body>'):html);next();});
   const auth=(req,res,next)=>{if(req.get('x-test-admin')!=='yes')return res.status(401).json({error:'auth'});req.user={id:'admin-test'};next();};
@@ -110,6 +110,24 @@ test('local raster validation reads actual JPEG/WebP/PNG dimensions',async t=>{
   assert.equal((await f.assets.image('/assets/agrotecnica-premium-v2.webp')).type,'webp');
   assert.throws(()=>rasterSize(Buffer.from('<svg/>')),/PNG, JPEG ou WebP/);
   for(const invalid of ['/assets/a?x=1','/assets/a#x','/assets\\pwa-icon-192.png','data:image/png;base64,AA'])await assert.rejects(f.assets.image(invalid));
+});
+test('own absolute cover URLs normalize locally; alternate origins and ambiguous paths stay blocked',async t=>{
+  const f=await fixture(t);
+  f.db.prepare('UPDATE editorial_articles SET image_url=?').run('https://vitrinecity.test/assets/recipes/bolo-cenoura.jpg');
+  const story=await f.create();assert.equal(story.draft.pages[0].image,'/assets/recipes/bolo-cenoura.jpg');
+  assert.equal(normalizeStoryImagePath('https://VITRINECITY.test:443/assets/recipes/bolo-cenoura.jpg','https://vitrinecity.test'),'/assets/recipes/bolo-cenoura.jpg');
+  for(const url of ['https://vitrinecity.test.evil/assets/a.jpg','http://vitrinecity.test/assets/a.jpg','https://user:pass@vitrinecity.test/assets/a.jpg','//vitrinecity.test/assets/a.jpg','https://vitrinecity.test/assets/../a.jpg','https://vitrinecity.test/assets/%2e%2e/a.jpg','https://vitrinecity.test/assets/a.jpg?x=1','https://vitrinecity.test/assets/a.jpg#x'])assert.throws(()=>normalizeStoryImagePath(url,'https://vitrinecity.test'));
+});
+test('visual library contains validated published/shipped images and excludes draft/private uploads',async t=>{
+  const f=await fixture(t);
+  assert.equal((await f.call('/api/admin/web-stories/images',{admin:false})).status,401);
+  f.db.prepare('INSERT INTO editorial_articles VALUES(?,?,?,?,?,?,?,?,?,?)').run('draft-only','draft-only','Título privado de teste','Resumo privado',body,'/assets/agrotecnica-premium-v2.webp','privado','draft','2026-09-08','2026-09-08');
+  const result=(await f.call('/api/admin/web-stories/images?articleId=fixture')).json();
+  assert.ok(result.items.length>3);assert.ok(result.items.every(item=>item.width>=640&&item.height>=640&&item.url.startsWith('/')));
+  assert.equal(result.items[0].url,'/assets/recipes/bolo-cenoura.jpg');assert.equal(result.items[0].category,'Deste artigo');
+  assert.ok(!result.items.some(item=>item.title.includes('privado')));
+  assert.deepEqual((await f.call('/api/admin/web-stories/images?q=privado&articleId=draft-only')).json().items,[]);
+  assert.ok((await f.call('/api/admin/web-stories/images?q=cinema')).json().items.some(item=>item.title==='Noite de cinema'));
 });
 test('server exempts only explicitly rendered AMP stories from global HTML injection',async()=>{
   const source=await fs.readFile(path.join(appDir,'server.js'),'utf8');assert.match(source,/if \(res\.locals\.vcAmpStory === true \|\| req\.method/);assert.match(source,/\.\.\.webStories\.sitemapPaths\(\)/);

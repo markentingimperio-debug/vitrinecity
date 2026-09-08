@@ -5,6 +5,19 @@ import {createHash, randomUUID} from 'node:crypto';
 
 const assetError = message => Object.assign(Error(message), {status:400});
 
+export function normalizeStoryImagePath(value,siteUrl) {
+  if(typeof value!=='string')throw assetError('Escolha uma imagem da biblioteca da VitrineCity.');
+  let url=value.trim();
+  if(url.length>400||/[\\%?#\x00-\x20]/.test(url)||url.split('/').includes('..')||url.split('/').includes('.'))throw assetError('Escolha uma imagem local da biblioteca da VitrineCity.');
+  if(/^https?:\/\//i.test(url)) {
+    const parsed=new URL(url);
+    if(!siteUrl||parsed.origin!==new URL(siteUrl).origin||parsed.username||parsed.password)throw assetError('A imagem precisa estar no mesmo endereço da VitrineCity.');
+    url=parsed.pathname;
+  }
+  if(!url.startsWith('/')||url.startsWith('//'))throw assetError('Escolha uma imagem local da biblioteca da VitrineCity.');
+  return url;
+}
+
 export function rasterSize(bytes) {
   if (bytes.length >= 24 && bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) {
     return {width:bytes.readUInt32BE(16), height:bytes.readUInt32BE(20), type:'png'};
@@ -36,12 +49,12 @@ export function rasterSize(bytes) {
   throw assetError('Use uma imagem PNG, JPEG ou WebP válida.');
 }
 
-export function createStoryAssets({publicDir,dataDir}) {
+export function createStoryAssets({publicDir,dataDir,siteUrl}) {
   let conversions=0;
   const outputDir=path.join(dataDir,'web-stories');
   const roots=[['/assets/',path.join(publicDir,'assets')],['/uploads/generated-videos/',path.join(dataDir,'generated-videos')],['/uploads/store-assets/',path.join(dataDir,'store-assets')]];
   async function image(url,{logo=false}={}) {
-    if(typeof url!=='string'||url.length>400||/[\\%?#\x00-\x20]/.test(url)||url.split('/').includes('..'))throw assetError('Escolha uma imagem local da biblioteca da VitrineCity.');
+    url=normalizeStoryImagePath(url,siteUrl);
     const mapping=roots.find(([prefix])=>url.startsWith(prefix));
     if(!mapping)throw assetError('A imagem deve pertencer à biblioteca local da VitrineCity.');
     const [prefix,root]=mapping, base=await fs.realpath(root), file=await fs.realpath(path.join(root,url.slice(prefix.length)));
@@ -74,5 +87,15 @@ export function createStoryAssets({publicDir,dataDir}) {
       return '/story-assets/'+name;
     } finally {conversions--;await fs.unlink(temporary).catch(()=>{});}
   }
-  return {image,poster,outputDir};
+  async function library() {
+    const items=[];
+    const titles={'esportes-calendario':'Agenda de esportes','ia-revisao-humana':'Inteligência artificial com revisão humana','noite-cinema':'Noite de cinema','tecnologia-celular':'Tecnologia no celular','bolo-cenoura':'Bolo de cenoura','bowl-frango':'Bowl de frango','fricasse-frango':'Fricassê de frango'};
+    // Only shipped editorial/recipe assets; never enumerate customer/private uploads.
+    for(const [folder,category] of [['editorial','Editorial'],['recipes','Receitas']]) {
+      const entries=await fs.readdir(path.join(publicDir,'assets',folder),{withFileTypes:true}).catch(()=>[]);
+      for(const entry of entries.filter(e=>e.isFile()&&/\.(jpg|jpeg|png|webp)$/i.test(e.name)).slice(0,80)){const stem=entry.name.replace(/\.[^.]+$/,'');items.push({url:'/assets/'+folder+'/'+entry.name,title:titles[stem]||stem.replace(/[-_]/g,' '),category});}
+    }
+    return items;
+  }
+  return {image,poster,outputDir,library};
 }

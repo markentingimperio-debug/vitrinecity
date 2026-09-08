@@ -1,7 +1,7 @@
 import {randomUUID,createHash} from 'node:crypto';
 import path from 'node:path';
 import express from 'express';
-import {createStoryAssets} from './web-story-assets.js';
+import {createStoryAssets,normalizeStoryImagePath} from './web-story-assets.js';
 import {renderWebStory,renderStoryDirectory,escapeStory as esc} from './web-story-render.js';
 
 const fail=(message,status=400)=>Object.assign(Error(message),{status});
@@ -19,7 +19,7 @@ export function splitStoryText(body,max=130) {
   return pages;
 }
 
-export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publicDir,dataDir,assets=createStoryAssets({publicDir,dataDir})}) {
+export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publicDir,dataDir,assets=createStoryAssets({publicDir,dataDir,siteUrl})}) {
   const origin=new URL(siteUrl).origin,creating=new Set();
   db.exec(`CREATE TABLE IF NOT EXISTS editorial_web_stories(
     id TEXT PRIMARY KEY,slug TEXT NOT NULL UNIQUE,article_id TEXT NOT NULL UNIQUE,
@@ -37,6 +37,18 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
   const current=(item,revision)=>{if(!Number.isInteger(revision)||item.revision!==revision)throw fail('Esta história mudou em outra aba. Reabra antes de continuar.',409);};
   function currentSource(item){const source=article(item.article_id);if(!source)throw fail('O artigo de origem precisa estar publicado.',409);if(hashArticle(source)!==item.source_hash)throw fail('O artigo de origem mudou. Recrie o rascunho a partir da versão atual e revise novamente.',409);return source;}
   const route=fn=>async(req,res)=>{res.set('Cache-Control','no-store');try{await fn(req,res);}catch(error){res.status(error.status||400).json({error:error.status?error.message:'Não foi possível concluir. Confira as imagens locais e tente novamente.'});}};
+  const imageCache=new Map();
+  async function imageLibrary(query='',articleId='',page=1) {
+    const preferred=article(articleId),rows=db.prepare("SELECT title,image_url,portal FROM editorial_articles WHERE status='published' ORDER BY published_at DESC LIMIT 300").all();
+    const candidates=[...(preferred?[{url:preferred.image_url,title:preferred.title,category:'Deste artigo'}]:[]),...rows.map(a=>({url:a.image_url,title:a.title,category:a.portal.replace(/-/g,' ')})),...await assets.library()];
+    const normalized=value=>String(value).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase(),terms=normalized(query).split(/\s+/).filter(Boolean).slice(0,6),deduped=new Map();
+    for(const candidate of candidates){try{const url=normalizeStoryImagePath(candidate.url,origin);if(!/^\/(assets|uploads\/(generated-videos|store-assets))\//.test(url))continue;const previous=deduped.get(url);if(previous){previous.search+=' '+candidate.title+' '+candidate.category;continue;}deduped.set(url,{...candidate,url,search:candidate.title+' '+candidate.category,generic:url==='/assets/vitriny-city-master.jpg'});}catch{}}
+    const filtered=[...deduped.values()].filter(item=>terms.every(term=>normalized(item.search).includes(term))),pages=Math.max(1,Math.ceil(filtered.length/18)),currentPage=Math.max(1,Math.min(pages,page)),items=[];
+    for(const candidate of filtered.slice((currentPage-1)*18,currentPage*18)) {
+      try{let cached=imageCache.get(candidate.url);if(!cached||Date.now()-cached.at>120000){const asset=await assets.image(candidate.url);cached={at:Date.now(),width:asset.width,height:asset.height};if(imageCache.size>=500)imageCache.clear();imageCache.set(candidate.url,cached);}items.push({url:candidate.url,title:candidate.generic?'Capa genérica da cidade':candidate.title,alt:candidate.generic?'Vista da VitrineCity':candidate.title.slice(0,150),category:candidate.category,generic:candidate.generic,width:cached.width,height:cached.height});}catch{}
+    }
+    return {items,page:currentPage,pages};
+  }
   async function template(source) {
     if(source.body.trim().length<400)throw fail('O artigo deve conter pelo menos 400 caracteres de conteúdo completo.');
     const chunks=splitStoryText(source.body),image=await assets.image(source.image_url),logo=await assets.image('/assets/pwa-icon-192.png',{logo:true});
@@ -69,6 +81,7 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     const items=db.prepare("SELECT a.id,a.title,a.slug,a.portal,a.image_url,a.updated_at,w.id story_id FROM editorial_articles a LEFT JOIN editorial_web_stories w ON w.article_id=a.id WHERE a.status='published' AND instr(lower(a.title),lower(?))>0 ORDER BY a.published_at DESC LIMIT 50").all(q);
     res.json({items,generator:'editorial-template',supportedSources:['article']});
   }));
+  app.get('/api/admin/web-stories/images',requireAdmin,route(async(req,res)=>res.json(await imageLibrary(typeof req.query.q==='string'?req.query.q.trim().slice(0,80):'',typeof req.query.articleId==='string'?req.query.articleId.slice(0,150):'',Math.max(1,parseInt(req.query.p,10)||1)))));
   app.get('/api/admin/web-stories',requireAdmin,route((_req,res)=>res.json({items:db.prepare('SELECT * FROM editorial_web_stories ORDER BY updated_at DESC LIMIT 200').all().map(dto)})));
   app.get('/api/admin/web-stories/:id',requireAdmin,route((req,res)=>res.json(dto(get(req.params.id)))));
   app.post('/api/admin/web-stories',requireAdmin,sameOriginOnly,route(async(req,res)=>{
