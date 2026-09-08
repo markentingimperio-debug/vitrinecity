@@ -1,5 +1,6 @@
 import {publicSpatialCityIdentity} from './city-identity.js';
 import {spatialCity} from './city-registry.js';
+import {loadPremiumZoneAssignments,resolvePremiumZoneSlots} from './premium-zone-registry.js';
 
 const PROFILE_COUNTS=Object.freeze({
   LITE:Object.freeze({skyline:12,vegetation:14,lights:12,furniture:8,districtFurniture:8,premiumSlots:4}),
@@ -25,7 +26,7 @@ function pointOnRing(random,index,count,{inner,outer,phase=0}){const angle=phase
 function safeTransitPoint(point){return !(Math.abs(point.x)<58&&point.z>74&&point.z<128);}
 function pick(random,items){return items[Math.min(items.length-1,Math.floor(random()*items.length))];}
 
-export function planSpatialCityEnvironment(cityId,{profileId='STANDARD'}={}){
+export function planSpatialCityEnvironment(cityId,{profileId='STANDARD',premiumAssignments=[],now=Date.now()}={}){
   const city=spatialCity(cityId);if(!city)throw new Error('city_not_found');
   const identity=publicSpatialCityIdentity(city.id);if(!identity)throw new Error('city_identity_not_found');
   const quality=profile(profileId),counts=PROFILE_COUNTS[quality],style=CITY_STYLE[city.id]||CITY_STYLE['vitrine-city'];
@@ -49,17 +50,20 @@ export function planSpatialCityEnvironment(cityId,{profileId='STANDARD'}={}){
     if(!safeTransitPoint(p))continue;
     districtFurniture.push(Object.freeze({id:`district-furniture:${city.id}:${i}`,districtId,kind:pick(random,DISTRICT_FURNITURE[districtId]),position:Object.freeze({...p,y:0}),rotationY:num(-sector+Math.PI/2,5)}));
   }
-  const premiumSlots=[];
+  const premiumBase=[];
   for(let i=0;i<counts.premiumSlots;i++){
     const angle=i*Math.PI*2/counts.premiumSlots+.39,p={x:num(Math.cos(angle)*138),z:num(Math.sin(angle)*138)};if(!safeTransitPoint(p))continue;
     const districtId=DISTRICTS[Math.round((angle%(Math.PI*2))/(Math.PI/4))%DISTRICTS.length];
-    premiumSlots.push(Object.freeze({slotId:`premium:${city.id}:${i}`,districtId,status:'available',sponsor:'',position:Object.freeze({...p,y:0}),rotationY:num(-angle+Math.PI/2,5)}));
+    premiumBase.push(Object.freeze({slotId:`premium:${city.id}:${i}`,districtId,status:'available',sponsor:'',campaignRef:'',position:Object.freeze({...p,y:0}),rotationY:num(-angle+Math.PI/2,5)}));
   }
+  const premiumSlots=resolvePremiumZoneSlots(city.id,premiumBase,{assignments:premiumAssignments,now});
   const zones=Object.freeze([
     Object.freeze({id:'central-plaza',kind:'public',radius:82,label:'Central Plaza'}),
     Object.freeze({id:'transit-forecourt',kind:'mobility',bounds:Object.freeze({minX:-58,maxX:58,minZ:74,maxZ:128}),label:'Intercity Transit'}),
     Object.freeze({id:'premium-ring',kind:'premium',innerRadius:122,outerRadius:154,label:'Premium Ring'})
   ]);
-  return Object.freeze({cityId:city.id,worldKey:city.worldKey,profileId:quality,themeId:identity.themeId,skyline:Object.freeze(skyline),vegetation:Object.freeze(vegetation),lights:Object.freeze(lights),furniture:Object.freeze(furniture),districtFurniture:Object.freeze(districtFurniture),premiumSlots:Object.freeze(premiumSlots),zones});
+  return Object.freeze({cityId:city.id,worldKey:city.worldKey,profileId:quality,themeId:identity.themeId,skyline:Object.freeze(skyline),vegetation:Object.freeze(vegetation),lights:Object.freeze(lights),furniture:Object.freeze(furniture),districtFurniture:Object.freeze(districtFurniture),premiumSlots,zones});
 }
-export function publicSpatialCityEnvironment(cityId,{profileId='STANDARD'}={}){return planSpatialCityEnvironment(cityId,{profileId});}
+export function publicSpatialCityEnvironment(cityId,{profileId='STANDARD',premiumAssignments,now=Date.now()}={}){
+  return planSpatialCityEnvironment(cityId,{profileId,premiumAssignments:premiumAssignments??loadPremiumZoneAssignments({now}),now});
+}
