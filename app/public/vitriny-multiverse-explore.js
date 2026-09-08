@@ -113,7 +113,7 @@ function createCityLandmark(identity){
 }
 const cityLandmark=createCityLandmark(cityIdentity);
 let cityEnvironmentMount=null;
-mountSpatialCityEnvironment({scene,cityId,identity:cityIdentity,profileId:profile.id,shadows:profile.shadows}).then(result=>{if(disposed){result.dispose();return;}cityEnvironmentMount=result;}).catch(()=>{cityEnvironmentMount=null;});
+mountSpatialCityEnvironment({scene,camera,cityId,identity:cityIdentity,profileId:profile.id,shadows:profile.shadows}).then(result=>{if(disposed){result.dispose();return;}cityEnvironmentMount=result;}).catch(()=>{cityEnvironmentMount=null;});
 function portalFrame(portal,accent,{city=false,enabled=true}={}){
   const width=city?10:8.2,height=city?10:7;
   const frame=new THREE.MeshStandardMaterial({color:0x19263a,metalness:.72,roughness:.22});
