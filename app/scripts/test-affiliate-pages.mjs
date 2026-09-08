@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import express from 'express';
 import Database from 'better-sqlite3';
+import fs from 'node:fs';
 import { setupAffiliateCatalog } from '../affiliate-catalog.js';
 
 const app = express(), db = new Database(':memory:');
@@ -77,6 +78,22 @@ try {
   assert.equal((await fetch(base+'/api/admin/affiliate-catalog')).status, 401);
   assert.equal((await fetch(base+'/admin-vendas-afiliadas.html')).status, 401);
   assert.match(await html('/ofertas/echo-dot-5-alexa'), /Outros produtos da seleção/);
+
+  const [digital] = JSON.parse(fs.readFileSync(new URL('../affiliate-batches/darkplanner-20260908.json', import.meta.url),'utf8'));
+  db.prepare(`INSERT INTO affiliate_catalog (slug,platform,title,description,category,keywords,image,affiliate_url,status,availability,evidence)
+    VALUES (@slug,@platform,@title,@description,@category,@keywords,@image,@affiliate_url,@status,@availability,@evidence)`).run(digital);
+  const digitalHtml = await html('/ofertas/'+digital.slug);
+  assert.match(digitalHtml, /Ver detalhes na Cakto/);
+  assert.match(digitalHtml, /Se for assinatura/);
+  assert.match(digitalHtml, /prazo de acesso ou entrega/);
+  assert.match(digitalHtml, /não garante resultados, vendas ou renda/);
+  assert.match(digitalHtml, /Basic Mensal/);
+  const digitalDetail = digitalHtml.split('<section class="related-products">')[0];
+  assert.doesNotMatch(digitalDetail, /voltagem|Preço, frete, estoque/);
+  assert.match(await html('/ofertas?plataforma=cakto&q=darkplanner'), /1 produto encontrado/);
+  assert.ok(catalog.sitemapPaths().includes('/ofertas/'+digital.slug));
+  db.prepare("UPDATE affiliate_catalog SET platform='kiwify',affiliate_url='https://pay.kiwify.com.br/fixture?afid=test' WHERE slug=?").run(digital.slug);
+  assert.match(await html('/ofertas/'+digital.slug), /Ver detalhes na Kiwify/);
   console.log('Affiliate pages: filters, mobile-first action order, escaping, real links, availability and access protection passed.');
 } finally {
   catalog.close(); server.closeAllConnections();
