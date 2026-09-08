@@ -43,14 +43,28 @@ test('template preserves all source words; draft and preview stay out of public 
   const f=await fixture(t),story=await f.create();
   assert.equal(story.draft.pages.slice(1).map(p=>p.text).join(' '),body);
   assert.ok(story.draft.pages.every(p=>p.text.length<=130));
+  assert.equal(story.draft.cta,'Ver modo de preparo');assert.equal(story.draft.homeCta,'');
   assert.equal((await f.call(story.url,{admin:false})).status,404);
   assert.ok(!(await f.call('/sitemap-stories.xml',{admin:false})).raw.includes(story.slug));
   const preview=await f.preview(story);assert.equal(preview.status,200);assert.match(preview.json().html,/noindex,nofollow/);
+  const screens=[...preview.json().html.matchAll(/<amp-story-page id="[^"]+">([\s\S]*?)<\/amp-story-page>/g)];
+  assert.match(screens.at(-1)[1],/href="https:\/\/vitrinecity.test\/artigo\/guia-de-teste">Ver modo de preparo/);assert.ok(!screens.at(-2)[1].includes('amp-story-page-outlink'));
   assert.equal((await f.call(preview.json().url,{admin:false})).status,401);
   const framed=await f.call(preview.json().url);assert.equal(framed.status,200);assert.equal(framed.headers.get('x-robots-tag'),'noindex,nofollow');assert.ok(!framed.raw.includes('ordinary-site-script'));
   assert.equal(framed.headers.get('x-frame-options'),'SAMEORIGIN');assert.match(framed.headers.get('content-security-policy'),/frame-ancestors 'self'/);
   assert.ok(!(await f.call('/stories',{admin:false})).raw.includes(story.slug));
   assert.equal((await f.call('/api/admin/web-stories',{method:'POST',data:{articleId:'fixture'}})).json().id,story.id);
+});
+
+test('editing and regenerating preserve explicit legacy buttons and explicit opt-out',async t=>{
+  const f=await fixture(t),story=await f.create();
+  const put=(item,draft)=>f.call('/api/admin/web-stories/'+item.id,{method:'PUT',data:{revision:item.revision,draft}});
+  const saved=(await put(story,{...story.draft,cta:'Consultar a receita',homeCta:'Explorar a VitrineCity'})).json();
+  const partial={...saved.draft,title:'Título com botões preservados'};delete partial.cta;delete partial.homeCta;
+  const edited=(await put(saved,partial)).json();assert.equal(edited.draft.cta,'Consultar a receita');assert.equal(edited.draft.homeCta,'Explorar a VitrineCity');
+  const regenerate=item=>f.call('/api/admin/web-stories/'+item.id+'/regenerate',{method:'POST',data:{revision:item.revision,confirmed:true}});
+  const again=(await regenerate(edited)).json();assert.equal(again.draft.cta,'Consultar a receita');assert.equal(again.draft.homeCta,'Explorar a VitrineCity');
+  const optedOut=(await put(again,{...again.draft,cta:'',homeCta:''})).json();const final=(await regenerate(optedOut)).json();assert.equal(final.draft.cta,'');assert.equal(final.draft.homeCta,'');
 });
 test('manual preview and both editorial confirmations gate publication',async t=>{
   const f=await fixture(t),story=await f.create();assert.equal((await f.publish(story)).status,409);await f.preview(story);

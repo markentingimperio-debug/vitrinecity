@@ -14,7 +14,7 @@
   <details class="help"><summary>Como funciona e o que aparece no Google</summary>
     <p>A rotina diária prepara histórias com a IA Gestora, usa as fontes disponíveis e publica as que passam pelas checagens automáticas. Conteúdos com pendências ficam separados para atenção, sem liberação de uma história incompleta. Você também pode revisar e editar as histórias pelo painel.</p>
     <p>Notícias e celebridades exigem fontes verificáveis. Boatos e afirmações sem confirmação não devem ser publicados; consulte as fontes da história para conferir o contexto.</p>
-    <p>Cada história deve ter de 10 a 40 páginas, com frases convidativas e informações úteis. O convite final leva à página principal da VitrineCity; a página anterior pode levar ao conteúdo ou produto relacionado.</p>
+    <p>Cada história deve ter de 10 a 40 páginas, com frases convidativas e informações úteis. O botão final abre a receita, matéria, loja ou oferta relacionada na VitrineCity. A história deve apresentar as informações essenciais antes desse convite.</p>
     <p>As imagens da rotina usam a integração da IA Gestora. No editor, escolha imagens próprias ou com licença da biblioteca local e confira o recorte vertical na prévia. As checagens automáticas não substituem a confirmação dos direitos de uso.</p>
     <p>Após publicar, a história recebe endereço próprio e entra no sitemap. A indexação e a exibição no Google dependem da avaliação do buscador. Você pode enviar <a href="/sitemap-index.xml">o índice de sitemaps</a> no Search Console; este painel não faz o envio.</p>
     <p>No Search Console, use a Inspeção de URL para conferir uma história. O filtro Web Stories em Desempenho → Aparência na pesquisa depende de haver impressões registradas; ele pode ainda não aparecer. <a href="https://support.google.com/webmasters/answer/17011259?hl=en" target="_blank" rel="noopener">Entenda o relatório</a> · <a href="https://support.google.com/webmasters/answer/9012289?hl=en" target="_blank" rel="noopener">Inspeção de URL</a>.</p>
@@ -61,7 +61,11 @@
   <section id="editor" class="panel" hidden aria-labelledby="editor-heading">
     <div class="section-head"><h2 id="editor-heading">2. Edite a história</h2><a id="public-link" target="_blank" rel="noopener" hidden>Abrir publicação ↗</a></div><p id="revision-note" class="muted"></p>
     <form id="story-form"><label>Título · até 90 caracteres<input name="title" maxlength="90" required></label><label>Descrição para descoberta · de 30 a 160 caracteres<textarea name="description" minlength="30" maxlength="160" required rows="2"></textarea></label>
-      <label class="check"><input type="checkbox" name="cta" checked> Incluir botão para o conteúdo ou produto na penúltima página</label><label class="check"><input type="checkbox" name="homeCta" checked> Convidar a visitar a página principal na última página</label>
+      <label class="check"><input type="checkbox" name="cta" checked> Incluir botão para abrir a página relacionada</label>
+      <label>Texto do botão · até 30 caracteres<input name="ctaLabel" maxlength="30" value="Ler matéria completa" aria-describedby="cta-help"></label>
+      <p class="muted" id="cta-help">Exemplos: Ver modo de preparo, Ler matéria completa ou Ver oferta. Use chamadas de desconto apenas quando ele estiver confirmado na página de destino.</p>
+      <label class="check"><input type="checkbox" name="homeCta"> Usar a última página para convidar à página principal</label>
+      <p class="muted">Por padrão, o botão da página relacionada fica no final. Ao ativar o convite à página principal, ele passa para a penúltima página.</p>
       <p>Crie de 10 a 40 páginas com frases curtas, interessantes e fiéis às fontes. Inclua contexto, etapas e cuidados necessários para que a história seja útil por si só.</p><div id="pages" class="page-editor"></div>
       <div class="actions"><button type="button" id="add-page" class="secondary">Adicionar página</button><button id="save-story">Salvar alterações</button><button type="button" id="preview-story" class="secondary">Salvar e abrir prévia</button></div>
     </form>
