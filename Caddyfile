@@ -1,6 +1,13 @@
 vitrinecity.com, www.vitrinecity.com {
     encode zstd gzip
-    reverse_proxy app:3000
+
+    handle /api/multiversal/* {
+        reverse_proxy multiversal:3001
+    }
+
+    handle {
+        reverse_proxy app:3000
+    }
 }
 
 chat.vitrinecity.com {
