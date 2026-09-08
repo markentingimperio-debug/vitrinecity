@@ -81,6 +81,11 @@
     return new URLSearchParams(window.location.search).get("universo") || "";
   }
 
+  function readLastRealm() {
+    try { return JSON.parse(window.localStorage.getItem(LAST_REALM_KEY) || "{}"); }
+    catch { return {}; }
+  }
+
   function rememberRealm(realm) {
     try {
       window.localStorage.setItem(
@@ -174,19 +179,16 @@
         event.preventDefault();
         const realm = REALMS.find(item => item.slug === link.dataset.enter);
         if (!realm) return;
+        const previous = readLastRealm();
         rememberRealm(realm);
         let destination = realm.href;
-        const saved = (() => {
-          try { return JSON.parse(window.localStorage.getItem(LAST_REALM_KEY) || "{}"); }
-          catch { return {}; }
-        })();
         try {
           const request = fetch("/api/multiversal/transition", {
             method:"POST",
             headers:{ "Content-Type":"application/json" },
             body:JSON.stringify({
               citySlug:activeCitySlug,
-              fromRealm:saved?.slug && saved.slug !== realm.slug ? saved.slug : null,
+              fromRealm:previous?.citySlug === activeCitySlug && previous?.slug && previous.slug !== realm.slug ? previous.slug : null,
               toRealm:realm.slug,
               sourcePath:`${window.location.pathname}${window.location.search}`,
             }),
@@ -214,7 +216,7 @@
     resumeCard.hidden = true;
     resumeRealm = null;
     try {
-      const saved = JSON.parse(window.localStorage.getItem(LAST_REALM_KEY) || "{}");
+      const saved = readLastRealm();
       if (!saved.slug || (saved.citySlug && saved.citySlug !== activeCitySlug)) return;
       resumeRealm = REALMS.find(realm => realm.slug === saved.slug) || null;
       if (!resumeRealm) return;
