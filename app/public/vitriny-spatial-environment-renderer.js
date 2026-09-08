@@ -37,6 +37,13 @@ export async function mountSpatialCityEnvironment({scene,camera=null,cityId,iden
     environment.lights.forEach((item,index)=>{setTransform(poles,index,{x:item.position.x,y:item.height/2,z:item.position.z,sy:item.height},matrix,quaternion,scale,position);setTransform(bulbs,index,{x:item.position.x,y:item.height+.12,z:item.position.z,sx:.8+item.intensity*.35,sy:.8+item.intensity*.35,sz:.8+item.intensity*.35},matrix,quaternion,scale,position);});poles.instanceMatrix.needsUpdate=true;bulbs.instanceMatrix.needsUpdate=true;
   }
 
+  if(environment.districtLights?.length){
+    const poles=meshes.districtLightPoles=instanced(group,new THREE.CylinderGeometry(.09,.12,1,6),new THREE.MeshStandardMaterial({color:'#21364b',metalness:.72,roughness:.24}),environment.districtLights.length,'district-light-poles');
+    const bulbs=meshes.districtLights=instanced(group,new THREE.SphereGeometry(.34,profileId==='LITE'?6:10,profileId==='LITE'?4:7),new THREE.MeshBasicMaterial({color:'#ffffff',vertexColors:true,transparent:true,opacity:.92}),environment.districtLights.length,'district-light-beacons');
+    environment.districtLights.forEach((item,index)=>{setTransform(poles,index,{x:item.position.x,y:item.height/2,z:item.position.z,sy:item.height},matrix,quaternion,scale,position);const glow=.9+item.intensity*.45;setTransform(bulbs,index,{x:item.position.x,y:item.height+.18,z:item.position.z,sx:glow,sy:glow,sz:glow},matrix,quaternion,scale,position);bulbs.setColorAt(index,color(ACCENTS[item.accentIndex],identity?.palette?.accent||'#6ee7ff'));});
+    poles.instanceMatrix.needsUpdate=true;bulbs.instanceMatrix.needsUpdate=true;if(bulbs.instanceColor)bulbs.instanceColor.needsUpdate=true;
+  }
+
   if(environment.furniture.length){
     const furniture=meshes.furniture=instanced(group,new THREE.BoxGeometry(1,1,1),new THREE.MeshStandardMaterial({color:'#263646',metalness:.24,roughness:.58}),environment.furniture.length,'urban-furniture');
     environment.furniture.forEach((item,index)=>{const kiosk=item.kind==='kiosk',seat=item.kind==='garden-seat'||item.kind==='transit-seat';setTransform(furniture,index,{x:item.position.x,y:kiosk?1.4:.45,z:item.position.z,sx:kiosk?2.3:seat?2.5:2.8,sy:kiosk?2.8:.5,sz:kiosk?2.3:.8,ry:item.rotationY},matrix,quaternion,scale,position);});furniture.instanceMatrix.needsUpdate=true;
@@ -68,6 +75,7 @@ export async function mountSpatialCityEnvironment({scene,camera=null,cityId,iden
     if(scene.fog&&original.fog!=null)scene.fog.density=original.fog*phase.fog;
     if(meshes.skyline?.material)meshes.skyline.material.emissiveIntensity=.035+.12*phase.emissive;
     if(meshes.lights?.material){meshes.lights.material.opacity=.45+.5*phase.emissive;meshes.lights.material.transparent=true;}
+    if(meshes.districtLights?.material)meshes.districtLights.material.opacity=.52+.46*phase.emissive;
   }
   applyPhase();const phaseTimer=setInterval(applyPhase,60000);
 
@@ -76,7 +84,7 @@ export async function mountSpatialCityEnvironment({scene,camera=null,cityId,iden
   let fpsFactors=fpsLod.factors,distanceFactors=distanceLod.factors;
   function applyLod(){
     const factors=combineSpatialLodFactors(fpsFactors,distanceFactors);
-    setCount(meshes.skyline,factors.skyline);setCount(meshes.trunks,factors.vegetation);setCount(meshes.vegetation,factors.vegetation);setCount(meshes.lightPoles,factors.lights);setCount(meshes.lights,factors.lights);setCount(meshes.furniture,factors.furniture);setCount(meshes.districtFurniture,factors.districtFurniture);
+    setCount(meshes.skyline,factors.skyline);setCount(meshes.trunks,factors.vegetation);setCount(meshes.vegetation,factors.vegetation);setCount(meshes.lightPoles,factors.lights);setCount(meshes.lights,factors.lights);setCount(meshes.districtLightPoles,factors.lights);setCount(meshes.districtLights,factors.lights);setCount(meshes.furniture,factors.furniture);setCount(meshes.districtFurniture,factors.districtFurniture);
     const visiblePremium=Math.ceil(premiumSlots.length*factors.premium);premiumSlots.forEach((item,index)=>item.visible=index<visiblePremium);premium.visible=factors.premium>0;
     group.userData.lodLevel=fpsLod.level;group.userData.distanceTier=distanceLod.tier;group.userData.lodFactors=factors;
   }
