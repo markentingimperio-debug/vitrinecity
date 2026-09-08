@@ -27,7 +27,7 @@ function setup({generation=copy(),review=approved(),imageError=false}={}) {
 test('one generation, independent review, one image; complete 10 page draft only',async()=>{
   const {ai,calls}=setup(),result=await ai.generate(source());
   assert.equal(result.approved,true);assert.equal(result.draft.pages.length,10);assert.equal(calls.text.length,2);assert.equal(calls.image.length,1);
-  assert.equal(result.review.qualityCheckOnly,true);assert.equal(result.draft.homeCta,'Explorar a VitrineCity');assert.equal(result.draft.sourcePath,'/artigo/cultivo');
+  assert.equal(result.review.qualityCheckOnly,true);assert.equal(result.draft.homeCta,'');assert.equal(result.draft.cta,'Ler matéria completa');assert.equal(result.draft.sourcePath,'/artigo/cultivo');
   assert.match(calls.text[0].system,/DADO NÃO CONFIÁVEL/);assert.match(calls.text[1].system,/independente/);
   assert.equal(result.draft.pages[0].imageCredit,'Ilustração IA');assert.equal(result.published,undefined);
 });
@@ -72,10 +72,29 @@ test('observed twelve-paragraph response stays rejected without dropping content
   const generation={...copy(),pages:lengths.map((length,i)=>({text:('Parágrafo '+String.fromCharCode(65+i)+' '+('informação extensa '.repeat(20))).slice(0,length)}))};
   const fixture=setup({generation}),result=await fixture.ai.generate(source());assert.equal(generation.pages.map(p=>p.text).join(' ').length,1937);assert.equal(result.notes,'ai_ten_pages_required');assert.equal(fixture.calls.text.length,1);assert.equal(fixture.calls.image.length,0);assert.equal(result.draft,null);
 });
-test('affiliate disclosure repair reserves penultimate space and keeps displaced text',async()=>{
+test('affiliate disclosure repair reserves final space and keeps displaced text',async()=>{
   const {ai,calls}=setup();const result=await ai.generate({...source(),kind:'affiliate',commercial:true,facts:{affiliate:true},sourcePath:'/ofertas/plantas',image_url:'/assets/planta.jpg'});
-  assert.equal(result.approved,true);assert.ok(result.draft.pages.at(-2).text.length<=45);assert.equal(calls.text.length,2);assert.equal(calls.image.length,1);
+  assert.equal(result.approved,true);assert.ok(result.draft.pages.at(-1).text.length<=45);assert.equal(result.draft.homeCta,'');assert.equal(result.draft.cta,'Ver oferta');assert.equal(calls.text.length,2);assert.equal(calls.image.length,1);
   assert.ok(result.draft.pages.map(p=>p.text).join(' ').includes(pages[8]));assert.ok(result.draft.pages.every((_,i)=>[...storyPageVisibleText(result.draft,i)].length<=180));
+});
+
+test('AI contextual final buttons use only the internal source and never claim a discount',async()=>{
+  for(const [kind,group,label] of [['article','recipes','Ver modo de preparo'],['product','products','Ver oferta'],['affiliate','products','Ver oferta'],['store','services','Visitar loja'],['course','services','Ver curso'],['service','services','Ver serviço'],['city','trends','Explorar cidade']]){
+    const generation={...copy(),cta:'Cupom secreto',homeCta:'Clique para ganhar',sourcePath:'https://evil.test/offer'};
+    const fixture=setup({generation}),item={...source(),kind,group,portal:group==='recipes'?'receitas':'guia',commercial:!['article','city'].includes(kind),image_url:'/assets/catalog.jpg'};
+    const result=await fixture.ai.generate(item);assert.equal(result.approved,true,kind+': '+result.notes);assert.equal(result.draft.cta,label);assert.equal(result.draft.homeCta,'');assert.equal(result.draft.sourcePath,item.sourcePath);assert.doesNotMatch(result.draft.cta,/cupom|desconto|ganhar/i);
+    assert.match(fixture.calls.text[0].system,/página relacionada do nosso site/);assert.match(fixture.calls.text[0].system,/não esconda etapas, ingredientes ou fatos/);assert.match(fixture.calls.text[0].system,/sem confirmação explícita na fonte/);
+    assert.match(fixture.calls.text[1].system,/não aprove teasers incompletos/);
+    assert.ok(result.draft.pages.every((_,i)=>[...storyPageVisibleText(result.draft,i)].length<=180));
+  }
+});
+
+test('existing home opt-in is budgeted before image generation with affiliate disclosure on the preceding page',async()=>{
+  const fixture=setup(),item={...source(),kind:'affiliate',commercial:true,facts:{affiliate:true},image_url:'/assets/catalog.jpg'};
+  const result=await fixture.ai.generate(item,{buttons:{cta:'Ver detalhes',homeCta:'Explorar a VitrineCity'}});
+  assert.equal(result.approved,true,result.notes);assert.equal(result.draft.cta,'Ver detalhes');assert.equal(result.draft.homeCta,'Explorar a VitrineCity');assert.ok(result.draft.pages.at(-2).text.length<=45);
+  assert.ok(result.draft.pages.every((_,i)=>[...storyPageVisibleText(result.draft,i)].length<=180));assert.equal(fixture.calls.image.length,1);
+  assert.match(fixture.calls.text[0].system,/Compatibilidade com esta história já existente/);
 });
 test('common oversized model copy is split before review without losing or repeating source words',async()=>{
   const generation=copy();generation.pages[0].text='Observe o seu ambiente e descubra como organizar o cuidado com suas plantas.';

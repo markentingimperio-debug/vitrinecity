@@ -63,6 +63,24 @@ test('the final page leads home and the source CTA appears before it',async t=>{
   assert.match(pages.at(-2)[2],/href="https:\/\/vitrinecity\.test\/produto\/1\/fixture"/);assert.ok(!pages.at(-1)[2].includes('/produto/1/fixture'));
 });
 
+test('new automatic defaults put the contextual source button on the final page',async t=>{
+  const cases=[['product','products','produtos','Ver oferta'],['affiliate','products','ofertas','Ver oferta'],['store','services','lojas','Visitar loja'],['course','services','cursos','Ver curso'],['service','services','servicos','Ver serviço'],['city','trends','cidade','Explorar cidade'],['article','recipes','receitas','Ver modo de preparo'],['article','news','noticias','Ler matéria completa'],['article','sports','esportes','Ler matéria completa']];
+  for(const [kind,group,portal,label] of cases){
+    const f=await fixture(t,{commercial:!['city','article'].includes(kind)});Object.assign(f.state.source,{kind,group,portal});delete f.state.generated.cta;delete f.state.generated.homeCta;
+    if(kind==='affiliate')f.state.generated.pages.at(-1).text='Confira os detalhes na página do assunto.';
+    assert.equal((await f.generate()).status,'published');const saved=JSON.parse(f.row().published_json);assert.equal(saved.cta,label);assert.equal(saved.homeCta,'');
+    const html=(await f.call(f.publicUrl())).raw,pages=[...html.matchAll(/<amp-story-page id="[^"]+">([\s\S]*?)<\/amp-story-page>/g)];
+    assert.ok(pages.at(-1)[1].includes('href="https://vitrinecity.test'+f.state.source.sourcePath+'">'+label));assert.ok(!pages.at(-2)[1].includes('amp-story-page-outlink'));
+  }
+});
+
+test('automatic updates preserve explicitly stored legacy labels and home selection',async t=>{
+  const f=await fixture(t);await f.generate();f.state.source.facts.priceCents=1500;f.state.generated.cta='Ver oferta';f.state.generated.homeCta='';
+  assert.equal((await f.generate()).status,'published');const updated=JSON.parse(f.row().published_json);assert.equal(updated.cta,'Ver detalhes');assert.equal(updated.homeCta,'Explorar a VitrineCity');
+  const fresh=await fixture(t);fresh.state.generated.cta='';fresh.state.generated.homeCta='';await fresh.generate();fresh.state.source.facts.priceCents=1500;fresh.state.generated.cta='Ver oferta';fresh.state.generated.homeCta='Explorar a VitrineCity';
+  await fresh.generate();const empty=JSON.parse(fresh.row().published_json);assert.equal(empty.cta,'');assert.equal(empty.homeCta,'');
+});
+
 test('automatic publication rejects fewer than ten pages and excessive rendered text without writing a story',async t=>{
   const f=await fixture(t);f.state.generated.pages.pop();await assert.rejects(f.generate(),error=>error.status===400&&/10 e 40/.test(error.message));assert.equal(f.row(),undefined);
   f.state.generated=draft('T'.repeat(90));f.state.generated.pages[0].text='A'.repeat(130);await assert.rejects(f.generate(),error=>error.status===400&&/texto demais/.test(error.message));assert.equal(f.row(),undefined);

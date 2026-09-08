@@ -4,6 +4,7 @@ import express from 'express';
 import {createStoryAssets,normalizeStoryImagePath} from './web-story-assets.js';
 import {renderWebStory,renderStoryDirectory,storyPageVisibleText,escapeStory as esc} from './web-story-render.js';
 import {createWebStorySources} from './web-story-sources.js';
+import {storySourceCta} from './web-story-cta.js';
 
 const fail=(message,status=400)=>Object.assign(Error(message),{status});
 const hashArticle=a=>createHash('sha256').update(JSON.stringify([a.title,a.summary,a.body,a.image_url,a.updated_at,...(a.commercial?[a.facts,a.sourcePath]:[])])).digest('hex');
@@ -12,6 +13,8 @@ const text=(value,max,label,minimum=1)=>{
   if(typeof value!=='string'||value.trim().length<minimum||value.trim().length>max||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value))throw fail(`${label}: informe de ${minimum} a ${max} caracteres.`);
   return value.trim();
 };
+const button=(value,fallback,label)=>{const chosen=value??fallback;return chosen===false||chosen===''?'':text(chosen,30,label);};
+const storyButtons=(source,previous={})=>({cta:button(previous.cta,storySourceCta(source),'Texto do botão'),homeCta:button(previous.homeCta,'','Convite final')});
 export function splitStoryText(body,max=130) {
   max=Math.min(max,Math.max(25,Math.ceil(String(body||'').trim().length/9)));
   const words=String(body||'').trim().split(/\s+/),pages=[];
@@ -56,14 +59,14 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     }
     return {items,page:currentPage,pages};
   }
-  async function template(source) {
+  async function template(source,previous={}) {
     if(source.body.trim().length<400)throw fail('O artigo deve conter pelo menos 400 caracteres de conteúdo completo.');
     const chunks=splitStoryText(source.body),image=await assets.image(source.image_url),logo=await assets.image('/assets/pwa-icon-192.png',{logo:true});
     const poster=await assets.poster(image),title=source.title.trim().slice(0,90),description=(source.summary||source.title).trim().slice(0,160);
-    return {title,description,category:source.portal.replace(/-/g,' ').slice(0,26),logo:logo.url,poster,sourcePath:source.sourcePath||'/artigo/'+encodeURIComponent(source.slug),sourceKind:source.kind||'article',commercial:!!source.commercial,cta:source.commercial?'Ver na VitrineCity':'Artigo e fontes',homeCta:'Explorar a VitrineCity',pages:[description.slice(0,130),...chunks].map(content=>({text:content,image:image.url,width:image.width,height:image.height,alt:source.title.slice(0,150)}))};
+    return {title,description,category:source.portal.replace(/-/g,' ').slice(0,26),logo:logo.url,poster,sourcePath:source.sourcePath||'/artigo/'+encodeURIComponent(source.slug),sourceKind:source.kind||'article',commercial:!!source.commercial,...storyButtons(source,previous),pages:[description.slice(0,130),...chunks].map(content=>({text:content,image:image.url,width:image.width,height:image.height,alt:source.title.slice(0,150)}))};
   }
   async function validateDraft(input,original) {
-    const draft={...original,title:text(input.title,90,'Título'),description:text(input.description,160,'Descrição',30),cta:input.cta===false||input.cta===''?'':text(input.cta||'Artigo e fontes',30,'Texto do botão'),homeCta:input.homeCta===false||input.homeCta===''?'':input.homeCta?text(input.homeCta,30,'Convite final'):original.homeCta||''};
+    const draft={...original,title:text(input.title,90,'Título'),description:text(input.description,160,'Descrição',30),cta:button(input.cta,original.cta??storySourceCta(original),'Texto do botão'),homeCta:button(input.homeCta,original.homeCta??'','Convite final')};
     if(!Array.isArray(input.pages)||input.pages.length<10||input.pages.length>40)throw fail('A história deve ter entre 10 e 40 páginas, com conteúdo completo.');
     const unique=new Map();draft.pages=[];
     for(const p of input.pages){const copy=text(p.text,130,'Texto de cada página'),alt=text(p.alt,150,'Descrição da imagem');if(!unique.has(p.image))unique.set(p.image,await assets.image(p.image,{catalog:p.imageCredit==='Foto do catálogo'}));const asset=unique.get(p.image);draft.pages.push({text:copy,alt,image:asset.url,width:asset.width,height:asset.height,...(['Ilustração IA','Foto do catálogo'].includes(p.imageCredit)?{imageCredit:p.imageCredit}:{})});}
@@ -91,7 +94,8 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     } else if(db.prepare('SELECT COUNT(*) n FROM editorial_web_stories').get().n>=10000)throw fail('O estúdio atingiu o limite de 10 mil histórias.',409);
     const eligible=()=>!signal?.aborted&&isCurrent()&&article(key)&&hashArticle(article(key))===fingerprint;
     if(!eligible())throw fail('Rodada pausada ou conteúdo atualizado.',409);
-    const result=await generateStory(initial,{signal,isCurrent:eligible});
+    const previous=existing?JSON.parse(existing.draft_json):{};
+    const result=await generateStory(initial,{signal,isCurrent:eligible,buttons:storyButtons(initial,previous)});
     if(!eligible())throw fail('Rodada pausada ou conteúdo atualizado. Nenhuma publicação foi feita.',409);
     if(!result?.draft)return {storyId:existing?.id||null,status:'review',summary:String(result?.notes||'Faltam informações verificadas para criar uma história completa.').slice(0,500)};
     const companionId=initial.kind==='trend'?'story-companion:'+key:null;
@@ -100,8 +104,8 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     const sourcePath=companionId?'/artigo/'+companionSlug:initial.sourcePath||'/artigo/'+encodeURIComponent(initial.slug);
     if(!sourcePath.startsWith('/')||sourcePath.startsWith('//')||/[\\\u0000-\u0020]/.test(sourcePath))throw fail('O destino da história não é uma página válida da plataforma.');
     const logo=await assets.image('/assets/pwa-icon-192.png',{logo:true});
-    const original={title:initial.title,description:initial.summary,category:String(initial.portal||'VitrineCity').replace(/-/g,' ').slice(0,26),logo:logo.url,sourcePath,sourceKind:initial.kind||'article',commercial:!!initial.commercial,cta:initial.commercial?'Ver na VitrineCity':'Artigo e fontes',homeCta:'Explorar a VitrineCity',generation:'gestora',affiliateDisclosure:initial.kind==='affiliate'?'Link de afiliado: podemos receber comissão.':'',sources:Array.isArray(initial.sources)?initial.sources.slice(0,5).map(s=>({title:String(s.title||'Fonte').slice(0,120),url:String(s.url||''),...(s.checkedAt?{checkedAt:s.checkedAt}:{})})):[]};
-    const draft=await validateDraft({...result.draft,homeCta:result.draft.homeCta||original.homeCta},original);
+    const original={title:initial.title,description:initial.summary,category:String(initial.portal||'VitrineCity').replace(/-/g,' ').slice(0,26),logo:logo.url,sourcePath,sourceKind:initial.kind||'article',commercial:!!initial.commercial,...storyButtons(initial,previous),generation:'gestora',affiliateDisclosure:initial.kind==='affiliate'?'Link de afiliado: podemos receber comissão.':'',sources:Array.isArray(initial.sources)?initial.sources.slice(0,5).map(s=>({title:String(s.title||'Fonte').slice(0,120),url:String(s.url||''),...(s.checkedAt?{checkedAt:s.checkedAt}:{})})):[]};
+    const draft=await validateDraft({...result.draft,...(Object.hasOwn(previous,'cta')?{cta:previous.cta}:{}),...(Object.hasOwn(previous,'homeCta')?{homeCta:previous.homeCta}:{})},original);
     const companion=companionId?{title:draft.title,summary:draft.description,body:text(result.draft.articleBody,3000,'Artigo relacionado',900),image_url:draft.pages[0].image,sources_json:JSON.stringify(draft.sources)}:null;
     if(companion)draft.companionHash=companionHash(companion);
     if(draft.pages.some((_,i)=>[...storyPageVisibleText(draft,i)].length>180))throw fail('A IA produziu texto demais em uma página. A história ficou sem publicação.');
@@ -168,7 +172,7 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
   app.post('/api/admin/web-stories/:id/regenerate',requireAdmin,sameOriginOnly,route(async(req,res)=>{
     const item=get(req.params.id);current(item,req.body?.revision);if(req.body?.confirmed!==true)throw fail('Confirme a substituição do rascunho. A versão pública permanece disponível.');
     const source=article(item.article_id);if(!source)throw fail('O artigo de origem precisa estar publicado.',409);
-    const draft=await template(source);
+    const draft=await template(source,JSON.parse(item.draft_json));
     db.transaction(()=>{current(get(item.id),item.revision);if(!article(item.article_id)||hashArticle(article(item.article_id))!==hashArticle(source))throw fail('O artigo mudou durante a criação.',409);db.prepare('UPDATE editorial_web_stories SET draft_json=?,source_hash=?,revision=revision+1,previewed_revision=0,updated_at=? WHERE id=?').run(JSON.stringify(draft),hashArticle(source),new Date().toISOString(),item.id);event(req,{...item,revision:item.revision+1},'regenerated');})();
     res.json(dto(row(item.id)));
   }));
