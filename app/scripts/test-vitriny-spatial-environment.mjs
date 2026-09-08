@@ -34,5 +34,17 @@ for(const cityId of ['vitrine-city','silvania','anapolis','goiania']){
   const repeat=planSpatialCityEnvironment(cityId,{profileId:'STANDARD'});
   assert.deepEqual(repeat,standard);
 }
+
+const sponsored=planSpatialCityEnvironment('vitrine-city',{
+  profileId:'STANDARD',now:Date.parse('2026-09-08T12:00:00Z'),premiumAssignments:[
+    {slotId:'premium:vitrine-city:0',districtId:'commerce',status:'active',sponsor:'Loja Jardim',campaignRef:'campaign:123',approved:true},
+    {slotId:'premium:vitrine-city:1',districtId:'social',status:'active',sponsor:'Pendente',approved:false}
+  ]
+});
+assert.equal(sponsored.premiumSlots.find(slot=>slot.slotId==='premium:vitrine-city:0')?.status,'active');
+assert.equal(sponsored.premiumSlots.find(slot=>slot.slotId==='premium:vitrine-city:0')?.sponsor,'Loja Jardim');
+assert.equal(sponsored.premiumSlots.find(slot=>slot.slotId==='premium:vitrine-city:1')?.status,'reserved');
+assert.equal(sponsored.premiumSlots.find(slot=>slot.slotId==='premium:vitrine-city:1')?.sponsor,'');
+
 assert.throws(()=>planSpatialCityEnvironment('nao-existe'),/city_not_found/);
-console.log(JSON.stringify({ok:true,cities:4,profiles:3,premium:true,districtFurniture:true}));
+console.log(JSON.stringify({ok:true,cities:4,profiles:3,premium:true,districtFurniture:true,premiumOverlay:true}));
