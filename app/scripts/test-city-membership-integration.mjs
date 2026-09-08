@@ -16,9 +16,13 @@ const request=(url,options={})=>fetch(origin+url,{...options,redirect:'manual',h
 let db;
 try{
   let ready=false;for(let i=0;i<100;i++){try{if((await request('/api/health')).ok){ready=true;break;}}catch{}if(child.exitCode!==null)break;await new Promise(r=>setTimeout(r,100));}assert.ok(ready,output.slice(-2500));
-  for(const page of ['/vitriny-multiverse-explore.html?city=silvania','/vitriny-games.html','/vitriny-mini-fazenda.html','/vitriny-music-arena.html','/vitriny-cinema.html','/central-creditos.html','//vitriny-games.html','/%76itriny-mini-fazenda.html']){const response=await request(page);assert.equal(response.status,302,page);assert.match(response.headers.get('location'),/^\/entrar-cidade\.html\?returnTo=/);assert.match(response.headers.get('cache-control'),/no-store/);}
+  for(const page of ['/vitriny-games.html','/vitriny-mini-fazenda.html','/vitriny-music-arena.html','/vitriny-cinema.html','/central-creditos.html','//vitriny-games.html','/%76itriny-mini-fazenda.html','/jogos','/mini-fazenda','/arena-musical','/sala-de-cinema','/meus-creditos']){const response=await request(page);assert.equal(response.status,302,page);assert.match(response.headers.get('location'),/^\/entrar-cidade\.html\?returnTo=/);assert.match(response.headers.get('cache-control'),/no-store/);}
+  for(const page of ['/multiverso?city=silvania','/vitriny-multiverse-explore.html?city=silvania','/cidade',...['preview','district','food','creator','entertainment','business'].map(name=>'/vitriny-multiverse-'+name+'.html'),'/vitriny-store-interior.html']){
+    for(const method of ['GET','HEAD'])assert.equal((await request(page,{method})).status,200,method+' '+page);
+  }
   for(const page of ['/loja','/centros/mercadolivre','/centros/shopee','/centros/cakto','/centros/kiwify','/api/affiliate-centers','/entrar-cidade.html','/vitriny-multiverse-worlds.html'])assert.equal((await request(page)).status,200,page);
-  assert.equal((await request('/api/games/farm')).status,401);
+  for(const api of ['/api/games/farm','/api/city-chat/rooms','/api/rewards/me'])assert.equal((await request(api)).status,401,api);
+  for(const api of ['/api/games/farm/action','/api/city-chat/rooms/vitrine-city/messages','/api/rewards/checkout','/api/marketplace/checkout','/api/credits/checkout','/api/courses/example/checkout'])assert.equal((await request(api,{method:'POST',body:'{}'})).status,401,api);
   const account={name:'Pessoa de teste',email:'city-member@example.test',password:'isolated-password-2026',adultConfirmed:true,termsAccepted:true,accountContext:'city',whatsapp:'5562999990000',communications:{email:true,whatsapp:false}};
   let response=await request('/api/auth/register',{method:'POST',body:JSON.stringify(account)});assert.equal(response.status,201,await response.clone().text());const cookie=response.headers.get('set-cookie').split(';')[0],headers={cookie};
   response=await request('/api/privacy/communications',{headers});assert.deepEqual((await response.json()).preferences,{email:true,whatsapp:false});
@@ -34,7 +38,7 @@ try{
   response=await request('/api/privacy/export',{headers});assert.equal(response.status,200);const exported=await response.json();assert.ok(exported.farmProgress);
   db=new Database(path.join(dataDir,'vitrinecity.db'));assert.equal(db.prepare("SELECT document_version FROM consent_records WHERE purpose='account_terms' ORDER BY id DESC LIMIT 1").get().document_version,'city-account-2026-09-08');
   const userId=db.prepare('SELECT id FROM users WHERE email=?').get(account.email).id;db.prepare("UPDATE users SET account_status='suspended' WHERE id=?").run(userId);assert.equal((await request('/vitriny-games.html',{headers})).status,403);assert.equal((await request('/api/games/farm',{headers})).status,403);
-  console.log('city-membership-integration: registration, session, consent, public commerce, gated city, persistent farm and privacy export passed');
+  console.log('city-membership-integration: public city, private gameplay/chat/rewards/checkout, registration, session, consent, persistent farm and privacy export passed');
 }finally{
   db?.close();if(child.exitCode===null&&child.signalCode===null){const exited=new Promise(r=>child.once('exit',r));child.kill();await exited;}
   const resolved=path.resolve(dataDir);if(path.dirname(resolved)===path.resolve(tmpdir())&&path.basename(resolved).startsWith('vitriny-city-member-'))rmSync(resolved,{recursive:true,force:true,maxRetries:5,retryDelay:100});

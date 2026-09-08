@@ -115,12 +115,13 @@ import { attachResultCover } from './search-result-cover.js';
     }
     for (const item of data.contents || []) {
       const card = node('article',undefined,'local-card'), heading = node('h3');
-      const affiliate = item.kind === 'affiliate';
-      const a = link(item.title,item.url,!affiliate); if (affiliate && a.tagName === 'A') a.rel = 'sponsored noopener noreferrer';
+      const affiliate = item.kind === 'affiliate' || item.affiliate === true || item.url?.startsWith('/ofertas/');
+      const a = link(item.title,item.url,Boolean(safeUrl(item.url,true))); if (affiliate && a.tagName === 'A') a.rel = 'sponsored noopener noreferrer';
       attachResultCover(card,item,{document,origin:location.origin});
       if(isOutboundResult(item,location.origin))heading.textContent=item.title;
       else heading.append(a);
-      card.append(node('small',affiliate?'OFERTA DE AFILIADO · Podemos receber comissão':'CONTEÚDO DA VITRINE'),heading,node('p',item.description));
+      const contentLabel = {course:'CURSO DA VITRINE',book:'LIVRO DIGITAL DA VITRINE',article:'ARTIGO DA VITRINE',recipe:'RECEITA DA VITRINE'}[item.kind] || 'CONTEÚDO DA VITRINE';
+      card.append(node('small',affiliate?'OFERTA DE AFILIADO · Podemos receber comissão':contentLabel),heading,node('p',item.description));
       reader.attach(card,{...item,affiliate:affiliate || item.url?.startsWith('/ofertas/')});
       local.append(card);
     }
@@ -141,7 +142,7 @@ import { attachResultCover } from './search-result-cover.js';
       }
       local.append(node('h3', title), grid);
     }
-    if (!local.childElementCount) local.append(node('p','Nenhuma loja ou produto encontrado para esta busca na Vitrine. Você pode pesquisar na internet ou tentar outro termo.','panel muted'));
+    if (!local.childElementCount) local.append(node('p','Nenhuma loja, produto ou conteúdo relacionado encontrado na Vitrine. Consulte os resultados da internet ou tente outro termo.','panel muted'));
     if(data.suggestedQuery){const button=node('button','Você quis dizer “'+data.suggestedQuery+'”?','primary');button.type='button';button.onclick=()=>search(data.suggestedQuery);local.prepend(button);}
   }
   async function search(value) {

@@ -113,6 +113,10 @@ test('explorer wiring, mobile fallback and JS syntax stay in the release gate',(
   assert.ok(js.includes("cityId==='vitrine-city'&&cityContext.status==='active'"));
   assert.ok(js.includes('sharedMaterials.has(material)'));assert.ok(js.includes('if(disposed)return;'));
   for(const id of ['cityLinks','cityStatus','travelStatus','worldGateLink','loadingText'])assert.ok(html.includes(`id="${id}"`));
-  assert.ok(html.includes('aria-label="Avançar"'));assert.ok(html.includes('href="/cidade.html"'));
+  assert.ok(html.includes('aria-label="Avançar"'));
+  assert.ok(html.includes('href="/?inicio=1"'),'Fallback opens the lightweight home even when direct city entry was selected');
+  assert.ok(html.includes('id="loadingGuide"'),'The guide is available while the 3D city loads');
+  assert.ok(html.includes('id="cityGuide"'));
+  assert.match(html,/<script[^>]+src="\/vitriny-city-guide\.js(?:\?[^"]*)?"/,'The destination guide loads independently of the 3D explorer');
   execFileSync(process.execPath,['--check',fileURLToPath(url)]);
 });

@@ -1,5 +1,10 @@
+import {toLegacyPublicPath} from './vitriny-public-routes.js';
+
 // Shared allowlist: unknown and private routes never load Google Analytics.
 export function measurementPage(pathname) {
+  // Alias visits share their established page classification. This does not
+  // expand measurement to private city pages, account pages or payment routes.
+  pathname = toLegacyPublicPath(pathname);
   const fixed = new Set(['/', '/index.html', '/descobrir', '/descobrir.html', '/loja', '/loja.html',
     '/entregas', '/entregas.html', '/social', '/social.html', '/cidade', '/cidade-premium', '/cidade-premium.html',
     '/pesquisar.html', '/buscar.html', '/plantas-e-jardinagem', '/noticias', '/receitas', '/esportes',

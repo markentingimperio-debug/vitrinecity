@@ -1,4 +1,5 @@
 import { setupProductionHardening } from './production-hardening.js';
+import {cleanPublicRoutes} from './clean-public-routes.js';
 import { setupCatalogProductImages } from './catalog-product-images.js';
 import {setupCityMembership} from './city-membership.js';
 import {setupCampaignPreferences} from './campaign-preferences.js';
@@ -8,6 +9,7 @@ import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import {ADS_TERMS_VERSION,ADS_VALIDITY_DAYS,creditExpiryForOrder} from './credits-policy.js';
 import {setupCityChat} from './city-chat.js';
 import {setupCityRewards} from './city-rewards.js';
+import {setupCourierAccount} from './courier-account.js';
 import { setupMediaCatalog } from './media-catalog.js';
 import { createCryptoObservability, mountCryptoObservability } from './crypto-observability.js';
 import { mountJarvis } from './jarvis-core.js';
@@ -67,6 +69,7 @@ import { setupLiveStudio } from './live-studio.js';
 import { sendInstagramLiveDirect } from './instagram-live-direct.js';
 
 const app = express();
+app.use(cleanPublicRoutes);
 setupProductionHardening(app);
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.DATA_DIR || '/data';
@@ -2607,6 +2610,10 @@ const cityRewards=setupCityRewards({app,db,requireUser,requireAdmin,sameOriginOn
     const data=await response.json();if(!response.ok)throw Error('Pagamento indisponível');return data;}
 });
 const cityChat=setupCityChat({app,db,requireUser,requireAdmin,sameOriginOnly,publicDir:path.join(dir,'public')});
+setupCourierAccount({app,db,requireCourier,requireAdmin,sameOriginOnly,hashPassword,verifyPassword,sessionHash,
+  allowAttempt:(key,limit,windowMs)=>allowAttempt(authAttempts,key,limit,windowMs),
+  sendMail:mailTransport?message=>mailTransport.sendMail({from:process.env.EMAIL_FROM||`VitrineCity <${SMTP_USER}>`,...message}):null,
+  siteUrl:SITE_URL,publicDir:path.join(dir,'public'),redispatch:dispatchNextCourier});
 setupCityMembership(app,{db,currentUser,requireUser,sameOriginOnly,isAdministrativeUser,grantGameReward:cityRewards.grantGame});
 const campaignPreferences=setupCampaignPreferences(app,{db,requireUser,sameOriginOnly,recordConsent});
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
@@ -4155,6 +4162,13 @@ function localDeliverySettings(){
     platformCommissionBps:Number(row.platform_commission_bps??LOCAL_DELIVERY_DEFAULTS.platformCommissionBps),
     maxDistanceMeters:Number(row.max_distance_meters??LOCAL_DELIVERY_DEFAULTS.maxDistanceMeters)};
 }
+app.get('/api/marketplace/local-delivery/availability',(_req,res)=>{
+  const enabled=localDeliverySettings().enabled&&Boolean(String(process.env.GOOGLE_MAPS_ROUTES_API_KEY||'').trim());
+  const cities=db.prepare('SELECT city,state FROM local_delivery_cities WHERE active=1 ORDER BY state,city').all();
+  // Public service capability only. Each order still requires a valid address,
+  // an eligible store, a route quote and the existing checkout checks.
+  return res.set('Cache-Control','no-store').json({enabled,cities});
+});
 function readStoreAdAttribution(req,storeReference){const [idText,token]=String(parseCookies(req).vc_store_ad_attr||'').split('.'),id=Number(idText);if(!Number.isInteger(id)||!token)return null;const row=db.prepare(`SELECT c.id FROM store_ad_campaigns c JOIN store_ad_events e ON e.campaign_id=c.id WHERE c.id=? AND c.store_reference=? AND e.event_token=? AND e.event_type='click' AND e.created_at>=datetime('now','-30 days')`).get(id,storeReference,token);return row?{campaignId:id,eventToken:token}:null;}
 function localDeliveryCityActive(city,state){
   return Boolean(db.prepare('SELECT 1 FROM local_delivery_cities WHERE city=? AND state=? AND active=1').get(String(city||'').trim(),String(state||'').trim().toUpperCase()));

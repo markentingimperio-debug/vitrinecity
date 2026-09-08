@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer">
+<title>Recuperar acesso de entregador | VC Entregas</title>
+<style>*{box-sizing:border-box}body{margin:0;background:#eff5fd;color:#10223e;font:16px/1.5 system-ui,sans-serif}main{width:min(480px,calc(100% - 32px));margin:7vh auto;background:#fff;border:1px solid #d7e4f3;border-radius:22px;padding:28px;box-shadow:0 15px 45px #173d7014}a{color:#1768e6}h1{line-height:1.15;font-size:30px}label{display:block;font-weight:700;margin-top:16px}input,button{font:inherit;width:100%;padding:13px;border-radius:12px}input{margin-top:6px;border:1px solid #adbed5}button{margin-top:22px;border:0;background:#1768e6;color:white;font-weight:800;cursor:pointer}button:disabled{opacity:.6}p{color:#526782}#message{min-height:24px;color:#793400;overflow-wrap:anywhere}[hidden]{display:none!important}</style>
+<script src="/courier-recovery.js" defer></script></head><body><main>
+<a href="/entregador.html">← VC Entregas</a><h1 id="title">Recuperar minha senha</h1>
+<form id="requestForm"><p>Use o e-mail de recuperação que você confirmou na sua conta de entregador.</p><label>E-mail<input name="email" type="email" maxlength="254" autocomplete="email" required></label><button>Enviar link de recuperação</button></form>
+<form id="verifyForm" hidden><p>Confirme que este e-mail pode ser usado para recuperar sua conta de entregador.</p><button>Confirmar meu e-mail</button></form>
+<form id="resetForm" hidden><p>Crie uma senha com pelo menos 10 caracteres. Ao concluir, você precisará entrar novamente.</p><label>Nova senha<input name="password" type="password" minlength="10" maxlength="200" autocomplete="new-password" required></label><label>Repita a nova senha<input name="confirmation" type="password" minlength="10" maxlength="200" autocomplete="new-password" required></label><button>Salvar nova senha</button></form>
+<p id="message" role="status" aria-live="polite"></p><p id="onboardingHelp">Ainda não confirmou um e-mail e esqueceu a senha? Peça à equipe uma senha temporária. Depois de entrar, abra “Minha conta e segurança” para cadastrar e confirmar seu e-mail. <a href="/contato">Falar com a equipe</a>.</p>
+<p><a href="/entregador.html">Voltar para entrar</a> · <a href="/recuperar-acesso-entregador.html">Solicitar outro link</a></p>
+</main></body></html>

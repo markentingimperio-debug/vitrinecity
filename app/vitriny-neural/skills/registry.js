@@ -5,7 +5,7 @@ function ensureFn(value,label){if(typeof value!=='function')throw new TypeError(
 function statOf(stats,id){if(!stats.has(id))stats.set(id,{success:0,fail:0,consecutiveFail:0,totalMs:0,lastMs:0,openedUntil:0,inputTokens:0,outputTokens:0,totalTokens:0});return stats.get(id);}
 function usageOf(output){const u=output?.usage||output?.output?.usage||{};const input=Number(u.prompt_tokens??u.input_tokens??u.promptTokens??u.inputTokens??0)||0;const outputTokens=Number(u.completion_tokens??u.output_tokens??u.completionTokens??u.outputTokens??0)||0;const total=Number(u.total_tokens??u.totalTokens??0)||input+outputTokens;return{inputTokens:Math.max(0,input),outputTokens:Math.max(0,outputTokens),totalTokens:Math.max(0,total)};}
 
-export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circuitCooldownMs=60000}={}){
+export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circuitCooldownMs=60000,knowledgeProvider=null}={}){
   const skills=new Map(),providers=new Map(),stats=new Map(),providerPolicies=new Map();
   const threshold=Math.max(1,Math.min(20,Number(circuitFailureThreshold)||3));
   const cooldown=Math.max(1000,Math.min(30*60*1000,Number(circuitCooldownMs)||60000));
@@ -66,6 +66,13 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
   }
 
   async function invoke(capability,input,{preferredProviders=[],timeoutMs=120000,evaluation=false,maxTokens=null}={}){
+    let request=input;
+    if(typeof knowledgeProvider==='function'&&input&&typeof input==='object'&&!Array.isArray(input)){
+      // Caller-supplied knowledge cannot impersonate the reviewed system corpus.
+      const {platformKnowledge:ignored,...plainInput}=input;request=plainInput;
+      const query=[input.task,input.question,input.message,input.objective,input.prompt].filter(value=>typeof value==='string').join(' ').slice(0,6000);
+      try{const sources=knowledgeProvider(query);if(Array.isArray(sources)&&sources.length)request={...plainInput,platformKnowledge:{scope:'public_platform_facts_only',sources}};}catch{/* Knowledge is optional; its failure does not grant broader access. */}
+    }
     const list=await candidates(capability,{preferredProviders,evaluation});
     if(!list.length)throw new Error(`Nenhum provider disponível para ${capability}.`);
     const attempts=[];
@@ -74,7 +81,7 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
       try{
         const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);
         try{
-          const output=await provider.invoke({capability,input,signal:controller.signal,options:{evaluation,maxTokens}});
+          const output=await provider.invoke({capability,input:request,signal:controller.signal,options:{evaluation,maxTokens}});
           const elapsed=Math.max(0,now()-started),s=statOf(stats,provider.id),usage=usageOf(output);s.success++;s.consecutiveFail=0;s.lastMs=elapsed;s.totalMs+=elapsed;s.openedUntil=0;s.inputTokens+=usage.inputTokens;s.outputTokens+=usage.outputTokens;s.totalTokens+=usage.totalTokens;
           return {provider:provider.id,output,durationMs:elapsed,usage,attempts:[...attempts,{provider:provider.id,ok:true}]};
         }finally{clearTimeout(timer);}

@@ -1,11 +1,9 @@
 import { searchPromotions } from './search-promotions.js';
 import { suggestSpelling } from './search-spelling.js';
 import { recordOperation } from './platform-operations.js';
+import { normalizeSearch, searchTerms, publishedPlatformContent, rankSearchContent } from './search-platform-content.js';
+export { normalizeSearch } from './search-platform-content.js';
 // VitrineRank v1: explainable local relevance, using only published inventory.
-export function normalizeSearch(value) {
-  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-}
 
 export function setupDiscoverySearch(app, db, publicStorePath, contentProvider = () => []) {
   db.function('vc_normalize', { deterministic: true }, normalizeSearch);
@@ -16,10 +14,7 @@ export function setupDiscoverySearch(app, db, publicStorePath, contentProvider =
     const found=search(candidate,city);return (found.stores.length+found.products.length+(found.contents?.length||0))?candidate:null;
   }
   function search(query, city) {
-    const stopWords = new Set(['como','fazer','um','uma','de','do','da','para','com','o','a','os','as','e','em','no','na','quero','comprar']);
-    const words = normalizeSearch(query).split(' ').filter(Boolean);
-    const relevant = words.filter(word => !stopWords.has(word));
-    const terms = (relevant.length ? relevant : words).slice(0, 8);
+    const terms = searchTerms(query);
     if (normalizeSearch(query).length < 2) return { stores: [], products: [] };
     const location = normalizeSearch(city);
     const match = expression => terms.map(() => `instr(' '||vc_normalize(${expression}), ?) > 0`).join(' AND ');
@@ -53,16 +48,16 @@ export function setupDiscoverySearch(app, db, publicStorePath, contentProvider =
         officialStore: row.storeReference === 'official_agrotecnica',
         rankReason: row.storeReference === 'official_agrotecnica' ? 'Loja oficial · Prioridade da plataforma para produtos relacionados à busca' : row.verifiedReviews ? 'Relevância e avaliações de compras verificadas' : 'Correspondência com a sua busca' }));
     const promoted = searchPromotions(query);
-    const contents = [...promoted, ...contentProvider().filter(item => !promoted.some(p => p.url === item.url) && terms.every(term => (' '+normalizeSearch([item.title,item.description,item.keywords].filter(Boolean).join(' '))).includes(' '+term)))]
-      .slice(0, 20);
+    const contents = [...promoted, ...rankSearchContent([...contentProvider(),...publishedPlatformContent(db,query)],query)
+      .filter(item => !promoted.some(p => p.url === item.url))].slice(0, 20);
     return { stores, products, contents };
   }
   app.get('/api/discovery/search/suggestions', (req, res) => {
     const query = String(req.query.q || '').trim().slice(0, 80);
     const { stores, products, contents = [] } = search(query, req.query.city);
     const seen = new Set();
-    const kinds = {course:'Curso',recipe:'Receita',news:'Notícia',sports:'Esporte',article:'Artigo',affiliate:'Oferta de afiliado'};
-    const suggestions = [...products.filter(p=>p.officialStore).slice(0,6).map(p=>({label:p.name,type:'product',category:'Loja oficial · Prioridade da plataforma',city:p.city})),...contents.slice(0, 3).map(item => ({ label: item.title, type: 'content', category: kinds[item.kind] || 'Conteúdo' })),...stores.slice(0, 4).map(s => ({ label: s.name, type: 'store', category: s.segment, city: s.city })),
+    const kinds = {course:'Curso',recipe:'Receita',news:'Notícia',sports:'Esporte',article:'Artigo',book:'Livro digital',affiliate:'Oferta de afiliado'};
+    const suggestions = [...products.filter(p=>p.officialStore).slice(0,3).map(p=>({label:p.name,type:'product',category:'Loja oficial · Prioridade da plataforma',city:p.city})),...contents.slice(0, 4).map(item => ({ label: item.title, type: 'content', category: item.kind==='affiliate'||item.url?.startsWith('/ofertas/')?'Oferta de afiliado':kinds[item.kind] || 'Conteúdo' })),...stores.slice(0, 4).map(s => ({ label: s.name, type: 'store', category: s.segment, city: s.city })),
       ...products.filter(p=>!p.officialStore).slice(0, 6).map(p => ({ label: p.name, type: 'product', category: p.category, city: p.city }))]
       .filter(item => { const key = normalizeSearch(item.label); if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, 8);
     if(!suggestions.length){const candidate=correction(query,req.query.city);if(candidate)suggestions.push({label:candidate,type:'content',category:'Você quis dizer?'});}
@@ -73,6 +68,6 @@ export function setupDiscoverySearch(app, db, publicStorePath, contentProvider =
     const city = String(req.query.city || '').trim().slice(0, 100);
     const result=search(query,city),total=result.stores.length+result.products.length+(result.contents?.length||0);
     if(normalizeSearch(query).length>=2){recordOperation(db,'search');if(!total)recordOperation(db,'search_empty');}
-    res.json({ query, city, rankingVersion: 'vitrine-local-v3-official-first', ...result, suggestedQuery:total?null:correction(query,city) });
+    res.json({ query, city, rankingVersion: 'vitrine-local-v4-published-content', ...result, suggestedQuery:total?null:correction(query,city) });
   });
 }
