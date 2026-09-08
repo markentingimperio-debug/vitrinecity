@@ -27,7 +27,7 @@ Os limites de páginas são decisões do produto, incluindo o mínimo de dez sol
 
 | Regra | Preparação automática | Edição manual |
 | --- | --- | --- |
-| Número de páginas | 10 a 15 | 10 a 40 |
+| Número de páginas | 10 a 20 após encaixe do texto | 10 a 40 |
 | Texto | Páginas distintas e pelo menos 650 caracteres no conjunto; limites menores na capa e nas duas páginas finais | Até 130 caracteres por bloco, com conteúdo completo no conjunto |
 | Título | 8 a 65 caracteres | Até 90 caracteres |
 | Descrição | 30 a 160 caracteres | 30 a 160 caracteres |
@@ -37,7 +37,11 @@ Uma história automática aprovada solicita **uma imagem conceitual de IA**, dep
 
 Produtos, serviços, cursos e ofertas também precisam de **uma foto real do catálogo**, exibida na segunda página. A imagem conceitual não substitui essa fotografia nem comprova características do produto. Os créditos diferenciam `Ilustração IA` de `Foto do catálogo`. Uma foto inexistente, inacessível ou pequena mantém a preparação pendente.
 
-As imagens aceitas são PNG, JPEG ou WebP locais validados, com pelo menos 640 pixels em cada lado, limites de arquivo e de dimensões. Fotos remotas de catálogo passam pelo importador restrito já existente; o editor não aceita uma URL arbitrária para o FFmpeg. O cartaz é recortado em 900 × 1200, preservando a proporção, e reutilizado por hash. O logo deve ser quadrado, com pelo menos 96 pixels. O seletor oferece miniaturas, busca e aplicação às demais páginas somente quando essa opção é escolhida.
+As imagens aceitas são PNG, JPEG ou WebP locais validados, com pelo menos 640 pixels em cada lado, limites de arquivo e de dimensões. A exceção são fotos reais de catálogo com pelo menos 640 × 360 pixels: elas aparecem inteiras, com `object-fit: contain`, sem esticar nem cortar o produto. Fotos remotas de catálogo passam pelo importador restrito já existente; o editor não aceita uma URL arbitrária para o FFmpeg. O cartaz é recortado em 900 × 1200, preservando a proporção, e reutilizado por hash. O logo deve ser quadrado, com pelo menos 96 pixels. O seletor oferece miniaturas, busca e aplicação às demais páginas somente quando essa opção é escolhida.
+
+Quando `OPENAI_API_KEY` está configurada, as histórias usam `gpt-image-2` pela API de imagens da OpenAI, em 1024 × 1536 e qualidade média. Sem essa chave, usam o modelo de imagem configurado no OpenRouter. É uma escolha antes da chamada, sem repetição entre provedores em caso de falha. A conexão OpenAI foi validada com uma geração real em 8 de setembro de 2026; o modelo padrão do OpenRouter devolveu 404 nessa verificação.
+
+O encaixe automático redistribui frases e palavras inteiras que excedem uma tela, preservando a sequência do conteúdo. A versão encaixada passa pela revisão independente antes de qualquer geração de imagem. Não há corte de informação nem preenchimento repetitivo para atingir dez páginas.
 
 A penúltima página oferece acesso ao conteúdo, produto ou serviço de origem dentro da VitrineCity. Nas ofertas, ela inclui a identificação do vínculo de afiliado. A página final conclui o assunto e oferece **Explorar a VitrineCity**, com destino à página principal `/`. As fontes consultadas ficam acessíveis em `/stories/:slug/fontes`; essa página complementar recebe `noindex,follow`. A informação essencial deve estar na própria história.
 

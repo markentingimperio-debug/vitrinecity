@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {createWebStoryAI} from '../web-story-ai.js';
+import {createWebStoryAI,normalizeStoryCopy} from '../web-story-ai.js';
+import {storyPageVisibleText} from '../web-story-render.js';
 
 const pages=[
   'Descubra um cultivo mais atento.',
@@ -30,8 +31,8 @@ test('one generation, independent review, one image; complete 10 page draft only
   assert.match(calls.text[0].system,/DADO NÃO CONFIÁVEL/);assert.match(calls.text[1].system,/independente/);
   assert.equal(result.draft.pages[0].imageCredit,'Ilustração IA');assert.equal(result.published,undefined);
 });
-test('incomplete, repeated, fabricated numbers and oversized cover stop before image/review',async()=>{
-  const variants=[{...copy(),pages:copy().pages.slice(0,9)},{...copy(),pages:copy().pages.map(()=>({text:pages[1]}))},{...copy(),title:'Cultivo com 999 resultados'},{...copy(),pages:copy().pages.map((p,i)=>i===0?{text:'x'.repeat(36)}:p)}];
+test('thin, repeated, fabricated numbers and unsplittable words stop before image/review',async()=>{
+  const variants=[{...copy(),pages:copy().pages.slice(0,3)},{...copy(),pages:copy().pages.map(()=>({text:pages[1]}))},{...copy(),title:'Cultivo com 999 resultados'},{...copy(),pages:copy().pages.map((p,i)=>i===0?{text:'x'.repeat(101)}:p)}];
   for(const generation of variants){const {ai,calls}=setup({generation}),result=await ai.generate(source());assert.equal(result.approved,false);assert.equal(calls.text.length,1);assert.equal(calls.image.length,0);}
 });
 test('news and Trends without fetched independent evidence have no AI calls',async()=>{
@@ -52,9 +53,36 @@ test('real catalog photo remains inside affiliate draft; outbound CTA ignored',a
   assert.equal(result.approved,true);assert.equal(result.draft.pages[1].image,'/assets/planta.jpg');assert.equal(result.draft.pages[1].imageCredit,'Foto do catálogo');
   assert.equal(result.draft.sourcePath,'/ofertas/plantas');assert.match(result.draft.affiliateDisclosure,/comissão/);assert.equal(calls.image.length,1);
 });
-test('affiliate disclosure reserves penultimate page space before paid image',async()=>{
+test('affiliate disclosure repair reserves penultimate space and keeps displaced text',async()=>{
   const {ai,calls}=setup();const result=await ai.generate({...source(),kind:'affiliate',commercial:true,facts:{affiliate:true},sourcePath:'/ofertas/plantas',image_url:'/assets/planta.jpg'});
-  assert.equal(result.approved,false);assert.equal(result.notes,'ai_page_invalid');assert.equal(calls.text.length,1);assert.equal(calls.image.length,0);
+  assert.equal(result.approved,true);assert.ok(result.draft.pages.at(-2).text.length<=45);assert.equal(calls.text.length,2);assert.equal(calls.image.length,1);
+  assert.ok(result.draft.pages.map(p=>p.text).join(' ').includes(pages[8]));assert.ok(result.draft.pages.every((_,i)=>[...storyPageVisibleText(result.draft,i)].length<=180));
+});
+test('common oversized model copy is split before review without losing or repeating source words',async()=>{
+  const generation=copy();generation.pages[0].text='Observe o seu ambiente e descubra como organizar o cuidado com suas plantas.';
+  generation.pages[1].text+=' '+generation.pages[2].text;generation.pages.splice(2,1);
+  generation.pages.at(-1).text='Gostou de observar o cultivo? Você pode explorar este assunto e conhecer outras ideias na VitrineCity com calma.';
+  const original=generation.pages.map(p=>p.text).join(' '),normalized=normalizeStoryCopy(generation);
+  const tokens=text=>text.split(/\s+/).reduce((m,word)=>(m[word]=(m[word]||0)+1,m),{}),old=tokens(original),next=tokens(normalized.pages.map(p=>p.text).join(' '));
+  for(const [word,n] of Object.entries(old))assert.ok(next[word]>=n,'lost word: '+word);
+  assert.ok(normalized.pages.map(p=>p.text).join(' ').includes(original),'the original narrative order is preserved');
+  assert.ok(normalized.pages.length>=10&&normalized.pages.length<=15);assert.equal(new Set(normalized.pages.map(p=>p.text)).size,normalized.pages.length);
+  const x=setup({generation}),result=await x.ai.generate(source());assert.equal(result.approved,true);assert.equal(x.calls.text.length,2);assert.equal(x.calls.image.length,1);
+  assert.deepEqual(JSON.parse(x.calls.text[1].user).story.pages,result.draft.pages.map(p=>({text:p.text})),'review sees the repaired text');
+  assert.ok(result.draft.pages.every((_,i)=>[...storyPageVisibleText(result.draft,i)].length<=180));
+});
+test('normalization never conceals unsupported numbers or accepts an ungrounded review',async()=>{
+  const generation=copy();generation.pages[1].text+=' Foram 999 resultados adicionais e exclusivos para o nosso público.';
+  const first=setup({generation});assert.equal((await first.ai.generate(source())).notes,'ai_unbacked_numbers');assert.equal(first.calls.image.length,0);
+  const second=setup({generation:{...copy(),pages:copy().pages.map((p,i)=>i===1?{text:p.text+' Consulte também a página do assunto.'}:p)},review:{...approved(),grounded:false}});
+  assert.equal((await second.ai.generate(source())).approved,false);assert.equal(second.calls.image.length,0);
+});
+test('long model responses fit up to twenty screens without dropping the original narrative',()=>{
+  const generated=copy();for(const page of generated.pages)page.text+=' Observe também o contexto apresentado antes de avaliar esta informação.';
+  const original=generated.pages.map(p=>p.text).join(' '),repaired=normalizeStoryCopy(generated);
+  assert.ok(repaired.pages.length>15&&repaired.pages.length<=20);
+  assert.ok(repaired.pages.map(p=>p.text).join(' ').includes(original));
+  assert.ok(repaired.pages.slice(1,-2).every(p=>p.text.length<=100));
 });
 test('bad destination and too little source stay pending without calls',async()=>{
   for(const s of [{...source(),sourcePath:'//evil.test/a'},{...source(),sourcePath:'/api/admin'},{...source(),body:'Pequeno.',summary:'Breve.'}]){const {ai,calls}=setup();assert.equal((await ai.generate(s)).approved,false);assert.equal(calls.text.length,0);}
