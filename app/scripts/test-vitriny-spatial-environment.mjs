@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {planSpatialCityEnvironment} from '../vitriny-spatial/city-environment.js';
 
+const isInsideTransit=position=>Math.abs(position.x)<58&&position.z>74&&position.z<128;
+
 for(const cityId of ['vitrine-city','silvania','anapolis','goiania']){
   const lite=planSpatialCityEnvironment(cityId,{profileId:'LITE'});
   const standard=planSpatialCityEnvironment(cityId,{profileId:'STANDARD'});
@@ -34,8 +36,11 @@ for(const cityId of ['vitrine-city','silvania','anapolis','goiania']){
     assert.ok(['commerce','social','creator','food','education','entertainment','business','services'].includes(light.districtId));
     assert.ok(light.accentIndex>=0&&light.accentIndex<8);assert.ok(light.height>=5);assert.ok(light.intensity>=.7&&light.intensity<=1);
     assert.ok(Number.isFinite(light.position.x)&&Number.isFinite(light.position.z));
+    assert.equal(isInsideTransit(light.position),false);
   }
   assert.equal(new Set(lite.districtLights.map(item=>item.districtId)).size,8);
+  assert.equal(lite.districtLights.length,8);
+  assert.ok(lite.districtLights.every(light=>!isInsideTransit(light.position)));
   for(const slot of ultra.premiumSlots){
     assert.equal(slot.status,'available');assert.equal(slot.sponsor,'');assert.ok(slot.slotId.startsWith(`premium:${cityId}:`));
   }
@@ -55,4 +60,4 @@ assert.equal(sponsored.premiumSlots.find(slot=>slot.slotId==='premium:vitrine-ci
 assert.equal(sponsored.premiumSlots.find(slot=>slot.slotId==='premium:vitrine-city:1')?.sponsor,'');
 
 assert.throws(()=>planSpatialCityEnvironment('nao-existe'),/city_not_found/);
-console.log(JSON.stringify({ok:true,cities:4,profiles:3,premium:true,districtFurniture:true,districtLights:true,premiumOverlay:true}));
+console.log(JSON.stringify({ok:true,cities:4,profiles:3,premium:true,districtFurniture:true,districtLights:true,premiumOverlay:true,transitProtected:true}));
