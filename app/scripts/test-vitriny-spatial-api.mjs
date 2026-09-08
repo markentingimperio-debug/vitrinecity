@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import express from 'express';
 import {SPATIAL_CITIES,listSpatialCities,spatialCity,spatialCityDistrict} from '../vitriny-spatial/city-registry.js';
-import {setupSpatialApi,spatialApiChunk} from '../spatial-api.js';
+import {setupSpatialApi,spatialApiChunk,spatialNavigationContext} from '../spatial-api.js';
 
 assert.equal(SPATIAL_CITIES.length,5);
 assert.equal(new Set(SPATIAL_CITIES.map(city=>city.id)).size,5);
@@ -14,6 +14,17 @@ assert.equal(spatialCityDistrict('goiania','commerce').path,'/v/br/go/goiania/co
 assert.equal(spatialCityDistrict('vianopolis','social').path,'/v/br/go/vianopolis/social');
 assert.equal(listSpatialCities({status:'preview'}).length,4);
 assert.equal(SPATIAL_CITIES.every(city=>city.districts.length===8),true);
+
+const previewContext=spatialNavigationContext('vianopolis');
+assert.equal(previewContext.contextMode,'navigation-only');
+assert.equal(previewContext.city.id,'vianopolis');
+assert.equal(previewContext.capabilities.social,true);assert.equal(previewContext.capabilities.map,true);
+assert.equal(previewContext.capabilities.marketplace,false);assert.equal(previewContext.capabilities.deliveries,false);
+assert.equal(previewContext.modules.find(item=>item.id==='marketplace').href,'/loja.html?cidade=vianopolis');
+assert.equal(previewContext.modules.find(item=>item.id==='marketplace').enabled,false);
+const activeContext=spatialNavigationContext('vitrine-city');
+assert.equal(activeContext.modules.every(item=>item.enabled),true);
+assert.throws(()=>spatialNavigationContext('missing'),/city_not_found/);
 
 const a=spatialApiChunk('anapolis',2,-3),b=spatialApiChunk('anapolis',2,-3),c=spatialApiChunk('goiania',2,-3),v=spatialApiChunk('vianopolis',2,-3);
 assert.deepEqual(a,b);
@@ -31,7 +42,12 @@ const base=`http://127.0.0.1:${server.address().port}`;
 async function request(path){const response=await fetch(base+path);return{status:response.status,cache:response.headers.get('cache-control'),json:await response.json()};}
 try{
   const root=await request('/api/spatial/v1');
-  assert.equal(root.status,200);assert.equal(root.json.apiVersion,1);assert.equal(root.json.cityCount,5);assert.equal(root.json.capabilities.includes('themed-environment'),true);assert.equal(root.json.capabilities.includes('premium-zone-registry'),true);
+  assert.equal(root.status,200);assert.equal(root.json.apiVersion,1);assert.equal(root.json.cityCount,5);assert.equal(root.json.capabilities.includes('themed-environment'),true);assert.equal(root.json.capabilities.includes('premium-zone-registry'),true);assert.equal(root.json.capabilities.includes('city-navigation-context'),true);assert.equal(root.json.context,'/api/spatial/v1/context');
+  const context=await request('/api/spatial/v1/context?cidade=vianopolis');
+  assert.equal(context.status,200);assert.equal(context.json.contextMode,'navigation-only');assert.equal(context.json.city.name,'Vianópolis');assert.equal(context.json.capabilities.marketplace,false);assert.equal(context.json.modules.find(item=>item.id==='map').href,'/mapa-real.html?cidade=vianopolis');assert.ok(context.cache.includes('public'));
+  const hubContext=await request('/api/spatial/v1/context?city=vitrine-city');
+  assert.equal(hubContext.status,200);assert.equal(hubContext.json.modules.every(item=>item.enabled),true);
+  assert.equal((await request('/api/spatial/v1/context?cidade=missing')).status,404);
   const cities=await request('/api/spatial/v1/cities?status=preview&region=go');
   assert.equal(cities.status,200);assert.equal(cities.json.count,4);assert.ok(cities.cache.includes('public'));
   assert.ok(cities.json.items.some(item=>item.id==='vianopolis'));
@@ -57,4 +73,4 @@ try{
   assert.equal((await request('/api/spatial/v1/cities?status=private')).status,400);
 }finally{await new Promise(resolve=>server.close(resolve));}
 
-console.log(JSON.stringify({ok:true,cities:SPATIAL_CITIES.map(city=>({id:city.id,status:city.status})),buildings:a.buildings.length,premiumApi:true,vianopolis:true}));
+console.log(JSON.stringify({ok:true,cities:SPATIAL_CITIES.map(city=>({id:city.id,status:city.status})),buildings:a.buildings.length,premiumApi:true,cityContextApi:true,vianopolis:true}));
