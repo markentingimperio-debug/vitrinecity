@@ -174,6 +174,48 @@ A decisão preserva menor exposição de dados e evita uma segunda taxonomia con
 
 ---
 
+## 2026-09-08 — Fechamento técnico para implantação Multiversal
+
+**Estado:** CONCLUÍDO NO GIT / produção não alterada.
+
+### Verificação do release sweep
+
+Foi confirmado que `app/scripts/test-platform-release.mjs` já executa automaticamente todos os arquivos `test-*.mjs` do diretório de scripts, exceto o smoke público dependente de rede. Portanto a cobertura existente de mobile/WebGL, fallback clássico, HUD city-aware e jornada Multiversal → mapa real já faz parte do gate isolado do PR.
+
+### Smoke pós-deploy Multiversal
+
+Foi adicionado `app/scripts/smoke-vitriny-multiversal.mjs`, exposto como `npm run test:smoke:multiversal`. O smoke usa `BASE_URL` e valida, sem alterar dados:
+
+- `/api/health`;
+- páginas públicas Multiversal e mapa real;
+- Spatial API v1;
+- Vitrine City como cidade `active`;
+- Vianópolis como `preview`, mantendo Marketplace e Entregas desabilitados;
+- Premium Zones com estados permitidos e sem exposição de patrocinador em slot `reserved`;
+- rejeição de cidade desconhecida.
+
+O contrato do smoke é protegido por `test-vitriny-multiversal-smoke-contract.mjs`, que roda no release sweep offline e valida sintaxe, endpoints obrigatórios, timeout, `no-store` e regras de isolamento.
+
+Commits principais:
+
+- `c6363e49dc9fbd936fbc61881794ec48d3a8529d` — smoke pós-deploy Multiversal;
+- `b1ea34aee4a4525cdf2791b061bc4a7b07ac3d98` — comando `test:smoke:multiversal`;
+- `99a09f1ce5fa197ac0678584e1e8fa94bd3079b3` — teste do contrato do smoke;
+- `fcaa58c62fe9b950bd1223acec47e2709199915b` — smoke independente do estado comercial das Premium Zones;
+- `1f8558d6e48a84af7cf1e6f44a393589244b213b` — hardening final do contrato do smoke.
+
+### Evidência CI do head funcional `1f8558d6e48a84af7cf1e6f44a393589244b213b`
+
+- **Vitriny Neural #403: SUCCESS**;
+- **Verify release #405: SUCCESS**;
+- build da aplicação: aprovado;
+- build do live-studio: aprovado;
+- release sweep e contrato do smoke: aprovados.
+
+O smoke de rede não é executado dentro do CI isolado porque depende do runtime implantado. Ele é o primeiro gate após a reconciliação/deploy controlado.
+
+---
+
 ## Relação PR #144 × PR #145
 
 ### Mantido no #144
@@ -225,10 +267,10 @@ A integração disponível nesta sessão não expõe shell/arquivos da VPS, port
 
 ## Próxima sequência
 
-1. Validar mobile/WebGL e jornadas E2E da experiência espacial, incluindo fallback e HUD city-aware.
-2. Reconciliar GitHub × VPS conforme issue #146 quando houver acesso de leitura ao runtime/arquivos do servidor.
-3. Registrar branch/commit da VPS, diferenças rastreadas/não rastreadas e arquivos exclusivos sem expor segredos.
-4. Preservar snapshot/tag/imagem saudável antes de qualquer alteração operacional.
-5. Consolidar diferenças válidas em branch revisável e executar `ops/verify-release.sh` no candidato reconciliado.
-6. Validar `/api/health`, páginas públicas e jornadas críticas.
-7. Só então avaliar merge do PR #144, entrada oficial na home e deploy do Multiversal.
+1. Reconciliar GitHub × VPS conforme issue #146 quando houver acesso de leitura ao runtime/arquivos do servidor.
+2. Registrar branch/commit da VPS, diferenças rastreadas/não rastreadas e arquivos exclusivos sem expor segredos.
+3. Preservar snapshot/tag/imagem saudável antes de qualquer alteração operacional.
+4. Consolidar somente diferenças válidas em branch revisável e executar `ops/verify-release.sh` no candidato reconciliado.
+5. Implantar de forma controlada somente após a reconciliação aprovada.
+6. Executar `BASE_URL=<runtime> npm run test:smoke:multiversal` e o smoke público legado.
+7. Confirmar `/api/health`, páginas públicas, jornadas críticas e rollback saudável antes de entrada oficial na home.
