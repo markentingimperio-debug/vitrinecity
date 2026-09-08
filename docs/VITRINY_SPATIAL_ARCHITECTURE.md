@@ -13,7 +13,6 @@ Transformar a Vitrine City em uma interface espacial expansível sem substituir 
 5. **Render adaptativo** — Lite, Standard e Ultra conforme capacidade do dispositivo e FPS real.
 6. **URLs indexáveis** — cada mundo/distrito/local mantém rota HTML/SEO paralela à navegação 3D.
 7. **Vitriny Neural recomenda; não quebra física** — personalização muda destaque, rota, conteúdo e ranking sem reescrever o mundo arbitrariamente.
-8. **Privacidade por padrão** — presença e telemetria espaciais são agregadas/efêmeras e não transportam identidade pessoal.
 
 ## Hierarquia espacial
 
@@ -61,42 +60,25 @@ O perfil pode descer ou subir com base em FPS observado.
 
 Gera dimensões e variações determinísticas de edifícios a partir de `seed + id + categoria`. Um mesmo ID sempre produz o mesmo prédio. Isso permite reconstrução sem salvar malha duplicada para cada loja.
 
+### City Identity
+
+Cada cidade possui identidade espacial declarativa: `themeId`, tagline, paleta segura e um landmark digital próprio. A identidade é exposta pela Spatial API e validada no cliente antes de afetar HUD e materiais.
+
+### Environment Layer
+
+O `city-environment` produz um plano determinístico de skyline, vegetação, iluminação, mobiliário e zonas urbanas com densidade diferente para Lite, Standard e Ultra. A API publica o plano em `/api/spatial/v1/cities/:cityId/environment?profile=...` e o cliente valida todos os descritores antes do renderer Three.js materializar a cena.
+
+O renderer usa `InstancedMesh` para skyline, vegetação, postes e mobiliário repetitivo, reduzindo draw calls. A camada é apenas visual: não possui acesso a checkout, estoque, autenticação ou permissões.
+
 ### Central Plaza
 
 Primeiro espaço premium. O núcleo visual é `Vitriny Neural Core`, cercado por oito distritos: Commerce, Social, Creator, Food, Education, Entertainment, Business e Services.
 
 ### Commerce Live Layer
 
-A camada Commerce consulta `/api/marketplace/stores` e transforma lojas publicadas em edifícios espaciais determinísticos. A entidade 3D mantém somente referência, apresentação pública e coordenadas; catálogo, estoque, preço e regras continuam pertencendo ao marketplace.
+A camada Commerce já pode consultar `/api/marketplace/stores` e transformar lojas publicadas em edifícios espaciais determinísticos. A entidade 3D mantém somente referência, apresentação pública e coordenadas; catálogo, estoque, preço e regras continuam pertencendo ao marketplace.
 
-Ao selecionar um edifício de loja, o usuário entra no showroom espacial isolado. O showroom consulta apenas APIs públicas do marketplace, filtra o catálogo pela referência da loja e materializa produtos como entidades clicáveis. A página pública HTML da loja e as páginas de produto continuam sendo a fonte canônica para SEO e compra.
-
-### Live District Layer
-
-O mesmo princípio agora é aplicado aos demais distritos sem duplicar backend:
-
-- **Social District** consome sugestões públicas de perfis e transforma perfis em entidades espaciais clicáveis;
-- **Education District** consome cursos públicos e materializa experiências educacionais como pavilhões;
-- **Services District** consome serviços digitais públicos e materializa quiosques/edifícios de solução;
-- **Creator District** usa campanhas públicas do programa de criadores/afiliados como missões espaciais;
-- **Food Avenue** usa estabelecimentos publicados do marketplace para formar uma avenida de alimentação;
-- **Business District** usa empresas já publicadas para compor um skyline corporativo, sem expor a base administrativa de prospecção;
-- **Entertainment District** usa itens públicos da Vitriny Social para formar uma arena de telas/conteúdo;
-- cada distrito mantém um `fallbackHref` para a experiência HTML clássica.
-
-Esses distritos vivos projetam apenas dados públicos já existentes. Dados administrativos, prospects, pagamentos e operações privadas não são materializados no espaço público.
-
-### Presence v2
-
-A presença espacial usa sessão aleatória por aba, heartbeat com TTL curto e contagem agregada por distrito. A versão v2 adiciona um canal SSE (`/api/spatial/presence/stream`) para distribuir mudanças de contagem em tempo real sem expor a identidade dos visitantes.
-
-O servidor mantém Presence em memória de processo. Não grava conta, IP, localização pessoal ou histórico no banco. Sessões expiradas são removidas automaticamente, e os clientes recebem somente totais agregados por distrito e total do multiverso.
-
-### Spatial Telemetry
-
-A telemetria espacial coleta apenas eventos permitidos e agregáveis: entrada/saída de distrito, abertura de entidade, entrada em portal e amostras de renderização. Os campos são enums restritos de distrito, perfil de render, faixa de FPS e tipo de entidade.
-
-Não são enviados URL completa, texto digitado, identificador de usuário, sessionId de presença, IP persistente ou payload livre. O servidor agrega os eventos em janelas temporais em memória e disponibiliza o tracker em `app.locals.spatialTelemetry` para futura integração administrativa/Neural sem abrir métricas operacionais ao público.
+Ao selecionar um edifício de loja, o usuário entra no showroom espacial isolado. O showroom consulta apenas APIs públicas do marketplace, filtra o catálogo pela referência da loja e materializa até 24 produtos como entidades clicáveis. A página pública HTML da loja e as páginas de produto continuam sendo a fonte canônica para SEO e compra.
 
 ### Spatial Session Return
 
@@ -133,7 +115,7 @@ A Neural recebe sinais agregados de navegação espacial e pode sugerir:
 - pré-carregamento de chunks;
 - nível de renderização quando houver pressão de desempenho.
 
-Presence e telemetria fornecem apenas sinais agregados. Alterações de pagamentos, permissões, segurança e deploy continuam fora da autonomia espacial.
+Alterações de pagamentos, permissões, segurança e deploy continuam fora da autonomia espacial.
 
 ## SEO
 
@@ -145,13 +127,12 @@ O mundo 3D não substitui páginas indexáveis. Cada entidade comercial deve con
 2. **Renderer v1** — Three.js, câmera, LOD, ciclo load/unload e descarte de recursos.
 3. **Central Plaza visual** — arquitetura premium e portais.
 4. **Commerce District v1** — Store ID -> Building ID, lojas vivas, showroom 3D, produtos clicáveis e retorno à posição anterior.
-5. **Live Districts v1** — Social, Education, Services, Creator, Food, Business e Entertainment conectados a dados públicos reais.
-6. **Presence v2 + Telemetry v1** — heartbeat, TTL, SSE em tempo real e telemetria agregada de navegação/performance.
-7. **Spatial API** — cidades, chunks e entidades servidos por endpoint versionado dedicado quando o volume justificar.
-8. **Presence v3 / Avatares** — representação individual somente com regras explícitas de privacidade e escala distribuída.
-9. **Multicity** — Silvânia, Anápolis, Goiânia e expansão por demanda.
-10. **WebGPU/VR** — somente após métricas provarem necessidade.
+5. **Spatial API** — cidades, chunks, identidade e ambiente servidos por endpoint versionado.
+6. **City Environment** — skyline temático, vegetação, iluminação, mobiliário e zonas premium adaptativos.
+7. **Presence** — presença agregada; depois avatares e WebSocket.
+8. **Multicity** — Silvânia, Anápolis, Goiânia e expansão por demanda.
+9. **WebGPU/VR** — somente após métricas provarem necessidade.
 
 ## Critério para produção
 
-O Spatial Core entra primeiro como rota isolada/preview. A cidade atual só passa a depender dele depois de testes de FPS, memória, fallback Lite, navegação por teclado/toque, carregamento progressivo, SEO e rollback. Showrooms e distritos espaciais permanecem desacoplados de checkout e pagamentos: qualquer compra ou ação transacional continua passando pelas rotas e regras existentes.
+O Spatial Core entra primeiro como rota isolada/preview. A cidade atual só passa a depender dele depois de testes de FPS, memória, fallback Lite, navegação por teclado/toque, carregamento progressivo, SEO e rollback. Showrooms espaciais permanecem desacoplados de checkout e pagamentos: qualquer compra continua passando pelas rotas públicas e regras transacionais existentes.
