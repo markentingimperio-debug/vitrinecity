@@ -1,5 +1,6 @@
 function text(value,max=180){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max);}
 function positive(value){const n=Number(value);return Number.isFinite(n)&&n>0?n:0;}
+function safeImage(value){const raw=text(value,700);if(!raw||/[\\\s]/.test(raw))return '';try{const url=new URL(raw,'https://vitrinecity.com');return url.protocol==='https:'&&!url.username&&!url.password&&!/^\/(?:api|admin)(?:\/|$)/.test(url.pathname)?raw:'';}catch{return '';}}
 function slug(value,fallback='produto'){return text(value,120).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'').slice(0,100)||fallback;}
 
 export function normalizeInteriorProduct(raw={}){
@@ -11,6 +12,7 @@ export function normalizeInteriorProduct(raw={}){
     priceCents:Math.max(0,Math.floor(positive(raw.price_cents??raw.priceCents))),
     stockQuantity:Math.max(0,Math.floor(positive(raw.stock_quantity??raw.stockQuantity))),
     rating:Math.max(0,Math.min(5,positive(raw.rating_average??raw.ratingAverage))),
+    imageUrl:safeImage(raw.image_url??raw.imageUrl),
     href:`/produto/${id}/${slug(name)}`
   });
 }

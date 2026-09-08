@@ -19,7 +19,8 @@ export function normalizeSpatialStore(raw={}){
     acceptingOrders:Boolean(Number(raw.accepting_orders??raw.acceptingOrders??1)),
     logoUrl:safeMedia(raw.logo_url??raw.logoUrl),facadeUrl:safeMedia(raw.facade_url??raw.facadeUrl),
     href:`/loja/${encodeURIComponent(reference)}/${slug(name)}`,
-    interiorHref:storeInteriorHref(reference,name)
+    interiorHref:positive(raw.product_count??raw.productCount)>0?storeInteriorHref(reference,name):'',
+    mapHref:reference==='official_centro_educacional'?'/centro-educacional.html':''
   });
 }
 
@@ -38,10 +39,20 @@ export function mapStoresToSpatialEntities(stores,{limit=48,origin={x:112,z:0},s
   });
 }
 
-export async function fetchSpatialStores({fetchImpl=globalThis.fetch,url='/api/marketplace/stores',timeoutMs=6000,limit=48}={}){
+export async function fetchSpatialStores({fetchImpl=globalThis.fetch,url='/api/marketplace/stores',mapsUrl='/api/maps/stores',timeoutMs=6000,limit=48}={}){
   if(typeof fetchImpl!=='function')throw new TypeError('Spatial store registry requer fetch.');
-  const response=await fetchImpl(url,{headers:{accept:'application/json'},cache:'no-store',signal:AbortSignal.timeout(Math.max(1000,Math.min(20000,Number(timeoutMs)||6000)))});
-  if(!response.ok)throw new Error(`spatial_stores_${response.status}`);
-  const data=await response.json();
-  return mapStoresToSpatialEntities(data?.stores,{limit});
+  const request=async endpoint=>{
+    const response=await fetchImpl(endpoint,{headers:{accept:'application/json'},cache:'no-store',signal:AbortSignal.timeout(Math.max(1000,Math.min(20000,Number(timeoutMs)||6000)))});
+    if(!response.ok)throw new Error(`spatial_stores_${response.status}`);
+    const data=await response.json();if(!Array.isArray(data?.stores))throw new Error('spatial_stores_invalid');return data.stores;
+  };
+  const [market,maps]=await Promise.allSettled([request(url),request(mapsUrl)]);
+  if(market.status==='rejected'&&maps.status==='rejected')throw market.reason;
+  const stores=new Map();
+  // Map listings preserve published businesses without products in the marketplace.
+  for(const raw of [...(maps.status==='fulfilled'?maps.value:[]),...(market.status==='fulfilled'?market.value:[])]){
+    const normalized=normalizeSpatialStore(raw);if(!normalized)continue;
+    stores.set(normalized.reference,{...stores.get(normalized.reference),...raw});
+  }
+  return mapStoresToSpatialEntities([...stores.values()],{limit,origin:{x:112,z:0},spacing:30}).map(entity=>Object.freeze({...entity,size:{width:22,depth:16,height:9}}));
 }

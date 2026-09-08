@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {normalizeBillboard,safeBillboardHref,fetchBillboardPlaylist,billboardIndex,storeBillboardPlaylist,fetchStoreBillboardPlaylist} from '../public/vitriny-spatial-billboard-core.js';
+for(const href of ['https://bad.example/','//bad.example/','/\\bad.example','/admin','/api/delete','/checkout','/x/../admin','/x%2fadmin','javascript:alert(1)'])assert.equal(safeBillboardHref(href),'',href);
+assert.equal(safeBillboardHref('/loja/ref/name'),'/loja/ref/name');
+assert.equal(safeBillboardHref('/api/ads/42/click?token=abcdefghijklmno',{campaign:true}),'/api/ads/42/click?token=abcdefghijklmno');
+assert.equal(safeBillboardHref('/api/ads/42/click?token=abc&next=evil',{campaign:true}),'');
+assert.equal(normalizeBillboard({title:'Test',url:'/loja',imageUrl:'javascript:alert(1)'}).imageUrl,'');
+assert.equal(normalizeBillboard({title:'Test',clickUrl:'/api/ads/1/click?token=abcdefghijklmno'},{campaign:true}).label,'PATROCINADO');
+let calls=0;assert.deepEqual(await fetchBillboardPlaylist({active:false,fetchImpl:()=>{calls++;throw Error('no')}}),[]);assert.equal(calls,0,'Preview cities cannot request commercial campaigns');
+const items=await fetchBillboardPlaylist({active:true,fetchImpl:async url=>url.includes('/ads/')?new Response('{}',{status:503}):new Response(JSON.stringify({items:[{title:'Curso',url:'/centro-educacional.html'},{title:'Unsafe',url:'//outside.example'}]}))});
+assert.equal(items.length,1,'Public promotions remain when the campaign API fails');
+assert.equal(billboardIndex({elapsed:0,offset:0,count:4}),0);assert.equal(billboardIndex({elapsed:8,offset:0,count:4}),1);assert.equal(billboardIndex({elapsed:100,offset:2,count:4,paused:true}),2);
+const store={name:'Loja A',reference:'ref-a',href:'/loja/ref-a/loja-a',productCount:2};
+const products=[{id:11,name:'Produto A',store_reference:'ref-a',price_cents:1250,image_url:'/assets/product.jpg'},{id:12,name:'Outra loja',store_reference:'ref-b',price_cents:5000}];
+const own=storeBillboardPlaylist(store,products);assert.equal(own.length,1,'A rooftop cannot advertise another store by mistake');assert.equal(own[0].href,'/produto/11/produto-a');assert.equal(own[0].amountCents,1250);assert.equal(own[0].label,'Loja A');
+assert.equal(storeBillboardPlaylist(store,[])[0].href,store.href,'A store without products retains its real destination');
+const fallback=await fetchStoreBillboardPlaylist(store,{fetchImpl:async()=>new Response('{}',{status:503})});assert.equal(fallback[0].href,store.href);
+console.log(JSON.stringify({ok:true,billboards:'safe links, real playlist, eight-second rotation, preview isolation'}));

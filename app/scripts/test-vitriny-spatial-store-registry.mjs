@@ -24,10 +24,17 @@ assert.equal(a.every(item=>Number.isFinite(item.position.x)&&Number.isFinite(ite
 assert.equal(new Set(a.map(item=>`${item.position.x}:${item.position.z}`)).size,a.length);
 
 let called=0;
-const fetched=await fetchSpatialStores({limit:1,fetchImpl:async(url,options)=>{called++;assert.equal(url,'/api/marketplace/stores');assert.equal(options.headers.accept,'application/json');return new Response(JSON.stringify({stores:raw}),{status:200,headers:{'content-type':'application/json'}});}});
-assert.equal(called,1);
+const fetched=await fetchSpatialStores({limit:1,fetchImpl:async(url,options)=>{called++;assert.ok(['/api/marketplace/stores','/api/maps/stores'].includes(url));assert.equal(options.headers.accept,'application/json');return new Response(JSON.stringify({stores:raw}),{status:200,headers:{'content-type':'application/json'}});}});
+assert.equal(called,2);
 assert.equal(fetched.length,1);
 assert.equal(fetched[0].reference,'ref-a');
 await assert.rejects(()=>fetchSpatialStores({fetchImpl:async()=>new Response('{}',{status:503})}),/spatial_stores_503/);
+const combined=await fetchSpatialStores({fetchImpl:async url=>new Response(JSON.stringify({stores:url.includes('/maps/')?[{reference:'ref-c',name:'Negócio sem produtos',city:'Anápolis'},{reference:'ref-b',name:'Loja B',city:'Anápolis'}]:raw}),{status:200})});
+assert.equal(combined.length,3,'Map-only businesses must remain visible');
+assert.equal(combined.find(item=>item.reference==='ref-c').interiorHref,'','No broken showroom for stores without products');
+assert.equal(combined.find(item=>item.reference==='ref-b').productCount,5,'Marketplace metadata enriches the same map listing');
+assert.equal(combined.filter(item=>item.reference==='ref-b').length,1,'Do not duplicate a mapped marketplace store');
+const mapOnly=await fetchSpatialStores({fetchImpl:async url=>url.includes('/maps/')?new Response(JSON.stringify({stores:[{reference:'ref-c',name:'Map store'}]})):new Response('{}',{status:503})});
+assert.equal(mapOnly.length,1,'Catalogue failure must not hide map listings');
 
 console.log(JSON.stringify({ok:true,stores:a.length,first:a[0].interiorHref}));

@@ -250,7 +250,7 @@ O smoke de rede não é executado dentro do CI isolado porque depende do runtime
 
 ## Bloqueio operacional — issue #146
 
-**Estado:** PENDENTE / obrigatório antes de deploy.
+**Estado em 08/09/2026:** reconciliação de leitura executada; snapshot e publicação ainda pendentes.
 
 A árvore efetiva da VPS precisa ser reconciliada com GitHub antes de qualquer publicação ampla. A reconciliação deve ser somente leitura até preservar snapshot e identificar diferenças.
 
@@ -261,7 +261,25 @@ Não fazer:
 - restauração de banco antigo sobre dados novos;
 - cópia da árvore Git por cima de `/opt/vitrinecity` sem diff e backup.
 
-A integração disponível nesta sessão não expõe shell/arquivos da VPS, portanto a reconciliação de `/opt/vitrinecity` ainda não foi executada nem simulada.
+A reconciliação por SSH identificou `/opt/vitrinecity` em `2c97fd10a60235f7a5656d68f4c577769417a69c`, com alterações rastreadas e staged vazias. Os arquivos não rastreados de agentes e de mapas devem ser preservados. O aplicativo usa volumes persistentes separados. A comparação com o container encontrou somente transformações de HTML explicadas pela preparação pública da imagem; nenhum código executável exclusivo sem correspondência foi encontrado.
+
+Há diferença entre o ambiente configurado no Compose e o ambiente efetivo do app na chave `ASAAS_API_KEY`. Nenhum valor foi registrado. A publicação deve preservar o valor efetivo do container saudável, sem alterar credenciais financeiras. Ambos os provedores de IA têm chaves configuradas; o guard de saída agora considera as duas e exige origem HTTPS autorizada.
+
+## Revisão visual e integração do mapa — 08/09/2026
+
+- Referências: os dois vídeos enviados pelo usuário foram examinados em quadros distribuídos pela duração; a referência de lojas tem vidro, interiores quentes, fachadas escuras, paisagismo e iluminação dourada.
+- World Gate redesenhado, com navegação HTML que permanece disponível se o 3D falhar.
+- Praça, lojas modeladas, skyline, sombras, reflexos e materiais locais CC0. A fidelidade visual ainda está em revisão; não é declarado equivalente aos vídeos de referência.
+- Torre VitrineCity com diretório para 31 áreas administrativas existentes, sem mudança de autenticação ou permissões.
+- Base VC Entregas em cada uma das cinco cidades. Todas as bases visuais estão explicitamente em implantação; não habilitam entregas locais.
+- Catálogos do mapa e marketplace unidos por referência. Confirmados no catálogo público: Agrotecnica, Centro Educacional VitrineCity, Sertaneja Moda Country e Beemi — Agência Shopee. As duas últimas não apareciam no catálogo restrito a produtos disponíveis.
+- Outdoors urbanos com promoções/campanhas existentes e painéis nos telhados das lojas com seus próprios produtos. Links do item exibido levam às páginas correspondentes. Lojas sem catálogo mantêm apresentação e destino reais.
+- Botões nas entradas levam às páginas públicas das lojas. Interiores 3D passam a exibir imagens dos produtos e movimento coerente com a câmera.
+- Recomendação apresentada: Distrito de Afiliados separado, com prédios por plataforma e Centro Educacional como academia. Esse distrito ainda não foi implementado neste checkpoint.
+
+Validação parcial: `npm test` e `npm run test:release` passaram na revisão anterior desta sessão (127 scripts de release). As alterações posteriores em outdoors próprios, interiores, bases e botões de entrada precisam de nova rodada final e verificação visual no desktop/celular. A prévia local lê catálogos públicos, bloqueia escrita e simula campanhas pagas vazias; não registra impressões pagas reais.
+
+Nada desta revisão foi implantado em produção até este checkpoint. Não houve mudança de banco, cobrança, ativação de campanha ou de operação local.
 
 ---
 

@@ -1,8 +1,9 @@
 const nativeFetch = globalThis.fetch;
-const allowedAiHosts = new Set(['openrouter.ai', 'api.openai.com']);
+const allowedAiOrigins = new Set(['https://openrouter.ai', 'https://api.openai.com']);
 
-function aiSecret() {
-  return String(process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || '').trim();
+function aiSecrets() {
+  return new Set([process.env.OPENROUTER_API_KEY, process.env.OPENAI_API_KEY]
+    .map(value => String(value || '').trim()).filter(Boolean));
 }
 
 function requestUrl(input) {
@@ -22,12 +23,12 @@ if (typeof nativeFetch !== 'function') throw new Error('global fetch unavailable
 
 globalThis.fetch = function guardedFetch(input, init = {}) {
   const url = requestUrl(input);
-  const secret = aiSecret();
-  if (!url || !secret) return nativeFetch(input, init);
+  const secrets = aiSecrets();
+  if (!url || !secrets.size) return nativeFetch(input, init);
 
   const headers = guardedHeaders(input, init);
-  const authorization = headers.get('authorization');
-  if (authorization === `Bearer ${secret}` && !allowedAiHosts.has(url.hostname.toLowerCase())) {
+  const bearer = /^Bearer\s+(.+)$/i.exec(headers.get('authorization') || '');
+  if (bearer && secrets.has(bearer[1].trim()) && !allowedAiOrigins.has(url.origin)) {
     headers.delete('authorization');
     return nativeFetch(input, { ...init, headers });
   }
