@@ -1,3 +1,4 @@
+import {createDoorEntryTracker} from './vitriny-door-entry.js';
 import * as THREE from '/vendor/three/three.module.js';
 import {createSpatialClientRuntime} from '/vitriny-spatial-client-core.js';
 import {createSpatialApiChunkLoader,fetchSpatialCityContext,spatialCityFromLocation,spatialFallbackCity} from '/vitriny-spatial-api-client.js';
@@ -11,10 +12,14 @@ import {mountPremiumAtmosphere,createPremiumFacades} from './vitriny-spatial-pre
 import {createArchitectureKit} from './vitriny-premium-architecture.js';
 import {mountCityHeadquarters,installHeadquartersDirectory} from './vitriny-city-headquarters.js';
 import {mountSpatialBillboards} from './vitriny-spatial-billboards.js';
+import {arrangeStoreBuildings,intersectsStoreBuilding} from './vitriny-store-building-core.js';
 import {mountDeliveryBase} from './vitriny-delivery-base.js';
 import {mountVisitorAvatar} from './vitriny-visitor-avatar.js';
 import {mountStorefrontDisplays} from './vitriny-storefront-displays.js';
 import {mountGamesBuilding} from './vitriny-city-games-building.js';
+import {mountCinemaBuilding} from './vitriny-cinema-building.js';
+import {mountCreditsBuilding} from './vitriny-credits-building.js';
+import {mountCityLife} from './vitriny-city-life.js';
 import {mountCommerceAvenue,mountMusicArena} from './vitriny-commerce-avenue.js';
 import {intersectsCommerceAvenue} from './vitriny-affiliate-centers-core.js';
 
@@ -39,27 +44,29 @@ document.title=`Vitriny Multiverse · ${cityContext.name}`;
 worldStat.textContent=`${cityContext.name} · ${isActiveCity?'HUB':'PREVIEW'}`;
 
 const scene=new THREE.Scene();
-scene.background=new THREE.Color('#c4ac9c');
-scene.fog=new THREE.FogExp2(new THREE.Color('#c4ac9c'),0.0013);
+scene.background=new THREE.Color('#758baf');
+scene.fog=new THREE.FogExp2(new THREE.Color('#758baf'),0.00115);
 const camera=new THREE.PerspectiveCamera(58,innerWidth/innerHeight,.1,1800);
 let renderer;
 try{renderer=new THREE.WebGLRenderer({antialias:profile.id!=='LITE',powerPreference:'high-performance'});}
 catch(error){$('loadingText').textContent='3D indisponível neste aparelho. Use o World Gate ou a cidade clássica.';throw error;}
 renderer.setPixelRatio(profile.pixel);renderer.setSize(innerWidth,innerHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;
-renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.92;renderer.shadowMap.enabled=profile.shadows;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.02;renderer.shadowMap.enabled=profile.shadows;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 document.body.prepend(renderer.domElement);
 scene.add(new THREE.HemisphereLight(0xbad4f4,0x806f53,1.45));
-const sun=new THREE.DirectionalLight(0xffdab0,3.1);sun.position.set(-170,155,130);sun.castShadow=profile.shadows;
+const sun=new THREE.DirectionalLight(0xffd2a4,2.4);sun.position.set(-170,110,180);sun.castShadow=profile.shadows;
 sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-220,right:220,top:220,bottom:-220,near:1,far:680});sun.shadow.bias=-.00025;sun.shadow.normalBias=.14;scene.add(sun);
 const architecture=createArchitectureKit({renderer,scene,shadows:profile.shadows,lite:profile.id==='LITE'}),disposeReflections=architecture.reflections();
 const groundMat=architecture.pavingMaterial({color:'#777b70',repeat:20});
 const roadMat=new THREE.MeshStandardMaterial({color:'#303c43',roughness:.85,metalness:.03});
-const sidewalkMat=architecture.pavingMaterial({color:'#a7a494',repeat:14});
+const sidewalkMat=architecture.pavingMaterial({color:'#aab4c0',repeat:9,formal:true});
 const laneMat=new THREE.MeshBasicMaterial({color:'#d0c7ac'}),roofMat=new THREE.MeshStandardMaterial({color:'#65716e',roughness:.7});
-const facades=createPremiumFacades();
+const facades=createPremiumFacades({mobile:profile.id!=='ULTRA'});
 const sharedMaterials=new Set([groundMat,roadMat,sidewalkMat,laneMat,roofMat,...facades,...architecture.materials]),chunkGroups=new Map();
+let storeBuildingLots=[];
 const cityGround=new THREE.Mesh(new THREE.PlaneGeometry(2600,2600),groundMat);cityGround.rotation.x=-Math.PI/2;cityGround.position.y=-.08;cityGround.receiveShadow=profile.shadows;scene.add(cityGround);
 const premiumAtmosphere=mountPremiumAtmosphere({scene,identity:cityIdentity,profileId:profile.id});
+const cityLife=mountCityLife({scene,architecture,profileId:profile.id});
 const reducedMotion=matchMedia('(prefers-reduced-motion:reduce)');
 let animationPaused=reducedMotion.matches,avatarMode=false;
 function mesh(geometry,material,parent,position){
@@ -83,10 +90,12 @@ function createChunkGroup(chunk){
   }
   for(const building of chunk.buildings){
     if(intersectsTransitPlaza(building))continue;
+    if(storeBuildingLots.some(store=>intersectsStoreBuilding(building,store)))continue;
     const px=building.position.x,pz=building.position.z;
+    if((Math.abs(px)<320&&pz>82&&pz<120)||(px>-40&&px<50&&pz>122&&pz<180)||(px>70&&px<164&&pz>122&&pz<190)||(px>-95&&px<-20&&pz>170&&pz<230)||(px>85&&px<166&&pz>-225&&pz<-148))continue;
     if((px>82&&px<510&&Math.abs(pz)<68)||(Math.abs(px)<50&&pz>-195&&pz<-115)||(px>55&&px<160&&pz>-150&&pz<-45)||(px>-150&&px<-78&&pz>-125&&pz<68)||intersectsCommerceAvenue(building)||(px>-140&&px<-65&&pz>120&&pz<183))continue;
     const b=building,accent=palette[b.accentIndex%palette.length],g=new THREE.Group();
-    g.position.set(b.position.x,0,b.position.z);g.userData={kind:b.kind,buildingId:b.id};
+    g.position.set(b.position.x,0,b.position.z);g.userData={kind:b.kind,buildingId:b.id,proceduralBuilding:b};
     const facade=facades[Math.abs(Math.trunc(b.accentIndex||0))%facades.length];
     const geometry=new THREE.BoxGeometry(b.size.width,b.size.height,b.size.depth),uv=geometry.attributes.uv;
     for(let i=0;i<uv.count;i++){const side=Math.floor(i/4),width=side<2?b.size.depth:b.size.width;uv.setXY(i,uv.getX(i)*width/12,uv.getY(i)*b.size.height/24);}
@@ -112,14 +121,14 @@ function disposeGroup(group,{keepShared=true}={}){
     if(object.geometry&&!(keepShared&&architecture.geometries.has(object.geometry)))geometries.add(object.geometry);
     for(const material of Array.isArray(object.material)?object.material:[object.material]){
       if(!material||(keepShared&&sharedMaterials.has(material)))continue;
-      materials.add(material);if(material.map)textures.add(material.map);
+      materials.add(material);for(const value of Object.values(material))if(value?.isTexture)textures.add(value);
     }
   });
   for(const item of [...textures,...materials,...geometries])item.dispose?.();
 }
 function removeChunk(id){const group=chunkGroups.get(id);if(!group)return;disposeGroup(group);scene.remove(group);chunkGroups.delete(id);}
 
-const portalTargets=[],storeTargets=[],storeEntrances=[],cityDestinations=new Map();
+const portalTargets=[],storeTargets=[],storeEntrances=[],cityDestinations=new Map(),doorEntry=createDoorEntryTracker();
 const entranceLayer=document.createElement('div');entranceLayer.className='store-entrances';entranceLayer.setAttribute('aria-label','Entradas das lojas');document.body.append(entranceLayer);
 const plaza=new THREE.Group();plaza.name=`central-plaza:${cityId}`;scene.add(plaza);
 const plazaFloor=mesh(new THREE.CircleGeometry(82,64),sidewalkMat,plaza,[0,.18,0]);plazaFloor.rotation.x=-Math.PI/2;plazaFloor.receiveShadow=profile.shadows;
@@ -153,23 +162,33 @@ function createCityLandmark(identity){
 const cityLandmark=createCityLandmark(cityIdentity);
 const headquarters=mountCityHeadquarters({scene,architecture,facade:facades[0],shadows:profile.shadows});
 const billboards=mountSpatialBillboards({scene,architecture,active:isActiveCity,cityName:cityContext.name});
-const storefronts=mountStorefrontDisplays({architecture,directory:$('storefrontProducts'),onVisit(store){$('storefrontDirectory').close();releaseControls();const distance=innerWidth<=760?50:29;position.set(store.position.x-distance,avatarMode?1.7:3.1,store.position.z+3);yaw=-Math.PI/2-.06;pitch=.05;updateViewButton();}});
+const storefronts=mountStorefrontDisplays({architecture,directory:$('storefrontProducts'),onVisit(store,{building=false}={}){
+  $('storefrontDirectory').close();$('cityTools').open=false;releaseControls();
+  if(building){const offset=innerWidth<=760?60:48;avatarMode=false;position.set(store.position.x-38,16,store.position.z+offset);yaw=-Math.PI/2-Math.atan2(offset,38);pitch=.2;}
+  else{const distance=innerWidth<=760?37:29;position.set(store.position.x-distance,avatarMode?1.7:3.1,store.position.z+3);yaw=-Math.PI/2-.06;pitch=.05;}
+  updateViewButton();
+}});
 $('openStorefronts').addEventListener('click',()=>{releaseControls();$('storefrontDirectory').showModal();});
 $('storefrontDirectory').querySelector('[data-close]').addEventListener('click',()=>$('storefrontDirectory').close());
 const deliveryBase=mountDeliveryBase({scene,architecture,cityId,cityName:cityContext.name});
 const gamesBuilding=mountGamesBuilding({scene,architecture});storeTargets.push(gamesBuilding);
 const centers=isActiveCity?mountCommerceAvenue({scene,architecture,billboards,facade:facades[1]}):[];
-for(const {group,center,anchor} of centers){storeTargets.push(group);const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=center.href;entry.setAttribute('aria-label',`Entrar em ${center.title}`);const label=document.createElement('small'),action=document.createElement('strong');label.textContent=center.title;action.textContent='Explorar departamentos →';entry.append(label,action);entry.addEventListener('click',()=>saveSpatialContext());entranceLayer.append(entry);storeEntrances.push({element:entry,anchor});}
+for(const {group,center,anchor} of centers){storeTargets.push(group);const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=center.href;entry.setAttribute('aria-label',`Entrar em ${center.title}`);const label=document.createElement('small'),action=document.createElement('strong');label.textContent=center.title;action.textContent='Explorar departamentos →';entry.append(label,action);entry.addEventListener('click',()=>saveSpatialContext());entranceLayer.append(entry);storeEntrances.push({element:entry,anchor,normal:new THREE.Vector3(0,0,1).transformDirection(group.matrixWorld),href:center.href,reference:`center-${center.id}`});}
 const musicArena=mountMusicArena({scene,architecture});storeTargets.push(musicArena);
+const cinemaBuilding=mountCinemaBuilding({scene,architecture});storeTargets.push(cinemaBuilding);
+const creditsBuilding=mountCreditsBuilding({scene,architecture});storeTargets.push(creditsBuilding);
+for(const [group,z]of [[cinemaBuilding,24],[musicArena,16],[creditsBuilding,18]]){const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=group.userData.href;entry.textContent='Entrar em '+group.userData.label;entry.addEventListener('click',()=>saveSpatialContext());entranceLayer.append(entry);const anchor=group.localToWorld(new THREE.Vector3(0,2,z));storeEntrances.push({element:entry,anchor,normal:new THREE.Vector3(0,0,1).transformDirection(group.matrixWorld),href:group.userData.href,reference:group.userData.reference});}
+$('openCredits').addEventListener('click',()=>{saveSpatialContext();location.assign('/central-creditos.html');});
+$('openCinema').addEventListener('click',()=>{saveSpatialContext();location.assign('/vitriny-cinema.html');});
 $('openMusic').addEventListener('click',()=>{saveSpatialContext();location.assign('/vitriny-music-arena.html');});
 const centersDialog=$('centersDirectory');$('openCenters').addEventListener('click',()=>{releaseControls();centersDialog.showModal();});centersDialog.querySelector('[data-close]').addEventListener('click',()=>centersDialog.close());
 let visitedCenter=-1;
-function visitCenter(index){const center=centers[index];if(!center)return;visitedCenter=index;releaseControls();avatarMode=false;position.set(-105,9,center.group.position.z);yaw=Math.PI/2;pitch=.12;updateViewButton();$('nextCenter').hidden=false;}
+function visitCenter(index){const center=centers[index];if(!center)return;visitedCenter=index;releaseControls();avatarMode=false;position.set(-153,7,center.group.position.z+25);yaw=Math.PI/2+.3;pitch=.16;updateViewButton();$('nextCenter').hidden=false;}
 $('visitCenters').addEventListener('click',()=>{centersDialog.close();visitCenter(0);});$('visitCenters').hidden=!isActiveCity;
 $('nextCenter').addEventListener('click',()=>visitCenter((visitedCenter+1)%centers.length));
 $('openGames').addEventListener('click',()=>{saveSpatialContext();location.assign('/vitriny-games.html');});
 if(isActiveCity)for(let i=0;i<3;i++){
-  const building=new THREE.Group();building.position.set(-113,0,-40+i*39);building.rotation.y=Math.PI/2;
+  const building=new THREE.Group();building.position.set(126+i*44,0,60);building.rotation.y=0;
   building.userData={store:true,href:'/para-empresas.html',reference:`showcase-available-${i}`,label:'Tenha seu prédio na VitrineCity'};
   architecture.boutique(building,{label:'SEU ESPAÇO AQUI',width:22,depth:16,height:9,subtitle:'TENHA SEU PRÉDIO DIGITAL',catalog:true});
   billboards.registerVenue(building,{name:'DISPONÍVEL',description:'Conheça os planos para ter seu espaço na VitrineCity.',href:'/para-empresas.html',roof:9});
@@ -241,20 +260,23 @@ function addLiveStore(entity){
   const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=entity.href;entry.setAttribute('aria-label',`Visitar ${entity.name}`);
   const name=document.createElement('small');name.textContent=entity.name;const action=document.createElement('strong');action.textContent='Visitar loja  →';entry.append(name,action);
   entry.addEventListener('click',()=>saveSpatialContext({spatialPath:`/v/br/go/${cityId}/commerce/${encodeURIComponent(entity.reference)}`,districtId:'commerce',targetType:'store',targetId:entity.reference}));entranceLayer.append(entry);
-  const anchor=g.localToWorld(new THREE.Vector3(0,2.5,entity.size.depth/2+.4));storeEntrances.push({element:entry,anchor});
+  const anchor=g.localToWorld(new THREE.Vector3(0,2.5,entity.size.depth/2+.4));storeEntrances.push({element:entry,anchor,normal:new THREE.Vector3(0,0,1).transformDirection(g.matrixWorld),href:entity.href,reference:entity.reference});
 }
 async function loadLiveStores(){
   if(!isActiveCity){worldStat.textContent=`${cityContext.name} · PREVIEW PROCEDURAL`;$('storefrontProducts').textContent='As vitrines locais estarão disponíveis quando as lojas desta cidade forem conectadas.';return;}
   try{
     const entities=await fetchSpatialStores({limit:profile.id==='LITE'?20:48});if(disposed)return;
     const links=$('storeLinks');links.replaceChildren();
-    for(const entity of entities){addLiveStore(entity);const link=document.createElement('a');link.href=entity.href;link.textContent=entity.name;links.append(link);}
+    storeBuildingLots=arrangeStoreBuildings(entities);
+    for(const chunk of chunkGroups.values())for(const child of [...chunk.children])if(child.userData.proceduralBuilding&&storeBuildingLots.some(store=>intersectsStoreBuilding(child.userData.proceduralBuilding,store))){disposeGroup(child);chunk.remove(child);}
+    for(const entity of storeBuildingLots){addLiveStore(entity);const link=document.createElement('a');link.href=entity.href;link.textContent=entity.name;links.append(link);}
     worldStat.textContent=`${cityContext.name} · ${entities.length} lojas conectadas`;
   }catch{worldStat.textContent=`${cityContext.name} · lojas em modo offline`;$('storefrontProducts').textContent='Não foi possível carregar as vitrines agora. Tente novamente mais tarde.';}
 }
 
-const position=new THREE.Vector3(0,38,132),velocity=new THREE.Vector3(),keys=new Set();
-let yaw=Math.PI,pitch=.1,speed=16,dragging=false,lastX=0,lastY=0,pointerStartX=0,pointerStartY=0,activePortal=null;
+const phoneArrival=isActiveCity&&innerWidth<=760;
+const position=isActiveCity?new THREE.Vector3(-164,phoneArrival?8:11.5,191):new THREE.Vector3(0,38,132),velocity=new THREE.Vector3(),keys=new Set();
+let yaw=phoneArrival?-Math.PI/2-Math.atan2(46,38):Math.PI,pitch=phoneArrival?.2:.14,speed=16,dragging=false,lastX=0,lastY=0,pointerStartX=0,pointerStartY=0,activePortal=null;
 let chunkSource=cityApiOnline?'api':'fallback',disposed=false,navigating=false,raf=0;
 function restoreSpatialContext(){
   if(new URLSearchParams(location.search).get('return')!=='1')return;
@@ -266,7 +288,7 @@ restoreSpatialContext();
 function updateViewButton(){const button=$('toggleView');if(button){button.textContent=position.y>10?'Explorar a pé':'Vista panorâmica';button.setAttribute('aria-pressed',String(position.y>10));}}
 updateViewButton();
 $('toggleView')?.addEventListener('click',()=>{avatarMode=false;if(position.y>10){position.set(23,2.2,53);yaw=Math.PI-.4;pitch=.035;}else{position.set(0,38,132);yaw=Math.PI;pitch=.1;}releaseControls();updateViewButton();});
-$('visitStores')?.addEventListener('click',()=>{position.set(91,avatarMode?1.7:3.3,58);yaw=-Math.PI/2-.38;pitch=.02;releaseControls();updateViewButton();});
+$('visitStores')?.addEventListener('click',()=>{position.set(-164,avatarMode?1.7:4.2,145);yaw=Math.PI;pitch=.12;releaseControls();updateViewButton();});
 const avatar=mountVisitorAvatar({scene,dialog:$('avatarDirectory'),onEnter(){avatarMode=true;position.set(23,1.7,53);yaw=Math.PI-.4;pitch=.02;releaseControls();updateViewButton();}});
 $('openAvatar').addEventListener('click',()=>{releaseControls();$('avatarDirectory').showModal();});
 function updateMotionButton(){const button=$('pauseMotion');button.textContent=animationPaused?'Retomar animações':'Pausar animações';button.setAttribute('aria-pressed',String(animationPaused));}
@@ -312,9 +334,7 @@ addEventListener('keydown',event=>{
 });
 addEventListener('keyup',event=>keys.delete(event.code));
 function releaseControls(){keys.clear();dragging=false;}
-const cityTools=$('cityTools'),compactCity=matchMedia('(max-width:760px)');cityTools.open=!compactCity.matches;
-compactCity.addEventListener('change',event=>{cityTools.open=!event.matches;});
-cityTools.addEventListener('click',event=>{if(event.target.closest('button')&&matchMedia('(max-width:760px)').matches)cityTools.open=false;});
+// Panel visibility is managed by vitriny-hud-panels.js, independently of the 3D engine.
 addEventListener('blur',releaseControls);document.addEventListener('visibilitychange',()=>{if(document.hidden)releaseControls();});
 for(const button of document.querySelectorAll('[data-move]')){
   const code=moveMap[button.dataset.move];
@@ -384,10 +404,13 @@ function animate(now){
   if(keys.has('KeyD')||keys.has('ArrowRight'))velocity.add(rightVector);if(keys.has('KeyA')||keys.has('ArrowLeft'))velocity.sub(rightVector);
   if(velocity.lengthSq())position.add(velocity.normalize().multiplyScalar((avatarMode?5.5:speed)*dt));
   position.x=Math.max(-100000,Math.min(100000,position.x));position.z=Math.max(-100000,Math.min(100000,position.z));
+  const entry=doorEntry.step({position,moving:velocity.lengthSq()>0,enabled:avatarMode&&!navigating&&!document.querySelector('dialog[open]'),doors:storeEntrances});
+  if(entry&&isSafeInternalHref(entry.href)){releaseControls();saveSpatialContext({spatialPath:`/v/br/go/${cityId}/commerce/${encodeURIComponent(entry.reference)}`,districtId:'commerce',targetType:'store',targetId:entry.reference});spatialEvent('entity_open','store');safeNavigate(entry.href);return;}
+
   lookTarget.set(basis.forward.x*Math.cos(pitch),Math.sin(pitch),basis.forward.z*Math.cos(pitch)).add(position);
   if(avatarMode){camera.position.copy(position).addScaledVector(forwardVector,-6);camera.position.y=4.4;lookTarget.copy(position).addScaledVector(forwardVector,4);lookTarget.y=1.9+pitch*6;}else camera.position.copy(position);
   camera.lookAt(lookTarget);avatar.tick(dt,{position,yaw,moving:velocity.lengthSq()>0,visible:avatarMode});
-  if(!animationPaused)neuralCore.rotation.y+=dt*.45;premiumAtmosphere.tick(dt,{paused:animationPaused});billboards.tick(dt,{paused:animationPaused});storefronts.tick(dt,{paused:animationPaused});
+  if(!animationPaused)neuralCore.rotation.y+=dt*.45;premiumAtmosphere.tick(dt,{paused:animationPaused});cityLife.tick(dt,{paused:animationPaused});billboards.tick(dt,{paused:animationPaused});storefronts.tick(dt,{paused:animationPaused});
   updatePortal();syncChunks();renderer.render(scene,camera);updateStoreEntrances();
   if(firstFrame){firstFrame=false;$('loading').classList.add('hide');}
 }
@@ -400,4 +423,4 @@ addEventListener('pagehide',event=>{
   if(event.persisted)return;
   disposed=true;cancelAnimationFrame(raf);billboards.dispose();storefronts.dispose();architecture.dispose();cityEnvironmentMount?.dispose();cityEnvironmentMount=null;disposeGroup(scene,{keepShared:false});disposeReflections();renderer.dispose();
 });
-addEventListener('pageshow',()=>{navigating=false;last=performance.now();fpsClock=last;frames=0;});
+addEventListener('pageshow',()=>{doorEntry.reset();navigating=false;last=performance.now();fpsClock=last;frames=0;});

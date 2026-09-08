@@ -1,4 +1,5 @@
 import * as THREE from '/vendor/three/three.module.js';
+import {dressBoutique} from './vitriny-building-signatures.js';
 
 // Dimensions use metres. These are presentation assets, never store registrations.
 export function createArchitectureKit({renderer,scene,shadows=false,lite=false}){
@@ -80,9 +81,10 @@ export function createArchitectureKit({renderer,scene,shadows=false,lite=false})
       tree(g,-w*.32,-d*.28,.45,h+.3);tree(g,w*.32,-d*.28,.45,h+.3);
     }
     tree(g,-w/2-2.6,front-1.8,.66);tree(g,w/2+2.6,front-1.8,.66);
+    dressBoutique({group:g,architecture:{part,tree,textSign,materials,stone,graphite,brass,wood,warm,glass},width:w,depth:d,height:h,label,lite,catalog});
     return g;
   }
-  function pavingMaterial({color='#aaa89b',repeat=12}={}){
+  function pavingMaterial({color='#aaa89b',repeat=12,formal=false}={}){
     const canvas=document.createElement('canvas');canvas.width=512;canvas.height=512;const ctx=canvas.getContext('2d');
     ctx.fillStyle=color;ctx.fillRect(0,0,512,512);
     for(let row=0;row<8;row++)for(let col=0;col<8;col++){
@@ -91,6 +93,7 @@ export function createArchitectureKit({renderer,scene,shadows=false,lite=false})
     ctx.strokeStyle='#4d514a55';ctx.lineWidth=1.4;for(let i=0;i<=8;i++){ctx.beginPath();ctx.moveTo(i*64,0);ctx.lineTo(i*64,512);ctx.moveTo(0,i*64);ctx.lineTo(512,i*64);ctx.stroke();}
     const map=new THREE.CanvasTexture(canvas);map.colorSpace=THREE.SRGBColorSpace;map.wrapS=map.wrapT=THREE.RepeatWrapping;map.repeat.set(repeat,repeat);map.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
     const material=standard({map,roughness:.8,metalness:.03});
+    if(formal){textures.add(map);material.roughness=.53;material.metalness=.12;return material;}
     const photo=pbr('pavement_02','Diffuse',repeat*2);material.map=photo;
     if(!lite){material.normalMap=pbr('pavement_02','nor_gl',repeat*2);material.normalScale=new THREE.Vector2(.35,.35);material.roughnessMap=pbr('pavement_02','Rough',repeat*2);}
     map.dispose();return material;

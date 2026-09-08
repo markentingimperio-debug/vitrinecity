@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {createDoorEntryTracker} from '../public/vitriny-door-entry.js';
+const tracker=createDoorEntryTracker(),door={anchor:{x:10,y:2.5,z:20},normal:{x:1,z:0},href:'/loja/exemplo/loja'},doors=[door];
+const step=(x,z=20,extra={})=>tracker.step({position:{x,y:1.7,z},moving:true,enabled:true,doors,...extra});
+assert.equal(step(13),null);assert.equal(step(12.4),null);assert.equal(step(11.9),door,'Approaching the front of the doorway opens the store');
+assert.equal(step(11.5),null,'Staying inside does not reopen');tracker.reset();assert.equal(step(11.5),null,'Returning inside a doorway does not reopen');
+assert.equal(step(12.2),null,'Walking out does not enter');assert.equal(step(11.9),door,'Leaving and approaching again re-arms entry');
+tracker.reset();step(20);assert.equal(step(11.9),null,'Teleporting never opens a page');
+tracker.reset();step(13,25);assert.equal(step(11.9,25),null,'Walking next to a door does not enter');
+tracker.reset();step(8);assert.equal(step(9.5),null,'Approach from inside/back does not enter');
+tracker.reset();step(13);assert.equal(step(11.9,20,{enabled:false}),null,'Panoramic camera and dialogs cannot enter');
+tracker.reset();step(13);assert.equal(step(11.9,20,{moving:false}),null,'A stationary avatar cannot enter');
+tracker.reset();step(13);assert.equal(step(11.9,20,{position:{x:11.9,y:20,z:20}}),null,'Flying above is not entering');
+console.log('door-entry: deliberate front crossing, walking-only, no return loop, teleport/back/side/height guards passed');

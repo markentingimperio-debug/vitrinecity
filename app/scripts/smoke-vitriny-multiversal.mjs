@@ -28,6 +28,9 @@ for(const path of [
   '/centros/shopee',
   '/centros/cakto',
   '/centros/kiwify',
+  '/centros/tiktok',
+  '/musicas',
+  '/cinema',
   '/mapa-real.html?cidade=vianopolis'
 ])await expectHtml(path);
 
@@ -37,11 +40,15 @@ for(const path of [
   '/vitriny-multiverse-district.html?city=vitrine-city&district=commerce',
   '/vitriny-games.html',
   '/vitriny-mini-fazenda.html',
-  '/vitriny-music-arena.html'
+  '/vitriny-music-arena.html',
+  '/vitriny-cinema.html',
+  '/central-creditos.html'
 ]){const {response}=await request(path);assert.equal(response.status,302,`${path} deve exigir login`);assert.ok(response.headers.get('location')?.startsWith('/entrar-cidade.html?returnTo='));}
 assert.equal((await request('/api/games/farm')).response.status,401,'Progresso de jogo exige conta autenticada');
 assert.equal((await request('/api/privacy/communications')).response.status,401,'Preferências de comunicação exigem conta autenticada');
-const centers=await request('/api/affiliate-centers',{expectJson:true});assert.equal(centers.response.status,200);assert.deepEqual(centers.body.centers.map(center=>center.id),['mercadolivre','shopee','cakto','kiwify']);
+for(const path of ['/api/rewards/me','/api/city-chat/rooms','/api/affiliates/me/products'])assert.equal((await request(path)).response.status,401,path+' exige conta');
+for(const scope of ['music','cinema']){const catalog=await request('/api/media/'+scope,{expectJson:true});assert.equal(catalog.response.status,200);assert.ok(Array.isArray(catalog.body.items));assert.ok(catalog.body.items.length<=24);for(const item of catalog.body.items)assert.ok(item.source.embedUrl.startsWith('https://www.youtube-nocookie.com/embed/'));}
+const centers=await request('/api/affiliate-centers',{expectJson:true});assert.equal(centers.response.status,200);assert.deepEqual(centers.body.centers.map(center=>center.id),['mercadolivre','shopee','cakto','kiwify','tiktok']);
 for(const center of centers.body.centers){const catalog=await request(`/api/affiliate-centers/${center.id}/products`,{expectJson:true});assert.equal(catalog.response.status,200);assert.ok(catalog.body.items.length<=24);assert.ok(catalog.body.items.every(item=>item.platform===center.id&&item.href.startsWith('/ofertas/')));assert.equal((await request(center.logo)).response.status,200);}
 
 const health=await request('/api/health',{expectJson:true});
@@ -89,5 +96,5 @@ assert.equal(invalid.response.status,404,'cidade desconhecida deve ser rejeitada
 console.log(JSON.stringify({
   ok:true,
   base,
-  checks:{health:true,publicPages:4,memberPages:5,privateFarm:true,privatePreferences:true,spatialApi:true,activeCity:true,previewIsolation:true,premiumZones:true}
+  checks:{health:true,publicCommerceAndMedia:true,memberCityAndArenas:true,privateFarm:true,privateRewards:true,privateChat:true,privatePartners:true,privatePreferences:true,spatialApi:true,activeCity:true,previewIsolation:true,premiumZones:true}
 }));

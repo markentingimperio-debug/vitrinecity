@@ -29,13 +29,23 @@ export function mountVisitorAvatar({scene,dialog,onEnter}){
     mesh(leg,new THREE.BoxGeometry(.16,.12,.28),shoes,0,-.82,.055);
   }
   const badge=mesh(group,new THREE.PlaneGeometry(.085,.11),new THREE.MeshStandardMaterial({color:'#ecd598',metalness:.45,roughness:.4}),-.095,1.25,.196);badge.rotation.y=-.15;
+  const premium=new THREE.Group();premium.visible=false;group.add(premium);
+  const gold=new THREE.MeshStandardMaterial({color:'#cfaf68',metalness:.78,roughness:.26}),glow=new THREE.MeshStandardMaterial({color:'#68e8ed',emissive:'#35aab4',emissiveIntensity:.65,metalness:.4,roughness:.25});
+  mesh(premium,new THREE.CylinderGeometry(.218,.19,.5,12),gold,0,1.15,0);
+  mesh(premium,new THREE.BoxGeometry(.25,.055,.045),glow,0,1.65,.143);
+  for(const side of [-1,1]){mesh(premium,new THREE.BoxGeometry(.12,.07,.2),gold,side*.24,1.39,0);mesh(premium,new THREE.BoxGeometry(.026,.36,.035),glow,side*.12,1.16,.2);}
+  let premiumExpiresAt=0,serverClockOffset=0,premiumSelected=false,premiumPreferenceSet=false,premiumRequest=null;
+  const premiumLabel=document.createElement('label'),premiumCheck=document.createElement('input'),premiumText=document.createElement('span'),premiumLink=document.createElement('a');premiumCheck.type='checkbox';premiumCheck.disabled=true;premiumText.textContent='Traje Orbit premium · consultando acesso';premiumLabel.append(premiumCheck,premiumText);premiumLabel.style.cssText='display:flex;gap:12px;align-items:center;margin:18px 0';premiumLink.href='/central-creditos.html';premiumLink.textContent='Avatar premium · R$ 10 / 30 dias · até 30% em moedas';premiumLink.style.cssText='display:block;color:#f4d18c;margin:12px 0';dialog.querySelector('[data-enter-avatar]').before(premiumLabel,premiumLink);
+  async function checkPremium(){if(premiumRequest)return;premiumRequest=new AbortController();try{const response=await fetch('/api/rewards/me',{credentials:'same-origin',cache:'no-store',signal:premiumRequest.signal});if(!response.ok)throw Error();const data=await response.json();const serverTime=Date.parse(response.headers.get('date')||'');serverClockOffset=Number.isFinite(serverTime)?serverTime-Date.now():0;premiumExpiresAt=data.avatar.active?Number(data.avatar.expiresAt):0;premiumCheck.disabled=!premiumExpiresAt;premiumText.textContent=premiumExpiresAt?'Traje Orbit premium · até '+new Date(premiumExpiresAt).toLocaleDateString('pt-BR'):'Traje Orbit premium · ativação na central';if(premiumExpiresAt&&!premiumPreferenceSet){premiumSelected=true;premiumPreferenceSet=true;premiumCheck.checked=true;}}catch{premiumExpiresAt=0;premiumCheck.disabled=true;premiumText.textContent='Traje Orbit premium · confira seu acesso na central';}finally{premiumRequest=null;}}
+  premiumCheck.addEventListener('change',()=>{premiumPreferenceSet=true;premiumSelected=premiumCheck.checked;});checkPremium();let nextPremiumCheck=Date.now()+60000;
+  window.addEventListener('pagehide',()=>{premiumRequest?.abort();});
   const skinSelect=dialog.querySelector('[name="skin"]'),outfitSelect=dialog.querySelector('[name="outfit"]');skinSelect.value=String(appearance.skin);outfitSelect.value=String(appearance.outfit);
   function update(){appearance={skin:Number(skinSelect.value),outfit:Number(outfitSelect.value)};skin.color.set(SKINS[appearance.skin]||SKINS[1]);shirt.color.set(OUTFITS[appearance.outfit]||OUTFITS[0]);try{localStorage.setItem(STORAGE_KEY,JSON.stringify(appearance));}catch{}}
   skinSelect.addEventListener('change',update);outfitSelect.addEventListener('change',update);
   dialog.querySelector('[data-close]').addEventListener('click',()=>dialog.close());
   dialog.querySelector('[data-enter-avatar]').addEventListener('click',()=>{update();dialog.close();onEnter();});
   let phase=0;
-  return {group,tick(dt,{position,yaw,moving=false,visible=false}){group.visible=visible;if(!visible)return;group.position.set(position.x,.13,position.z);group.rotation.y=-yaw;if(moving)phase+=dt*9;
+  return {group,tick(dt,{position,yaw,moving=false,visible=false}){if(Date.now()>=nextPremiumCheck){nextPremiumCheck=Date.now()+60000;checkPremium();}premium.visible=premiumSelected&&premiumCheck.checked&&Date.now()+serverClockOffset<premiumExpiresAt;group.visible=visible;if(!visible)return;group.position.set(position.x,.13,position.z);group.rotation.y=-yaw;if(moving)phase+=dt*9;
     const stride=moving?Math.sin(phase)*.48:0;legs[0].rotation.x=stride;legs[1].rotation.x=-stride;arms[0].rotation.x=-stride*.75;arms[1].rotation.x=stride*.75;group.position.y+=moving?Math.abs(Math.sin(phase))*.035:0;
   }};
 }

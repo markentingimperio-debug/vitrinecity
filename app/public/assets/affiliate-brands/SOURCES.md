@@ -19,3 +19,5 @@ kiwify.png 41018735113c7b9541aa3a9c5e3c8740de80c4ec8d75bc1dcb06820edf8c1e51
 ```
 
 Paleta arquitetônica inspirada na identidade visual observada: Mercado Livre amarelo/azul, Shopee laranja/branco, Cakto verde escuro/branco e Kiwify verde. Não constitui um manual oficial de aplicação de marca. O SVG da Shopee contém somente elementos vetoriais locais, sem scripts, recursos externos ou animação.
+
+TikTok Shop: arquivo original do [portal brasileiro](https://seller.tiktok.com/br?channel=global_portal_v4), https://lf16-scmcdn.oecstatic.com/obj/oec-magellan-sg/oec/seller/seller_tiktok_com/icons/tiktok-logo.svg, SHA-256 `82619d2dca7ce7361512213df1f067f6da65915105ecceefa513b91e7129e11e`. SVG local com apenas svg/path, sem scripts nem recursos externos.

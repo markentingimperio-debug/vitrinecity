@@ -41,7 +41,9 @@ export function mountStorefrontDisplays({architecture,directory,onVisit=()=>{}})
         group.add(new THREE.Mesh(new THREE.PlaneGeometry(5.2,5.2),new THREE.MeshBasicMaterial({map:texture,toneMapped:false})));
         const display={group,canvas,texture,store,items:[],offset:side===-1?0:1,current:-1};displays.push(display);entries.push(display);
       }
-      const section=document.createElement('section'),heading=document.createElement('h3'),links=document.createElement('nav'),visit=document.createElement('button');heading.textContent=store.name;links.setAttribute('aria-label',`Vitrine de ${store.name}`);visit.type='button';visit.className='motion-toggle';visit.textContent='Ver vitrine na cidade';visit.setAttribute('aria-label',`Ver vitrine de ${store.name} na cidade`);visit.addEventListener('click',()=>onVisit(store));section.append(heading,visit,links);directory.append(section);
+      const section=document.createElement('section'),heading=document.createElement('h3'),links=document.createElement('nav'),visit=document.createElement('button');heading.textContent=store.name;links.setAttribute('aria-label',`Vitrine de ${store.name}`);visit.type='button';visit.className='motion-toggle';visit.textContent='Ver vitrine na cidade';visit.setAttribute('aria-label',`Ver vitrine de ${store.name} na cidade`);visit.addEventListener('click',()=>onVisit(store));
+      const building=document.createElement('button');building.type='button';building.className='motion-toggle';building.textContent='Ver prédio na cidade';building.setAttribute('aria-label',`Ver prédio de ${store.name} na cidade`);building.addEventListener('click',()=>onVisit(store,{building:true}));
+      section.append(heading,building,document.createTextNode(' '),visit,links);directory.append(section);
       return items=>{
         if(disposed)return;
         const safe=items.filter(item=>safeBillboardHref(item.href));for(const entry of entries){entry.items=safe;entry.current=-1;}

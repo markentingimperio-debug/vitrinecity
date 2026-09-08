@@ -1,0 +1,11 @@
+// Official creator/distributor uploads checked on 2026-09-08; no rehosting.
+const short=(slug,title,genre,id,description,tags)=>({slug,title,genre,kind:'video',format:'curta',url:'https://www.youtube.com/watch?v='+id,artist:'Blender Studio',description,tags});
+export const cinemaSeeds=[
+  short('caminandes-llamigos','Caminandes 3 · Llamigos','kids','L6mLFxGRFI4','Um curta de animação com Koro, a lhama, e um pequeno pinguim em busca de uma fruta no inverno da Patagônia. Publicado pelo Blender Studio para assistir em família.','animacao, familia, lhama, pinguim'),
+  short('wing-it','Wing It! · Uma aventura espacial','aventura','u9lj-c29dxI','Um engenheiro e um aspirante a piloto acabam lançados em uma nave fora de controle. Curta de animação completo do Blender Studio, com aventura e humor no espaço.','animacao, espaco, nave, humor'),
+  short('agent-327','Agent 327 · Operação Barbearia','acao','mN0zPOpADL4','Uma missão de espionagem vira uma sequência de ação em uma barbearia. Assista ao curta de apresentação do projeto Agent 327, publicado pelo Blender Studio.','agente, espionagem, acao, animacao'),
+  short('charge','Charge · Ficção científica','ficcao','UXqq0ZvbOnk','Em um futuro de escassez de energia, um homem entra em uma fábrica de baterias e encontra um robô de segurança. Curta completo de ficção científica do Blender Studio.','robo, futuro, energia, distopia'),
+  short('singularity','Singularity · Aventura espacial','ficcao','l5OZu-IrXpw','Uma aventura espacial apresentada pelo Blender Studio com uma linguagem visual pictórica. Assista ao curta completo disponibilizado no canal oficial do estúdio.','singularidade, espaco, animacao, 2026'),
+  short('spring','Spring · Aventura e fantasia','aventura','WhWc3b3KhnY','Uma jovem pastora e seu cão encontram espíritos ancestrais ligados ao ciclo da vida. Um curta de fantasia e aventura publicado pelo Blender Studio.','fantasia, natureza, animacao'),
+  {slug:'toy-story-5-trailer',title:'Toy Story 5 · Trailer oficial dublado',genre:'lancamentos',kind:'video',format:'trailer',url:'https://www.youtube.com/watch?v=-YbiBclEEgo',artist:'Walt Disney Studios BR',description:'Trailer oficial dublado de Toy Story 5, lançado pela Disney e Pixar em 2026. Esta sessão apresenta a prévia divulgada pelo estúdio, não o filme completo.',tags:'toy story, disney, pixar, trailer, dublado, 2026'}
+];
