@@ -1,5 +1,6 @@
 import {generateBlock} from './vitriny-spatial/procedural-city.js';
 import {SPATIAL_CITIES,SPATIAL_WORLDS,listSpatialCities,spatialCity,spatialCityDistrict} from './vitriny-spatial/city-registry.js';
+import {publicSpatialCityEnvironment} from './vitriny-spatial/city-environment.js';
 
 const INTEGER=/^-?\d+$/;
 function boundedInt(value,label,{min=-2048,max=2048}={}){
@@ -35,7 +36,7 @@ export function setupSpatialApi(app){
   if(!app||typeof app.get!=='function')throw new TypeError('spatial_api_app_required');
   app.get('/api/spatial/v1',(_req,res)=>cache(noSniff(res),300).json({
     apiVersion:1,name:'Vitriny Spatial API',worlds:'/api/spatial/v1/worlds',cities:'/api/spatial/v1/cities',
-    cityCount:SPATIAL_CITIES.length,capabilities:['multicity-registry','district-registry','procedural-chunks','city-identity']
+    cityCount:SPATIAL_CITIES.length,capabilities:['multicity-registry','district-registry','procedural-chunks','city-identity','themed-environment']
   }));
   app.get('/api/spatial/v1/worlds',(_req,res)=>cache(noSniff(res),300).json({apiVersion:1,items:SPATIAL_WORLDS}));
   app.get('/api/spatial/v1/cities',(req,res)=>{
@@ -47,6 +48,13 @@ export function setupSpatialApi(app){
   app.get('/api/spatial/v1/cities/:cityId',(req,res)=>{
     const city=spatialCity(req.params.cityId);if(!city)return noSniff(res).status(404).json({error:'city_not_found'});
     return cache(noSniff(res),120).json({apiVersion:1,city:publicCity(city)});
+  });
+  app.get('/api/spatial/v1/cities/:cityId/environment',(req,res)=>{
+    const city=spatialCity(req.params.cityId);if(!city)return noSniff(res).status(404).json({error:'city_not_found'});
+    const profile=String(req.query.profile||'STANDARD').trim().toUpperCase();
+    if(!['LITE','STANDARD','ULTRA'].includes(profile))return noSniff(res).status(400).json({error:'profile_invalid'});
+    try{return cache(noSniff(res),300).json({apiVersion:1,environment:publicSpatialCityEnvironment(city.id,{profileId:profile})});}
+    catch(error){return noSniff(res).status(400).json({error:String(error?.message||'environment_invalid').slice(0,80)});}
   });
   app.get('/api/spatial/v1/cities/:cityId/districts',(req,res)=>{
     const city=spatialCity(req.params.cityId);if(!city)return noSniff(res).status(404).json({error:'city_not_found'});
