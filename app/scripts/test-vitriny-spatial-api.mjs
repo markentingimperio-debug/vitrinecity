@@ -28,7 +28,7 @@ const base=`http://127.0.0.1:${server.address().port}`;
 async function request(path){const response=await fetch(base+path);return{status:response.status,cache:response.headers.get('cache-control'),json:await response.json()};}
 try{
   const root=await request('/api/spatial/v1');
-  assert.equal(root.status,200);assert.equal(root.json.apiVersion,1);assert.equal(root.json.cityCount,4);assert.equal(root.json.capabilities.includes('themed-environment'),true);
+  assert.equal(root.status,200);assert.equal(root.json.apiVersion,1);assert.equal(root.json.cityCount,4);assert.equal(root.json.capabilities.includes('themed-environment'),true);assert.equal(root.json.capabilities.includes('premium-zone-registry'),true);
   const cities=await request('/api/spatial/v1/cities?status=preview&region=go');
   assert.equal(cities.status,200);assert.equal(cities.json.count,3);assert.ok(cities.cache.includes('public'));
   const city=await request('/api/spatial/v1/cities/silvania');
@@ -36,6 +36,10 @@ try{
   const environment=await request('/api/spatial/v1/cities/silvania/environment?profile=LITE');
   assert.equal(environment.status,200);assert.equal(environment.json.environment.cityId,'silvania');assert.equal(environment.json.environment.profileId,'LITE');assert.equal(environment.json.environment.skyline.length,12);assert.ok(environment.cache.includes('public'));
   assert.equal((await request('/api/spatial/v1/cities/silvania/environment?profile=MEGA')).status,400);
+  const premium=await request('/api/spatial/v1/cities/silvania/premium-zones?profile=LITE');
+  assert.equal(premium.status,200);assert.equal(premium.json.cityId,'silvania');assert.equal(premium.json.profileId,'LITE');assert.equal(premium.json.count,premium.json.items.length);assert.equal(premium.json.activeCount,0);assert.equal(premium.json.items.every(item=>item.status==='available'),true);assert.ok(premium.cache.includes('public'));
+  assert.equal((await request('/api/spatial/v1/cities/silvania/premium-zones?profile=MEGA')).status,400);
+  assert.equal((await request('/api/spatial/v1/cities/missing/premium-zones')).status,404);
   const districts=await request('/api/spatial/v1/cities/anapolis/districts');
   assert.equal(districts.json.items.length,8);
   const district=await request('/api/spatial/v1/cities/anapolis/districts/food');
@@ -47,4 +51,4 @@ try{
   assert.equal((await request('/api/spatial/v1/cities?status=private')).status,400);
 }finally{await new Promise(resolve=>server.close(resolve));}
 
-console.log(JSON.stringify({ok:true,cities:SPATIAL_CITIES.map(city=>({id:city.id,status:city.status})),buildings:a.buildings.length}));
+console.log(JSON.stringify({ok:true,cities:SPATIAL_CITIES.map(city=>({id:city.id,status:city.status})),buildings:a.buildings.length,premiumApi:true}));
