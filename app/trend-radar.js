@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { editorialImage, isGenericEditorialImage } from './editorial-image-policy.js';
+import { safeResultImageUrl } from './public/search-result-image.js';
 
 const esc = (value) =>
   String(value ?? "").replace(
@@ -68,7 +70,7 @@ function portalFor(title) {
   return "noticias";
 }
 
-function renderIndex(portal, rows) {
+function renderIndex(portal, rows, siteUrl='https://vitrinecity.com') {
   const names = {
     conteudo: "Conteúdos em destaque",
     noticias: "Vitrine Notícias",
@@ -81,10 +83,11 @@ function renderIndex(portal, rows) {
   };
   const cards =
     rows
-      .map(
-        (row) =>
-          `<article><a href="/artigo/${esc(row.slug)}"><img src="${esc(row.image_url || "/assets/vitriny-city-master.jpg")}" alt=""><div><small>${esc(row.portal)}</small><h2>${esc(row.title)}</h2><p>${esc(row.summary)}</p><span>Ler artigo →</span></div></a></article>`,
-      )
+      .map(row=>{
+        const image=editorialImage(row.image_url,{siteUrl});
+        const cover=image.url?`<figure><img src="${esc(image.url)}" alt="" width="1200" height="675" loading="lazy">${image.credit?`<figcaption>${esc(image.credit)}</figcaption>`:''}</figure>`:'';
+        return `<article${image.url?'':' class="text-only"'}><a href="/artigo/${esc(row.slug)}">${cover}<div><small>${esc(row.portal)}</small><h2>${esc(row.title)}</h2><p>${esc(row.summary)}</p><span>Ler artigo →</span></div></a></article>`;
+      })
       .join("") ||
     '<div class="empty">Os primeiros artigos estão em preparação editorial.</div>';
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(names[portal])} — VitrineCity</title><meta name="description" content="Notícias, tecnologia, inteligência artificial, entretenimento e conteúdos úteis selecionados pela VitrineCity."><style>${INDEX_CSS}</style></head><body><header><a href="/">VitrineCity</a><nav><a href="/noticias">Notícias</a><a href="/tecnologia">Tecnologia</a><a href="/inteligencia-artificial">IA</a><a href="/entretenimento">Famosos</a><a href="/social">Vitriny Social</a></nav></header><main><div class="hero"><small>CONTEÚDO COM REVISÃO EDITORIAL</small><h1>${esc(names[portal])}</h1><p>Tendências transformadas em conteúdo útil, com fontes identificadas e revisão antes da publicação.</p></div><section>${cards}</section></main><footer>VitrineCity · conteúdo informativo · <a href="/contato.html">Contato</a></footer></body></html>`;
@@ -105,19 +108,20 @@ export function publishedStoryForArticle(db, row) {
   } catch { return null; }
 }
 
-function renderArticle(row, products = [], storyUrl = null) {
+function renderArticle(row, products = [], storyUrl = null, siteUrl='https://vitrinecity.com') {
   const sources = JSON.parse(row.sources_json || "[]");
-  const articleUrl = `https://vitrinecity.com/artigo/${encodeURIComponent(row.slug)}`;
-  const absoluteImage = new URL(
-    row.image_url || "/assets/vitriny-city-master.jpg",
-    "https://vitrinecity.com",
-  ).href;
+  const articleUrl = new URL('/artigo/'+encodeURIComponent(row.slug),siteUrl).href;
+  const image=editorialImage(row.image_url,{siteUrl});
+  const absoluteImage=image.url?new URL(image.url,siteUrl).href:'';
+  const imageCaption=image.caption||image.credit;
+  const imageAlt=image.caption||((image.kind==='ai'?'Ilustração por IA sobre ':'Imagem de capa: ')+row.title);
+  const cover=image.url?`<figure class="article-cover"><img class="cover" src="${esc(image.url)}" alt="${esc(imageAlt)}" width="1200" height="675">${imageCaption?`<figcaption>${esc(imageCaption)}</figcaption>`:''}</figure>`:'<div class="article-rule" aria-hidden="true"></div>';
   const seoKeywords = [...new Set([
     row.portal.replaceAll("-", " "),
     ...String(row.title).toLowerCase().split(/\s+/).filter(word => word.length > 3),
     "VitrineCity",
   ])].slice(0, 12).join(", ");
-  const paragraphs = (String(row.id||'').startsWith('story-companion:')?'<p class="review">Imagem de capa: ilustração gerada por IA.</p>':'') + String(row.body || "")
+  const paragraphs = String(row.body || "")
     .split(/\n{2,}/)
     .filter(Boolean)
     .map((p) => `<p>${esc(p)}</p>`)
@@ -130,17 +134,22 @@ function renderArticle(row, products = [], storyUrl = null) {
     .join("");
   const adContext = JSON.stringify(`${row.portal} ${row.title}`).replace(/</g, "\\u003c");
   const storyLink = storyUrl ? `<p><a href="${esc(storyUrl)}">Ver este conteúdo em Web Story →</a></p>` : '';
+  const productOrigin=siteUrl;
+  const productPhoto=value=>{
+    const safe=safeResultImageUrl(value,productOrigin);if(!safe)return '';
+    const url=new URL(safe);
+    if(url.origin!==new URL(productOrigin).origin)return safe;
+    return isGenericEditorialImage(url.pathname,{siteUrl:productOrigin})?'':url.pathname+url.search;
+  };
   const productCarousel = products.length
-    ? `<section class="context-ad" id="contextAd" hidden><small>CONTEÚDO PATROCINADO</small><a rel="nofollow sponsored"><img alt=""><span><b></b><em></em></span></a></section><script>fetch('/api/ads/serve?placement=banner&context='+encodeURIComponent(${adContext})).then(r=>r.json()).then(d=>{const ad=d.ads?.[0];if(!ad)return;const box=document.getElementById('contextAd'),link=box.querySelector('a'),img=box.querySelector('img');link.href=ad.clickUrl;box.querySelector('b').textContent=ad.title;box.querySelector('em').textContent=ad.text;if(ad.imageUrl){img.src=ad.imageUrl;img.alt=ad.title}else img.remove();box.hidden=false}).catch(()=>{})<\/script><section class="products"><div class="products-head"><div><small>VITRINECITY LOJA</small><h2>Produtos relacionados ao assunto</h2></div><a href="/loja">Ver catálogo completo →</a></div><div class="product-track">${products.map(product => `<a class="product-card" href="/produto/${encodeURIComponent(product.id)}/${esc(slugify(product.name))}"><img src="${esc(product.image_url || "/assets/vitriny-city-master.jpg")}" alt="${esc(product.name)}"><span>${esc(product.store_name)}</span><strong>${esc(product.name)}</strong><b>${(Number(product.price_cents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</b></a>`).join("")}</div></section>`
+    ? `<section class="context-ad" id="contextAd" hidden><small>CONTEÚDO PATROCINADO</small><a rel="nofollow sponsored"><img alt=""><span><b></b><em></em></span></a></section><script>fetch('/api/ads/serve?placement=banner&context='+encodeURIComponent(${adContext})).then(r=>r.json()).then(d=>{const ad=d.ads?.[0];if(!ad)return;const box=document.getElementById('contextAd'),link=box.querySelector('a'),img=box.querySelector('img');link.href=ad.clickUrl;box.querySelector('b').textContent=ad.title;box.querySelector('em').textContent=ad.text;if(ad.imageUrl){img.src=ad.imageUrl;img.alt=ad.title}else img.remove();box.hidden=false}).catch(()=>{})<\/script><section class="products"><div class="products-head"><div><small>VITRINECITY LOJA</small><h2>Produtos relacionados ao assunto</h2></div><a href="/loja">Ver catálogo completo →</a></div><div class="product-track">${products.map(product => {const photo=productPhoto(product.image_url);return `<a class="product-card" href="/produto/${encodeURIComponent(product.id)}/${esc(slugify(product.name))}">${photo?`<img src="${esc(photo)}" alt="${esc(product.name)}">`:'<span class="product-without-image">Ver detalhes do produto</span>'}<span>${esc(product.store_name)}</span><strong>${esc(product.name)}</strong><b>${(Number(product.price_cents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</b></a>`;}).join("")}</div></section>`
     : "";
   const schema = JSON.stringify({
     "@context": "https://schema.org",
     "@type": row.portal === "noticias" ? "NewsArticle" : "Article",
     headline: row.title,
     description: row.summary,
-    image: [
-      absoluteImage,
-    ],
+    ...(absoluteImage?{image:[absoluteImage]}:{}),
     mainEntityOfPage: articleUrl,
     keywords: seoKeywords,
     datePublished: row.published_at,
@@ -148,15 +157,16 @@ function renderArticle(row, products = [], storyUrl = null) {
     author: { "@type": "Organization", name: "VitrineCity" },
     publisher: { "@type": "Organization", name: "VitrineCity" },
   }).replace(/</g, "\\u003c");
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(row.title)} — VitrineCity</title><meta name="description" content="${esc(row.summary)}"><meta name="keywords" content="${esc(seoKeywords)}"><meta name="robots" content="index,follow,max-image-preview:large"><meta property="og:type" content="article"><meta property="og:locale" content="pt_BR"><meta property="og:site_name" content="VitrineCity"><meta property="og:title" content="${esc(row.title)}"><meta property="og:description" content="${esc(row.summary)}"><meta property="og:url" content="${esc(articleUrl)}"><meta property="og:image" content="${esc(absoluteImage)}"><meta name="twitter:card" content="summary_large_image"><link rel="canonical" href="${esc(articleUrl)}"><script type="application/ld+json">${schema}</script><style>${ARTICLE_CSS}</style></head><body><header><a href="/">VitrineCity</a><a href="/${esc(row.portal)}">← Voltar</a></header><main><small>${esc(row.portal.toUpperCase())}</small><h1>${esc(row.title)}</h1><p class="summary">${esc(row.summary)}</p>${storyLink}<img class="cover" src="${esc(row.image_url || "/assets/vitriny-city-master.jpg")}" alt="${esc(row.title)}" width="1200" height="675"><article>${paragraphs}</article>${sourceList ? `<aside><h2>Fontes consultadas</h2><ul>${sourceList}</ul></aside>` : ""}<p class="review">Conteúdo revisado antes da publicação. Informações podem ser atualizadas conforme novas fontes.</p>${productCarousel}</main></body></html>`;
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(row.title)} — VitrineCity</title><meta name="description" content="${esc(row.summary)}"><meta name="keywords" content="${esc(seoKeywords)}"><meta name="robots" content="index,follow,max-image-preview:large"><meta property="og:type" content="article"><meta property="og:locale" content="pt_BR"><meta property="og:site_name" content="VitrineCity"><meta property="og:title" content="${esc(row.title)}"><meta property="og:description" content="${esc(row.summary)}"><meta property="og:url" content="${esc(articleUrl)}">${absoluteImage?`<meta property="og:image" content="${esc(absoluteImage)}">`:""}<meta name="twitter:card" content="${absoluteImage?"summary_large_image":"summary"}"><link rel="canonical" href="${esc(articleUrl)}"><script type="application/ld+json">${schema}</script><style>${ARTICLE_CSS}</style></head><body><header><a href="/">VitrineCity</a><a href="/${esc(row.portal)}">← Voltar</a></header><main><small>${esc(row.portal.toUpperCase())}</small><h1>${esc(row.title)}</h1><p class="summary">${esc(row.summary)}</p>${storyLink}${cover}<article>${paragraphs}</article>${sourceList ? `<aside><h2>Fontes consultadas</h2><ul>${sourceList}</ul></aside>` : ""}<p class="review">Conteúdo revisado antes da publicação. Informações podem ser atualizadas conforme novas fontes.</p>${productCarousel}</main></body></html>`;
 }
 
-const INDEX_CSS = `:root{--blue:#1768e6;--navy:#071f4b;--yellow:#ffc628;--bg:#f4f9ff}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--navy);font-family:Inter,Arial,sans-serif}header{height:72px;padding:0 max(18px,6vw);display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #d8e7f7}header>a{font-size:25px;font-weight:950;text-decoration:none}nav{display:flex;gap:18px}nav a{font-weight:850;text-decoration:none}.hero{padding:70px 20px;text-align:center;background:linear-gradient(135deg,#061c44,#1768e6);color:#fff}.hero small{color:var(--yellow);font-weight:950}.hero h1{font-size:clamp(40px,7vw,72px);margin:10px}.hero p{max-width:700px;margin:auto;color:#d5e5ff}main section{max-width:1120px;margin:auto;padding:45px 20px;display:grid;grid-template-columns:repeat(3,1fr);gap:18px}article{background:#fff;border:1px solid #d8e7f7;border-radius:20px;overflow:hidden}article a{text-decoration:none}article img{width:100%;aspect-ratio:16/9;object-fit:cover}article div{padding:19px}article small{color:#1768e6;font-weight:950;text-transform:uppercase}article h2{font-size:21px;margin:8px 0}article p{color:#5b7192;line-height:1.5}article span{font-weight:900;color:#1768e6}.empty{grid-column:1/-1;padding:70px;text-align:center}footer{text-align:center;padding:30px;background:#061c44;color:#c7daf7}@media(max-width:760px){nav a:not(:last-child){display:none}main section{grid-template-columns:1fr}}`;
-const ARTICLE_CSS = `*{box-sizing:border-box}body{margin:0;background:#f5f9ff;color:#071f4b;font-family:Georgia,serif}header{height:68px;padding:0 max(18px,6vw);display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #d8e7f7}header a{font-family:Arial,sans-serif;font-weight:900;text-decoration:none}main{max-width:840px;margin:auto;padding:55px 20px 90px}main>small{font-family:Arial,sans-serif;color:#1768e6;font-weight:900}h1{font-size:clamp(38px,6vw,64px);line-height:1.04;margin:12px 0 18px}.summary{font-size:21px;color:#526987;line-height:1.55}.cover{width:100%;max-height:520px;object-fit:cover;border-radius:22px;margin:25px 0}article{font-size:19px;line-height:1.8}aside{margin-top:40px;padding:22px;background:#fff;border:1px solid #d8e7f7;border-radius:16px}aside a{color:#1768e6}.review{font-family:Arial,sans-serif;color:#6b7e98;font-size:12px;margin-top:25px}.products{margin-top:45px;padding-top:28px;border-top:1px solid #d8e7f7;font-family:Inter,Arial,sans-serif}.products-head{display:flex;align-items:end;justify-content:space-between;gap:15px}.products-head small{color:#1768e6;font-weight:950}.products-head h2{margin:5px 0}.products-head a{color:#1768e6;font-weight:900;text-decoration:none}.product-track{display:flex;gap:14px;margin-top:18px;padding-bottom:10px;overflow-x:auto;scroll-snap-type:x mandatory}.product-card{flex:0 0 210px;scroll-snap-align:start;overflow:hidden;border:1px solid #d8e7f7;border-radius:16px;background:#fff;color:#071f4b;text-decoration:none}.product-card img{width:100%;aspect-ratio:1/1;object-fit:cover}.product-card span,.product-card strong,.product-card b{display:block;margin:7px 13px}.product-card span{color:#617694;font-size:11px}.product-card strong{min-height:38px}.product-card b{color:#1768e6;font-size:18px;margin-bottom:14px}@media(max-width:600px){.products-head{align-items:start;flex-direction:column}.product-card{flex-basis:72vw}}`;
+const INDEX_CSS = `:root{--blue:#1768e6;--navy:#071f4b;--yellow:#ffc628;--bg:#f4f9ff}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--navy);font-family:Inter,Arial,sans-serif}header{height:72px;padding:0 max(18px,6vw);display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #d8e7f7}header>a{font-size:25px;font-weight:950;text-decoration:none}nav{display:flex;gap:18px}nav a{font-weight:850;text-decoration:none}.hero{padding:70px 20px;text-align:center;background:linear-gradient(135deg,#061c44,#1768e6);color:#fff}.hero small{color:var(--yellow);font-weight:950}.hero h1{font-size:clamp(40px,7vw,72px);margin:10px}.hero p{max-width:700px;margin:auto;color:#d5e5ff}main section{max-width:1120px;margin:auto;padding:45px 20px;display:grid;grid-template-columns:repeat(3,1fr);gap:18px}article{background:#fff;border:1px solid #d8e7f7;border-radius:20px;overflow:hidden}article a{text-decoration:none;display:flex;flex-direction:column;height:100%;color:inherit}article figure{margin:0}article figcaption{font-size:11px;color:#526987;padding:7px 19px;border-bottom:1px solid #e4eaf1}article.text-only{border-top:4px solid #1768e6}article.text-only h2{font-family:Georgia,serif;font-size:27px;line-height:1.2}article.text-only> a>div{padding:26px 23px}article img{width:100%;aspect-ratio:16/9;object-fit:cover}article div{padding:19px}article small{color:#1768e6;font-weight:950;text-transform:uppercase}article h2{font-size:21px;margin:8px 0}article p{color:#5b7192;line-height:1.5}article span{font-weight:900;color:#1768e6}.empty{grid-column:1/-1;padding:70px;text-align:center}footer{text-align:center;padding:30px;background:#061c44;color:#c7daf7}@media(max-width:760px){nav a:not(:last-child){display:none}main section{grid-template-columns:1fr}}`;
+const ARTICLE_CSS = `*{box-sizing:border-box}body{margin:0;background:#f5f9ff;color:#071f4b;font-family:Georgia,serif}header{height:68px;padding:0 max(18px,6vw);display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #d8e7f7}header a{font-family:Arial,sans-serif;font-weight:900;text-decoration:none}main{max-width:840px;margin:auto;padding:55px 20px 90px}main>small{font-family:Arial,sans-serif;color:#1768e6;font-weight:900}h1{font-size:clamp(38px,6vw,64px);line-height:1.04;margin:12px 0 18px}.summary{font-size:21px;color:#526987;line-height:1.55}.article-cover{margin:25px 0}.cover{display:block;width:100%;height:auto;max-height:520px;object-fit:cover;border-radius:22px}.article-cover figcaption{font:12px/1.5 Arial,sans-serif;color:#526987;margin-top:9px}.article-rule{height:3px;width:72px;background:#1768e6;margin:30px 0}.product-without-image{padding:25px 0;font-size:13px;color:#617694}article{font-size:19px;line-height:1.8}aside{margin-top:40px;padding:22px;background:#fff;border:1px solid #d8e7f7;border-radius:16px}aside a{color:#1768e6}.review{font-family:Arial,sans-serif;color:#6b7e98;font-size:12px;margin-top:25px}.products{margin-top:45px;padding-top:28px;border-top:1px solid #d8e7f7;font-family:Inter,Arial,sans-serif}.products-head{display:flex;align-items:end;justify-content:space-between;gap:15px}.products-head small{color:#1768e6;font-weight:950}.products-head h2{margin:5px 0}.products-head a{color:#1768e6;font-weight:900;text-decoration:none}.product-track{display:flex;gap:14px;margin-top:18px;padding-bottom:10px;overflow-x:auto;scroll-snap-type:x mandatory}.product-card{flex:0 0 210px;scroll-snap-align:start;overflow:hidden;border:1px solid #d8e7f7;border-radius:16px;background:#fff;color:#071f4b;text-decoration:none}.product-card img{width:100%;aspect-ratio:1/1;object-fit:cover}.product-card span,.product-card strong,.product-card b{display:block;margin:7px 13px}.product-card span{color:#617694;font-size:11px}.product-card strong{min-height:38px}.product-card b{color:#1768e6;font-size:18px;margin-bottom:14px}@media(max-width:600px){.products-head{align-items:start;flex-direction:column}.product-card{flex-basis:72vw}}`;
 
 export function setupTrendRadar({
   app,
   db,
+  siteUrl='https://vitrinecity.com',
   requireAdmin,
   sameOriginOnly,
   publicPage,
@@ -257,7 +267,7 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
         .slice(0, 180),
       body = String(generated.body || "").trim();
     const summary = String(generated.summary || "").trim(),
-      imageUrl = String(generated.imageUrl || "");
+      imageUrl = editorialImage(generated.imageUrl,{siteUrl}).url;
     const sources = trend.source_url
       ? [{ title: "Google Trends — tendência identificada", url: trend.source_url }]
       : [];
@@ -283,16 +293,15 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
       ],
       [
         "midia",
-        imageUrl.length > 0 && imageUrl !== "/assets/vitriny-city-master.jpg",
-        imageUrl ? "Capa verificada." : "Capa ausente.",
+        !!editorialImage(imageUrl,{siteUrl}).url,
+        imageUrl ? "Imagem editorial disponível para revisão." : "Capa ausente, genérica ou incompatível.",
       ],
       [
         "editora",
         body.length >= 600 &&
           summary.length >= 40 &&
           sourceOk && director.approved &&
-          imageUrl.length > 0 &&
-          imageUrl !== "/assets/vitriny-city-master.jpg",
+          !!editorialImage(imageUrl,{siteUrl}).url,
         "Validação final do Coordenador da Editora.",
       ],
       [
@@ -312,7 +321,7 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
       title,
       summary,
       body,
-      imageUrl || "/assets/vitriny-city-master.jpg",
+      imageUrl,
       JSON.stringify(sources),
       approved ? "published" : "draft",
       approved ? 1 : 0,
@@ -517,7 +526,7 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
           title,
           String(generated.summary || "").trim(),
           body,
-          String(generated.imageUrl || "/assets/vitriny-city-master.jpg"),
+          editorialImage(generated.imageUrl,{siteUrl}).url,
           JSON.stringify(sources),
         );
         db.prepare(
@@ -591,8 +600,9 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
     requireAdmin,
     sameOriginOnly,
     (req, res) => {
-      const article=db.prepare("SELECT portal,sources_json FROM editorial_articles WHERE id=?").get(req.params.id);
+      const article=db.prepare("SELECT portal,sources_json,image_url FROM editorial_articles WHERE id=?").get(req.params.id);
       if(!article)return res.status(404).json({error:'Artigo não encontrado.'});
+      if(!editorialImage(article.image_url,{siteUrl}).url)return res.status(409).json({error:'Escolha uma capa relacionada ao assunto antes de publicar. Imagens genéricas da cidade não servem como capa editorial.'});
       let sources=[];try{sources=JSON.parse(article.sources_json||'[]')}catch{}
       const validSources=sources.filter(source=>source&&/^https:\/\//i.test(String(source.url||''))&&String(source.title||'').trim().length>=3);
       if(['noticias','esportes','entretenimento','tecnologia','inteligencia-artificial'].includes(article.portal)&&validSources.length<2)return res.status(409).json({error:'Esta editoria exige pelo menos duas fontes HTTPS identificadas antes da publicação.'});
@@ -632,7 +642,7 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
                 "SELECT * FROM editorial_articles WHERE status='published' AND portal=? ORDER BY published_at DESC LIMIT 60",
               )
               .all(portal);
-      res.type("html").send(renderIndex(portal, rows));
+      res.type("html").send(renderIndex(portal, rows, siteUrl));
     });
   app.get("/artigo/:slug", (req, res) => {
     const row = db
@@ -643,6 +653,6 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
     if (!row) return res.status(404).send("Artigo não encontrado.");
     const contextTerms = row.portal === 'receitas' ? /cozinha|panela|forma|alimento|tempero|receita/ : row.portal === 'plantas-e-jardinagem' ? /planta|adubo|terra|substrato|vaso|jardin|semente|npk/ : null;
     const products = db.prepare(`SELECT p.id,p.name,p.category,p.price_cents,p.image_url,s.business_name store_name FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0 AND s.review_status='published' ORDER BY p.updated_at DESC,p.id DESC LIMIT 40`).all().sort((a,b)=>Number(contextTerms?.test(`${b.name} ${b.category}`.toLowerCase()))-Number(contextTerms?.test(`${a.name} ${a.category}`.toLowerCase()))).slice(0,10);
-    return res.type("html").send(renderArticle(row, products, publishedStoryForArticle(db, row)));
+    return res.type("html").send(renderArticle(row, products, publishedStoryForArticle(db, row),siteUrl));
   });
 }

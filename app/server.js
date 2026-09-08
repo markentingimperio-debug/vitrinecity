@@ -12,8 +12,10 @@ import {setupCityRewards} from './city-rewards.js';
 import {setupCourierAccount} from './courier-account.js';
 import { setupMediaCatalog } from './media-catalog.js';
 import { setupEmissora } from './emissora.js';
+import {editorialImage} from './editorial-image-policy.js';
 import { setupDailyWebStories } from './web-story-daily.js';
 import { createStoryImageProvider, createOpenAIStoryRequest } from './web-story-provider.js';
+import {createEditorialCoverGenerator} from './editorial-cover-generation.js';
 import { createCryptoObservability, mountCryptoObservability } from './crypto-observability.js';
 import { mountJarvis } from './jarvis-core.js';
 import { mountJarvisPublic } from './jarvis-public.js';
@@ -2649,9 +2651,10 @@ const publicPage = file => (req, res) => {
   ));
 };
 let dailyStories;
-setupTrendRadar({ app, db, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft, reviewEditorialDraft, automationAllowed:()=>!dailyStories?.automation.status().enabled });
+setupTrendRadar({ app, db, siteUrl:SITE_URL, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft, reviewEditorialDraft, automationAllowed:()=>!dailyStories?.automation.status().enabled });
 setupEmissora({app,db,siteUrl:SITE_URL});
 const storyOpenAIRequest=createOpenAIStoryRequest({apiKey:()=>process.env.OPENAI_API_KEY});
+const generateEditorialCover=createEditorialCoverGenerator({outputDir:generatedMediaDir,openAIRequest:storyOpenAIRequest,openRouterRequest,openRouterModel:()=>OPENROUTER_IMAGE_MODEL,onFailure:details=>console.error('Editorial cover pending',details)});
 const webStories = dailyStories = setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl:SITE_URL,publicDir:path.join(dir,'public'),dataDir,
   services:()=>DIGITAL_SERVICE_PACKAGES,courses:()=>managedCourses(true).filter(course=>courseReady(course.slug)),
   requestText:requestEditorialText,requestImage:createStoryImageProvider({provider:()=>process.env.OPENAI_API_KEY?'openai':'openrouter',request:(url,...args)=>url==='https://api.openai.com/v1/images/generations'?storyOpenAIRequest(url,...args):openRouterRequest(url,...args),model:()=>process.env.OPENAI_API_KEY?'gpt-image-2':OPENROUTER_IMAGE_MODEL,outputDir:generatedMediaDir}),
@@ -2673,7 +2676,10 @@ app.get('/descobrir', publicPage('descobrir.html'));
 app.get('/descobrir-social.html', enhancedPublicPage('descobrir-social.html', ['/discover-enhancements.js']));
 app.get('/api/discover', (_req,res) => {
   const articles=db.prepare(`SELECT slug,portal,title,summary,image_url imageUrl,published_at publishedAt
-    FROM editorial_articles WHERE status='published' ORDER BY published_at DESC LIMIT 18`).all().map(item=>({...item,url:`/artigo/${encodeURIComponent(item.slug)}`}));
+    FROM editorial_articles WHERE status='published' ORDER BY published_at DESC LIMIT 18`).all().map(item=>{
+      const image=editorialImage(item.imageUrl,{siteUrl:SITE_URL});
+      return {...item,imageUrl:image.url,imageCredit:image.credit,url:`/artigo/${encodeURIComponent(item.slug)}`};
+    });
   const books=db.prepare(`SELECT slug,title,category,summary,cover_url imageUrl,price_cents amountCents,published_at publishedAt
     FROM digital_books WHERE status='published' ORDER BY published_at DESC LIMIT 10`).all().map(item=>({...item,url:`/livro/${encodeURIComponent(item.slug)}`}));
   const courses=managedCourses(true).filter(course=>courseReady(course.slug)).slice(0,12).map(course=>({slug:course.slug,title:course.title,description:course.description,imageUrl:course.coverUrl,amountCents:course.priceCents,url:`/centro-educacional.html#${encodeURIComponent(course.slug)}`}));
@@ -3365,7 +3371,10 @@ app.get('/api/search', (req, res) => {
       (sp.name LIKE ? OR sp.description LIKE ? OR sp.category LIKE ? OR p.business_name LIKE ?)
     ORDER BY CASE WHEN sp.name LIKE ? THEN 0 ELSE 1 END,sp.updated_at DESC LIMIT 60`)
     .all(like, like, like, like, `${query}%`);
-  const contents=db.prepare(`SELECT slug,title,summary,portal,image_url imageUrl FROM editorial_articles WHERE status='published' AND (title LIKE ? OR summary LIKE ? OR body LIKE ? OR portal LIKE ?) ORDER BY CASE WHEN title LIKE ? THEN 0 ELSE 1 END,published_at DESC LIMIT 40`).all(like,like,like,like,`${query}%`).map(item=>({...item,url:`/artigo/${encodeURIComponent(item.slug)}`}));
+  const contents=db.prepare(`SELECT slug,title,summary,portal,image_url imageUrl FROM editorial_articles WHERE status='published' AND (title LIKE ? OR summary LIKE ? OR body LIKE ? OR portal LIKE ?) ORDER BY CASE WHEN title LIKE ? THEN 0 ELSE 1 END,published_at DESC LIMIT 40`).all(like,like,like,like,`${query}%`).map(item=>{
+    const image=editorialImage(item.imageUrl,{siteUrl:SITE_URL});
+    return {...item,imageUrl:image.url,imageCredit:image.credit,url:`/artigo/${encodeURIComponent(item.slug)}`};
+  });
   const books=db.prepare(`SELECT slug,title,summary,category,cover_url imageUrl,price_cents priceCents FROM digital_books WHERE status='published' AND (title LIKE ? OR summary LIKE ? OR category LIKE ?) ORDER BY CASE WHEN title LIKE ? THEN 0 ELSE 1 END,published_at DESC LIMIT 30`).all(like,like,like,`${query}%`).map(item=>({...item,url:`/livro/${encodeURIComponent(item.slug)}`}));
   const normalized=query.toLocaleLowerCase('pt-BR'),courses=managedCourses(true).filter(course=>courseReady(course.slug)&&`${course.title} ${course.description}`.toLocaleLowerCase('pt-BR').includes(normalized)).slice(0,30).map(course=>({title:course.title,description:course.description,imageUrl:course.coverUrl,priceCents:course.priceCents,url:`/centro-educacional.html#${encodeURIComponent(course.slug)}`}));
   const services=Object.entries(DIGITAL_SERVICE_PACKAGES).filter(([,item])=>`${item.title} ${item.description}`.toLocaleLowerCase('pt-BR').includes(normalized)).slice(0,20).map(([slug,item])=>({title:item.title,description:item.description,priceCents:item.amountCents,url:`/servicos-digitais.html?servico=${encodeURIComponent(slug)}`}));
@@ -5300,24 +5309,11 @@ async function requestEditorialText(system,user,maxTokens=2200){
 
 async function generateEditorialDraft({ title, portal, traffic, sourceUrl }) {
   if (!aiConfigured()) { const error = new Error('Configure a chave da IA no painel antes de gerar o artigo.'); error.status = 503; throw error; }
-  const raw = await requestEditorialText('Você é o agente editorial da VitrineCity. Crie um rascunho em português do Brasil, claro e útil, com 900 a 1.500 caracteres no corpo. Não invente acontecimentos, números, declarações ou fontes. Quando houver apenas uma tendência de busca, explique o assunto e sinalize o que precisa de confirmação editorial. Em entretenimento, não publique boatos, acusações, diagnóstico, localização ou informação privada. Em tecnologia e IA, priorize fontes oficiais. Retorne somente JSON válido com title, summary, body e imagePrompt. O corpo deve ter no mínimo 600 caracteres. A capa não pode imitar pessoa real.',`Tema: ${title}\nEditoria: ${portal}\nVolume: ${traffic||'não informado'}\nFonte: ${sourceUrl||'Google Trends Brasil'}`,2200);
+  const raw = await requestEditorialText('Você é o agente editorial da VitrineCity. Crie um rascunho em português do Brasil, claro e útil, com 900 a 1.500 caracteres no corpo. Não invente acontecimentos, números, declarações ou fontes. Quando houver apenas uma tendência de busca, explique o assunto e sinalize o que precisa de confirmação editorial. Em entretenimento, não publique boatos, acusações, diagnóstico, localização ou informação privada. Em tecnologia e IA, priorize fontes oficiais. Retorne somente JSON válido com title, summary e body. O corpo deve ter no mínimo 600 caracteres.',`Tema: ${title}\nEditoria: ${portal}\nVolume: ${traffic||'não informado'}\nFonte: ${sourceUrl||'Google Trends Brasil'}`,2200);
   const article = parseEditorialJson(raw);
   const body = String(article.body || '').trim();
   if (body.length < 600) throw new Error('O agente não produziu o mínimo de 600 caracteres. Tente novamente.');
-  let imageUrl = '/assets/vitriny-city-master.jpg';
-  if (AI_PROVIDER === 'openrouter' && article.imagePrompt) {
-    try {
-      const imageResult = await openRouterRequest('https://openrouter.ai/api/v1/images', { method: 'POST', body: JSON.stringify({ model: OPENROUTER_IMAGE_MODEL, prompt: String(article.imagePrompt).slice(0, 1200), n: 1, aspect_ratio: '16:9' }) }, 120000);
-      const item = imageResult.data?.data?.[0] || imageResult.data?.images?.[0];
-      const encoded = String(item?.b64_json || item?.image_url?.url || '').replace(/^data:[^;]+;base64,/, '');
-      const buffer = Buffer.from(encoded, 'base64');
-      if (buffer.length && buffer.length <= 25 * 1024 * 1024) {
-        const file = `editorial-${Date.now()}-${randomBytes(4).toString('hex')}.png`;
-        fs.writeFileSync(path.join(generatedMediaDir, file), buffer, { flag: 'wx' });
-        imageUrl = `/uploads/generated-videos/${file}`;
-      }
-    } catch (error) { console.error('Editorial cover generation failed', String(error.message || error)); }
-  }
+  const imageUrl=await generateEditorialCover({title:article.title||title,summary:article.summary,body,portal});
   return { title: article.title, summary: article.summary, body, imageUrl };
 }
 

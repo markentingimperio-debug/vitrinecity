@@ -36,4 +36,14 @@ attachResultCover(container,{imageUrl:'/assets/example.png'},{document,origin});
 const cover=container.children[0],image=cover.children[0];
 image.naturalWidth=1;image.naturalHeight=1;image.listeners.load();
 assert.equal(cover.removed,true,'Tracking-sized images are not useful covers');
+for(const imageCredit of ['Ilustração por IA','Foto de arquivo · 2024','ArionStar · CC0']){
+  const item={kind:'article',imageUrl:'/assets/editorial/example.jpg',imageCredit},card=element('article');
+  attachResultCover(card,item,{document,origin});const frame=card.children[0],[photo,credit]=frame.children;
+  assert.equal(credit.tagName,'SMALL');assert.equal(credit.textContent,imageCredit);assert.equal(credit.innerHTML,undefined,'Credits must be plain text');assert.equal(credit.hidden,true);
+  photo.naturalWidth=960;photo.naturalHeight=540;photo.listeners.load();assert.equal(credit.hidden,false);
+  photo.listeners.error();assert.equal(frame.removed,true,'Image failure removes its credit too');
+}
+for(const item of [{kind:'product',imageCredit:'Ilustração por IA'},{kind:'article',imageCredit:'<img src=x onerror=alert(1)>'},{kind:'article',imageCredit:'Foto exclusiva do acontecimento'},{kind:'article'}]){
+  const card=element('article');attachResultCover(card,{...item,imageUrl:'/assets/example.png'},{document,origin});assert.equal(card.children[0].children.length,1,'Only known editorial credits are displayed');
+}
 console.log('Search covers: safe source only, lazy static image, one action preserved, failures collapse.');

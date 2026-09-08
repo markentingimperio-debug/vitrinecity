@@ -1,16 +1,9 @@
+import {editorialImage} from './editorial-image-policy.js';
+
 const PAGE_SIZE=12,MAX_PAGE=10000;
 const categories=new Set(['total','noticias','receitas','esportes','entretenimento']);
 const normalize=value=>String(value??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
 const invalid=message=>Object.assign(Error(message),{status:400});
-
-function publicImage(value,origin){
-  if(typeof value!=='string'||!value||value.length>1000||/[\\%\x00-\x20\x7f]/.test(value))return '';
-  try{
-    const url=new URL(value,origin);
-    if(url.origin!==origin||url.username||url.password||url.search||url.hash||value.startsWith('//'))return '';
-    return /^\/(?:assets|uploads\/(?:generated-videos|store-assets)|story-assets)\/[a-z0-9_./-]+\.(?:jpe?g|png|webp)$/i.test(url.pathname)?url.pathname:'';
-  }catch{return '';}
-}
 
 function publicDate(value){
   if(typeof value!=='string'||!value.trim())return null;
@@ -43,7 +36,10 @@ export function createEmissoraFeed({db,siteUrl}){
     const total=db.prepare('SELECT count(*) total FROM editorial_articles WHERE '+clause).get(...params).total;
     const rows=db.prepare(`SELECT slug,portal,title,summary,image_url,published_at,updated_at FROM editorial_articles WHERE ${clause}
       ORDER BY datetime(published_at) DESC,slug ASC LIMIT ? OFFSET ?`).all(...params,PAGE_SIZE,(page-1)*PAGE_SIZE);
-    const items=rows.map(row=>({slug:String(row.slug),category:row.portal==='celebridades'?'entretenimento':row.portal,title:String(row.title||''),summary:String(row.summary||''),imageUrl:publicImage(row.image_url,origin),url:'/artigo/'+encodeURIComponent(row.slug),publishedAt:publicDate(row.published_at),updatedAt:publicDate(row.updated_at)}));
+    const items=rows.map(row=>{
+      const image=editorialImage(row.image_url,{siteUrl:origin});
+      return {slug:String(row.slug),category:row.portal==='celebridades'?'entretenimento':row.portal,title:String(row.title||''),summary:String(row.summary||''),imageUrl:image.url,imageCredit:image.credit,url:'/artigo/'+encodeURIComponent(row.slug),publishedAt:publicDate(row.published_at),updatedAt:publicDate(row.updated_at)};
+    });
     return {category,query,page,pageSize:PAGE_SIZE,total,pages:Math.max(1,Math.ceil(total/PAGE_SIZE)),items};
   }
   return {list};
