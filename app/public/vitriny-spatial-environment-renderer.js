@@ -1,14 +1,15 @@
 import * as THREE from '/vendor/three/three.module.js';
 import {fetchSpatialEnvironment} from './vitriny-spatial-environment-client.js';
-import {createSpatialLodController,premiumSpatialSlotState,resolveSpatialDayPhase} from './vitriny-spatial-adaptive-experience.js';
+import {combineSpatialLodFactors,createSpatialDistanceLodController,createSpatialLodController,premiumSpatialSlotState,resolveSpatialDayPhase} from './vitriny-spatial-adaptive-experience.js';
 
 const ACCENTS=['#6ee7ff','#8f8cff','#e48cff','#ffb36b','#85e6a8','#6f9cff','#b58cff','#6edbcf'];
 function color(value,fallback){try{return new THREE.Color(String(value||fallback));}catch{return new THREE.Color(fallback);}}
 function instanced(group,geometry,material,count,name){const mesh=new THREE.InstancedMesh(geometry,material,count);mesh.name=name;mesh.frustumCulled=true;mesh.userData.baseCount=count;group.add(mesh);return mesh;}
 function setTransform(mesh,index,{x=0,y=0,z=0,sx=1,sy=1,sz=1,ry=0},matrix,quaternion,scale,position){position.set(x,y,z);quaternion.setFromEuler(new THREE.Euler(0,ry,0));scale.set(sx,sy,sz);matrix.compose(position,quaternion,scale);mesh.setMatrixAt(index,matrix);}
-function setCount(mesh,factor){if(!mesh?.isInstancedMesh)return;mesh.count=Math.max(0,Math.min(mesh.userData.baseCount||mesh.count,Math.ceil((mesh.userData.baseCount||mesh.count)*factor)));mesh.visible=mesh.count>0;}
+function setCount(mesh,factor){if(!mesh?.isInstancedMesh)return;const base=mesh.userData.baseCount||mesh.count;mesh.count=Math.max(0,Math.min(base,Math.ceil(base*factor)));mesh.visible=mesh.count>0;}
+function cameraDistance(camera){const x=Number(camera?.position?.x),z=Number(camera?.position?.z);return Number.isFinite(x)&&Number.isFinite(z)?Math.hypot(x,z):0;}
 
-export async function mountSpatialCityEnvironment({scene,cityId,identity,profileId='STANDARD',shadows=false,fetchImpl=globalThis.fetch}={}){
+export async function mountSpatialCityEnvironment({scene,camera=null,cityId,identity,profileId='STANDARD',shadows=false,fetchImpl=globalThis.fetch}={}){
   if(!scene?.add)throw new TypeError('spatial_environment_scene_required');
   const environment=await fetchSpatialEnvironment({cityId,profileId,fetchImpl});
   const group=new THREE.Group();group.name=`city-environment:${environment.cityId}:${environment.profileId}`;group.userData={spatialEnvironment:true,cityId:environment.cityId,profileId:environment.profileId};
@@ -51,14 +52,14 @@ export async function mountSpatialCityEnvironment({scene,cityId,identity,profile
     const slot=premiumSpatialSlotState(raw);if(!slot)continue;
     const source=(environment.premiumSlots||[]).find(item=>item.slotId===slot.slotId);if(!source)continue;
     const marker=new THREE.Group();marker.name=slot.slotId;marker.userData={premiumSlot:true,...slot};marker.position.set(source.position.x,0,source.position.z);marker.rotation.y=source.rotationY||0;
-    const base=new THREE.Mesh(new THREE.CylinderGeometry(2.8,3.2,.55,profileId==='LITE'?12:24),new THREE.MeshStandardMaterial({color:'#132336',metalness:.5,roughness:.32}));base.position.y=.275;marker.add(base);
-    const ring=new THREE.Mesh(new THREE.TorusGeometry(2.6,.12,6,profileId==='LITE'?20:40),new THREE.MeshBasicMaterial({color:secondary,transparent:true,opacity:.42}));ring.rotation.x=Math.PI/2;ring.position.y=.68;marker.add(ring);group.add(marker);premiumSlots.push(marker);
+    const base=new THREE.Mesh(new THREE.CylinderGeometry(2.8,3.2,.55,profileId==='LITE'?12:24),new THREE.MeshStandardMaterial({color:slot.status==='active'?'#18334a':'#132336',emissive:slot.status==='active'?accent:'#000000',emissiveIntensity:slot.status==='active'?.18:0,metalness:.5,roughness:.32}));base.position.y=.275;marker.add(base);
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(2.6,.12,6,profileId==='LITE'?20:40),new THREE.MeshBasicMaterial({color:slot.status==='active'?accent:secondary,transparent:true,opacity:slot.status==='active'?.78:.42}));ring.rotation.x=Math.PI/2;ring.position.y=.68;marker.add(ring);group.add(marker);premiumSlots.push(marker);
   }
 
   const premium=new THREE.Mesh(new THREE.RingGeometry(122,154,profileId==='LITE'?48:96),new THREE.MeshBasicMaterial({color:identity?.palette?.secondary||'#8f8cff',transparent:true,opacity:.035,side:THREE.DoubleSide,depthWrite:false}));premium.rotation.x=-Math.PI/2;premium.position.y=.015;premium.name='premium-zone-ring';group.add(premium);
 
   const hemi=scene.children.find(item=>item?.isHemisphereLight)||null,directional=scene.children.find(item=>item?.isDirectionalLight)||null;
-  const original={hemi:hemi?.intensity??null,directional:directional?.intensity??null,fog:scene.fog?.density??null,exposure:null};
+  const original={hemi:hemi?.intensity??null,directional:directional?.intensity??null,fog:scene.fog?.density??null};
   let currentPhase=null;
   function applyPhase(){
     const phase=resolveSpatialDayPhase(new Date().getHours());if(currentPhase?.id===phase.id)return;currentPhase=phase;group.userData.dayPhase=phase.id;
@@ -70,17 +71,32 @@ export async function mountSpatialCityEnvironment({scene,cityId,identity,profile
   }
   applyPhase();const phaseTimer=setInterval(applyPhase,60000);
 
-  const lod=createSpatialLodController({profile:profileId});
-  function applyLod(factors=lod.factors){
+  const fpsLod=createSpatialLodController({profile:profileId});
+  const distanceLod=createSpatialDistanceLodController({profile:profileId,initialDistance:cameraDistance(camera)});
+  let fpsFactors=fpsLod.factors,distanceFactors=distanceLod.factors;
+  function applyLod(){
+    const factors=combineSpatialLodFactors(fpsFactors,distanceFactors);
     setCount(meshes.skyline,factors.skyline);setCount(meshes.trunks,factors.vegetation);setCount(meshes.vegetation,factors.vegetation);setCount(meshes.lightPoles,factors.lights);setCount(meshes.lights,factors.lights);setCount(meshes.furniture,factors.furniture);setCount(meshes.districtFurniture,factors.districtFurniture);
     const visiblePremium=Math.ceil(premiumSlots.length*factors.premium);premiumSlots.forEach((item,index)=>item.visible=index<visiblePremium);premium.visible=factors.premium>0;
-    group.userData.lodLevel=lod.level;
+    group.userData.lodLevel=fpsLod.level;group.userData.distanceTier=distanceLod.tier;group.userData.lodFactors=factors;
   }
   applyLod();
-  let raf=0,frames=0,clock=performance.now(),disposed=false;
-  function sample(now){if(disposed)return;raf=requestAnimationFrame(sample);if(document.hidden){frames=0;clock=now;return;}frames++;if(now-clock>=1000){const fps=frames*1000/(now-clock),result=lod.sample(fps);frames=0;clock=now;if(result.changed)applyLod(result.factors);group.userData.fps=Math.round(fps);}}
+  let raf=0,frames=0,clock=performance.now(),distanceClock=clock,disposed=false;
+  function sample(now){
+    if(disposed)return;raf=requestAnimationFrame(sample);
+    if(document.hidden){frames=0;clock=distanceClock=now;return;}
+    frames++;
+    if(now-distanceClock>=250){
+      const result=distanceLod.sample(cameraDistance(camera));distanceClock=now;group.userData.cameraDistance=Math.round(result.distance);
+      if(result.changed){distanceFactors=result.factors;applyLod();}
+    }
+    if(now-clock>=1000){
+      const fps=frames*1000/(now-clock),result=fpsLod.sample(fps);frames=0;clock=now;group.userData.fps=Math.round(fps);
+      if(result.changed){fpsFactors=result.factors;applyLod();}
+    }
+  }
   raf=requestAnimationFrame(sample);
 
   scene.add(group);
-  return Object.freeze({group,environment,get phase(){return currentPhase?.id||'day';},get lodLevel(){return lod.level;},dispose(){disposed=true;cancelAnimationFrame(raf);clearInterval(phaseTimer);if(hemi&&original.hemi!=null)hemi.intensity=original.hemi;if(directional&&original.directional!=null)directional.intensity=original.directional;if(scene.fog&&original.fog!=null)scene.fog.density=original.fog;scene.remove(group);group.traverse(object=>{object.geometry?.dispose?.();for(const material of Array.isArray(object.material)?object.material:[object.material])material?.dispose?.();});}});
+  return Object.freeze({group,environment,get phase(){return currentPhase?.id||'day';},get lodLevel(){return fpsLod.level;},get distanceTier(){return distanceLod.tier;},dispose(){disposed=true;cancelAnimationFrame(raf);clearInterval(phaseTimer);if(hemi&&original.hemi!=null)hemi.intensity=original.hemi;if(directional&&original.directional!=null)directional.intensity=original.directional;if(scene.fog&&original.fog!=null)scene.fog.density=original.fog;scene.remove(group);group.traverse(object=>{object.geometry?.dispose?.();for(const material of Array.isArray(object.material)?object.material:[object.material])material?.dispose?.();});}});
 }
