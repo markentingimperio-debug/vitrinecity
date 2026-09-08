@@ -2,6 +2,7 @@ import express from 'express';
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
+import {createVitrinyNeuralRuntime} from './vitriny-neural/bootstrap.js';
 
 const app = express();
 const port = Number(process.env.MULTIVERSAL_PORT || process.env.PORT || 3001);
@@ -13,6 +14,7 @@ db.pragma('foreign_keys = ON');
 
 const DEFAULT_CITY = 'silvania-go';
 const transitionAttempts = new Map();
+const EVENT_KINDS = new Set(['enter','city-change','place-visit']);
 
 const SEED_CITIES = Object.freeze([
   Object.freeze({ slug:'silvania-go', name:'Silvânia', state:'Goiás', stateCode:'GO', status:'pilot', sortOrder:10 }),
@@ -102,6 +104,27 @@ const seed = db.transaction(() => {
 });
 seed();
 
+function truthy(value){return ['1','true','yes','on'].includes(String(value??'').trim().toLowerCase());}
+let neuralRuntime=null;
+if(truthy(process.env.VITRINY_NEURAL_ENABLED)){
+  try{
+    neuralRuntime=createVitrinyNeuralRuntime({
+      db,
+      env:process.env,
+      nodeId:'multiversal-core',
+      pseudonymSalt:String(process.env.VITRINY_NEURAL_PSEUDONYM_SALT||'multiversal-no-personal-events')
+    });
+  }catch(error){
+    console.warn('[multiversal] Neural capture unavailable',String(error?.message||error));
+  }
+}
+
+function captureNeural(event){
+  if(!neuralRuntime?.bridge?.capture)return{accepted:false,reason:'neural_disabled'};
+  try{return neuralRuntime.bridge.capture(event);}
+  catch(error){console.warn('[multiversal] Neural event rejected',String(error?.message||error));return{accepted:false,reason:'capture_failed'};}
+}
+
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(express.json({ limit:'16kb' }));
@@ -178,7 +201,7 @@ function allowTransition(req) {
 
 app.get('/api/multiversal/health', (_req,res) => {
   res.set('Cache-Control','no-store');
-  return res.json({ ok:true, service:'vitrinecity-multiversal-core', database:'connected', now:new Date().toISOString() });
+  return res.json({ ok:true, service:'vitrinecity-multiversal-core', database:'connected', neuralCapture:Boolean(neuralRuntime), now:new Date().toISOString() });
 });
 
 app.get('/api/multiversal/cities', (_req,res) => {
@@ -208,8 +231,40 @@ app.get('/api/multiversal/context', (req,res) => {
     city,
     realm: realm ? publicRealm(realm, city.slug) : null,
     multiversalPath:`/multiversal.html?cidade=${encodeURIComponent(city.slug)}${realm ? `&universo=${encodeURIComponent(realm.slug)}` : ''}`,
+    neuralCapture:Boolean(neuralRuntime),
     updatedAt:new Date().toISOString()
   });
+});
+
+app.post('/api/multiversal/event', (req,res) => {
+  res.set('Cache-Control','no-store');
+  if (!sameOrigin(req)) return res.status(403).json({ error:'Origem do evento não autorizada.' });
+  if (!allowTransition(req)) return res.status(429).json({ error:'Muitos eventos em pouco tempo.' });
+  const kind=String(req.body?.kind||'').trim();
+  if(!EVENT_KINDS.has(kind))return res.status(400).json({error:'Evento Multiversal inválido.'});
+
+  const city=exactCityBySlug(req.body?.citySlug);
+  if(!city)return res.status(400).json({error:'Cidade inválida.'});
+  const realmSlug=safeSlug(req.body?.realmSlug);
+  const realm=realmSlug?realmBySlug(realmSlug,city.slug):null;
+  if(realmSlug&&!realm)return res.status(400).json({error:'Universo inválido para esta cidade.'});
+
+  const payload={citySlug:city.slug};
+  let type='multiversal.enter',entityType='city',entityId=city.slug;
+  if(kind==='city-change'){
+    const fromCity=exactCityBySlug(req.body?.fromCitySlug);
+    if(fromCity)payload.fromCitySlug=fromCity.slug;
+    payload.toCitySlug=city.slug;type='multiversal.city-change';entityType='city';entityId=city.slug;
+  }else if(kind==='place-visit'){
+    const placeSlug=safeSlug(req.body?.placeSlug),placeType=safeSlug(req.body?.placeType);
+    if(!placeSlug||!placeType)return res.status(400).json({error:'Local Multiversal inválido.'});
+    payload.placeType=placeType;if(realm)payload.realmSlug=realm.slug;
+    type='multiversal.place-visit';entityType=placeType;entityId=placeSlug;
+  }else if(realm){
+    payload.realmSlug=realm.slug;entityType='realm';entityId=realm.slug;
+  }
+  const captured=captureNeural({type,source:'multiversal',entityType,entityId,priority:2,payload});
+  return res.status(202).json({ok:true,accepted:captured?.accepted===true,neural:Boolean(neuralRuntime)});
 });
 
 app.post('/api/multiversal/transition', (req,res) => {
@@ -230,12 +285,18 @@ app.post('/api/multiversal/transition', (req,res) => {
   db.prepare(`INSERT INTO multiversal_transitions(city_slug,from_realm,to_realm,source_path)
     VALUES (?,?,?,?)`).run(city.slug, fromRealm?.slug || null, toRealm.slug, sourcePath);
 
+  captureNeural({
+    type:'multiversal.realm-transition',source:'multiversal',entityType:'realm',entityId:toRealm.slug,priority:3,
+    payload:{citySlug:city.slug,fromRealm:fromRealm?.slug||'',toRealm:toRealm.slug}
+  });
+
   return res.status(201).json({
     ok:true,
     city,
     fromRealm:fromRealm?.slug || null,
     toRealm:toRealm.slug,
-    href:appendCity(toRealm.entryPath, city.slug)
+    href:appendCity(toRealm.entryPath, city.slug),
+    neuralCapture:Boolean(neuralRuntime)
   });
 });
 
