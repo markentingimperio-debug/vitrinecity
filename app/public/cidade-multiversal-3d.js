@@ -72,8 +72,9 @@ const target=new THREE.Vector3(0,3,0);
 
 function safeJson(response){return response.json().catch(()=>({}));}
 function selectedCity(){return cities.find(city=>city.slug===activeCitySlug)||cities[0]||null;}
-function appendCity(entryPath,citySlug){const url=new URL(entryPath,location.origin);url.searchParams.set('cidade',citySlug);return `${url.pathname}${url.search}${url.hash}`;}
-function normalizeRealm(realm){const entryPath=realm.entryPath||realm.href||'/multiversal.html';return{...realm,category:realm.category||realm.type||'experience',categoryLabel:realm.categoryLabel||realm.typeLabel||realm.category||'Universo',entryPath,href:realm.href||appendCity(entryPath,activeCitySlug),imagePath:realm.imagePath||realm.image||'/assets/vitriny-city-master.jpg'};}
+function localPath(value,fallback){try{const url=new URL(String(value||''),location.origin);if(url.origin!==location.origin||!['http:','https:'].includes(url.protocol))return fallback;return `${url.pathname}${url.search}${url.hash}`;}catch{return fallback;}}
+function appendCity(entryPath,citySlug){const safePath=localPath(entryPath,'/multiversal.html');const url=new URL(safePath,location.origin);url.searchParams.set('cidade',citySlug);return `${url.pathname}${url.search}${url.hash}`;}
+function normalizeRealm(realm){const entryPath=localPath(realm.entryPath||realm.href,'/multiversal.html');const fallbackHref=appendCity(entryPath,activeCitySlug);return{...realm,category:realm.category||realm.type||'experience',categoryLabel:realm.categoryLabel||realm.typeLabel||realm.category||'Universo',entryPath,href:localPath(realm.href,fallbackHref),imagePath:localPath(realm.imagePath||realm.image,'/assets/vitriny-city-master.jpg')};}
 function readLastRealm(){try{return JSON.parse(localStorage.getItem(LAST_REALM_KEY)||'{}');}catch{return{};}}
 function rememberRealm(realm){try{localStorage.setItem(LAST_REALM_KEY,JSON.stringify({slug:realm.slug,citySlug:activeCitySlug,visitedAt:Date.now()}));}catch{/* A URL mantém a navegação funcional sem localStorage. */}}
 function rememberCity(slug){try{localStorage.setItem(LAST_CITY_KEY,slug);}catch{/* A cidade permanece na URL quando o armazenamento local está indisponível. */}}
@@ -273,12 +274,12 @@ function selectRealm(realm,recordVisit=true){
   if(recordVisit)sendMultiversalEvent({kind:'place-visit',citySlug:activeCitySlug,realmSlug:realm.slug,placeSlug:realm.slug,placeType:'realm'});
 }
 async function enterActiveRealm(){
-  if(!activeRealm)return;const previous=readLastRealm();rememberRealm(activeRealm);let destination=activeRealm.href||appendCity(activeRealm.entryPath,activeCitySlug);
+  if(!activeRealm)return;const previous=readLastRealm();rememberRealm(activeRealm);let destination=localPath(activeRealm.href||appendCity(activeRealm.entryPath,activeCitySlug),'/multiversal.html');
   try{
     const response=await fetch('/api/multiversal/transition',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({citySlug:activeCitySlug,fromRealm:previous?.citySlug===activeCitySlug&&previous?.slug!==activeRealm.slug?previous?.slug:null,toRealm:activeRealm.slug,sourcePath:`${location.pathname}${location.search}`})});
-    const data=response.ok?await safeJson(response):null;if(data?.href)destination=data.href;
+    const data=response.ok?await safeJson(response):null;if(data?.href)destination=localPath(data.href,destination);
   }catch{/* Telemetria não pode impedir a entrada no universo. */}
-  location.assign(destination);
+  location.assign(localPath(destination,'/multiversal.html'));
 }
 
 async function switchCity(nextSlug){
