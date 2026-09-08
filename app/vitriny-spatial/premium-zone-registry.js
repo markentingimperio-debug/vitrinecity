@@ -1,6 +1,6 @@
-const CITY_IDS=new Set(['vitrine-city','silvania','anapolis','goiania']);
+const CITY_IDS=new Set(['vitrine-city','silvania','anapolis','vianopolis','goiania']);
 const DISTRICT_IDS=new Set(['commerce','social','creator','food','education','entertainment','business','services']);
-const SLOT_RE=/^premium:(vitrine-city|silvania|anapolis|goiania):(\d{1,2})$/;
+const SLOT_RE=/^premium:(vitrine-city|silvania|anapolis|vianopolis|goiania):(\d{1,2})$/;
 const REF_RE=/^[a-zA-Z0-9:_-]{1,80}$/;
 
 function clean(value,max=80){return String(value??'').trim().slice(0,max);}
