@@ -24,10 +24,10 @@ export async function fetchBillboardPlaylist({fetchImpl=globalThis.fetch,active=
 export function billboardIndex({elapsed=0,offset=0,count=0,paused=false}={}){return count>0?((paused?0:Math.floor(Math.max(0,elapsed)/8))+offset)%count:0;}
 
 export function storeBillboardPlaylist(store,products=[]){
-  const items=(Array.isArray(products)?products:[]).map(normalizeInteriorProduct).filter(product=>product&&product.storeReference===store.reference).slice(0,24).map(product=>normalizeBillboard({title:product.name,url:product.href,imageUrl:product.imageUrl,label:store.name,amountCents:product.priceCents,description:product.description})).filter(Boolean);
+  const items=(Array.isArray(products)?products:[]).map(normalizeInteriorProduct).filter(product=>product&&product.storeReference===store.reference).slice(0,24).map(product=>({ ...normalizeBillboard({title:product.name,url:product.href,imageUrl:product.textureUrl,label:store.name,amountCents:product.priceCents,description:product.description}),kind:'product' })).filter(item=>item.href);
   if(items.length)return items;
-  const intro=normalizeBillboard({title:'Conheça o que oferecemos',label:store.name,url:store.mapHref||store.href,imageUrl:store.facadeUrl||store.logoUrl,description:store.description||'Visite a página da loja para saber mais.'});
-  return intro?[intro]:[];
+  const intro=normalizeBillboard({title:'Conheça o que oferecemos',label:store.name,url:store.href||store.mapHref,imageUrl:store.facadeUrl||store.logoUrl,description:store.description||'Visite a página da loja para saber mais.'});
+  return intro?[{...intro,kind:'store'}]:[];
 }
 export async function fetchStoreBillboardPlaylist(store,{fetchImpl=globalThis.fetch}={}){
   if(!store.productCount)return storeBillboardPlaylist(store);

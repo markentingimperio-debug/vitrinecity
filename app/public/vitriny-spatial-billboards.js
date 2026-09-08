@@ -31,13 +31,13 @@ export function mountSpatialBillboards({scene,architecture,active=false,cityName
     ctx.fillStyle='#9edacf';ctx.font='600 20px system-ui';ctx.fillText('CONHEÇA MAIS  →',48,470);board.texture.needsUpdate=true;board.group.userData.item=item;
   }
   function prepareImages(items=playlist){
-    for(const item of items){if(!item.imageUrl||images.has(item.imageUrl))continue;const image=new Image();image.crossOrigin='anonymous';images.set(item.imageUrl,image);image.onload=()=>{if(!disposed)for(const board of boards)board.current=-1;};image.onerror=()=>images.delete(item.imageUrl);image.src=item.imageUrl;}
+    for(const item of items.slice(0,2)){if(!item.imageUrl||images.has(item.imageUrl))continue;const image=new Image();image.crossOrigin='anonymous';images.set(item.imageUrl,image);image.onload=()=>{if(!disposed)for(const board of boards)board.current=-1;};image.onerror=()=>{image.onload=null;};image.src=item.imageUrl;}
   }
   const ready=fetchBillboardPlaylist({active,city:active?'':cityName}).then(items=>{if(!disposed&&items.length){playlist=items;for(const board of boards)board.current=-1;prepareImages();}return items.length;}).catch(()=>0);
   return {group,get targets(){return boards.map(board=>board.group);},ready,
-    registerStore(parent,store,{roof=9}={}){const entry=createBoard(parent,{y:roof+4,z:0,width:17,height:7.5,postHeight:4,heading:store.name,items:storeBillboardPlaylist(store)});prepareImages(entry.items);fetchStoreBillboardPlaylist(store).then(items=>{if(!disposed&&items.length){entry.items=items;entry.current=-1;prepareImages(items);}});return entry;},
+    registerStore(parent,store,{roof=9,onPlaylist=()=>{}}={}){const entry=createBoard(parent,{y:roof+4,z:0,width:17,height:7.5,postHeight:4,heading:store.name,items:storeBillboardPlaylist(store)});prepareImages(entry.items);onPlaylist(entry.items);fetchStoreBillboardPlaylist(store).then(items=>{if(!disposed&&items.length){entry.items=items;entry.current=-1;prepareImages(items);onPlaylist(items);}});return entry;},
     registerVenue(parent,{name,description,href,roof=9}){const items=storeBillboardPlaylist({name,href,description,reference:''});if(items.length)createBoard(parent,{y:roof+3.5,width:15,height:6.5,postHeight:3.5,heading:name,items});},
-    tick(dt,{paused=false}={}){if(!paused)elapsed+=dt;for(const board of boards){const items=board.items||playlist;if(!items.length)continue;const i=billboardIndex({elapsed,offset:board.index,count:items.length});if(board.current!==i){board.current=i;draw(board,items[i]);}}},
+    tick(dt,{paused=false}={}){if(!paused)elapsed+=dt;for(const board of boards){const items=board.items||playlist;if(!items.length)continue;const i=billboardIndex({elapsed,offset:board.index,count:items.length});if(board.current!==i){prepareImages([items[i],items[(i+1)%items.length]]);board.current=i;draw(board,items[i]);}}},
     activate(target){const item=target?.userData?.item;if(!item)return false;const href=safeBillboardHref(item.href,{campaign:item.campaign});if(!href)return false;location.assign(href);return true;},
     dispose(){disposed=true;for(const image of images.values()){image.onload=image.onerror=null;}images.clear();}};
 }

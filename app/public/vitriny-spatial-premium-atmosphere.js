@@ -3,12 +3,11 @@ import * as THREE from '/vendor/three/three.module.js';
 export function createPremiumFacades(){
   return [0,1,2].map(variant=>{
     const canvas=document.createElement('canvas');canvas.width=256;canvas.height=512;const ctx=canvas.getContext('2d');
-    ctx.fillStyle=['#3c525a','#676b67','#53636a'][variant];ctx.fillRect(0,0,256,512);
+    const reflection=ctx.createLinearGradient(0,0,256,512);reflection.addColorStop(0,['#7197ab','#9aa59f','#90a6b3'][variant]);reflection.addColorStop(.48,'#3d5b69');reflection.addColorStop(.7,'#7d9399');reflection.addColorStop(1,'#233e4a');ctx.fillStyle=reflection;ctx.fillRect(0,0,256,512);
     for(let row=0;row<8;row++)for(let col=0;col<4;col++){
-      const x=col*64+3,y=row*64+3,lit=(row*7+col*11+variant)%11<2;
-      const gradient=ctx.createLinearGradient(x,y,x+57,y+50);gradient.addColorStop(0,lit?'#d6b884':['#668da1','#7993a0','#8da2ad'][variant]);gradient.addColorStop(1,lit?'#9e865e':'#354c59');
-      ctx.fillStyle=gradient;ctx.fillRect(x,y,58,48);
-      ctx.fillStyle=lit?'#d9c098':'#adc2c666';ctx.fillRect(x,y,58,2);ctx.fillStyle='#182c3677';ctx.fillRect(x+28,y,1,48);
+      const x=col*64,y=row*64,lit=(row*7+col*11+variant)%13<2;
+      if(lit){ctx.fillStyle='#d2b584';ctx.fillRect(x+3,y+7,58,47);ctx.fillStyle='#615441';ctx.fillRect(x+12,y+38,18,16);ctx.fillRect(x+38,y+44,16,10);ctx.fillStyle='#f4dfb0';ctx.fillRect(x+8,y+11,47,2);}
+      ctx.fillStyle='#142e3d';ctx.fillRect(x,y,2,64);ctx.fillRect(x,y+57,64,7);ctx.fillStyle='#a5b4b777';ctx.fillRect(x+2,y,1,57);ctx.fillRect(x,y+56,64,1);ctx.fillStyle='#26465388';ctx.fillRect(x+31,y,1,56);
     }
     const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=8;texture.wrapS=texture.wrapT=THREE.RepeatWrapping;
     return new THREE.MeshStandardMaterial({map:texture,color:'#d7dddf',emissiveMap:texture,emissive:'#b2a588',emissiveIntensity:.1,metalness:.42,roughness:.3});

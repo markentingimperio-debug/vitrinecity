@@ -38,7 +38,7 @@ export function createArchitectureKit({renderer,scene,shadows=false,lite=false})
     for(let i=0;i<count;i++){const a=i*2.399;part(g,foliage[i%3],Math.cos(a)*(i?1.15:0),4.3+(i%3)*.55,Math.sin(a)*(i?1.05:0),1.45,1.45+(i%2)*.35,1.4,leafShape);}
     return g;
   }
-  function boutique(parent,{width=19,depth=13,height=8.8,label='Vitrine City',variant=0,subtitle=''}={}){
+  function boutique(parent,{width=19,depth=13,height=8.8,label='Vitrine City',variant=0,subtitle='',catalog=false}={}){
     const w=width,d=depth,h=Math.max(6.8,Math.min(11,height)),front=d/2;
     const g=new THREE.Group();g.name='premium-boutique';parent.add(g);
     part(g,stone,0,.23,0,w+2.2,.46,d+2.2);
@@ -62,7 +62,7 @@ export function createArchitectureKit({renderer,scene,shadows=false,lite=false})
     for(let row=0;row<3;row++){
       const yy=1.5+row*1.45;part(g,wood,0,yy,-d/2+1.1,w-2,.12,1.45);
       part(g,warm,0,yy-.1,-d/2+1.73,w-2,.04,.04);
-      for(let col=0;col<(lite?5:9);col++){
+      for(let col=0;col<(catalog?0:lite?5:9);col++){
         const n=lite?5:9,x=-w*.4+col*w*.8/(n-1),v=(col+row+variant)%4;
         part(g,goods[v],x,yy+.38,-d/2+1.1,.45+v*.1,.55+(v%2)*.25,.5);
       }
@@ -70,7 +70,7 @@ export function createArchitectureKit({renderer,scene,shadows=false,lite=false})
     for(const x of [-w*.26,w*.26]){
       part(g,wood,x,1.22,0,w*.22,.22,2.2);
       for(const xx of [-.6,.6])part(g,graphite,x+xx,.8,0,.1,.8,1.4);
-      for(let i=0;i<3;i++)part(g,goods[(variant+i)%4],x-.7+i*.7,1.6,0,.4,.55,.5);
+      if(!catalog)for(let i=0;i<3;i++)part(g,goods[(variant+i)%4],x-.7+i*.7,1.6,0,.4,.55,.5);
       part(g,white,x,h-1.42,-1,w*.24,.04,1.8);
     }
     // Roof terrace: parapets, raised planting and small trees.
@@ -79,7 +79,7 @@ export function createArchitectureKit({renderer,scene,shadows=false,lite=false})
       for(let i=0;i<5;i++)part(g,foliage[(i+variant)%3],-w*.3+i*w*.15,h+1,-d*.3,1.5,.7,.7,leafShape);
       tree(g,-w*.32,-d*.28,.45,h+.3);tree(g,w*.32,-d*.28,.45,h+.3);
     }
-    tree(g,-w/2-1.5,front-.4,.8);tree(g,w/2+1.5,front-.4,.8);
+    tree(g,-w/2-2.6,front-1.8,.66);tree(g,w/2+2.6,front-1.8,.66);
     return g;
   }
   function pavingMaterial({color='#aaa89b',repeat=12}={}){

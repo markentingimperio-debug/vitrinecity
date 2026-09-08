@@ -13,6 +13,7 @@ export function normalizeInteriorProduct(raw={}){
     stockQuantity:Math.max(0,Math.floor(positive(raw.stock_quantity??raw.stockQuantity))),
     rating:Math.max(0,Math.min(5,positive(raw.rating_average??raw.ratingAverage))),
     imageUrl:safeImage(raw.image_url??raw.imageUrl),
+    textureUrl:safeImage(raw.image_url??raw.imageUrl)?`/api/marketplace/products/${id}/image`:'',
     href:`/produto/${id}/${slug(name)}`
   });
 }

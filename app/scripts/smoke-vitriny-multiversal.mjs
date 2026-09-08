@@ -22,11 +22,20 @@ async function expectHtml(path){
 
 for(const path of [
   '/vitriny-multiverse-worlds.html',
+  '/entrar-cidade.html',
+  '/loja',
+  '/mapa-real.html?cidade=vianopolis'
+])await expectHtml(path);
+
+for(const path of [
   '/vitriny-multiverse-explore.html?city=vitrine-city',
   '/vitriny-multiverse-explore.html?city=vianopolis',
   '/vitriny-multiverse-district.html?city=vitrine-city&district=commerce',
-  '/mapa-real.html?cidade=vianopolis'
-])await expectHtml(path);
+  '/vitriny-games.html',
+  '/vitriny-mini-fazenda.html'
+]){const {response}=await request(path);assert.equal(response.status,302,`${path} deve exigir login`);assert.ok(response.headers.get('location')?.startsWith('/entrar-cidade.html?returnTo='));}
+assert.equal((await request('/api/games/farm')).response.status,401,'Progresso de jogo exige conta autenticada');
+assert.equal((await request('/api/privacy/communications')).response.status,401,'Preferências de comunicação exigem conta autenticada');
 
 const health=await request('/api/health',{expectJson:true});
 assert.equal(health.response.status,200,'/api/health deve responder 200');
@@ -73,5 +82,5 @@ assert.equal(invalid.response.status,404,'cidade desconhecida deve ser rejeitada
 console.log(JSON.stringify({
   ok:true,
   base,
-  checks:{health:true,publicPages:5,spatialApi:true,activeCity:true,previewIsolation:true,premiumZones:true}
+  checks:{health:true,publicPages:4,memberPages:5,privateFarm:true,privatePreferences:true,spatialApi:true,activeCity:true,previewIsolation:true,premiumZones:true}
 }));

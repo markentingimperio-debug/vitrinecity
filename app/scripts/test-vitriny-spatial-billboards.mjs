@@ -14,5 +14,8 @@ const store={name:'Loja A',reference:'ref-a',href:'/loja/ref-a/loja-a',productCo
 const products=[{id:11,name:'Produto A',store_reference:'ref-a',price_cents:1250,image_url:'/assets/product.jpg'},{id:12,name:'Outra loja',store_reference:'ref-b',price_cents:5000}];
 const own=storeBillboardPlaylist(store,products);assert.equal(own.length,1,'A rooftop cannot advertise another store by mistake');assert.equal(own[0].href,'/produto/11/produto-a');assert.equal(own[0].amountCents,1250);assert.equal(own[0].label,'Loja A');
 assert.equal(storeBillboardPlaylist(store,[])[0].href,store.href,'A store without products retains its real destination');
+assert.equal(own[0].kind,'product');assert.equal(own[0].imageUrl,'/api/marketplace/products/11/image','The storefront receives the catalog photo through its CORS-safe image route');
+assert.equal(storeBillboardPlaylist({...store,mapHref:'/centro-educacional.html'},[])[0].href,store.href,'A store presentation opens the main store page');
+assert.equal(storeBillboardPlaylist(store,[])[0].kind,'store');
 const fallback=await fetchStoreBillboardPlaylist(store,{fetchImpl:async()=>new Response('{}',{status:503})});assert.equal(fallback[0].href,store.href);
 console.log(JSON.stringify({ok:true,billboards:'safe links, real playlist, eight-second rotation, preview isolation'}));

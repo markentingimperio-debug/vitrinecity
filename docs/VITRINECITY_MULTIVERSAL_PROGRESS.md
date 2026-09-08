@@ -292,3 +292,22 @@ Nada desta revisão foi implantado em produção até este checkpoint. Não houv
 5. Implantar de forma controlada somente após a reconciliação aprovada.
 6. Executar `BASE_URL=<runtime> npm run test:smoke:multiversal` e o smoke público legado.
 7. Confirmar `/api/health`, páginas públicas, jornadas críticas e rollback saudável antes de entrada oficial na home.
+
+## 2026-09-08 — Contas, vitrines e Mini Fazenda
+
+**Estado:** implementação e validação local concluídas; CI e publicação do candidato final pendentes.
+
+- Decisão expressa do usuário: cidade e jogos exigem login; lojas, produtos e apresentação World Gate permanecem públicos. A conta existente é reutilizada, sem novo provedor de autenticação.
+- Novo acesso `entrar-cidade.html` usa cadastro sem endereço/CPF obrigatório para a experiência, mantendo a política de maioridade já existente. Preferências de campanhas por e-mail e WhatsApp são opcionais, desmarcadas, registradas por canal e revogáveis em Minha conta. Nenhum envio ou trabalho de campanha é criado.
+- Mini Fazenda própria para navegador: 5 fases, cenouras/milho/morangos, galinhas/vaquinha, moedas fictícias e 12 canteiros progressivos. Estado pertence à conta, salvo no SQLite; tempo e recompensas são calculados no servidor em transação. Exportação de privacidade inclui esse progresso.
+- Migração aditiva: tabela `city_farm_progress` com chave do usuário e exclusão em cascata. Consentimentos usam a tabela já existente. Rollback de código pode deixar a nova tabela preservada; não restaurar banco antigo sobre dados novos.
+- Avatar próprio com aparência local e câmera em terceira pessoa. Não há sincronização de posições entre jogadores; presença continua agregada. Colisões completas de exploração ainda não foram implementadas.
+- Prédio de jogos na cidade e três fachadas demonstrativas disponíveis, ligadas aos planos existentes de espaço digital. Não representam venda de imóvel físico nem inventário comercial reservado.
+- Fotos reais nas vitrines e painéis com destinos exatos. Endpoint de imagem aceita somente produto publicado e origens explícitas, fixa DNS público, limita bytes/cache/concorrência e prioriza original sobre miniatura WordPress quando disponível. A fotografia original não é alterada.
+- Interface móvel com menu recolhido, botões de movimento e vitrine acessível também por lista. Imagens próximas são carregadas progressivamente. Os testes de viewport não equivalem a medição de desempenho em aparelhos físicos.
+
+Evidências: `npm test` e release sweep com **132/132 scripts** passaram antes dos ajustes finais de enquadramento; testes direcionados desses ajustes passaram. Integração com servidor completo e banco descartável validou registro, sessão, proteção de páginas, comércio público, preferências, revogação, progresso e exportação. QA visual em 390 × 844 e 1440 × 900 validou login/cadastro, plantio, rega, retorno e colheita. Clique na foto do NPK 10-10-10 abriu `/produto/9/adubo-npk-10-10-10-liquido-concentrado-500-ml` real.
+
+Limites visuais: cenário procedural estilizado; não equivale ao fotorrealismo das referências. A Mini Fazenda é primeira versão própria jogável. OpenFront, Solaris, Survev e Mindustry foram pesquisados; nenhum desses jogos externos foi incorporado ou apresentado como operacional.
+
+Reconciliação atualizada: produção passou a `c7cfe8092f09da22c0aa64b94a4fd6ab925bb41b` (PRs 147/148 de afiliados e correção do qs). A versão espacial será integrada a essa base; não substituir alterações recentes com o snapshot antigo.

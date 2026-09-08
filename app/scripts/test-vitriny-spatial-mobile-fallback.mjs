@@ -15,7 +15,7 @@ assert.match(html,/href="\/cidade\.html"/);
 assert.match(html,/id="ecosystemLinks"/);
 
 assert.match(js,/matchMedia\('\(max-width:760px\)'\)\.matches/);
-assert.match(js,/id=score>=6\?'ULTRA':score>=3\?'STANDARD':'LITE'/);
+assert.match(js,/id=mobile\?/,'Mobile devices use their own conservative quality selection');
 assert.match(js,/new THREE\.WebGLRenderer/);
 assert.match(js,/3D indisponível neste aparelho\. Use o World Gate ou a cidade clássica\./);
 assert.match(js,/renderer\.setPixelRatio\(profile\.pixel\)/);

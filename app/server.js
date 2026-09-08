@@ -1,4 +1,7 @@
 import { setupProductionHardening } from './production-hardening.js';
+import { setupCatalogProductImages } from './catalog-product-images.js';
+import {setupCityMembership} from './city-membership.js';
+import {setupCampaignPreferences} from './campaign-preferences.js';
 import { integrationObserver, openRouterOperation } from './integration-health.js';
 import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
@@ -2581,6 +2584,8 @@ app.use((req, res, next) => {
   if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });
+setupCityMembership(app,{db,currentUser,requireUser,sameOriginOnly,isAdministrativeUser});
+const campaignPreferences=setupCampaignPreferences(app,{db,requireUser,sameOriginOnly,recordConsent});
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 const cryptoObservability = createCryptoObservability(db);
 cryptoObservability.seedLatest();
@@ -3035,8 +3040,9 @@ app.post('/api/auth/register', sameOriginOnly, (req, res) => {
       return Number(result.lastInsertRowid);
     });
     const userId = create();
-    recordConsent(req,{userId,email:normalizedEmail,purpose:'account_terms',version:'terms-2026-08-22',source:'account_registration'});
+    recordConsent(req,{userId,email:normalizedEmail,purpose:'account_terms',version:req.body?.accountContext==='city'?'city-account-2026-09-08':'terms-2026-08-22',source:'account_registration'});
     recordConsent(req,{userId,email:normalizedEmail,purpose:'adult_declaration',version:'adult-2026-08-22',source:'account_registration'});
+    campaignPreferences.record(req,{id:userId,email:normalizedEmail,whatsapp:String(whatsapp).trim().slice(0,30)},req.body?.communications||{},'account_registration');
     setSession(res, userId);
     recordAcquisitionSignup(db, req, userId);
     conversionHeader(req, res, 'sign_up');
@@ -3485,12 +3491,13 @@ app.post('/api/privacy/requests',sameOriginOnly,requireUser,(req,res)=>{
   const protocol=`LGPD-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${randomBytes(4).toString('hex').toUpperCase()}`;
   db.prepare('INSERT INTO data_subject_requests (protocol,user_id,request_type,details) VALUES (?,?,?,?)').run(protocol,req.user.id,requestType,details);
   if(requestType==='consent_revocation')db.prepare('UPDATE leads SET consent=0 WHERE email=?').run(String(req.user.email).toLowerCase());
-  if(requestType==='consent_revocation')recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'marketing_communications',version:'privacy-2026-08-22',granted:false,source:'privacy_center'});
+  if(requestType==='consent_revocation')campaignPreferences.record(req,req.user,{email:false,whatsapp:false},'privacy_center');
   return res.status(201).json({ok:true,protocol,status:'received'});
 });
 app.get('/api/privacy/export',requireUser,(req,res)=>{
   const userId=req.user.id;
   const exportData={generatedAt:new Date().toISOString(),account:{name:req.user.name,email:req.user.email,whatsapp:req.user.whatsapp||'',createdAt:req.user.created_at},
+    farmProgress:db.prepare('SELECT state_json stateJson,updated_at updatedAt FROM city_farm_progress WHERE user_id=?').get(userId)||null,
     addresses:db.prepare('SELECT label,recipient_name recipientName,postal_code postalCode,street,number,complement,neighborhood,city,state,is_default isDefault,created_at createdAt FROM customer_addresses WHERE user_id=?').all(userId),
     ageVerification:publicAgeVerification(db.prepare('SELECT status,over_18,verified_at,expires_at FROM age_verifications WHERE user_id=?').get(userId)),
     orders:db.prepare('SELECT reference,payment_status paymentStatus,fulfillment_status fulfillmentStatus,total_cents totalCents,created_at createdAt FROM marketplace_orders WHERE buyer_user_id=? ORDER BY id DESC').all(userId),
@@ -3570,6 +3577,11 @@ app.get('/api/checkout/customer', requireUser, (req, res) => {
   return res.json({ customer: { name: req.user.name, email: req.user.email, whatsapp: req.user.whatsapp || '' },
     address: address ? publicAddress(address) : null, confirmationRequired: true });
 });
+
+setupCatalogProductImages(app,{getProduct:id=>db.prepare(`SELECT p.image_url FROM store_products p
+  JOIN store_profiles s ON s.order_reference=p.store_reference
+  WHERE p.id=? AND p.active=1 AND p.marketplace_enabled=1 AND p.available=1
+    AND p.price_cents>0 AND p.stock_quantity>0 AND s.review_status='published'`).get(id)});
 
 app.get('/api/marketplace/products', (req, res) => {
   const category = String(req.query.category || '').trim().slice(0, 80);

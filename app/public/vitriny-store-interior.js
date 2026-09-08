@@ -56,7 +56,7 @@ function addProduct(product){
   architecture.part(group,architecture.graphite,0,3.65,-.1,4.7,4.7,.18);
   if(product.imageUrl){
     const photo=new THREE.Mesh(new THREE.PlaneGeometry(4.4,4.4),new THREE.MeshBasicMaterial({color:'#e9e5da'}));photo.position.set(0,3.65,.015);group.add(photo);
-    new THREE.TextureLoader().load(product.imageUrl,texture=>{if(disposed){texture.dispose();return;}texture.colorSpace=THREE.SRGBColorSpace;const ratio=texture.image.width/texture.image.height;photo.scale.set(ratio>1?1:ratio,ratio>1?1/ratio:1,1);photo.material.map=texture;photo.material.color.set('#ffffff');photo.material.needsUpdate=true;},undefined,()=>{});
+    new THREE.TextureLoader().load(product.textureUrl,texture=>{if(disposed){texture.dispose();return;}texture.colorSpace=THREE.SRGBColorSpace;const ratio=texture.image.width/texture.image.height;photo.scale.set(ratio>1?1:ratio,ratio>1?1/ratio:1,1);photo.material.map=texture;photo.material.color.set('#ffffff');photo.material.needsUpdate=true;},undefined,()=>{});
   }
   const texture=makeLabelTexture(product),sign=new THREE.Mesh(new THREE.PlaneGeometry(4.9*profile.labelScale,2.45*profile.labelScale),new THREE.MeshBasicMaterial({map:texture,transparent:false}));sign.position.set(0,1.9,1.4);sign.userData.labelTexture=texture;group.add(sign);
   scene.add(group);productTargets.push(group);
