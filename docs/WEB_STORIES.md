@@ -19,6 +19,16 @@ O adaptador lê novamente o catálogo público a cada consulta. Não importa cli
 
 A biblioteca já contém as fotos de **bolo de cenoura**, **bowl de frango** e **fricassê de frango**, em `app/public/assets/recipes/`. Essas receitas podem aproveitar os artigos existentes, desde que estejam publicados e completos. A presença de uma foto na biblioteca, por si só, não cria uma receita, não torna um artigo público e não garante aprovação automática.
 
+### Apresentação da cidade e das lojas
+
+O catálogo também admite `city:vitrine-city`, na categoria Tendências, e `store:<referência>`, na categoria Serviços e cursos. São fontes com identidades próprias (`city` e `store`), sem criar cópias dos artigos ou das páginas comerciais existentes. A história da cidade leva à página inicial; a história de uma loja leva ao endereço canônico `/loja/:referência/:nome`.
+
+A fonte da cidade requer o diretório público configurado em `createWebStorySources({publicDir})`. Ela relê a descrição, o título, a nota de acesso e a imagem da home real, e reaproveita as descrições do guia público `CITY_GUIDE_ITEMS`. Não extrai formulários, scripts, informações de visitantes ou texto de páginas arbitrárias. O texto mantém o acesso público à visita e orienta a consultar a disponibilidade de entregas; não transforma presença visual de um prédio em confirmação de operação. A imagem da home é identificada como conceitual pela própria página. Se a home deixa de existir, a fonte deixa de ser retornada.
+
+As lojas precisam estar publicadas em `store_profiles`. O adaptador seleciona apenas nome, descrição, cidade/estado, imagem pública e nomes dos canais válidos; não entrega e-mails de proprietários, observações administrativas, pedidos ou contatos brutos à IA. Os produtos mencionados passam pelo mesmo filtro do catálogo de produtos, incluindo publicação da loja, disponibilidade, preço e estoque quando controlado. A apresentação pode citar até doze itens atuais, com seus caminhos internos. Uma loja publicada sem produtos pode continuar sendo apresentada a partir da descrição real, sem inventar um catálogo.
+
+Lojas são fontes comerciais: alterações na descrição, identidade, imagem ou nos itens citados invalidam o snapshot comercial antigo; retirada da publicação remove a elegibilidade. Uma descrição curta ou uma foto inadequada continua sujeita aos mesmos bloqueios de conteúdo e imagem. O adaptador não completa informações ausentes para atingir dez páginas. Acrescentar essas fontes não ativa a automação nem gera conteúdo fora da quota.
+
 O Google Trends é consultado pelo RSS público do Brasil. A pesquisa aceita apenas uma lista explícita de publicadores, recusa redirecionamentos e endereços de rede privada e limita tempo e tamanho das respostas. Uma evidência válida contém texto efetivamente recuperado, endereço, família editorial, data da consulta e hash do trecho. São necessárias **duas famílias editoriais distintas**, com consulta recente de até 24 horas; dois subdomínios do mesmo grupo não contam como duas fontes independentes. Falta de acesso, texto insuficiente ou fonte não permitida mantém a história pendente. Não há contorno de paywall nem publicação de notícia baseada apenas em título, popularidade ou resumo inventado.
 
 ## Formato e imagens

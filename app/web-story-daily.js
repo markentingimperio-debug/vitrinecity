@@ -11,7 +11,7 @@ const notes={quality_checks_passed:'História criada, revisada pela IA e publica
 const explain=value=>Object.hasOwn(notes,String(value))?notes[value]:'Esta história precisa de revisão antes de publicar.';
 
 export function setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publicDir,dataDir,services,courses,requestText,requestImage,isConfigured,schedule=true,assets=createStoryAssets({publicDir,dataDir,siteUrl}),research=createWebStoryResearch({db})}) {
-  const sources=createWebStorySources({db,services,courses});
+  const sources=createWebStorySources({db,services,courses,publicDir});
   const enrichCached=source=>source&&research.getEnriched?research.getEnriched(source):source;
   function trendRows(options) {
     const result=[];

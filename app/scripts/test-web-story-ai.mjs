@@ -53,6 +53,25 @@ test('real catalog photo remains inside affiliate draft; outbound CTA ignored',a
   assert.equal(result.approved,true);assert.equal(result.draft.pages[1].image,'/assets/planta.jpg');assert.equal(result.draft.pages[1].imageCredit,'Foto do catálogo');
   assert.equal(result.draft.sourcePath,'/ofertas/plantas');assert.match(result.draft.affiliateDisclosure,/comissão/);assert.equal(calls.image.length,1);
 });
+
+test('store stories require and display their actual public photo before generating conceptual artwork',async()=>{
+  const store={...source(),kind:'store',commercial:true,sourcePath:'/loja/fixture/jardim',image_url:'/assets/fachada-jardim.jpg'};
+  const first=setup(),published=await first.ai.generate(store);assert.equal(published.approved,true);assert.equal(published.draft.pages[1].image,store.image_url);assert.equal(published.draft.pages[1].imageCredit,'Foto do catálogo');assert.equal(published.draft.sourcePath,store.sourcePath);assert.equal(first.calls.image.length,1);
+  const missing=setup(),held=await missing.ai.generate({...store,image_url:''});assert.equal(held.notes,'catalog_photo_missing');assert.equal(missing.calls.text.length,0);assert.equal(missing.calls.image.length,0);
+});
+
+test('recipe generation ends with a compact character contract and requires complete quantities or an insufficient result',async()=>{
+  const fixture=setup({generation:{insufficient:true}}),recipe={...source(),group:'recipes',portal:'receitas'};
+  const result=await fixture.ai.generate(recipe);assert.equal(result.notes,'source_insufficient_for_ten_pages');assert.equal(fixture.calls.text.length,1);assert.equal(fixture.calls.image.length,0);
+  const instructions=fixture.calls.text[0].system.slice(fixture.calls.text[0].system.indexOf('CONFERÊNCIA FINAL DO JSON:'));
+  assert.match(instructions,/exatamente 12 objetos/);assert.match(instructions,/UMA FRASE CURTA/);assert.match(instructions,/CARACTERES COM ESPAÇOS, não de palavras/);assert.match(instructions,/entre 650 e 1100 caracteres/);assert.match(instructions,/quantidades de TODOS os ingredientes/);assert.match(instructions,/Não substitua medidas/);assert.match(instructions,/receita completa dentro dos limites/);
+});
+
+test('observed twelve-paragraph response stays rejected without dropping content or paying for an image',async()=>{
+  const lengths=[202,163,172,146,161,146,177,135,155,141,164,164];
+  const generation={...copy(),pages:lengths.map((length,i)=>({text:('Parágrafo '+String.fromCharCode(65+i)+' '+('informação extensa '.repeat(20))).slice(0,length)}))};
+  const fixture=setup({generation}),result=await fixture.ai.generate(source());assert.equal(generation.pages.map(p=>p.text).join(' ').length,1937);assert.equal(result.notes,'ai_ten_pages_required');assert.equal(fixture.calls.text.length,1);assert.equal(fixture.calls.image.length,0);assert.equal(result.draft,null);
+});
 test('affiliate disclosure repair reserves penultimate space and keeps displaced text',async()=>{
   const {ai,calls}=setup();const result=await ai.generate({...source(),kind:'affiliate',commercial:true,facts:{affiliate:true},sourcePath:'/ofertas/plantas',image_url:'/assets/planta.jpg'});
   assert.equal(result.approved,true);assert.ok(result.draft.pages.at(-2).text.length<=45);assert.equal(calls.text.length,2);assert.equal(calls.image.length,1);

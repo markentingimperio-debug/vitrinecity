@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {createWebStorySources} from '../web-story-sources.js';
 
 function fixture(t,{stock=true,availability=true}={}) {
@@ -79,4 +83,51 @@ test('malformed bibliographies and unsafe protocols do not create invalid refere
   const f=fixture(t);f.article({sources_json:'{invalid'});const sources=createWebStorySources({db:f.db});assert.equal(sources.get('legacy-article').sources.length,1);
   f.db.prepare('UPDATE editorial_articles SET sources_json=?').run(JSON.stringify([{title:'Unsafe',url:'javascript:alert(1)'},{title:'Credential',url:'https://user:password@example.org/x'},{title:'Safe',url:'https://example.org/fonte'},{title:'Duplicate',url:'https://example.org/fonte'}]));
   assert.deepEqual(sources.get('legacy-article').sources,[{title:'Guia público',url:'/artigo/guia-publicado'},{title:'Safe',url:'https://example.org/fonte'}]);
+});
+
+test('city source comes from the real public home and existing guide, without invented operating claims',t=>{
+  const db=new Database(':memory:');t.after(()=>db.close());
+  const publicDir=fileURLToPath(new URL('../public/',import.meta.url)),sources=createWebStorySources({db,publicDir});
+  const item=sources.get('city:vitrine-city');assert.ok(item);assert.equal(item.kind,'city');assert.equal(item.group,'trends');assert.equal(item.commercial,false);assert.equal(item.sourcePath,'/');
+  assert.equal(item.facts.accessNote,'Visite sem cadastro. Entre na sua conta para jogar e conversar.');
+  assert.ok(item.body.includes('Consulte as lojas com entrega local e a disponibilidade na sua cidade.'));
+  assert.ok(item.body.includes('Centro Educacional'));assert.ok(item.body.includes('Pulse Arena'));assert.ok(item.body.includes('Lojas e vitrines'));
+  assert.ok(item.facts.illustrationDescription.includes('conceitual'));assert.ok(item.body.length>650);
+  assert.deepEqual(sources.list({group:'trends',q:'cidade'}),[item]);assert.deepEqual(sources.list({group:'news'}),[]);
+  assert.equal(sources.get('city:../../server.js'),null);assert.equal(createWebStorySources({db}).get('city:vitrine-city'),null);
+});
+
+test('city adapter reads only selected public fields, refreshes text and withdraws missing home',t=>{
+  const db=new Database(':memory:');t.after(()=>db.close());
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'vitrine-story-sources-'));
+  t.after(()=>{const resolved=path.resolve(root);assert.equal(path.dirname(resolved),path.resolve(os.tmpdir()));assert.ok(path.basename(resolved).startsWith('vitrine-story-sources-'));fs.rmSync(resolved,{recursive:true,force:true});});
+  const file=path.join(root,'index.html');
+  const markup=description=>`<html><head><title>Cidade &amp; encontros</title><meta content="${description}" name="description"><script>PRIVATE_SCRIPT_SECRET</script></head><body><section class="home-hero"><img class="hero-panorama" src="/assets/conceito.webp" alt="Ilustração conceitual"><p class="hero-note">Visita pública; conta para conversar.</p><form>PRIVATE_FORM_SECRET</form></section><section>PRIVATE_OUTSIDE_SECRET</section></body></html>`;
+  fs.writeFileSync(file,markup('Primeira apresentação pública.'));const sources=createWebStorySources({db,publicDir:root}),first=sources.get('city:vitrine-city');
+  assert.equal(first.title,'Cidade & encontros');assert.equal(first.summary,'Primeira apresentação pública.');assert.ok(!JSON.stringify(first).includes('PRIVATE_'));
+  fs.writeFileSync(file,markup('Apresentação atualizada da plataforma.'));assert.notDeepEqual(sources.get('city:vitrine-city'),first);
+  fs.unlinkSync(file);assert.equal(sources.get('city:vitrine-city'),null);assert.deepEqual(sources.list(),[]);
+});
+
+function storeDetails(f){
+  f.db.exec('ALTER TABLE store_profiles ADD COLUMN description TEXT; ALTER TABLE store_profiles ADD COLUMN facade_url TEXT; ALTER TABLE store_profiles ADD COLUMN gallery_1_url TEXT; ALTER TABLE store_profiles ADD COLUMN logo_url TEXT; ALTER TABLE store_profiles ADD COLUMN city TEXT; ALTER TABLE store_profiles ADD COLUMN state TEXT; ALTER TABLE store_profiles ADD COLUMN website_url TEXT; ALTER TABLE store_profiles ADD COLUMN instagram_url TEXT; ALTER TABLE store_profiles ADD COLUMN tiktok_url TEXT; ALTER TABLE store_profiles ADD COLUMN google_maps_url TEXT; ALTER TABLE store_profiles ADD COLUMN updated_at TEXT; ALTER TABLE store_profiles ADD COLUMN admin_notes TEXT;');
+  f.db.prepare('UPDATE store_profiles SET description=?,facade_url=?,logo_url=?,city=?,state=?,website_url=?,instagram_url=?,tiktok_url=?,updated_at=?,admin_notes=?').run('Loja de jardinagem com orientação sobre o uso de vasos e ferramentas manuais.','/assets/fachada.jpg','/assets/logo.png','Silvânia','GO','https://user:PRIVATE_PASSWORD@example.org','https://instagram.com/publico','javascript:alert(1)','2026-09-08T12:00:00Z','PRIVATE_STORE_ADMIN_NOTE');
+}
+
+test('store source uses public profile and eligible inventory only, with canonical destination and no private data',t=>{
+  const f=fixture(t);storeDetails(f);f.product();f.product({id:2,name:'PRIVATE_DISABLED_ITEM',active:0});f.product({id:3,name:'PRIVATE_OUT_OF_STOCK_ITEM',stock_quantity:0});f.product({id:4,name:'PRIVATE_UNAVAILABLE_ITEM',available:0});f.product({id:5,name:'PRIVATE_NONMARKET_ITEM',marketplace_enabled:0});
+  f.insert('store_profiles',{order_reference:'hidden',business_name:'PRIVATE_UNPUBLISHED_STORE',review_status:'pending',description:'PRIVATE_DESCRIPTION'});f.product({id:6,store_reference:'hidden',name:'PRIVATE_OTHER_STORE_ITEM'});
+  const sources=createWebStorySources({db:f.db}),item=sources.get('store:store');
+  assert.equal(item.kind,'store');assert.equal(item.group,'services');assert.equal(item.commercial,true);assert.equal(item.sourcePath,'/loja/store/loja-publica');assert.equal(item.image_url,'/assets/fachada.jpg');assert.equal(item.facts.city,'Silvânia');assert.equal(item.facts.publicProductCount,1);
+  assert.deepEqual(item.facts.productCategories,['Jardinagem']);assert.deepEqual(item.facts.publicChannels,['Instagram']);assert.equal(item.facts.products[0].sourcePath,'/produto/1/vaso-de-ceramica');assert.ok(item.body.includes('furo para drenagem'));assert.ok(!JSON.stringify(item).includes('PRIVATE_'));
+  assert.equal(sources.get('store:hidden'),null);assert.deepEqual(sources.list({group:'services',q:'silvania vasos'}),[item]);
+  f.db.prepare('UPDATE store_products SET stock_quantity=0 WHERE id=1').run();const current=sources.get('store:store');assert.equal(current.facts.publicProductCount,0);assert.deepEqual(current.facts.products,[]);assert.ok(!current.body.includes('furo para drenagem'));assert.notDeepEqual(current,item);
+  f.db.prepare("UPDATE store_profiles SET review_status='pending' WHERE order_reference='store'").run();assert.equal(sources.get('store:store'),null);assert.deepEqual(sources.list({group:'services'}),[]);
+});
+
+test('sparse stores stay sparse for the normal content gate and published legacy IDs keep precedence',t=>{
+  const f=fixture(t);storeDetails(f);f.db.prepare("UPDATE store_profiles SET description='',city='',state='',instagram_url='',facade_url='',gallery_1_url='',logo_url=''").run();
+  const sources=createWebStorySources({db:f.db}),item=sources.get('store:store');assert.equal(item.body,'');assert.equal(item.image_url,'');assert.equal(item.facts.publicProductCount,0);
+  f.article({id:'store:store'});assert.equal(sources.get('store:store').kind,'article');assert.equal(sources.list().filter(item=>item.key==='store:store').length,1);assert.deepEqual(sources.list({group:'services'}),[]);
+  for(const key of ['store:missing','store:','store:toString','city:constructor'])assert.equal(sources.get(key),null);
 });

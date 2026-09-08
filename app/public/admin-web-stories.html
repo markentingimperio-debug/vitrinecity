@@ -38,11 +38,11 @@
       <p class="muted">Cada preparação utiliza uma tentativa do limite diário, inclusive quando precisa de ajustes. O painel não apresenta custos ou saldo do provedor de IA.</p>
       <fieldset class="automation-groups"><legend>Quais assuntos podem ser publicados?</legend>
         <label class="check"><input type="checkbox" name="groups" value="products" checked disabled> Produtos e ofertas</label>
-        <label class="check"><input type="checkbox" name="groups" value="services" checked disabled> Serviços e cursos</label>
+        <label class="check"><input type="checkbox" name="groups" value="services" checked disabled> Lojas, serviços e cursos</label>
         <label class="check"><input type="checkbox" name="groups" value="news" checked disabled> Notícias e celebridades</label>
         <label class="check"><input type="checkbox" name="groups" value="recipes" checked disabled> Receitas</label>
         <label class="check"><input type="checkbox" name="groups" value="sports" checked disabled> Esportes</label>
-        <label class="check"><input type="checkbox" name="groups" value="trends" checked disabled> Tendências e outros assuntos</label>
+        <label class="check"><input type="checkbox" name="groups" value="trends" checked disabled> Cidade, tendências e outros assuntos</label>
       </fieldset>
       <div class="actions"><button id="automation-save" disabled>Salvar rotina</button><button id="automation-pause" type="button" class="secondary" disabled hidden>Pausar agora</button><button id="automation-run" type="button" class="secondary" disabled>Executar rodada agora</button><button id="automation-refresh" type="button" class="secondary">Atualizar status</button></div>
       <p class="muted">“Executar rodada agora” usa as mesmas categorias e o mesmo limite diário. A rotina precisa estar ativa.</p>
@@ -52,10 +52,10 @@
   <p id="status" role="status" aria-live="polite"></p>
   <section id="source-manual" class="panel" aria-labelledby="source-heading">
     <p class="eyebrow">EDIÇÃO MANUAL</p><h2 id="source-heading">1. Escolha o conteúdo</h2>
-    <form id="source-search" class="actions"><label>Título ou assunto<input name="q" type="search" maxlength="80" placeholder="Buscar conteúdos e ofertas publicados"></label><label>Categoria<select name="group" id="source-group"><option value="all">Todas</option><option value="products">Produtos e ofertas</option><option value="services">Serviços e cursos</option><option value="news">Notícias e celebridades</option><option value="recipes">Receitas</option><option value="sports">Esportes</option><option value="trends">Tendências e outros assuntos</option></select></label><button>Buscar conteúdos</button></form>
+    <form id="source-search" class="actions"><label>Título ou assunto<input name="q" type="search" maxlength="80" placeholder="Buscar conteúdos e ofertas publicados"></label><label>Categoria<select name="group" id="source-group"><option value="all">Todas</option><option value="products">Produtos e ofertas</option><option value="services">Lojas, serviços e cursos</option><option value="news">Notícias e celebridades</option><option value="recipes">Receitas</option><option value="sports">Esportes</option><option value="trends">Cidade, tendências e outros assuntos</option></select></label><button>Buscar conteúdos</button></form>
     <form id="create-story" class="actions"><label>Conteúdo disponível<select id="source" required><option value="">Carregando…</option></select></label><button id="create-button">Montar rascunho</button></form>
     <nav class="actions source-pagination" aria-label="Páginas de conteúdos"><button id="source-previous" type="button" class="secondary" disabled>← Anteriores</button><span id="source-page">Página 1</span><button id="source-next" type="button" class="secondary" disabled>Próximos →</button></nav>
-    <p class="muted">Escolha entre artigos, notícias, receitas, esportes, tendências, produtos, ofertas de afiliados, serviços e cursos disponíveis. O rascunho manual organiza o texto existente e deve ser completado e revisado antes de publicar.</p>
+    <p class="muted">Escolha entre a cidade VitrineCity, lojas, artigos, notícias, receitas, esportes, tendências, produtos, ofertas de afiliados, serviços e cursos disponíveis. O rascunho manual organiza o texto existente e deve ser completado e revisado antes de publicar.</p>
   </section>
   <section id="story-library" class="panel"><h2>Suas histórias</h2><div id="story-list" class="draft-list"><p>Carregando…</p></div></section>
   <section id="editor" class="panel" hidden aria-labelledby="editor-heading">
