@@ -4,6 +4,7 @@ import {fileURLToPath} from 'node:url';
 
 const root=fileURLToPath(new URL('../..',import.meta.url));
 const script=readFileSync(`${root}/ops/reconcile-vps-readonly.sh`,'utf8');
+const executableScript=script.replace(/^#.*$/gm,'');
 
 assert.match(script,/^#!\/usr\/bin\/env bash/m);
 assert.match(script,/set -euo pipefail/);
@@ -16,6 +17,7 @@ assert.match(script,/docker compose images/);
 assert.match(script,/127\.0\.0\.1:3000\/api\/health/);
 assert.match(script,/127\.0\.0\.1:3000\/api\/spatial\/v1/);
 assert.match(script,/\[redacted-sensitive-path\]/);
+assert.match(script,/\*\.sqlite3/);
 
 for(const forbidden of [
   /\bgit\s+reset\b/,
@@ -27,7 +29,14 @@ for(const forbidden of [
   /\bdocker\s+(?:rm|rmi|system\s+prune)\b/,
   /\brm\s+-rf\b/,
   /\bcat\s+[^\n]*\.env\b/,
-  /\bsqlite3\b/,
-]) assert.equal(forbidden.test(script.replace(/^#.*$/gm,'')),false,String(forbidden));
+]) assert.equal(forbidden.test(executableScript),false,String(forbidden));
+
+// Database filenames such as "*.sqlite3" are intentionally present in the
+// redaction allowlist. Reject executable sqlite3 invocations without treating
+// a filename suffix as a command.
+for(const forbiddenSqliteInvocation of [
+  /^\s*(?:(?:sudo|command)\s+)?sqlite3\b/m,
+  /(?:[;&|]\s*|\$\(\s*|\b(?:if|then|do|while|until)\s+)(?:(?:sudo|command)\s+)?sqlite3\b/m,
+]) assert.equal(forbiddenSqliteInvocation.test(executableScript),false,String(forbiddenSqliteInvocation));
 
 console.log(JSON.stringify({ok:true,readOnly:true,secretContents:false,healthProbes:true}));
