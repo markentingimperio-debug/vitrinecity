@@ -110,28 +110,51 @@ Portanto, a regressão funcional do Multiversal/Neural foi encerrada no Git.
 
 ---
 
-## 2026-09-07 — Quality Gate SonarCloud
+## 2026-09-07 — Quality Gate SonarCloud e hardening
 
 **Estado:** EM VALIDAÇÃO / bloqueia integração final.
 
-### Evidência atual
+### Evolução observada
 
-No mesmo head `3eeb21fcf7039e0a13c9f32305773d7b5f9c10b3`, o SonarCloud ainda reprova o PR `#145` com 6 apontamentos em código novo:
+No head `3eeb21fcf7039e0a13c9f32305773d7b5f9c10b3` o SonarCloud reportou:
 
-- **Security Rating: E** — exigido A;
-- **Reliability Rating: C** — exigido A.
+- **Security Rating: E**;
+- **Reliability Rating: C**;
+- 6 apontamentos em código novo.
+
+Após remover DOM dinâmico do portal e da cidade 3D, no head `4792931b8b3503e2436d7e2ed8f6d8b9fbe39f62`:
+
+- **Security Rating: B**;
+- **Reliability Rating: C**;
+- 4 apontamentos.
+
+### Hardening versionado
+
+- `96a2a3693ae39ee82740ddcb9bbe94c6971f619f` — remove HTML dinâmico do Portal Multiversal e usa criação segura de nós DOM.
+- `4792931b8b3503e2436d7e2ed8f6d8b9fbe39f62` — aplica o mesmo hardening à cidade WebGL 3D.
+- `8843fba52db5d3da125c0e8a5e13293cc05763bd` — restringe destinos e imagens do portal à mesma origem.
+- `068a6d48b642986b3807d1d8303c287025037c33` — restringe destinos e imagens da cidade 3D à mesma origem.
+- `a0392d3608ccafd685793626cbd9b77b2cc96d5b` — remove salt de pseudonimização de fallback escrito no código, exige `VITRINY_NEURAL_PSEUDONYM_SALT` quando a captura Neural estiver habilitada, valida paths locais no backend, exige `Origin` nos POSTs e endurece shutdown.
+- `7b02879ce72e72053147dcf81afaaf9fa61d4fe4` — adiciona regressão de DOM seguro e same-origin em `test-multiversal-ui.mjs`.
+- `3f58903f2bb306a89092e17d662b11581ac1250a` — adiciona regressão de Origin obrigatório e paths locais em `test-multiversal-core.mjs`.
+
+### Estado dos testes durante o hardening
+
+- Vitriny Neural continuou passando após as mudanças de DOM e de core.
+- O `Verify release` do head anterior ao último checkpoint estava em execução; não declarar o hardening concluído antes do novo resultado final.
+- O SonarCloud do head após remoção de `innerHTML` melhorou Security de E para B, comprovando redução real da superfície apontada.
 
 ### Decisão
 
 - CI funcional verde não será usado para ignorar o Quality Gate.
 - Nenhum deploy será feito enquanto os apontamentos de segurança/confiabilidade não forem tratados ou tecnicamente justificados.
-- A limpeza começa pelos padrões novos de DOM dinâmico (`innerHTML`) e exceções silenciosas, preservando a mesma funcionalidade.
+- Cada novo hardening recebe teste de regressão antes da continuidade da expansão multicidade.
 
 ---
 
 ## Próxima sequência autorizada
 
-1. Corrigir e validar o SonarCloud Quality Gate.
+1. Fechar e registrar o Quality Gate do head atual.
 2. Propagar contexto `cidade` de forma opt-in e compatível para:
    - Mapa Real;
    - Vitriny Social;
