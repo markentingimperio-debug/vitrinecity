@@ -35,7 +35,7 @@ try{
 
   const db=new Database(path.join(dataDir,'vitrinecity.db'),{readonly:true});
   const events=db.prepare(`SELECT type,source,entity_type entityType,entity_id entityId,payload_json payloadJson
-    FROM neural_events WHERE source='multiversal' ORDER BY id`).all().map(row=>({...row,payload:JSON.parse(row.payloadJson)}));
+    FROM neural_events WHERE source='multiversal' ORDER BY rowid`).all().map(row=>({...row,payload:JSON.parse(row.payloadJson)}));
   db.close();
   assert.equal(events.length,4);
   assert.deepEqual(events.map(event=>event.type),['multiversal.enter','multiversal.city-change','multiversal.place-visit','multiversal.realm-transition']);
