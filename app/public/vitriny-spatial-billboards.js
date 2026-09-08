@@ -37,6 +37,14 @@ export function mountSpatialBillboards({scene,architecture,active=false,cityName
   return {group,get targets(){return boards.map(board=>board.group);},ready,
     registerStore(parent,store,{roof=9,onPlaylist=()=>{}}={}){const entry=createBoard(parent,{y:roof+4,z:0,width:17,height:7.5,postHeight:4,heading:store.name,items:storeBillboardPlaylist(store)});prepareImages(entry.items);onPlaylist(entry.items);fetchStoreBillboardPlaylist(store).then(items=>{if(!disposed&&items.length){entry.items=items;entry.current=-1;prepareImages(items);onPlaylist(items);}});return entry;},
     registerVenue(parent,{name,description,href,roof=9}){const items=storeBillboardPlaylist({name,href,description,reference:''});if(items.length)createBoard(parent,{y:roof+3.5,width:15,height:6.5,postHeight:3.5,heading:name,items});},
+    registerCenter(parent,center){
+      const entry=createBoard(parent,{y:21,z:18.2,width:25,height:7,postHeight:0,heading:center.name,items:storeBillboardPlaylist({name:center.title,href:center.href,description:'Explore os departamentos da nossa seleção afiliada.',reference:''})});
+      fetch(`/api/affiliate-centers/${center.id}/products`,{credentials:'same-origin'}).then(response=>{if(!response.ok)throw Error('Catalogue unavailable');return response.json();}).then(data=>{
+        if(disposed)return;
+        const items=(Array.isArray(data.items)?data.items:[]).filter(p=>p.platform===center.id&&p.available&&/^\/ofertas\/[a-z0-9-]+$/.test(p.href)).slice(0,12).map(p=>({title:p.title,label:center.name,description:p.category,href:p.href,imageUrl:p.image||'',campaign:false}));
+        if(items.length){entry.items=items;entry.current=-1;prepareImages(items);}
+      }).catch(()=>{});
+    },
     tick(dt,{paused=false}={}){if(!paused)elapsed+=dt;for(const board of boards){const items=board.items||playlist;if(!items.length)continue;const i=billboardIndex({elapsed,offset:board.index,count:items.length});if(board.current!==i){prepareImages([items[i],items[(i+1)%items.length]]);board.current=i;draw(board,items[i]);}}},
     activate(target){const item=target?.userData?.item;if(!item)return false;const href=safeBillboardHref(item.href,{campaign:item.campaign});if(!href)return false;location.assign(href);return true;},
     dispose(){disposed=true;for(const image of images.values()){image.onload=image.onerror=null;}images.clear();}};

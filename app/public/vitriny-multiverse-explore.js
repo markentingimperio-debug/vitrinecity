@@ -15,6 +15,8 @@ import {mountDeliveryBase} from './vitriny-delivery-base.js';
 import {mountVisitorAvatar} from './vitriny-visitor-avatar.js';
 import {mountStorefrontDisplays} from './vitriny-storefront-displays.js';
 import {mountGamesBuilding} from './vitriny-city-games-building.js';
+import {mountCommerceAvenue,mountMusicArena} from './vitriny-commerce-avenue.js';
+import {intersectsCommerceAvenue} from './vitriny-affiliate-centers-core.js';
 
 const palette=[0x6ee7ff,0x8f8cff,0xe48cff,0xffb36b,0x85e6a8,0x6f9cff,0xb58cff,0x6edbcf];
 const requested=spatialCityFromLocation(),requestedCityId=TRANSIT_CITY_IDS.includes(requested)?requested:'vitrine-city';
@@ -82,7 +84,7 @@ function createChunkGroup(chunk){
   for(const building of chunk.buildings){
     if(intersectsTransitPlaza(building))continue;
     const px=building.position.x,pz=building.position.z;
-    if((px>82&&px<510&&Math.abs(pz)<68)||(Math.abs(px)<50&&pz>-195&&pz<-115)||(px>55&&px<160&&pz>-150&&pz<-45)||(px>-150&&px<-78&&pz>-125&&pz<68))continue;
+    if((px>82&&px<510&&Math.abs(pz)<68)||(Math.abs(px)<50&&pz>-195&&pz<-115)||(px>55&&px<160&&pz>-150&&pz<-45)||(px>-150&&px<-78&&pz>-125&&pz<68)||intersectsCommerceAvenue(building)||(px>-140&&px<-65&&pz>120&&pz<183))continue;
     const b=building,accent=palette[b.accentIndex%palette.length],g=new THREE.Group();
     g.position.set(b.position.x,0,b.position.z);g.userData={kind:b.kind,buildingId:b.id};
     const facade=facades[Math.abs(Math.trunc(b.accentIndex||0))%facades.length];
@@ -156,6 +158,15 @@ $('openStorefronts').addEventListener('click',()=>{releaseControls();$('storefro
 $('storefrontDirectory').querySelector('[data-close]').addEventListener('click',()=>$('storefrontDirectory').close());
 const deliveryBase=mountDeliveryBase({scene,architecture,cityId,cityName:cityContext.name});
 const gamesBuilding=mountGamesBuilding({scene,architecture});storeTargets.push(gamesBuilding);
+const centers=isActiveCity?mountCommerceAvenue({scene,architecture,billboards,facade:facades[1]}):[];
+for(const {group,center,anchor} of centers){storeTargets.push(group);const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=center.href;entry.setAttribute('aria-label',`Entrar em ${center.title}`);const label=document.createElement('small'),action=document.createElement('strong');label.textContent=center.title;action.textContent='Explorar departamentos →';entry.append(label,action);entry.addEventListener('click',()=>saveSpatialContext());entranceLayer.append(entry);storeEntrances.push({element:entry,anchor});}
+const musicArena=mountMusicArena({scene,architecture});storeTargets.push(musicArena);
+$('openMusic').addEventListener('click',()=>{saveSpatialContext();location.assign('/vitriny-music-arena.html');});
+const centersDialog=$('centersDirectory');$('openCenters').addEventListener('click',()=>{releaseControls();centersDialog.showModal();});centersDialog.querySelector('[data-close]').addEventListener('click',()=>centersDialog.close());
+let visitedCenter=-1;
+function visitCenter(index){const center=centers[index];if(!center)return;visitedCenter=index;releaseControls();avatarMode=false;position.set(-105,9,center.group.position.z);yaw=Math.PI/2;pitch=.12;updateViewButton();$('nextCenter').hidden=false;}
+$('visitCenters').addEventListener('click',()=>{centersDialog.close();visitCenter(0);});$('visitCenters').hidden=!isActiveCity;
+$('nextCenter').addEventListener('click',()=>visitCenter((visitedCenter+1)%centers.length));
 $('openGames').addEventListener('click',()=>{saveSpatialContext();location.assign('/vitriny-games.html');});
 if(isActiveCity)for(let i=0;i<3;i++){
   const building=new THREE.Group();building.position.set(-113,0,-40+i*39);building.rotation.y=Math.PI/2;

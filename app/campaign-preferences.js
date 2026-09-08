@@ -12,7 +12,7 @@ export function setupCampaignPreferences(app,{db,requireUser,sameOriginOnly,reco
       for(const channel of Object.keys(consent))recordConsent(req,{userId:user.id,email:user.email,purpose:`marketing_${channel}`,version:VERSION,granted:consent[channel],source,evidence:{channel,contactDigest:contactDigest(user,channel)}});
       recordConsent(req,{userId:user.id,email:user.email,purpose:'marketing_communications',version:VERSION,granted:consent.email||consent.whatsapp,source,evidence:{channels:consent}});
       // A revocation also excludes existing lead campaigns. Opt-in does not create a send job.
-      if(!consent.email&&!consent.whatsapp)db.prepare('UPDATE leads SET consent=0 WHERE email=?').run(String(user.email||'').toLowerCase());
+      if(!consent.email)db.prepare('UPDATE leads SET consent=0 WHERE email=?').run(String(user.email||'').toLowerCase());
     })();return consent;
   }
   app.get('/api/privacy/communications',requireUser,(req,res)=>res.set('Cache-Control','private,no-store').json({preferences:read(req.user),hasWhatsapp:String(req.user.whatsapp||'').replace(/\D/g,'').length>=10}));

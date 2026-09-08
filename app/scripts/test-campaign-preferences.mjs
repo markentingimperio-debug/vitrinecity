@@ -10,6 +10,8 @@ assert.deepEqual(preferences.read(user),{email:false,whatsapp:false},'Account cr
 preferences.record({},user,{email:true,whatsapp:false});assert.deepEqual(preferences.read(user),{email:true,whatsapp:false});
 preferences.record({},user,{email:true,whatsapp:true});assert.equal(preferences.read({...user,whatsapp:'5562988880000'}).whatsapp,false,'Consent does not transfer to a changed contact number');
 preferences.record({},user,{email:false,whatsapp:false},'privacy_center');assert.deepEqual(preferences.read(user),{email:false,whatsapp:false});
+db.prepare('INSERT INTO leads(email,consent) VALUES(?,1)').run(user.email);
+preferences.record({},user,{email:false,whatsapp:true},'privacy_center');assert.equal(db.prepare('SELECT consent FROM leads WHERE email=?').get(user.email).consent,0,'Email revocation also disables legacy email consent while WhatsApp stays enabled');assert.deepEqual(preferences.read(user),{email:false,whatsapp:true});
 const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));const base=`http://127.0.0.1:${server.address().port}/api/privacy/communications`;
 try{assert.equal((await fetch(base)).status,401);assert.equal((await fetch(base,{method:'PUT',headers:{'Content-Type':'application/json','x-test-user':'1',origin:'https://evil.test'},body:'{"email":true,"whatsapp":true}'})).status,403);assert.equal((await fetch(base,{method:'PUT',headers:{'Content-Type':'application/json','x-test-user':'1'},body:'{"email":"true","whatsapp":false}'})).status,400);}finally{await new Promise(resolve=>server.close(resolve));db.close();}
 console.log(JSON.stringify({ok:true,communications:'explicit channel consent, revocation, contact binding, authenticated settings'}));

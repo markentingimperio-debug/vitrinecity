@@ -1,6 +1,7 @@
 import * as THREE from '/vendor/three/three.module.js';
 import {fetchSpatialEnvironment} from './vitriny-spatial-environment-client.js';
 import {createPremiumFacades} from './vitriny-spatial-premium-atmosphere.js';
+import {intersectsCommerceAvenue} from './vitriny-affiliate-centers-core.js';
 import {combineSpatialLodFactors,createSpatialDistanceLodController,createSpatialLodController,premiumSpatialSlotState,resolveSpatialDayPhase} from './vitriny-spatial-adaptive-experience.js';
 
 const ACCENTS=['#6ee7ff','#8f8cff','#e48cff','#ffb36b','#85e6a8','#6f9cff','#b58cff','#6edbcf'];
@@ -18,11 +19,12 @@ export async function mountSpatialCityEnvironment({scene,camera=null,cityId,iden
   const matrix=new THREE.Matrix4(),quaternion=new THREE.Quaternion(),scale=new THREE.Vector3(),position=new THREE.Vector3();
   const meshes={};
 
-  if(environment.skyline.length){
+  const skylineItems=environment.skyline.filter(item=>cityId!=='vitrine-city'||!intersectsCommerceAvenue(item));
+  if(skylineItems.length){
     const geometry=new THREE.BoxGeometry(1,1,1),[material,...unused]=createPremiumFacades();
     for(const item of unused){item.map.dispose();item.dispose();}material.map.repeat.set(2,5);
-    const skyline=meshes.skyline=instanced(group,geometry,material,environment.skyline.length,'themed-skyline');skyline.castShadow=Boolean(shadows);skyline.receiveShadow=Boolean(shadows);
-    environment.skyline.forEach((item,index)=>{setTransform(skyline,index,{x:item.position.x,y:item.size.height/2,z:item.position.z,sx:item.size.width,sy:item.size.height,sz:item.size.depth,ry:item.rotationY},matrix,quaternion,scale,position);skyline.setColorAt(index,color(index%2?'#bdc8cc':'#ddd8c9','#ffffff'));});
+    const skyline=meshes.skyline=instanced(group,geometry,material,skylineItems.length,'themed-skyline');skyline.castShadow=Boolean(shadows);skyline.receiveShadow=Boolean(shadows);
+    skylineItems.forEach((item,index)=>{setTransform(skyline,index,{x:item.position.x,y:item.size.height/2,z:item.position.z,sx:item.size.width,sy:item.size.height,sz:item.size.depth,ry:item.rotationY},matrix,quaternion,scale,position);skyline.setColorAt(index,color(index%2?'#bdc8cc':'#ddd8c9','#ffffff'));});
     skyline.instanceMatrix.needsUpdate=true;if(skyline.instanceColor)skyline.instanceColor.needsUpdate=true;
   }
 

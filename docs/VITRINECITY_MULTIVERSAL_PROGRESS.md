@@ -311,3 +311,19 @@ Evidências: `npm test` e release sweep com **132/132 scripts** passaram antes d
 Limites visuais: cenário procedural estilizado; não equivale ao fotorrealismo das referências. A Mini Fazenda é primeira versão própria jogável. OpenFront, Solaris, Survev e Mindustry foram pesquisados; nenhum desses jogos externos foi incorporado ou apresentado como operacional.
 
 Reconciliação atualizada: produção passou a `c7cfe8092f09da22c0aa64b94a4fd6ab925bb41b` (PRs 147/148 de afiliados e correção do qs). A versão espacial será integrada a essa base; não substituir alterações recentes com o snapshot antigo.
+
+## 2026-09-08 — Centros de compras e Pulse Arena
+
+**Estado:** candidato local validado, aguardando verificação isolada e publicação. A base `c7cfe80` foi integrada por `e478f68`; as três verificações do GitHub desse merge passaram.
+
+- Quatro prédios independentes: Mercado Livre, Shopee Center, Cakto e Kiwify. Cada um tem logo oficial verificado e nome no topo e na fachada, paleta e detalhes arquitetônicos próprios. As imagens de marca são locais; origem e hashes estão em `app/public/assets/affiliate-brands/SOURCES.md`. O espaço é uma seleção afiliada independente da VitrineCity.
+- Avenida com área livre de obstáculos de cenário, botão para percorrer os quatro prédios e entradas para `/centros/:plataforma`. A restrição de ocupação considera também o tamanho e a rotação dos prédios de fundo.
+- Cada centro usa o catálogo existente: departamentos por categoria publicada, busca com índice FTS5, páginas de 24 produtos e destino na página própria `/ofertas/:slug`. Os painéis mostram até 12 produtos publicados da plataforma e abrem o produto exibido. Nenhum produto, preço, estoque ou link afiliado foi inventado.
+- Snapshot público de QA: 22 Mercado Livre, 4 Shopee, 1 Cakto e 0 Kiwify. Kiwify mostra seleção em preparação. As quantidades mudam conforme novas publicações.
+- Administração com busca, filtro por plataforma e paginação de 50 itens. Capacidade de cadastro aumentada para 50 mil; fixture de 10 mil valida índice, atualização, isolamento e paginação. Não é um resultado de teste de carga de produção. As APIs externas das plataformas e a importação em massa ficam para uma integração futura conforme acesso autorizado; nenhuma campanha ou compra de tráfego foi executada.
+- Pulse Arena com identidade própria e players oficiais do vídeo YouTube `98ovJs-Ibd4` e da playlist Spotify `3d7eXh3ohl1YeaKHVCKNsU` fornecidos pelo usuário. Só carrega após escolha; não inicia áudio automaticamente; trocar ou fechar remove o player anterior. Spotify pode oferecer apenas prévias conforme o serviço. Não há download nem retransmissão própria de áudio.
+- Cidade, jogos e arena exigem conta. Catálogos dos quatro centros e produtos permanecem públicos. A revogação de e-mail também desativa o consentimento legado de leads, mesmo se WhatsApp continuar permitido.
+
+Validação: `npm test` e `npm run test:release` passaram, incluindo **135/135 scripts**. Ajustes finais de identidade/ocupação tiveram verificação direcionada. Navegador conferiu os quatro prédios, painéis com produtos reais e entrada no catálogo; viewport móvel confirmou logo e nome legíveis e catálogo sem rolagem horizontal. Os players oficiais e a interface móvel da arena foram conferidos; não foi necessário iniciar reprodução.
+
+Reconciliação de leitura novamente confirmou produção `c7cfe8092f09da22c0aa64b94a4fd6ab925bb41b`, app saudável na imagem `sha256:0a5c9e20fd2dfe1e459020a812df4b7d13412a472d356539e6eb8e272b402b9f`. A única chave divergente de ambiente continua `ASAAS_API_KEY`; preservar o valor efetivo sem registrar seu conteúdo.
