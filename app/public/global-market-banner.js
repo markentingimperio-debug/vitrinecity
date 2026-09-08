@@ -1,5 +1,6 @@
 (() => {
-  if(window.__vcGlobalMarketBannerLoaded || location.pathname.startsWith('/admin'))return;
+  // The 3D city has its own building billboards; page-wide banners cover its controls.
+  if(window.__vcGlobalMarketBannerLoaded || location.pathname.startsWith('/admin') || /^\/vitriny-multiverse-(?:explore|district)(?:\.html)?\/?$/.test(location.pathname))return;
   window.__vcGlobalMarketBannerLoaded=true;
   window.__vcMarketStylesReady=new Promise(resolve=>{
     let css=document.querySelector('link[data-vc-market-styles]');
