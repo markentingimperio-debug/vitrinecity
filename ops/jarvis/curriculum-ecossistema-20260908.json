@@ -1,6 +1,6 @@
 {
   "id": "ecossistema-20260908-v1",
-  "verifiedCommit": "3d79b67ea037d808a0be809c0af9a0bf9ec93cbc",
+  "verifiedCommit": "4400e2f6a79623fd6fded0c219f9a5e5d8031477",
   "authorization": "Usuário autorizou continuar o ensino do ecossistema VitrineCity em 08/09/2026. Este lote reúne fatos públicos da revisão de trabalho e limites de capacidades conferidos no código pelo operador Codex. Não autoriza pagamentos, mensagens, deploy ou ajuste de pesos. Conferir a revisão final publicada antes de aplicar no banco de produção.",
   "scope": "public_platform_facts_only",
   "releaseNote": "verifiedCommit identifica a base desta revisão de trabalho. Atualizar para o commit final de código e verificar as rotas antes da importação em produção; este arquivo sozinho não comprova publicação nem importação.",
@@ -68,17 +68,93 @@
     }
   ],
   "questions": [
-    {"question":"Posso explorar a cidade pública sem cadastro?","title":"Cidade pública: explorar o multiverso e encontrar serviços","answerIncludes":["pública"]},
-    {"question":"Onde encontro o guia para encontrar serviços no multiverso?","title":"Cidade pública: explorar o multiverso e encontrar serviços","answerIncludes":["Encontrar na cidade"]},
-    {"question":"Preciso de conta pessoal para jogos e chat?","title":"Conta pessoal: jogos, chat, pedidos e benefícios","answerIncludes":["conta"]},
-    {"question":"Qual o desconto de Vitrine Coins em curso e avatar?","title":"Vitrine Coins: desconto de até 30% em curso e avatar","answerIncludes":["30%"]},
-    {"question":"O avatar premium permite até R$ 3 de desconto?","title":"Vitrine Coins: desconto de até 30% em curso e avatar","answerIncludes":["R$ 3"]},
-    {"question":"O parceiro afiliado recebe 50% da comissão ou por clique?","title":"Parceiros afiliados: 50% da comissão e links rastreáveis","answerIncludes":["50%","não"]},
-    {"question":"A busca coloca conteúdo interno relevante antes da internet?","title":"Busca relevante: conteúdo interno antes de sugestões externas","answerIncludes":["relacionados"]},
-    {"question":"O prédio VC Entregas em Silvânia significa operação local funcionando?","title":"VC Entregas: prédio visual e disponibilidade da operação local","answerIncludes":["consultado","não comprovam"]},
-    {"question":"A skill de programação aplica código ou entrega proposta e testes?","title":"Programação da Neural: análise, proposta de código e testes","answerIncludes":["proposta"]},
-    {"question":"A Neural pode gerar imagens sem provider especializado?","title":"Imagens e mídia: capacidade declarada exige provider real","answerIncludes":["provider","não"]},
-    {"question":"Análises de métricas confirmam vendas apenas pelos cliques?","title":"Análises e métricas: evidência, privacidade e limites","answerIncludes":["não"]},
-    {"question":"Ensino contínuo da memória significa fine-tuning de pesos?","title":"Ensino contínuo: memória revisada não é fine-tuning","answerIncludes":["não","pesos"]}
+    {
+      "question": "Posso explorar a cidade pública sem cadastro?",
+      "title": "Cidade pública: explorar o multiverso e encontrar serviços",
+      "answerIncludes": [
+        "pública"
+      ]
+    },
+    {
+      "question": "Onde encontro o guia para encontrar serviços no multiverso?",
+      "title": "Cidade pública: explorar o multiverso e encontrar serviços",
+      "answerIncludes": [
+        "Encontrar na cidade"
+      ]
+    },
+    {
+      "question": "Preciso de conta pessoal para jogos e chat?",
+      "title": "Conta pessoal: jogos, chat, pedidos e benefícios",
+      "answerIncludes": [
+        "conta"
+      ]
+    },
+    {
+      "question": "Qual o desconto de Vitrine Coins em curso e avatar?",
+      "title": "Vitrine Coins: desconto de até 30% em curso e avatar",
+      "answerIncludes": [
+        "30%"
+      ]
+    },
+    {
+      "question": "O avatar premium permite até R$ 3 de desconto?",
+      "title": "Vitrine Coins: desconto de até 30% em curso e avatar",
+      "answerIncludes": [
+        "R$ 3"
+      ]
+    },
+    {
+      "question": "O parceiro afiliado recebe 50% da comissão ou por clique?",
+      "title": "Parceiros afiliados: 50% da comissão e links rastreáveis",
+      "answerIncludes": [
+        "50%",
+        "não"
+      ]
+    },
+    {
+      "question": "A busca coloca conteúdo interno relevante antes da internet?",
+      "title": "Busca relevante: conteúdo interno antes de sugestões externas",
+      "answerIncludes": [
+        "relacionados"
+      ]
+    },
+    {
+      "question": "O prédio VC Entregas em Silvânia significa operação local funcionando?",
+      "title": "VC Entregas: prédio visual e disponibilidade da operação local",
+      "answerIncludes": [
+        "consultado",
+        "não comprovam"
+      ]
+    },
+    {
+      "question": "A skill de programação aplica código ou entrega proposta e testes?",
+      "title": "Programação da Neural: análise, proposta de código e testes",
+      "answerIncludes": [
+        "proposta"
+      ]
+    },
+    {
+      "question": "A Neural pode gerar imagens sem provider especializado?",
+      "title": "Imagens e mídia: capacidade declarada exige provider real",
+      "answerIncludes": [
+        "provider",
+        "não"
+      ]
+    },
+    {
+      "question": "Análises de métricas confirmam vendas apenas pelos cliques?",
+      "title": "Análises e métricas: evidência, privacidade e limites",
+      "answerIncludes": [
+        "não"
+      ]
+    },
+    {
+      "question": "Ensino contínuo da memória significa fine-tuning de pesos?",
+      "title": "Ensino contínuo: memória revisada não é fine-tuning",
+      "answerIncludes": [
+        "não",
+        "pesos"
+      ]
+    }
   ]
 }
