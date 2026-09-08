@@ -1,9 +1,10 @@
-const CITY_IDS=new Set(['vitrine-city','silvania','anapolis','goiania']);
+const CITY_IDS=new Set(['vitrine-city','silvania','anapolis','vianopolis','goiania']);
 const HEX=/^#[0-9a-f]{6}$/i;
 const FALLBACK=Object.freeze({
   'vitrine-city':Object.freeze({themeId:'neural-nexus',tagline:'Núcleo inteligente do ecossistema Vitriny',palette:{background:'#02050c',fog:'#07101c',ground:'#09131c',road:'#101a24',accent:'#6ee7ff',secondary:'#8f8cff'},landmark:{id:'neural-spire',label:'Vitriny Neural Spire',kind:'spire'}}),
   silvania:Object.freeze({themeId:'cerrado-gardens',tagline:'Cidade-jardim digital inspirada no Cerrado',palette:{background:'#03100c',fog:'#082219',ground:'#0d2119',road:'#15251f',accent:'#85e6a8',secondary:'#ffc56b'},landmark:{id:'cerrado-crown',label:'Coroa do Cerrado',kind:'crown'}}),
   anapolis:Object.freeze({themeId:'connected-axis',tagline:'Eixo de conexões, negócios e mobilidade digital',palette:{background:'#06101b',fog:'#0a1d30',ground:'#0d1b2a',road:'#162334',accent:'#6f9cff',secondary:'#ffb36b'},landmark:{id:'connection-arch',label:'Arco Conector',kind:'arch'}}),
+  vianopolis:Object.freeze({themeId:'cerrado-crossroads',tagline:'Conexões do Cerrado, comércio local e vida digital',palette:{background:'#06100b',fog:'#102219',ground:'#13231a',road:'#263126',accent:'#f0c96b',secondary:'#75d6a5'},landmark:{id:'cerrado-gateway',label:'Portal do Cerrado',kind:'arch'}}),
   goiania:Object.freeze({themeId:'green-metropolis',tagline:'Metrópole verde, criativa e conectada',palette:{background:'#050711',fog:'#101328',ground:'#121827',road:'#1a2030',accent:'#b58cff',secondary:'#85e6a8'},landmark:{id:'metropolis-orbit',label:'Órbita Metropolitana',kind:'orbital'}})
 });
 
