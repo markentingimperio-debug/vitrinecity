@@ -24,6 +24,7 @@ function num(value,digits=3){return Number(Number(value).toFixed(digits));}
 function profile(value){const id=String(value||'STANDARD').trim().toUpperCase();return PROFILE_COUNTS[id]?id:'STANDARD';}
 function pointOnRing(random,index,count,{inner,outer,phase=0}){const angle=phase+(index/count)*Math.PI*2+(random()-.5)*.12;const radius=inner+(outer-inner)*(.25+.75*random());return{x:num(Math.cos(angle)*radius),z:num(Math.sin(angle)*radius)};}
 function safeTransitPoint(point){return !(Math.abs(point.x)<58&&point.z>74&&point.z<128);}
+function relocateOutsideTransit(point,index){if(safeTransitPoint(point))return point;return{x:index%2===0?64:-64,z:point.z};}
 function pick(random,items){return items[Math.min(items.length-1,Math.floor(random()*items.length))];}
 
 export function planSpatialCityEnvironment(cityId,{profileId='STANDARD',premiumAssignments=[],now=Date.now()}={}){
@@ -53,8 +54,9 @@ export function planSpatialCityEnvironment(cityId,{profileId='STANDARD',premiumA
   const districtLights=[];
   for(let i=0;i<counts.districtLights;i++){
     const districtIndex=i%DISTRICTS.length,districtId=DISTRICTS[districtIndex],ring=Math.floor(i/DISTRICTS.length),sector=districtIndex*Math.PI/4;
-    const angle=sector+(ring?0.075:-0.075),radius=84+ring*7,p={x:num(Math.cos(angle)*radius),z:num(Math.sin(angle)*radius)};
-    if(!safeTransitPoint(p))continue;
+    const angle=sector+(ring?0.075:-0.075),radius=84+ring*7;
+    let p={x:num(Math.cos(angle)*radius),z:num(Math.sin(angle)*radius)};
+    p=relocateOutsideTransit(p,districtIndex+ring);
     districtLights.push(Object.freeze({id:`district-light:${city.id}:${i}`,districtId,accentIndex:districtIndex,height:num(5.4+ring*.8),intensity:num(.72+random()*.22),position:Object.freeze({...p,y:0})}));
   }
   const premiumBase=[];
