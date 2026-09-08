@@ -5,6 +5,7 @@ import {districtExperience} from '/vitriny-district-integrations.js';
 import {fetchSpatialStores} from '/vitriny-spatial-store-registry.js';
 import {SPATIAL_RETURN_KEY,createSpatialReturnState,isSafeInternalHref} from '/vitriny-spatial-session.js';
 import {TRANSIT_CITY_IDS,fetchCityPortals,loadCityCheckpoint,saveCityCheckpoint,spatialMovementBasis,intersectsTransitPlaza} from '/vitriny-spatial-city-portals.js';
+import {fallbackSpatialCityIdentity,normalizeSpatialCityIdentity} from './vitriny-spatial-city-identity.js';
 
 const palette=[0x6ee7ff,0x8f8cff,0xe48cff,0xffb36b,0x85e6a8,0x6f9cff,0xb58cff,0x6edbcf];
 const requested=spatialCityFromLocation(),requestedCityId=TRANSIT_CITY_IDS.includes(requested)?requested:'vitrine-city';
@@ -12,6 +13,7 @@ let cityContext=spatialFallbackCity(requestedCityId),cityApiOnline=false;
 try{cityContext=await fetchSpatialCityContext({cityId:requestedCityId,timeoutMs:2000});cityApiOnline=true;}
 catch{if(cityContext.id!==requestedCityId)cityContext=spatialFallbackCity('vitrine-city');}
 const cityId=cityContext.id,worldKey=cityContext.worldKey,isActiveCity=cityId==='vitrine-city'&&cityContext.status==='active';
+const cityIdentity=normalizeSpatialCityIdentity(cityContext.identity||fallbackSpatialCityIdentity(cityId),cityId);
 const profile=(()=>{
   const memory=Number(navigator.deviceMemory||0),cores=Number(navigator.hardwareConcurrency||2),mobile=matchMedia('(max-width:760px)').matches;
   const score=(memory>=8?3:memory>=4?2:memory>=2?1:0)+(cores>=8?3:cores>=4?2:1)+(mobile?-1:1);
@@ -26,8 +28,8 @@ document.title=`Vitriny Multiverse · ${cityContext.name}`;
 worldStat.textContent=`${cityContext.name} · ${isActiveCity?'HUB':'PREVIEW'}`;
 
 const scene=new THREE.Scene();
-scene.background=new THREE.Color(cityId==='goiania'?0x030711:cityId==='silvania'?0x04100d:cityId==='anapolis'?0x07101a:0x02050c);
-scene.fog=new THREE.FogExp2(scene.background,0.0026);
+scene.background=new THREE.Color(cityIdentity.palette.background);
+scene.fog=new THREE.FogExp2(new THREE.Color(cityIdentity.palette.fog),0.0026);
 const camera=new THREE.PerspectiveCamera(58,innerWidth/innerHeight,.1,1800);
 let renderer;
 try{renderer=new THREE.WebGLRenderer({antialias:profile.id!=='LITE',powerPreference:'high-performance'});}
@@ -37,8 +39,8 @@ renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.
 document.body.prepend(renderer.domElement);
 scene.add(new THREE.HemisphereLight(0xc9f3ff,0x061018,1.25));
 const sun=new THREE.DirectionalLight(0xffffff,1.9);sun.position.set(120,180,90);sun.castShadow=profile.shadows;scene.add(sun);
-const groundMat=new THREE.MeshStandardMaterial({color:0x09131c,roughness:.86,metalness:.08});
-const roadMat=new THREE.MeshStandardMaterial({color:0x101a24,roughness:.72,metalness:.12});
+const groundMat=new THREE.MeshStandardMaterial({color:cityIdentity.palette.ground,roughness:.86,metalness:.08});
+const roadMat=new THREE.MeshStandardMaterial({color:cityIdentity.palette.road,roughness:.72,metalness:.12});
 const sharedMaterials=new Set([groundMat,roadMat]),chunkGroups=new Map();
 function mesh(geometry,material,parent,position){
   const object=new THREE.Mesh(geometry,material);if(position)object.position.set(...position);parent.add(object);return object;
@@ -82,11 +84,34 @@ const portalTargets=[],storeTargets=[],cityDestinations=new Map();
 const plaza=new THREE.Group();plaza.name=`central-plaza:${cityId}`;scene.add(plaza);
 // Ground exists before API chunks arrive, so the first scene is not an empty loading screen.
 const plazaFloor=mesh(new THREE.CircleGeometry(145,64),groundMat,plaza,[0,-.04,0]);plazaFloor.rotation.x=-Math.PI/2;
-for(const [r,w,c,o] of [[24,1.7,0x6ee7ff,.65],[40,1.1,0x6f85ff,.3],[55,1.3,0xb58cff,.4],[72,1.1,0x6ee7ff,.25]]){
+for(const [r,w,c,o] of [[24,1.7,cityIdentity.palette.accent,.65],[40,1.1,cityIdentity.palette.secondary,.3],[55,1.3,cityIdentity.palette.accent,.4],[72,1.1,cityIdentity.palette.secondary,.25]]){
   const ring=mesh(new THREE.RingGeometry(r-w,r,64),new THREE.MeshBasicMaterial({color:c,transparent:true,opacity:o,side:THREE.DoubleSide}),plaza,[0,.06,0]);ring.rotation.x=-Math.PI/2;
 }
 mesh(new THREE.CylinderGeometry(9,12,4,40),new THREE.MeshStandardMaterial({color:0x121d31,metalness:.72,roughness:.22}),plaza,[0,2,0]);
-const neuralCore=mesh(new THREE.IcosahedronGeometry(7,2),new THREE.MeshPhysicalMaterial({color:0x74eaff,emissive:0x185f80,emissiveIntensity:isActiveCity?2:1.15,metalness:.2,roughness:.16}),plaza,[0,15,0]);
+const neuralCore=mesh(new THREE.IcosahedronGeometry(7,2),new THREE.MeshPhysicalMaterial({color:cityIdentity.palette.accent,emissive:cityIdentity.palette.accent,emissiveIntensity:isActiveCity?1.25:.72,metalness:.2,roughness:.16}),plaza,[0,15,0]);
+function createCityLandmark(identity){
+  const group=new THREE.Group();group.name=`city-landmark:${identity.landmark.id}`;group.userData={landmark:true,kind:identity.landmark.kind};
+  const accent=identity.palette.accent,secondary=identity.palette.secondary,quality=profile.id==='LITE'?0:profile.id==='STANDARD'?1:2;
+  const glow=new THREE.MeshStandardMaterial({color:0x142337,emissive:accent,emissiveIntensity:.72,metalness:.55,roughness:.22});
+  const glow2=new THREE.MeshBasicMaterial({color:secondary,transparent:true,opacity:.62});
+  if(identity.landmark.kind==='spire'){
+    mesh(new THREE.CylinderGeometry(.7,2.2,34,quality?18:10),glow,group,[0,19,0]);
+    const halo=mesh(new THREE.TorusGeometry(9,.22,quality?10:6,quality?64:28),glow2,group,[0,30,0]);halo.rotation.x=Math.PI/2;
+    if(quality>0){const halo2=mesh(new THREE.TorusGeometry(12,.1,8,64),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.32}),group,[0,36,0]);halo2.rotation.x=Math.PI/2;}
+  }else if(identity.landmark.kind==='crown'){
+    for(let i=0;i<3;i++){const crown=mesh(new THREE.TorusGeometry(9+i*2,.28,quality?10:6,quality?56:28),i%2?glow2:glow,group,[0,7+i*4,0]);crown.rotation.x=Math.PI/2;}
+    const petals=quality?8:5;for(let i=0;i<petals;i++){const a=i*Math.PI*2/petals;mesh(new THREE.CylinderGeometry(.2,.55,12,6),glow,group,[Math.cos(a)*8,7,Math.sin(a)*8]).rotation.z=Math.sin(a)*.28;}
+  }else if(identity.landmark.kind==='arch'){
+    for(const x of [-11,11])mesh(new THREE.BoxGeometry(1.4,20,1.4),glow,group,[x,10,-8]);
+    const arch=mesh(new THREE.TorusGeometry(11,.72,quality?12:7,quality?72:32,Math.PI),glow,group,[0,20,-8]);arch.rotation.z=0;
+    mesh(new THREE.BoxGeometry(20,.18,3),glow2,group,[0,2,-8]);
+  }else{
+    const center=mesh(new THREE.SphereGeometry(3.2,quality?24:12,quality?16:8),glow,group,[0,17,-5]);center.scale.y=1.35;
+    const rotations=[[Math.PI/2,0,0],[1.1,.5,.2],[.8,-.6,.4]];for(let i=0;i<(quality?3:2);i++){const orbit=mesh(new THREE.TorusGeometry(10+i*2,.22,quality?10:6,quality?64:28),i%2?glow2:glow,group,[0,17,-5]);orbit.rotation.set(...rotations[i]);}
+  }
+  plaza.add(group);return group;
+}
+const cityLandmark=createCityLandmark(cityIdentity);
 function portalFrame(portal,accent,{city=false,enabled=true}={}){
   const width=city?10:8.2,height=city?10:7;
   const frame=new THREE.MeshStandardMaterial({color:0x19263a,metalness:.72,roughness:.22});
@@ -259,7 +284,7 @@ function animate(now){
   if(velocity.lengthSq())position.add(velocity.normalize().multiplyScalar(speed*dt));
   position.x=Math.max(-100000,Math.min(100000,position.x));position.z=Math.max(-100000,Math.min(100000,position.z));
   lookTarget.set(basis.forward.x*Math.cos(pitch),Math.sin(pitch),basis.forward.z*Math.cos(pitch)).add(position);
-  camera.position.copy(position);camera.lookAt(lookTarget);neuralCore.rotation.y+=dt*.45;
+  camera.position.copy(position);camera.lookAt(lookTarget);neuralCore.rotation.y+=dt*.45;cityLandmark.rotation.y+=dt*.12;
   updatePortal();syncChunks();renderer.render(scene,camera);
   if(firstFrame){firstFrame=false;$('loading').classList.add('hide');}
 }
