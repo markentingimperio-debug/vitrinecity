@@ -127,6 +127,9 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     res.locals.vcAmpStory=true;
     // The AMP document must remain embeddable by the official AMP/Google story viewer.
     res.removeHeader('X-Frame-Options');
+    const policy=String(res.getHeader('Content-Security-Policy')||'').split(';').map(directive=>directive.trim())
+      .filter(directive=>directive&&!/^frame-ancestors(?:\s|$)/i.test(directive)).join('; ');
+    if(policy)res.set('Content-Security-Policy',policy);else res.removeHeader('Content-Security-Policy');
     return res.type('html').set('Cache-Control','public,max-age=60').send(renderWebStory(JSON.parse(item.published_json),{origin,slug:item.slug,publishedAt:item.published_at,modifiedAt:item.published_updated_at}));
   });
   app.get('/sitemap-stories.xml',(_req,res)=>res.type('application/xml').set('Cache-Control','public,max-age=60').send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${published().map(item=>`<url><loc>${esc(origin+'/stories/'+item.slug)}</loc><lastmod>${esc(item.published_updated_at)}</lastmod></url>`).join('')}</urlset>`));

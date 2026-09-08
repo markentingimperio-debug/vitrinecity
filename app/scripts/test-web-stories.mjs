@@ -18,7 +18,7 @@ async function fixture(t){
   db.prepare('INSERT INTO editorial_articles VALUES(?,?,?,?,?,?,?,?,?,?)').run('fixture','guia-de-teste','Guia de teste: conteúdo completo','Uma descrição de teste com contexto completo para acompanhar cada uma das páginas.',body,'/assets/recipes/bolo-cenoura.jpg','receitas','published','2026-09-08','2026-09-08');
   const realAssets=createStoryAssets({publicDir,dataDir});await fs.mkdir(realAssets.outputDir,{recursive:true});
   const state={beforeImage:null};const assets={...realAssets,image:async(...args)=>{if(state.beforeImage)await state.beforeImage();return realAssets.image(...args);},poster:async()=>'/story-assets/0123456789abcdef0123456789abcdef.jpg'};
-  app.use(express.json());app.use((_req,res,next)=>{res.set('X-Frame-Options','SAMEORIGIN');const send=res.send.bind(res);res.send=html=>send(typeof html==='string'&&html.startsWith('<!doctype')&&!res.locals.vcAmpStory?html.replace('</body>','<script src="/ordinary-site-script.js"></script></body>'):html);next();});
+  app.use(express.json());app.use((_req,res,next)=>{res.set('X-Frame-Options','SAMEORIGIN');res.set('Content-Security-Policy',"base-uri 'self'; object-src 'none'; frame-ancestors 'self'");const send=res.send.bind(res);res.send=html=>send(typeof html==='string'&&html.startsWith('<!doctype')&&!res.locals.vcAmpStory?html.replace('</body>','<script src="/ordinary-site-script.js"></script></body>'):html);next();});
   const auth=(req,res,next)=>{if(req.get('x-test-admin')!=='yes')return res.status(401).json({error:'auth'});req.user={id:'admin-test'};next();};
   const same=(req,res,next)=>req.get('origin')==='https://vitrinecity.test'?next():res.status(403).json({error:'origin'});
   const instance=setupWebStories({app,db,requireAdmin:auth,sameOriginOnly:same,siteUrl:'https://vitrinecity.test',publicDir,dataDir,assets});
@@ -48,6 +48,7 @@ test('template preserves all source words; draft and preview stay out of public 
   const preview=await f.preview(story);assert.equal(preview.status,200);assert.match(preview.json().html,/noindex,nofollow/);
   assert.equal((await f.call(preview.json().url,{admin:false})).status,401);
   const framed=await f.call(preview.json().url);assert.equal(framed.status,200);assert.equal(framed.headers.get('x-robots-tag'),'noindex,nofollow');assert.ok(!framed.raw.includes('ordinary-site-script'));
+  assert.equal(framed.headers.get('x-frame-options'),'SAMEORIGIN');assert.match(framed.headers.get('content-security-policy'),/frame-ancestors 'self'/);
   assert.ok(!(await f.call('/stories',{admin:false})).raw.includes(story.slug));
   assert.equal((await f.call('/api/admin/web-stories',{method:'POST',data:{articleId:'fixture'}})).json().id,story.id);
 });
@@ -56,6 +57,9 @@ test('manual preview and both editorial confirmations gate publication',async t=
   assert.equal((await f.call('/api/admin/web-stories/'+story.id+'/publish',{method:'POST',data:{revision:1,reviewed:true}})).status,400);
   assert.equal((await f.publish(story)).status,200);
   const publicPage=await f.call(story.url,{admin:false});assert.equal(publicPage.status,200);assert.ok(!publicPage.raw.includes('ordinary-site-script'));assert.equal(publicPage.headers.get('x-frame-options'),null);
+  assert.equal(publicPage.headers.get('content-security-policy'),"base-uri 'self'; object-src 'none'");
+  const directory=await f.call('/stories',{admin:false});assert.match(directory.headers.get('content-security-policy'),/frame-ancestors 'self'/);assert.equal(directory.headers.get('x-frame-options'),'SAMEORIGIN');
+  const missing=await f.call('/stories/unknown',{admin:false});assert.equal(missing.status,404);assert.match(missing.headers.get('content-security-policy'),/frame-ancestors 'self'/);
   assert.match(publicPage.raw,/<html amp lang="pt-BR">/);assert.match(publicPage.raw,/poster-portrait-src=/);assert.match(publicPage.raw,/rel="canonical" href="https:\/\/vitrinecity.test\/stories\//);
   assert.ok((await f.call('/stories',{admin:false})).raw.includes(story.slug));
   assert.ok((await f.call('/sitemap-stories.xml',{admin:false})).raw.includes('<lastmod>'));assert.ok(f.instance.sitemapPaths().includes(story.url));

@@ -2044,7 +2044,7 @@ function recordAdminLogin(req,email,success,reason){
 }
 
 const ADMIN_HTML_PATHS=new Set(['/admin-vendas-afiliadas.html','/admin','/admin.html','/admin-agentes.html','/admin-sales-agents.html','/admin-crypto-matrix.html','/admin-quizzes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html','/admin-conteudos.html','/admin-entregas.html']);
-for(const page of ['admin-midia','admin-parceiros','admin-chat-cidade','admin-recompensas']){ADMIN_HTML_PATHS.add('/'+page+'.html');ADMIN_HTML_PATHS.add('/'+page);}
+for(const page of ['admin-midia','admin-parceiros','admin-chat-cidade','admin-recompensas','admin-web-stories']){ADMIN_HTML_PATHS.add('/'+page+'.html');ADMIN_HTML_PATHS.add('/'+page);}
 ADMIN_HTML_PATHS.add('/admin-live.html');
 ADMIN_HTML_PATHS.add('/admin-jarvis.html');
 ADMIN_HTML_PATHS.add('/admin-jarvis-public.html');
