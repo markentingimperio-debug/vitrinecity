@@ -51,8 +51,8 @@ Há registro operacional anterior de divergência GitHub × VPS. Nenhum deploy d
 
 ### Testes
 
-- `test-multiversal-core.mjs` — passou no release sweep anterior.
-- `test-multiversal-ui.mjs` — passou no release sweep anterior.
+- `test-multiversal-core.mjs` — aprovado no release sweep.
+- `test-multiversal-ui.mjs` — aprovado no release sweep.
 
 ---
 
@@ -77,7 +77,7 @@ Há registro operacional anterior de divergência GitHub × VPS. Nenhum deploy d
 
 ## 2026-09-07 — Integração Vitriny Neural
 
-**Estado:** EM VALIDAÇÃO.
+**Estado:** CONCLUÍDO NO GIT / Quality Gate geral ainda em validação.
 
 ### Conclusão
 
@@ -88,27 +88,50 @@ Há registro operacional anterior de divergência GitHub × VPS. Nenhum deploy d
   - `multiversal.realm-transition`.
 - Eventos não carregam dados pessoais brutos nem `sourcePath` para aprendizado.
 - Política Neural permanece com pagamentos e ações destrutivas desabilitados para automação.
-- Workflow específico da Vitriny Neural passou no head anterior do PR.
 
 ### Correção do release
 
 O primeiro `Verify release` executou 101 testes: 100 passaram e apenas `test-multiversal-neural.mjs` falhou. A falha era **determinismo do teste**, não comportamento funcional: a consulta ordenava eventos por UUID (`id`), embora UUID não represente ordem de inserção.
 
-Correção aplicada no commit:
+Correção aplicada:
 
 - `f0c7ba8dfe65278cd796d81fc5644775ba0ebfc8` — `fix(multiversal): estabiliza ordem do teste Neural`
-- O teste agora ordena os eventos por `rowid`, preservando a sequência real de ingestão.
+- O teste passou a ordenar eventos por `rowid`, preservando a sequência real de ingestão.
 
-### Pendente imediato
+### Evidência CI após a correção
 
-- Confirmar novo `Verify release` após o commit de correção.
-- Corrigir/validar o SonarCloud Quality Gate antes de declarar a branch integrável.
+No head `3eeb21fcf7039e0a13c9f32305773d7b5f9c10b3`:
+
+- workflow **Vitriny Neural**, run `#348`: **SUCCESS**;
+- workflow **Verify release**, run `#350`: **SUCCESS**;
+- suíte isolada completa: **SUCCESS**.
+
+Portanto, a regressão funcional do Multiversal/Neural foi encerrada no Git.
+
+---
+
+## 2026-09-07 — Quality Gate SonarCloud
+
+**Estado:** EM VALIDAÇÃO / bloqueia integração final.
+
+### Evidência atual
+
+No mesmo head `3eeb21fcf7039e0a13c9f32305773d7b5f9c10b3`, o SonarCloud ainda reprova o PR `#145` com 6 apontamentos em código novo:
+
+- **Security Rating: E** — exigido A;
+- **Reliability Rating: C** — exigido A.
+
+### Decisão
+
+- CI funcional verde não será usado para ignorar o Quality Gate.
+- Nenhum deploy será feito enquanto os apontamentos de segurança/confiabilidade não forem tratados ou tecnicamente justificados.
+- A limpeza começa pelos padrões novos de DOM dinâmico (`innerHTML`) e exceções silenciosas, preservando a mesma funcionalidade.
 
 ---
 
 ## Próxima sequência autorizada
 
-1. Fechar `Verify release` e Quality Gate.
+1. Corrigir e validar o SonarCloud Quality Gate.
 2. Propagar contexto `cidade` de forma opt-in e compatível para:
    - Mapa Real;
    - Vitriny Social;
