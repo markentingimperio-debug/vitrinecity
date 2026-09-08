@@ -14,4 +14,4 @@ COPY public ./public
 RUN node prepare-public-highlights.js
 RUN mkdir -p /data
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["node", "--import", "./security-fetch-guard.js", "server.js"]
