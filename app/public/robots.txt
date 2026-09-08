@@ -8,3 +8,4 @@ Disallow: /pedidos.html
 Disallow: /meus-cursos.html
 
 Sitemap: https://vitrinecity.com/sitemap.xml
+Sitemap: https://vitrinecity.com/sitemap-stories.xml
