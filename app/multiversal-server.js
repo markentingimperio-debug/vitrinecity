@@ -120,12 +120,18 @@ function safeSlug(value) {
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) ? slug : '';
 }
 
-function cityBySlug(value) {
-  const slug = safeSlug(value) || DEFAULT_CITY;
+function exactCityBySlug(value) {
+  const slug = safeSlug(value);
+  if (!slug) return null;
   return db.prepare(`SELECT slug,name,state,state_code stateCode,status,sort_order sortOrder
-    FROM multiversal_cities WHERE slug=? AND status IN ('pilot','enabled')`).get(slug)
+    FROM multiversal_cities WHERE slug=? AND status IN ('pilot','enabled')`).get(slug) || null;
+}
+
+function cityBySlug(value) {
+  return exactCityBySlug(value)
+    || exactCityBySlug(DEFAULT_CITY)
     || db.prepare(`SELECT slug,name,state,state_code stateCode,status,sort_order sortOrder
-      FROM multiversal_cities WHERE slug=? AND status IN ('pilot','enabled')`).get(DEFAULT_CITY)
+      FROM multiversal_cities WHERE status IN ('pilot','enabled') ORDER BY sort_order,name LIMIT 1`).get()
     || null;
 }
 
@@ -211,7 +217,7 @@ app.post('/api/multiversal/transition', (req,res) => {
   if (!sameOrigin(req)) return res.status(403).json({ error:'Origem da transição não autorizada.' });
   if (!allowTransition(req)) return res.status(429).json({ error:'Muitas transições em pouco tempo.' });
 
-  const city = cityBySlug(req.body?.citySlug || req.body?.cidade);
+  const city = exactCityBySlug(req.body?.citySlug || req.body?.cidade);
   if (!city) return res.status(400).json({ error:'Cidade inválida.' });
   const toRealm = realmBySlug(req.body?.toRealm, city.slug);
   if (!toRealm) return res.status(400).json({ error:'Universo de destino inválido para esta cidade.' });
