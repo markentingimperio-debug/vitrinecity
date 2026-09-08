@@ -1,9 +1,9 @@
 const $ = s => document.querySelector(s);
 const esc = v => String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const names = {mercadolivre:'Mercado Livre',shopee:'Shopee',tiktok:'TikTok'};
-const healthNames = {unchecked:'Ainda não verificado',reachable:'Endereço respondeu; estoque não confirmado',broken:'Erro 404/410: revisar link',review:'Verificação inconclusiva: revisar na plataforma'};
+const names = {mercadolivre:'Mercado Livre',shopee:'Shopee',tiktok:'TikTok',cakto:'Cakto',kiwify:'Kiwify'};
+const healthNames = {unchecked:'Ainda não verificado',reachable:'Endereço respondeu; disponibilidade não confirmada',broken:'Erro 404/410: revisar link',review:'Verificação inconclusiva: revisar na plataforma'};
 let platform = new URLSearchParams(location.search).get('plataforma');
-if (!names[platform]) platform='mercadolivre';
+if (!Object.hasOwn(names,platform)) platform='mercadolivre';
 let rows=[],revision=0;
 async function api(url,options){const response=await fetch(url,options);const data=await response.json();if(response.status===401||response.status===403){location.href='/admin-login.html';throw Error('Entre na administração.');}if(!response.ok)throw Error(data.error||'Não foi possível concluir.');return data;}
 async function load(){
@@ -13,7 +13,7 @@ async function load(){
     const visible=rows.filter(p=>p.platform===platform);
     $('#summary').textContent=`${names[platform]} · ${visible.length} produtos`;
     document.querySelectorAll('[data-platform]').forEach(a=>{if(a.dataset.platform===platform)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
-    $('#items').innerHTML=visible.map(p=>`<article class="admin-item"><h2>${esc(p.title)}</h2><p>${esc({published:'Publicado',paused:'Pausado',draft:'Rascunho'}[p.status])} · Disponibilidade: ${esc({available:'informada disponível',unavailable:'indisponível',unknown:'não confirmada'}[p.availability])} · ${p.clicks} cliques registrados</p><p>${esc(healthNames[p.health])} · ${p.checked_at?esc(new Date(p.checked_at).toLocaleString('pt-BR')):'Sem verificação'}</p><div class="toolbar"><button data-edit="${p.slug}">Editar / trocar link</button><button data-check="${p.slug}" class="secondary">Verificar endereço</button>${p.status!=='draft'?`<a href="/ofertas/${p.slug}" target="_blank" rel="noopener">Abrir página</a>`:''}</div></article>`).join('')||'<p>Nenhum produto cadastrado nesta plataforma. Cadastre uma oferta com o link da sua conta de afiliado.</p>';
+    $('#items').innerHTML=visible.map(p=>`<article class="admin-item"><h2>${esc(p.title)}</h2><p>${esc({published:'Publicado',paused:'Pausado',draft:'Rascunho'}[p.status])} · Disponibilidade: ${esc({available:'informada disponível',unavailable:'indisponível',unknown:'não confirmada'}[p.availability])} · ${p.clicks} cliques registrados</p><p>${esc(healthNames[p.health])} · ${p.checked_at?esc(new Date(p.checked_at).toLocaleString('pt-BR')):'Sem verificação'}</p><div class="toolbar"><button data-edit="${p.slug}">Editar / trocar link</button><button data-check="${p.slug}" class="secondary">Verificar endereço</button>${p.status!=='draft'?`<a href="/ofertas/${p.slug}" target="_blank" rel="noopener">Abrir página</a>`:''}</div></article>`).join('')||'<p>Nenhum produto cadastrado nesta plataforma. Cadastre um produto físico ou digital com o link da sua conta de afiliado.</p>';
     const slugs=new Set(visible.map(p=>p.slug));
     $('#history').innerHTML=data.audit.filter(a=>slugs.has(a.slug)).map(a=>`<li>${esc(a.created_at)} · ${esc(a.slug)} · ${esc(a.action)}<br>${esc(a.detail)}</li>`).join('')||'<li>Sem alterações registradas.</li>';
     $('#message').textContent=data.running?'Verificação em andamento. Atualize o painel em instantes.':'';
