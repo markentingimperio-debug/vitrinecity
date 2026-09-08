@@ -19,6 +19,16 @@ O adaptador lê novamente o catálogo público a cada consulta. Não importa cli
 
 A biblioteca já contém as fotos de **bolo de cenoura**, **bowl de frango** e **fricassê de frango**, em `app/public/assets/recipes/`. Essas receitas podem aproveitar os artigos existentes, desde que estejam publicados e completos. A presença de uma foto na biblioteca, por si só, não cria uma receita, não torna um artigo público e não garante aprovação automática.
 
+### Receitas estruturadas: preservar o preparo completo
+
+A implementação local prepara as telas diretamente do corpo da receita publicada, em vez de pedir à IA que resuma os ingredientes e o preparo. Esta descrição documenta o código e seus testes; não confirma que essa alteração já esteja publicada no domínio.
+
+Esse caminho aplica-se a artigos da categoria receitas (`kind: article`, grupo `recipes` ou portal `receitas`). O texto, após normalizar espaços, precisa ter entre **550 e 1600 caracteres**, com seções identificáveis de **Ingredientes:** e **Preparo:** ou **Modo de fazer:**. HTML, URLs, estrutura desconhecida, texto insuficiente ou conteúdo que não caiba nos limites mantém a tentativa pendente antes da primeira chamada de texto. O sistema não inventa ingredientes nem elimina etapas para fazer a receita caber.
+
+Todas as palavras do corpo da receita, incluindo medidas, temperatura, tempo e cuidados informados, permanecem na ordem original. O conteúdo é distribuído em 7 a 17 telas de preparo, com 35 a 100 caracteres por tela, além da capa e de duas telas finais: **10 a 20 páginas** no total, pelo menos 650 caracteres e o mesmo limite de leitura de 180 caracteres realmente exibidos por página. Apenas os espaços entre palavras são normalizados.
+
+A primeira chamada de IA pede somente título, descrição e orientação para a imagem, com orçamento de 700 tokens; eventuais páginas devolvidas pelo modelo não substituem o preparo preservado. A resposta `insufficient` continua interrompendo a tentativa. Uma segunda chamada recebe a receita e todas as telas completas para revisão independente. A orientação distingue a diagramação fiel desse artigo interno de reprodução indevida de terceiros, sem presumir autoria, licença ou exclusividade. Originalidade, fundamentação, completude e os demais critérios continuam exigindo aprovação explícita. Metadados inventados, reprovação, cancelamento ou mudança da origem impedem a geração da imagem e a publicação.
+
 ### Apresentação da cidade e das lojas
 
 O catálogo também admite `city:vitrine-city`, na categoria Tendências, e `store:<referência>`, na categoria Serviços e cursos. São fontes com identidades próprias (`city` e `store`), sem criar cópias dos artigos ou das páginas comerciais existentes. A história da cidade leva à página inicial; a história de uma loja leva ao endereço canônico `/loja/:referência/:nome`.
@@ -45,7 +55,7 @@ Os limites de páginas são decisões do produto, incluindo o mínimo de dez sol
 
 Uma história automática aprovada solicita **uma imagem conceitual de IA**, depois das verificações de fonte, redação e revisão. Essa imagem é reutilizada nas páginas; não existe geração de uma imagem nova por página nem repetição oculta da solicitação. A orientação exclui texto embutido, logotipos, rostos de pessoas reais e aparência de prova documental de um acontecimento.
 
-Produtos, serviços, cursos e ofertas também precisam de **uma foto real do catálogo**, exibida na segunda página. A imagem conceitual não substitui essa fotografia nem comprova características do produto. Os créditos diferenciam `Ilustração IA` de `Foto do catálogo`. Uma foto inexistente, inacessível ou pequena mantém a preparação pendente.
+Produtos, serviços, cursos, ofertas e lojas também precisam de **uma foto real do catálogo**, exibida na segunda página. A imagem conceitual não substitui essa fotografia nem comprova características do produto. Os créditos diferenciam `Ilustração IA` de `Foto do catálogo`. Uma foto inexistente, inacessível ou pequena mantém a preparação pendente.
 
 As imagens aceitas são PNG, JPEG ou WebP locais validados, com pelo menos 640 pixels em cada lado, limites de arquivo e de dimensões. A exceção são fotos reais de catálogo com pelo menos 640 × 360 pixels: elas aparecem inteiras, com `object-fit: contain`, sem esticar nem cortar o produto. Fotos remotas de catálogo passam pelo importador restrito já existente; o editor não aceita uma URL arbitrária para o FFmpeg. O cartaz é recortado em 900 × 1200, preservando a proporção, e reutilizado por hash. O logo deve ser quadrado, com pelo menos 96 pixels. O seletor oferece miniaturas, busca e aplicação às demais páginas somente quando essa opção é escolhida.
 
@@ -77,7 +87,7 @@ Enquanto a automação de Web Stories está habilitada, o temporizador editorial
 
 ## Publicação automática e revisão manual
 
-A IA recebe dados públicos de origem como dados não confiáveis, sem obedecer a instruções contidas nos textos. Primeiro redige; uma segunda chamada revisa a redação contra a origem. Para publicar, os indicadores de fundamentação, originalidade, completude, ausência de repetição e equilíbrio comercial precisam ser aprovados, com risco baixo. Regras locais verificam formato, quantidade de páginas, números ausentes na origem, chamadas inadequadas, imagens e orçamento de leitura.
+A IA recebe dados públicos de origem como dados não confiáveis, sem obedecer a instruções contidas nos textos. Primeiro redige o conteúdo ou, nas receitas estruturadas, apenas os metadados do preparo já diagramado. Uma segunda chamada revisa a história completa contra a origem. Para publicar, os indicadores de fundamentação, originalidade, completude, ausência de repetição e equilíbrio comercial precisam ser aprovados, com risco baixo. Regras locais verificam formato, quantidade de páginas, números ausentes na origem, chamadas inadequadas, imagens e orçamento de leitura.
 
 Essas verificações reduzem erros; não equivalem a verificação humana infalível nem a certificação do Google. Notícias e esportes usam os trechos pesquisados como evidência, não o título editorial como prova. Conteúdo insuficiente não deve ser esticado artificialmente para chegar a dez páginas.
 

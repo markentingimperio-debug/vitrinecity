@@ -2,6 +2,7 @@
 // payment callbacks and old .html addresses keep their established behavior.
 export const CLEAN_PUBLIC_ROUTES = Object.freeze({
   '/multiverso': '/vitriny-multiverse-explore.html',
+  '/emissora': '/emissora.html',
   '/jogos': '/vitriny-games.html',
   '/mini-fazenda': '/vitriny-mini-fazenda.html',
   '/arena-musical': '/vitriny-music-arena.html',
