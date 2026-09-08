@@ -28,9 +28,11 @@ Esses conceitos são identidades digitais do produto, não réplicas urbanístic
 
 ## Renderização
 
-A primeira etapa aplica as paletas ao HUD do explorer e publica o descriptor do landmark. O próximo renderer pode materializar o marco em Three.js de forma determinística, respeitando os perfis Lite, Standard e Ultra.
+O explorer aplica a paleta validada ao ambiente, HUD, chão e vias e materializa um landmark 3D específico por cidade. O nível geométrico do marco respeita os perfis Lite, Standard e Ultra: aparelhos simples recebem menos segmentos e efeitos, enquanto dispositivos mais capazes recebem anéis e detalhes adicionais.
 
-O landmark deve ser decorativo/navegacional: não controla checkout, permissões, autenticação ou outras operações críticas.
+Os landmarks atuais são procedurais e declarativos: `spire`, `crown`, `arch` e `orbital`. Eles funcionam como assinatura visual da cidade sem controlar regras de negócio.
+
+O landmark é decorativo/navegacional: não controla checkout, permissões, autenticação ou outras operações críticas.
 
 ## Segurança e escala
 
@@ -43,8 +45,8 @@ O landmark deve ser decorativo/navegacional: não controla checkout, permissões
 
 ## Próximos passos
 
-1. materializar landmarks 3D por descriptor;
-2. gerar skyline procedural coerente com o tema;
-3. adicionar vegetação, iluminação e mobiliário por perfil de dispositivo;
+1. gerar skyline procedural coerente com o tema;
+2. adicionar vegetação, iluminação e mobiliário por perfil de dispositivo;
+3. criar zonas premium e marcos secundários sem bloquear streaming de chunks;
 4. permitir novas cidades por registry versionado, mantendo validação e fallback;
 5. usar métricas agregadas para otimizar desempenho, nunca para alterar identidade cultural automaticamente.
