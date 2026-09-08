@@ -24,6 +24,25 @@ services:
       timeout: 5s
       retries: 4
       start_period: 20s
+  multiversal:
+    build: ./app
+    restart: unless-stopped
+    command: ["node", "multiversal-server.js"]
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      MULTIVERSAL_PORT: 3001
+      DATA_DIR: /data
+    volumes:
+      - vitrinecity_data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/multiversal/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
   jarvis-model:
     profiles: [jarvis]
     extends:
@@ -38,6 +57,8 @@ services:
     restart: unless-stopped
     depends_on:
       app:
+        condition: service_healthy
+      multiversal:
         condition: service_healthy
     ports:
       - "80:80"
