@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {createWebStoryAI,normalizeStoryCopy} from '../web-story-ai.js';
+import {createWebStoryAI,normalizeStoryCopy,storySourcePreflight} from '../web-story-ai.js';
 import {storyPageVisibleText} from '../web-story-render.js';
 
 const pages=[
@@ -19,6 +19,22 @@ const pages=[
 const copy=()=>({title:'Como observar o cultivo em casa',description:'Um guia de observação para conhecer o ambiente e consultar as necessidades de cada planta.',pages:pages.map(text=>({text})),imagePrompt:'Um jardim doméstico conceitual, luz suave, composição vertical.'});
 const approved=()=>({approved:true,grounded:true,original:true,complete:true,nonRepetitive:true,commerceBalanced:true,risk:'low',notes:'Conteúdo coerente com a fonte; qualidade editorial revisada.'});
 const source=()=>({id:'article-public',kind:'article',group:'trends',portal:'plantas-e-jardinagem',title:'Cuidados com plantas',summary:'Observe o ambiente e as necessidades de cada espécie antes de cuidar de plantas em casa.',body:pages.slice(1,9).join(' '),sourcePath:'/artigo/cultivo',sources:[{title:'Guia próprio',url:'https://vitrinecity.com/artigo/cultivo'}],facts:{},commercial:false});
+test('preflight counts unique useful statements rather than duplicate description or metadata bytes',async()=>{
+  const repeated='Anuncie seu negócio no painel da cidade e conheça os planos disponíveis.';
+  const thin={...source(),kind:'service',summary:repeated,body:Array(20).fill(repeated).join(' '),facts:{id:'i'.repeat(500),updatedAt:'x'.repeat(500),sourcePath:'https://x.test/'+'p'.repeat(400)},image_url:'/assets/service.png'};
+  assert.equal(storySourcePreflight(thin).code,'source_insufficient_for_ten_pages');
+  const f=setup(),result=await f.ai.generate(thin);assert.equal(result.notes,'source_insufficient_for_ten_pages');assert.equal(f.calls.text.length,0);assert.equal(f.calls.image.length,0);
+  const paragraphs=pages.slice(1,4).map(x=>x.replace(/\.$/,''));
+  assert.equal(storySourcePreflight({...source(),summary:'',body:paragraphs.join('\n\n')}).eligible,true,'newlines preserve independent complete descriptions');
+  assert.equal(storySourcePreflight({...source(),summary:'',body:paragraphs.map(x=>x+';').join(' ')}).eligible,true);
+});
+test('preflight checks own destinations and the actual catalog image origin without fetching',()=>{
+  const commercial={...source(),kind:'product',image_url:'/uploads/store-assets/product.jpg'};
+  assert.equal(storySourcePreflight(commercial).eligible,true);
+  for(const sourcePath of ['//foreign.test/x','/admin-secret','/api/orders','https://foreign.test/x'])assert.equal(storySourcePreflight({...commercial,sourcePath}).code,'source_destination_invalid');
+  for(const image_url of ['https://127.0.0.1/x.jpg','/uploads/private/x.png','/assets/../secret.png','https://foreign.test/photo.jpg'])assert.equal(storySourcePreflight({...commercial,image_url}).code,'catalog_photo_unavailable');
+  assert.equal(storySourcePreflight({...commercial,image_url:''}).code,'catalog_photo_missing');
+});
 const recipeBody=`Tempo aproximado: 1 hora. Rendimento: 12 fatias.
 
 Ingredientes da massa: 3 cenouras médias descascadas e cortadas; 3 ovos; 1 xícara de óleo; 2 xícaras de açúcar; 2 e meia xícaras de farinha de trigo; 1 colher de sopa de fermento químico. Para a cobertura: 4 colheres de sopa de chocolate em pó; 4 colheres de sopa de açúcar; 2 colheres de sopa de manteiga; meia xícara de leite.
@@ -32,9 +48,19 @@ const recipeSource=()=>({...source(),group:'recipes',portal:'receitas',title:'Bo
 function setup({generation=copy(),review=approved(),generations=[],reviews=[],imageError=false,textError=false}={}) {
   const calls={text:[],image:[],assets:[]};
   let generationCount=0,reviewCount=0;
-  const ai=createWebStoryAI({siteUrl:'https://vitrinecity.com',requestText:async(system,user,tokens)=>{calls.text.push({system,user,tokens});if(textError)throw Error('provider-private-detail');const result=system.startsWith('Você revisa')?(reviews[reviewCount++]??review):(generations[generationCount++]??generation);return typeof result==='string'?result:JSON.stringify(result);},requestImage:async prompt=>{calls.image.push(prompt);if(imageError)throw Error('provider-private-detail');return '/uploads/generated-videos/story.png';},assets:{image:async(url,options)=>{calls.assets.push(url);if(!url.startsWith('/'))throw Error('remote');return {url,width:options?.logo?192:1080,height:options?.logo?192:1920,hash:'a'.repeat(64)};},poster:async()=>'/story-assets/poster.jpg'}});
+  const ai=createWebStoryAI({siteUrl:'https://vitrinecity.com',requestText:async(system,user,tokens)=>{calls.text.push({system,user,tokens});if(textError)throw Error('provider-private-detail');const result=system.startsWith('Você revisa')?(reviews[reviewCount++]??review):(generations[generationCount++]??generation);return typeof result==='string'?result:JSON.stringify(result);},requestImage:async prompt=>{calls.image.push(prompt);if(imageError)throw imageError instanceof Error?imageError:Error('provider-private-detail');return '/uploads/generated-videos/story.png';},assets:{image:async(url,options)=>{calls.assets.push(url);if(!url.startsWith('/'))throw Error('remote');return {url,width:options?.logo?192:1080,height:options?.logo?192:1920,hash:'a'.repeat(64)};},poster:async()=>'/story-assets/poster.jpg'}});
   return {ai,calls};
 }
+test('image provider transient codes stay technical but authorization, policy and image-quality failures do not imply a retry',async()=>{
+  const expected=[['openai_story_network_error',502,'ai_image_unavailable'],['openai_story_timeout',504,'ai_image_unavailable'],['openai_story_http_error',503,'ai_image_unavailable'],['openai_story_http_error',429,'ai_image_unavailable'],['openai_story_http_error',401,'ai_provider_blocked'],['openai_story_http_error',403,'ai_provider_blocked'],['openai_story_http_error',400,'ai_provider_blocked'],['openai_story_not_configured',503,'ai_provider_blocked']];
+  for(const [code,status,note] of expected){
+    const error=Object.assign(Error('private response'),{code,status}),f=setup({imageError:error}),result=await f.ai.generate(source());
+    assert.equal(result.notes,note,code+':'+status);assert.equal(f.calls.image.length,1);assert.equal(result.approved,false);assert.doesNotMatch(JSON.stringify(result),/private response/);
+  }
+  for(const message of ['Inference is blocked on this account','No endpoints found matching ZDR policy','Insufficient credits','story_image_quality']){
+    const f=setup({imageError:Error(message)}),result=await f.ai.generate(source());assert.equal(result.notes,message==='story_image_quality'?message:'ai_provider_blocked');assert.equal(f.calls.image.length,1);
+  }
+});
 test('one generation, independent review, one image; complete 10 page draft only',async()=>{
   const {ai,calls}=setup(),result=await ai.generate(source());
   assert.equal(result.approved,true);assert.equal(result.draft.pages.length,10);assert.equal(calls.text.length,2);assert.equal(calls.image.length,1);

@@ -3,8 +3,23 @@ import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import express from 'express';
 import {createEcosystemOrchestrator,registerEcosystemRoutes,ecosystemLocalWindow,ecosystemProviderIssue} from '../ecosystem-orchestrator.js';
+import {createStoryAutomation} from '../web-story-automation.js';
 
 const defer=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
+
+test('real daily scheduler and Central resume a failed catalog after backoff while preserving pause, quota and leases',async t=>{
+  const db=new Database(':memory:');let time=Date.parse('2026-09-09T12:00:00Z'),broken=true,published=0,lookups=0,central;
+  const automation=createStoryAutomation({db,now:()=>time,canRun:()=>central.canRun(),autoRunAllowed:()=>false,getCandidates:({group})=>{if(group!=='recipes')return [];lookups++;if(broken)throw Error('catalog unavailable');return [{key:'recipe',group:'recipes',fingerprint:'approved-source-v1'}];},processSource:async(_source,{isCurrent})=>{assert(isCurrent());published++;return {status:'published',storyId:'one-public-story'};}});
+  const options={db,now:()=>time,schedule:false,getStories:()=>({automation}),catalog:{snapshot:()=>({})}};central=createEcosystemOrchestrator(options);const other=createEcosystemOrchestrator(options);
+  t.after(async()=>{central.close();other.close();automation.close();await Promise.all([central.awaitIdle(),other.awaitIdle(),automation.awaitIdle()]);db.close();});
+  central.updatePolicy({revision:1,enabled:true,dailyLimit:6,groups:['recipes']},7);central.run({manual:false});await central.awaitIdle();
+  assert.equal(automation.status().quota.attempted,0);assert.equal(db.prepare('SELECT last_day FROM ecosystem_policy').get().last_day,'2026-09-09');assert.equal(central.snapshot().plan.nextAt,'2026-09-09T12:15:00.000Z');assert.equal(central.snapshot().plan.items.find(x=>x.key==='production').status,'failed');assert.match(central.snapshot().plan.items.find(x=>x.key==='production').reason,/consulta do catálogo falhou/);const failedLookups=lookups;
+  broken=false;central.run({manual:false});await central.awaitIdle();assert.equal(lookups,failedLookups);
+  time+=15*60000;central.updatePolicy({revision:central.policy().revision,paused:true},7);assert.throws(()=>central.run({manual:false}),/pausa/);assert.equal(published,0);
+  central.updatePolicy({revision:central.policy().revision,paused:false},7);central.run({manual:false});other.run({manual:false});await Promise.all([central.awaitIdle(),other.awaitIdle()]);
+  assert.equal(published,1);assert.equal(automation.status().quota.attempted,1);assert.equal(automation.status().quota.remaining,5);assert.equal(automation.status().catalogRetry.pending,false);
+  central.run({manual:false});await central.awaitIdle();assert.equal(published,1);assert.equal(db.prepare('SELECT last_day FROM ecosystem_policy').get().last_day,'2026-09-09');
+});
 function fixture(t){
   const db=new Database(':memory:'),state={time:Date.parse('2026-09-09T12:00:00Z'),calls:[],updates:[],distributed:0,syncHook:null,workHook:null,configured:true,enabled:false,quota:6,history:[]};
   let revision=1,working=null;
@@ -26,6 +41,13 @@ test('defaults preserve independent workers, GET is read-only, and configuration
   f.service.updatePolicy({revision:f.service.policy().revision,paused:true},8);assert.equal(f.service.policy().publisherUserId,7);assert.equal(f.state.updates.length,1);assert.equal(f.service.canRun(),false);assert.equal(f.state.enabled,true);
   f.update({paused:false,enabled:false});assert.equal(f.state.enabled,true);assert.equal(f.service.policy().publisherUserId,7);assert(f.service.canRun());
   f.service.updatePolicy({revision:f.service.policy().revision,enabled:true},8);assert.equal(f.service.policy().publisherUserId,7);
+});
+
+test('a current later publication resolves the exception while preserving the original review status',t=>{
+  const f=fixture(t);f.state.history=[{id:1,day:'2026-09-09',sourceGroup:'recipes',sourceKey:'recipe',status:'review',summary:'Revisão antiga',recovery:{published:true,editorUrl:'/admin-web-stories.html?story=actual',publishedUrl:'/stories/actual'}}];
+  const before=JSON.stringify(f.state.history),snapshot=f.service.snapshot();assert.equal(snapshot.exceptions.some(e=>e.id==='story:1'),false);
+  const row=snapshot.plan.items.find(i=>i.id==='story-job:1');assert.equal(row.status,'review');assert.equal(row.url,'/admin-web-stories.html?story=actual');assert.match(row.reason,/publicada depois/);assert.equal(JSON.stringify(f.state.history),before);
+  f.state.history[0].recovery.published=false;assert.equal(f.service.snapshot().exceptions.find(e=>e.id==='story:1').actionUrl,'/admin-web-stories.html?story=actual');
 });
 
 test('stale revisions, invented publisher, invalid configuration and missing AI fail without side effects',t=>{

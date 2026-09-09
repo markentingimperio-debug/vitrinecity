@@ -183,3 +183,23 @@ test('additive category migration preserves existing settings and revisions',asy
   t.after(async()=>{engine.close();await engine.awaitIdle();db.close();});
   const state=engine.status();assert.equal(state.dailyLimit,3);assert.equal(state.hour,14);assert.equal(state.revision,8);assert.deepEqual(state.groups,STORY_AUTOMATION_GROUPS);
 });
+
+test('catalog failures back off durably across instances and stop after three failed scans without using a slot',async t=>{
+  const f=await fixture(t,{file:true});let broken=true,lookups=0;
+  const getCandidates=()=>{lookups++;if(broken)throw Error('private catalog detail');return f.sources;};
+  const engine=f.make({getCandidates});update(engine,{enabled:true,groups:['products']});await run(engine,{manual:false});
+  assert.equal(engine.status().reason,'candidate_error');assert.equal(engine.status().quota.attempted,0);assert.deepEqual(engine.status().catalogRetry,{pending:true,attempts:1,remaining:2,nextAt:'2026-09-08T12:15:00.000Z'});
+  const lookupsFirst=lookups,other=f.second({getCandidates});await run(other);assert.equal(lookups,lookupsFirst);assert.equal(other.status().reason,'candidate_retry_wait');
+  f.advance(15*60000);await run(other,{manual:false});assert.equal(other.status().catalogRetry.attempts,2);assert.equal(other.status().catalogRetry.nextAt,'2026-09-08T12:45:00.000Z');
+  f.advance(30*60000);await run(engine,{manual:false});assert.equal(engine.status().catalogRetry.remaining,0);const max=lookups;
+  broken=false;f.advance(5*3600000);await run(other);assert.equal(lookups,max);assert.equal(other.status().reason,'candidate_retry_limit');assert.equal(other.status().quota.attempted,0);assert.equal(other.status().nextAt,null);assert.doesNotMatch(JSON.stringify(other.status()),/private catalog detail/);
+  f.advance(24*3600000);await run(other,{manual:false});assert.equal(other.status().quota.published,1);assert.equal(other.status().catalogRetry.pending,false);
+});
+
+test('a recovered catalog resumes after the first wait, preserves prior review jobs and does not rerun on every tick',async t=>{
+  const f=await fixture(t);let broken=true;
+  const engine=f.make({getCandidates:()=>{if(broken)throw Error('unavailable');return f.sources;}});update(engine,{enabled:true,groups:['products']});
+  await run(engine,{manual:false});assert.equal(f.db.prepare('SELECT last_auto_day FROM web_story_automation_settings').get().last_auto_day,'');
+  broken=false;f.advance(15*60000);await run(engine,{manual:false});assert.equal(engine.status().quota.published,1);assert.equal(engine.status().catalogRetry.pending,false);
+  f.sources.push(source('later'));await run(engine,{manual:false});assert.equal(engine.status().quota.published,1);assert.equal(engine.status().reason,'already_scheduled');
+});

@@ -42,10 +42,12 @@ export function createEcosystemOrchestrator({db,getStories,catalog,runInternalSo
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(day,item_key) DO UPDATE SET label=excluded.label,status=excluded.status,reason=excluded.reason,
     source_key=excluded.source_key,story_id=excluded.story_id,started_at=excluded.started_at,finished_at=excluded.finished_at,url=excluded.url`)
     .run(details.id||randomUUID(),details.date||day(now()),key,kind,label,status,details.reason||'',details.sourceKey||null,details.storyId||null,details.startedAt||null,details.finishedAt||null,details.url||'');
+  const jobDetail=job=>job.recovery?.published?'Esta tentativa permaneceu no histórico; a versão atual foi revisada e publicada depois.':String(job.summary||job.reason||'').slice(0,500);
+  const jobUrl=job=>job.recovery?.editorUrl||'/admin-web-stories';
   function harvest(automation){
     for(const job of automation.history||[]){
       if(typeof job.id!=='number'||!/^\d{4}-\d{2}-\d{2}$/.test(job.day))continue;
-      item('story:'+job.id,'story',labels[job.sourceGroup]||'Conteúdo e Web Story',job.status,{id:'story-job:'+job.id,date:job.day,reason:String(job.summary||job.reason||'').slice(0,500),sourceKey:job.sourceKey,storyId:job.storyId,startedAt:job.startedAt,finishedAt:job.finishedAt,url:'/admin-web-stories'});
+      item('story:'+job.id,'story',labels[job.sourceGroup]||'Conteúdo e Web Story',job.status,{id:'story-job:'+job.id,date:job.day,reason:jobDetail(job),sourceKey:job.sourceKey,storyId:job.storyId,startedAt:job.startedAt,finishedAt:job.finishedAt,url:jobUrl(job)});
     }
   }
   function snapshot(){
@@ -54,9 +56,10 @@ export function createEcosystemOrchestrator({db,getStories,catalog,runInternalSo
     const exceptions=[];
     if(p.paused)exceptions.push({id:'global-pause',title:'Rotinas pausadas',detail:'Novas gerações, publicações e envios aguardam a retomada. Resultados já enviados são preservados.'});
     if(!automation.configured)exceptions.push({id:'ai-unavailable',title:'IA de conteúdo indisponível',detail:'Configure o provedor de texto e imagem antes de iniciar a rotina.',actionLabel:'Abrir estúdio',actionUrl:'/admin-web-stories'});
-    for(const job of (automation.history||[]).filter(x=>x.day===day(now())&&['review','failed','interrupted'].includes(x.status)).slice(0,10))exceptions.push({id:'story:'+job.id,title:job.status==='review'?'Conteúdo aguardando revisão':'Produção não concluída',detail:String(job.summary||job.reason||'Confira a tarefa antes de tentar novamente.').slice(0,500),actionLabel:'Revisar conteúdo',actionUrl:'/admin-web-stories'});
+    for(const job of (automation.history||[]).filter(x=>x.day===day(now())&&!x.recovery?.published&&['review','failed','interrupted'].includes(x.status)).slice(0,10))exceptions.push({id:'story:'+job.id,title:job.status==='review'?'Conteúdo aguardando revisão':'Produção não concluída',detail:String(job.summary||job.reason||'Confira a tarefa antes de tentar novamente.').slice(0,500),actionLabel:'Revisar conteúdo',actionUrl:jobUrl(job)});
+    if(automation.catalogRetry?.pending)exceptions.push({id:'story-catalog',title:'Consulta de fontes indisponível',detail:automation.catalogRetry.remaining?'A rotina fará uma nova consulta após a espera, respeitando a cota restante.':'O limite de consultas com falha foi atingido hoje. Confira o catálogo antes do próximo ciclo.',actionLabel:'Abrir estúdio',actionUrl:'/admin-web-stories'});
     const items=db.prepare('SELECT id,item_key key,kind,label,status,reason,source_key sourceKey,story_id storyId,started_at startedAt,finished_at finishedAt,url FROM ecosystem_daily_plan WHERE day=? ORDER BY COALESCE(started_at,0),id').all(day(now())).filter(x=>x.kind!=='story').map(x=>({...x,startedAt:iso(x.startedAt),finishedAt:iso(x.finishedAt)}));
-    for(const job of (automation.history||[]).filter(x=>x.day===day(now())))items.push({id:'story-job:'+job.id,key:'story:'+job.id,kind:'story',label:labels[job.sourceGroup]||'Conteúdo e Web Story',status:job.status,reason:String(job.summary||job.reason||'').slice(0,500),sourceKey:job.sourceKey,storyId:job.storyId,startedAt:iso(job.startedAt),finishedAt:iso(job.finishedAt),url:'/admin-web-stories'});
+    for(const job of (automation.history||[]).filter(x=>x.day===day(now())))items.push({id:'story-job:'+job.id,key:'story:'+job.id,kind:'story',label:labels[job.sourceGroup]||'Conteúdo e Web Story',status:job.status,reason:jobDetail(job),sourceKey:job.sourceKey,storyId:job.storyId,startedAt:iso(job.startedAt),finishedAt:iso(job.finishedAt),url:jobUrl(job),recovery:job.recovery});
     const exists=table=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
     const counts=table=>exists(table)?Object.fromEntries(db.prepare(`SELECT status,count(*) total FROM ${table} GROUP BY status`).all().map(x=>[x.status,x.total])):null;
     const whatsapp=exists('whatsapp_qr_schedules')?countWhatsAppSchedules(db.prepare('SELECT status,confirmation_state,claimed_at,provider_message_id FROM whatsapp_qr_schedules').all(),now()):null;
@@ -73,7 +76,7 @@ export function createEcosystemOrchestrator({db,getStories,catalog,runInternalSo
     }
     if(modules.whatsapp?.failed||modules.whatsapp?.unknown)exceptions.push({id:'whatsapp-failed',title:`${(modules.whatsapp.failed||0)+(modules.whatsapp.unknown||0)} envios de WhatsApp precisam de revisão`,detail:`${modules.whatsapp.unknown||0} sem confirmação; ${modules.whatsapp.failed||0} falhas. Confira as conversas antes de qualquer novo envio; não haverá repetição automática.`,actionLabel:'Abrir campanhas',actionUrl:'/admin-chatbotx.html'});
     const plannedDay=row().last_day>=day(now())?nextDay(day(now())):day(now());
-    return {policy:p,automation,modules,distributions:getInternalSocial(),plan:{date:day(now()),items,nextAt:p.enabled&&!p.paused&&(automation.configured||p.internalSocialEnabled)?new Date(Math.max(now(),slot(plannedDay,p.hour))).toISOString():null},
+    return {policy:p,automation,modules,distributions:getInternalSocial(),plan:{date:day(now()),items,nextAt:p.enabled&&!p.paused&&(automation.configured||p.internalSocialEnabled)?automation.catalogRetry?.pending&&automation.catalogRetry.nextAt&&automation.quota.remaining>0?automation.catalogRetry.nextAt:new Date(Math.max(now(),slot(plannedDay,p.hour))).toISOString():null},
       inventory:inventory.inventory||[],connections:inventory.connections||[],metrics:inventory.metrics||{items:[]},
       agents:[{id:'editorial',name:'Produção editorial e Web Stories',status:p.paused?'paused':automation.running?'running':!automation.configured?'blocked':automation.quota.review&&!automation.quota.published?'review':automation.quota.failed&&!automation.quota.published?'blocked':'ready',detail:'Usa a fila existente, revisão editorial e limite diário. Configuração não garante aprovação do conteúdo.'},{id:'internal-social',name:'Divulgação na Vitrine Social',status:p.paused?'paused':p.internalSocialEnabled?'ready':'disabled',detail:'Distribui conteúdo público aprovado; a confirmação aparece no histórico.'},
         {id:'videos',name:'Estúdio de vídeos',status:p.paused?'paused':modules.videos.scenes?.failed?'blocked':modules.videos.projects?.in_production?'running':'ready',detail:modules.videos.projects?`${modules.videos.projects.in_production||0} projetos em produção; ${modules.videos.scenes?.failed||0} cenas com falha. A central não força novas gerações de vídeo.`:'Estúdio indisponível nesta instalação.'},
@@ -111,8 +114,9 @@ export function createEcosystemOrchestrator({db,getStories,catalog,runInternalSo
       }
       const state=stories.automation.status();harvest(state);if(!current()){item('production','content','Produzir conteúdo e Web Stories','interrupted',{startedAt:context.startedAt,finishedAt:now(),reason:'As opções ou a pausa geral mudaram.'});return;}
       const fresh=(state.history||[]).filter(x=>x.startedAt>=context.startedAt),published=fresh.some(x=>x.status==='published'),review=fresh.some(x=>x.status==='review'),failed=fresh.some(x=>['failed','interrupted'].includes(x.status));
-      const resultStatus=!produce?'blocked':published?'completed':review?'review':failed?'failed':'blocked';
-      const reason=!produce?(before.quota.remaining<=0?'O limite diário de produção foi atingido. A distribuição de conteúdo aprovado continua disponível.':'A geração está indisponível; somente conteúdo já aprovado pode ser distribuído.'):published?'Rodada concluída; confira as publicações individuais.':review?'A rodada terminou com conteúdos em revisão, sem publicação confirmada.':failed?'A rodada terminou sem publicação; confira as falhas individuais.':'Nenhuma fonte elegível encontrada; nenhum conteúdo foi publicado.';
+      const catalogFailed=state.catalogRetry?.pending;
+      const resultStatus=!produce?'blocked':published?'completed':review?'review':failed||catalogFailed?'failed':'blocked';
+      const reason=!produce?(before.quota.remaining<=0?'O limite diário de produção foi atingido. A distribuição de conteúdo aprovado continua disponível.':'A geração está indisponível; somente conteúdo já aprovado pode ser distribuído.'):published?'Rodada concluída; confira as publicações individuais.':review?'A rodada terminou com conteúdos em revisão, sem publicação confirmada.':failed?'A rodada terminou sem publicação; confira as falhas individuais.':catalogFailed?'A consulta do catálogo falhou. A retomada respeita a espera, o limite de consultas e a cota restante.':'Nenhuma fonte elegível encontrada; nenhum conteúdo foi publicado.';
       item('production','content','Produzir conteúdo e Web Stories',resultStatus,{startedAt:context.startedAt,finishedAt:now(),reason});
       if(policy().internalSocialEnabled){
         item('internal-social','distribution','Divulgar na Vitrine Social','running',{startedAt:now()});
@@ -133,7 +137,8 @@ export function createEcosystemOrchestrator({db,getStories,catalog,runInternalSo
       if(s.lease_owner&&s.lease_until>time)return null;
       if(automation.running){if(manual)throw fail('A fila de Web Stories já está executando. Aguarde a rodada atual.',409);return null;}
       if(s.lease_owner)db.prepare("UPDATE ecosystem_daily_plan SET status='interrupted',reason='A execução anterior foi interrompida. As filas existentes preservam seus resultados.',finished_at=? WHERE status IN ('planned','running') AND kind!='story'").run(time);
-      if(!manual&&(s.last_day>=date||Number(local(time).hour)<s.hour))return null;
+      const retry=automation.catalogRetry,retryDue=retry?.pending&&retry.remaining>0&&retry.nextAt&&Date.parse(retry.nextAt)<=time&&automation.quota.remaining>0;
+      if(!manual&&((s.last_day>=date&&!retryDue)||Number(local(time).hour)<s.hour))return null;
       if(automation.quota.remaining<=0&&!s.internal_social_enabled){if(manual)throw fail('O limite diário de produção já foi utilizado.',409);return null;}
       const owner=randomUUID();db.prepare('UPDATE ecosystem_policy SET lease_owner=?,lease_until=?,last_day=? WHERE id=1').run(owner,time+LEASE,date);
       item('production','content','Produzir conteúdo e Web Stories','planned',{startedAt:time,reason:'Usa o limite e as verificações do estúdio existente.'});

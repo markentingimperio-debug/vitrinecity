@@ -19,7 +19,7 @@ function fixture(t,fetcher){
   }
   const document=new Element(),window=new Element(),root=new Element(),nodes={};
   document.hidden=false;document.createElement=()=>new Element();root.ownerDocument=document;
-  for(const id of ['form','message','enabled','limit','hour','save','pause','run','refresh','state','next','quota','results','provider','history'])nodes[id]=new Element();
+  for(const id of ['form','message','enabled','limit','hour','save','pause','run','refresh','state','next','quota','results','provider','history','published','publication-note'])nodes[id]=new Element();
   const inputs=groups.map(value=>Object.assign(new Element(),{value}));nodes.hour.append(Object.assign(new Element(),{value:'9'}));
   nodes.form.querySelectorAll=selector=>selector==='input[name=groups]'?inputs:[nodes.enabled,nodes.limit,nodes.hour,...inputs];
   root.querySelector=selector=>nodes[selector.replace('#automation-','')];
@@ -63,8 +63,8 @@ test('polling runs only during work, stops when hidden, and discards responses f
 
 test('a conflict blocks mutations until refreshed; history stays bounded and uses safe editor links',async t=>{
   const calls=[],history=Array.from({length:15},(_,i)=>({status:i?'review':'published',storyId:'story-'+i,sourceGroup:'products',summary:'<script>not markup</script>',startedAt:1788948000000}));
-  const f=fixture(t,async(url,options)=>{calls.push({url,options});return calls.length===2?response({error:'conflict'},409):response(sample({history,revision:calls.length===1?3:4}));});await tick();
-  assert.equal(f.nodes.history.children.length,10);assert.equal(f.nodes.history.children[0].children[1].href,'/admin-web-stories?story=story-0#editor');assert.equal(f.nodes.history.children[0].children[0].children[3].textContent,'<script>not markup</script>');
+  const f=fixture(t,async(url,options)=>{calls.push({url,options});return calls.length===2?response({error:'A configuração mudou em outra sessão.'},409):response(sample({history,revision:calls.length===1?3:4}));});await tick();
+  assert.equal(f.nodes.history.children.length,15);assert.equal(f.nodes.history.children[0].children[1].children[0].href,'/admin-web-stories?story=story-0#editor');assert.equal(f.nodes.history.children[0].children[0].children[3].textContent,'<script>not markup</script>');
   f.nodes.form.dispatch('change');f.nodes.form.dispatch('submit');await tick();assert.equal(f.nodes.save.disabled,true);assert.match(f.nodes.message.textContent,/outra sessão/);
   f.nodes.refresh.dispatch('click');await tick();assert.equal(f.nodes.save.disabled,false);f.nodes.form.dispatch('submit');await tick();assert.equal(JSON.parse(calls.at(-1).options.body).revision,4);
 });
@@ -75,4 +75,22 @@ test('hiding during a write aborts it and reconciles with the server on return',
   f.nodes.pause.dispatch('click');assert.equal(calls[1].options.method,'PUT');assert.equal(JSON.parse(calls[1].options.body).enabled,false);
   f.document.hidden=true;f.document.dispatch('visibilitychange');assert.equal(calls[1].options.signal.aborted,true);
   f.document.hidden=false;f.document.dispatch('visibilitychange');rejectWrite(Object.assign(Error('abort'),{name:'AbortError'}));await tick();await tick();assert.equal(calls.length,3);assert.equal(f.nodes.state.textContent,'Pausada');
+});
+
+test('six reviews and zero confirmed publications never become a success badge; recovered history stays intact',async t=>{
+  const value=sample({quota:{attempted:6,remaining:0,published:0,review:6,failed:0,interrupted:0},publications:{today:1,total:3},history:[{status:'review',sourceKey:'recipe',recovery:{sourceAvailable:true,sourceKey:'recipe',storyId:'saved',published:true,publishedUrl:'/stories/recipe',title:'Receita completa'},diagnostics:{code:'review_details_unavailable'}}]});
+  const f=fixture(t,async()=>response(value));await tick();assert.equal(f.nodes.state.dataset.active,'false');assert.equal(f.nodes.published.textContent,'1');assert.match(f.nodes.results.textContent,/0 publicadas pela rotina · 6 tentativas em revisão/);
+  const copy=f.nodes.history.children[0].children[0];assert.equal(copy.children[0].textContent,'Tentativa ficou em revisão');assert.ok(copy.children.some(el=>/não registrou um motivo detalhado/.test(el.textContent)));assert.ok(copy.children.some(el=>/versão atual desta fonte já está publicada/.test(el.textContent)));
+  assert.equal(f.nodes.history.children[0].children[1].children.at(-1).href,'/stories/recipe');assert.equal(value.history[0].status,'review');
+});
+
+test('source recovery links remain read-only and unavailable counts do not become zero',async t=>{
+  const calls=[],f=fixture(t,async(...args)=>{calls.push(args);return response(sample({history:[{status:'review',sourceKey:'without-draft',recovery:{sourceAvailable:true,sourceKey:'without-draft',sourceUrl:'/artigo/receita'}}]}));});await tick();
+  assert.equal(calls.length,1);assert.equal(calls[0][1].method,undefined);assert.equal(f.nodes.published.textContent,'Não informado');
+  const actions=f.nodes.history.children[0].children[1];assert.equal(actions.children[0].href,'/admin-web-stories?source=without-draft#source-manual');assert.equal(actions.children[1].href,'/artigo/receita');
+});
+
+test('global pauses and catalog backoff prevent blind retry, and server rejection keeps its actual reason',async t=>{
+  for(const extra of [{reason:'global_paused'},{catalogRetry:{pending:true,nextAt:'2026-09-09T13:00:00Z'}}])assert.equal(canRunAutomation(sample(extra)),false);
+  const f=fixture(t,async(_url,options)=>response(options.method?{error:'As publicações estão pausadas na Central.'}:sample(),options.method?409:200));await tick();f.nodes.run.dispatch('click');await tick();assert.equal(f.nodes.message.textContent,'As publicações estão pausadas na Central.');assert.equal(f.nodes.run.disabled,true);
 });

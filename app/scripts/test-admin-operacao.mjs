@@ -22,6 +22,7 @@ function fixture(t,fetcher){
   const root=new Element(),document=new Element(),window=new Element(),nodes={};document.hidden=false;document.createElement=tag=>new Element(tag);root.ownerDocument=document;document.defaultView=window;window.location={origin:'https://vitrinecity.com'};
   const ids=['Date','State','Next','Updated','Notice','Refresh','Run','Pause','PauseNote','Workflow','PlanCount','Plan','ExceptionCount','Exceptions','Quota','PolicyForm','Enabled','Limit','Hour','InternalSocial','PolicyNote','Save','Inventory','CatalogTabs','CatalogForm','Query','Search','CatalogNotice','Catalog','Previous','CatalogPage','NextPage','Connections','Metrics','MetricsPeriod','Agents','Events'];
   for(const id of ids)nodes[id]=new Element();
+  for(const id of ['Published','Attempts','Reviews','ProductionNote'])nodes[id]=new Element();
   const inputs=OPERATION_GROUPS.map(value=>Object.assign(new Element('input'),{value})),tabs=['products','stores','pages','buildings','networks'].map(kind=>{const button=new Element('button');button.dataset.kind=kind;return button;});
   nodes.Hour.append(Object.assign(new Element('option'),{value:'9'}));nodes.PolicyForm.querySelectorAll=selector=>selector==='input[name=groups]'?inputs:[nodes.Enabled,nodes.Limit,nodes.Hour,nodes.InternalSocial,...inputs];nodes.CatalogTabs.querySelectorAll=()=>tabs;root.querySelector=selector=>nodes[selector.slice(3)];
   const timers=new Map();let timerId=0;const controller=mountOperations(root,{document,window,fetcher,setTimer:fn=>{timers.set(++timerId,fn);return timerId;},clearTimer:id=>timers.delete(id)});t.after(()=>controller.destroy());return{root,document,window,nodes,inputs,tabs,timers,controller};
@@ -50,6 +51,20 @@ test('initial view makes only reads, displays real review failures and pending M
   assert.equal(f.nodes.MetricsPeriod.textContent,'Últimos 7 dias');
 });
 
+test('confirmed current publications and preserved review attempts have distinct counts and actions',async t=>{
+  const value=sample(),item=value.plan.items[0];value.automation.publications={today:1,total:4};value.automation.quota={attempted:6,remaining:0,published:0,review:6,failed:0,interrupted:0};item.recovery={published:true,publishedUrl:'/stories/bolo',title:'Bolo de cenoura revisado'};item.reason='A versão atual foi publicada depois.';value.exceptions=[];
+  const calls=[],f=fixture(t,async(url,options)=>{calls.push({url,options});return response(url.includes('/catalog?')?catalog():value);});await tick();
+  assert.equal(f.nodes.Published.textContent,'1');assert.equal(f.nodes.Attempts.textContent,'6');assert.equal(f.nodes.Reviews.textContent,'6');assert.match(f.nodes.ProductionNote.textContent,/0 publicadas pela rotina/);
+  assert.equal(f.nodes.ExceptionCount.textContent,'0');assert.equal(f.nodes.Workflow.children[2].children[2].textContent,'1 etapas registradas');
+  const copy=f.nodes.Plan.children[0].children[1];assert.equal(copy.children[0].children[1].textContent,'Resultado da tentativa preservado');assert.ok(copy.children.some(el=>el.textContent==='Versão atual publicada'));assert.ok(copy.children.some(el=>el.href==='/stories/bolo'));assert.equal(item.status,'review');assert.ok(calls.every(call=>!call.options.method));
+});
+
+test('catalog retry is shown as pending and does not enable another generation before the server wait',async t=>{
+  const value=sample();value.automation.catalogRetry={pending:true,nextAt:'2026-09-09T14:00:00Z',remaining:2};
+  const f=fixture(t,async url=>response(url.includes('/catalog?')?catalog():value));await tick();assert.equal(f.nodes.State.textContent,'Consulta de fontes pendente');assert.equal(f.nodes.Run.disabled,true);assert.equal(f.nodes.Published.textContent,'—');
+  value.policy.internalSocialEnabled=true;assert.equal(canRunOperation(value),true);
+});
+
 test('editing prevents execution; saving sends the edited revision and never executes the round',async t=>{
   const calls=[],f=fixture(t,async(url,options)=>{calls.push({url,options});if(url.includes('/catalog?'))return response(catalog());return response(options.method?sample({policy:{...JSON.parse(options.body),revision:4}}):sample());});await tick();
   f.nodes.Limit.value='4';f.inputs.forEach(input=>input.checked=input.value==='recipes');f.nodes.PolicyForm.dispatch('input');assert.equal(f.nodes.Run.disabled,true);f.nodes.Run.dispatch('click');assert.equal(calls.length,2);
@@ -72,7 +87,7 @@ test('an exhausted creation quota still permits only the configured distribution
 });
 
 test('uncertain write and stale revision block all mutations until a fresh read; refreshing does not retry the write',async t=>{
-  const calls=[];let reads=0;const f=fixture(t,async(url,options)=>{calls.push({url,options});if(url.includes('/catalog?'))return response(catalog());if(options.method)return response({error:'conflict'},409);return response(sample({policy:{...sample().policy,revision:++reads===1?3:4}}));});await tick();f.nodes.PolicyForm.dispatch('submit');await tick();assert.equal(f.nodes.Save.disabled,true);assert.equal(f.nodes.Pause.disabled,true);assert.match(f.nodes.Notice.textContent,/outra sessão/);f.nodes.Pause.dispatch('click');assert.equal(calls.filter(call=>call.options.method).length,1);
+  const calls=[];let reads=0;const f=fixture(t,async(url,options)=>{calls.push({url,options});if(url.includes('/catalog?'))return response(catalog());if(options.method)return response({error:'A rotina mudou em outra sessão.'},409);return response(sample({policy:{...sample().policy,revision:++reads===1?3:4}}));});await tick();f.nodes.PolicyForm.dispatch('submit');await tick();assert.equal(f.nodes.Save.disabled,true);assert.equal(f.nodes.Pause.disabled,true);assert.match(f.nodes.Notice.textContent,/outra sessão/);f.nodes.Pause.dispatch('click');assert.equal(calls.filter(call=>call.options.method).length,1);
   f.nodes.Refresh.dispatch('click');await tick();assert.equal(f.nodes.Save.disabled,false);assert.equal(calls.filter(call=>call.options.method).length,1);f.nodes.PolicyForm.dispatch('submit');await tick();assert.equal(JSON.parse(calls.filter(call=>call.options.method).at(-1).options.body).revision,4);
 });
 
