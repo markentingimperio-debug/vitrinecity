@@ -34,7 +34,7 @@ export function createMetaCommentApi({db,decryptToken,env=process.env,fetchImpl=
     }
     return data;
   }
-  async function inspect({accountId,surface,postId='',groupId=''}){
+  async function inspect({accountId,surface,postId='',groupId='',publicReplyEnabled=false,reactEnabled=false}){
     const missing=[];let postUrl='';const details={checkedAt:new Date(now()).toISOString(),permissionCheck:false,subscriptionCheck:false,ownershipCheck:false,publicAccessVerified:false};
     const note='Configuração verificada; alcance público depende da aprovação Meta.';
     const signal=AbortSignal.timeout(30000),read=(route,options)=>request(route,{...options,signal});
@@ -50,6 +50,8 @@ export function createMetaCommentApi({db,decryptToken,env=process.env,fetchImpl=
       return null;
     }
     try {
+      if(typeof publicReplyEnabled!=='boolean'||typeof reactEnabled!=='boolean')throw error('Confira as opções de resposta e curtida.');
+      if(surface==='instagram'&&reactEnabled)throw error('A curtida automática está disponível apenas para comentários no Facebook.');
       const account=accountFor(accountId,surface),{appId,secret}=config();
       if(!ID.test(appId)||!secret)return {ready:false,missing:['Configure o aplicativo Meta no painel de integrações.'],postUrl,details};
       let token;try {token=decryptToken(account.token_encrypted);}catch{throw error('A conexão da conta precisa ser renovada.');}
@@ -58,6 +60,7 @@ export function createMetaCommentApi({db,decryptToken,env=process.env,fetchImpl=
       if([grant.expires_at,grant.data_access_expires_at].some(value=>Number(value)>0&&Number(value)*1000<=now()))throw error('A conexão Meta expirou. Reconecte a conta.');
       const permissions=new Set(Array.isArray(grant.scopes)?grant.scopes:[]);
       const required=surface==='instagram'?['instagram_basic','instagram_manage_comments','pages_read_engagement','pages_manage_metadata']:['pages_messaging','pages_read_engagement','pages_manage_metadata'];
+      if(surface!=='instagram'&&(publicReplyEnabled||reactEnabled))required.push('pages_manage_engagement');
       for(const permission of required)if(!permissions.has(permission))missing.push('Autorize a permissão '+permission+' na conexão Meta.');
       // Granular permissions restricted to other targets do not grant this Page.
       for(const row of grant.granular_scopes||[])if(required.includes(row.scope)&&Array.isArray(row.target_ids)&&row.target_ids.length&&!row.target_ids.map(String).includes(String(account.page_id))&&!row.target_ids.map(String).includes(String(account.instagram_id||'')))missing.push('A permissão '+row.scope+' não inclui esta conta.');
@@ -110,5 +113,22 @@ export function createMetaCommentApi({db,decryptToken,env=process.env,fetchImpl=
     if(!messageId||messageId.length>500)throw error('A Meta não confirmou o identificador da resposta. Confira a conversa antes de tentar novamente.',true);
     return {messageId};
   }
-  return {inspect,send};
+  async function replyPublic({accountId,surface,commentId,text}){
+    const account=accountFor(accountId,surface);
+    if(!POST.test(String(commentId))||typeof text!=='string'||!text.trim()||text.length>1900||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text))throw error('Confira o comentário e a resposta pública.');
+    let token;try{token=decryptToken(account.token_encrypted);}catch{throw error('Reconecte a conta Meta antes de responder.');}
+    const result=await request(String(commentId)+(surface==='instagram'?'/replies':'/comments'),{token,body:{message:text}});
+    if(typeof result?.id!=='string'||!POST.test(result.id))throw error('A Meta não confirmou a resposta pública. Confira a publicação antes de tentar novamente.',true);
+    return {commentId:result.id};
+  }
+  async function likeComment({accountId,surface,commentId}){
+    if(surface==='instagram')throw error('A curtida automática está disponível apenas para comentários no Facebook.');
+    const account=accountFor(accountId,surface);
+    if(!POST.test(String(commentId)))throw error('Confira o comentário antes de curtir.');
+    let token;try{token=decryptToken(account.token_encrypted);}catch{throw error('Reconecte a conta Meta antes de curtir.');}
+    const result=await request(String(commentId)+'/likes',{token,body:{}});
+    if(result?.success!==true)throw error('A Meta não confirmou a curtida. Confira o comentário antes de tentar novamente.',true);
+    return {success:true};
+  }
+  return {inspect,send,replyPublic,likeComment};
 }

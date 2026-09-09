@@ -133,3 +133,36 @@ test('400/403 provider refusals are definitive; 500, timeout, malformed success 
     assert.equal(f.state.calls.length,1);
   }
 });
+
+test('public Facebook reply and like require pages_manage_engagement only when selected, without writing in inspect',async t=>{
+  const f=fixture(t);assert.equal((await f.inspect()).ready,true);
+  for(const option of [{publicReplyEnabled:true},{reactEnabled:true}]){const result=await f.inspect(option);assert.equal(result.ready,false);assert(result.missing.some(message=>message.includes('pages_manage_engagement')));}
+  f.state.grant.scopes.push('pages_manage_engagement');assert.equal((await f.inspect({publicReplyEnabled:true,reactEnabled:true})).ready,true);
+  f.state.grant.granular_scopes=[{scope:'pages_manage_engagement',target_ids:['999']}];assert.equal((await f.inspect({publicReplyEnabled:true})).ready,false);
+  assert(f.state.calls.every(call=>call.init.method==='GET'));
+  f.state.calls=[];assert.equal((await f.inspect({surface:'instagram',postId:'800',reactEnabled:true})).ready,false);assert.equal(f.state.calls.length,0);
+  assert.equal((await f.inspect({surface:'instagram',postId:'800',publicReplyEnabled:true})).ready,true);
+});
+
+test('public replies use official Facebook comments or Instagram replies edges; Facebook likes send an empty body',async t=>{
+  for(const surface of ['facebook_page','facebook_group','instagram']){
+    const f=fixture(t);f.state.hook=async()=>new Response(JSON.stringify({id:'900_999'}));
+    assert.deepEqual(await f.api.replyPublic({accountId:1,surface,commentId:'900_301',text:'Maria, obrigado! Enviei o conteúdo no privado.'}),{commentId:'900_999'});
+    assert.equal(f.state.calls.length,1);const call=f.state.calls[0];assert.equal(call.route,'900_301'+(surface==='instagram'?'/replies':'/comments'));assert.equal(call.init.method,'POST');assert.equal(call.init.headers.Authorization,'Bearer PAGE_SECRET');assert.deepEqual(JSON.parse(call.init.body),{message:'Maria, obrigado! Enviei o conteúdo no privado.'});
+  }
+  const f=fixture(t);f.state.hook=async()=>new Response(JSON.stringify({success:true}));
+  assert.deepEqual(await f.api.likeComment({accountId:1,surface:'facebook_page',commentId:'900_301'}),{success:true});assert.equal(f.state.calls[0].route,'900_301/likes');assert.deepEqual(JSON.parse(f.state.calls[0].init.body),{});
+  f.state.calls=[];await assert.rejects(f.api.likeComment({accountId:1,surface:'instagram',commentId:'900_301'}),error=>error.definitive===true);assert.equal(f.state.calls.length,0);
+});
+
+test('public and reaction acknowledgments are mandatory, with definitive refusals and uncertain errors never retried',async t=>{
+  for(const method of ['replyPublic','likeComment'])for(const outcome of [
+    {status:403,body:{error:{code:200,message:'SECRET'}},uncertain:false},
+    {status:500,body:{error:{code:200,message:'SECRET'}},uncertain:true},
+    {status:200,body:{},uncertain:true},{status:200,body:{success:false,id:'https://bad.test'},uncertain:true},{timeout:true,uncertain:true}
+  ]){
+    const f=fixture(t);f.state.hook=async()=>{if(outcome.timeout)throw Error('SECRET');return new Response(JSON.stringify(outcome.body),{status:outcome.status});};
+    await assert.rejects(f.api[method]({accountId:1,surface:'facebook_page',commentId:'900_301',text:'Obrigado!'}),error=>error.uncertain===outcome.uncertain&&error.definitive===!outcome.uncertain&&!error.message.includes('SECRET'));assert.equal(f.state.calls.length,1);
+  }
+  const f=fixture(t);for(const method of ['replyPublic','likeComment'])await assert.rejects(f.api[method]({accountId:1,surface:'facebook_page',commentId:'../messages',text:'Obrigado!'}),error=>error.definitive===true);assert.equal(f.state.calls.length,0);
+});

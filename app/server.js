@@ -2676,6 +2676,7 @@ const socialCommentSources = createWebStorySources({
 const socialCommentCampaigns = registerSocialCommentCampaigns({
   app, db, requireAdmin, sameOriginOnly, siteUrl:SITE_URL,
   sourceCatalog:socialCommentSources,
+  commentModerationReason:socialModerationReason,
   metaAdapter:createMetaCommentApi({db,decryptToken:decryptSocialToken})
 });
 setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover,generateBookIllustration});
