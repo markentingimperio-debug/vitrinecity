@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {runInNewContext} from 'node:vm';
 import {createWebStorySources} from '../web-story-sources.js';
 
 function fixture(t,{stock=true,availability=true}={}) {
@@ -51,6 +52,35 @@ test('public services are read from the injected registry with only real descrip
   assert.equal(item.kind,'service');assert.equal(item.group,'services');assert.equal(item.sourcePath,'/servicos-digitais.html?servico=seo-local');assert.equal(item.facts.priceCents,35000);assert.equal(item.updated_at,'');assert.ok(item.body.startsWith('Auditoria das páginas públicas.'));assert.ok(!JSON.stringify(item).includes('PRIVATE_'));
   catalog=[];assert.equal(sources.get('service:seo-local'),null);
   catalog=[{slug:'paused',title:'Pausado',description:'Texto',status:'paused'},{slug:'inactive',title:'Inativo',active:false},{slug:'unavailable',title:'Indisponível',available:'false'}];assert.deepEqual(sources.list({group:'services'}),[]);
+});
+
+test('reviewed service guidance enriches the source without replacing the commercial summary or price',t=>{
+  const f=fixture(t),server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
+  const start=server.indexOf('const DIGITAL_SERVICE_PACKAGES = Object.freeze({'),end=server.indexOf('\nconst REFERRAL_RATE_BPS',start);
+  assert.ok(start>=0&&end>start);
+  const registry=runInNewContext(server.slice(start,end)+'\nDIGITAL_SERVICE_PACKAGES;');
+  const sources=createWebStorySources({db:f.db,services:()=>registry});
+  const selected=['ads-banner-outdoor-15-dias','10-videos-loja'];
+  assert.deepEqual(Object.keys(registry).filter(key=>registry[key].editorialBody),selected);
+  for(const [slug,price] of [[selected[0],7500],[selected[1],20000]]){
+    const source=sources.get('service:'+slug),row=registry[slug];
+    assert.equal(source.summary,row.description);assert.equal(source.facts.priceCents,price);
+    assert.ok(source.body.startsWith(row.editorialBody));assert.ok(source.body.includes('Guia editorial de preparação: '));
+    assert.ok(source.body.length>=650);assert.ok(source.body.includes('não acrescentam entregas ao pacote'));
+    assert.equal(source.image_url,row.editorialImageUrl);assert.notEqual(source.image_url,row.imageUrl);assert.ok(row.imageUrl.startsWith('/assets/services/'));
+    assert.equal(source.sourcePath,'/servicos-digitais.html?servico='+slug);assert.equal(source.sources[0].url,source.sourcePath);
+  }
+  const legacy=sources.get('service:ads-banner-outdoor-7-dias');
+  assert.ok(!legacy.body.includes('Guia editorial'));assert.ok(legacy.body.length<400);assert.equal(legacy.facts.priceCents,5000);
+});
+
+test('guidance changes affect the source body while malformed or withdrawn guidance cannot create a public service',t=>{
+  const f=fixture(t),row={slug:'guide',title:'Serviço',description:'Escopo contratado.',amountCents:1234,editorialBody:'Guia editorial revisado.',imageUrl:'/assets/original.jpg',editorialImageUrl:'/uploads/generated-videos/editorial.png'};
+  const sources=createWebStorySources({db:f.db,services:()=>[row]}),first=sources.get('service:guide');
+  row.editorialBody='Guia editorial atualizado.';
+  assert.notEqual(sources.get('service:guide').body,first.body);assert.equal(sources.get('service:guide').summary,first.summary);
+  row.editorialBody={private:'PRIVATE_NOT_TEXT'};row.editorialImageUrl='';assert.ok(!sources.get('service:guide').body.includes('Guia editorial'));assert.ok(!JSON.stringify(sources.get('service:guide')).includes('PRIVATE_'));assert.equal(sources.get('service:guide').image_url,row.imageUrl);
+  row.editorialBody='Dica';row.active=false;assert.equal(sources.get('service:guide'),null);
 });
 test('courses use the ready public injection and current database metadata; no paid material is returned',t=>{
   const f=fixture(t);f.course();let catalog=[{slug:'curso-publico',title:'Título antigo da injeção',description:'Antigo',status:'active',available:true,materialUrl:'PRIVATE_PROVIDER_MATERIAL',videoUrl:'PRIVATE_PROVIDER_VIDEO'}];
