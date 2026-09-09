@@ -53,7 +53,20 @@ test('the legacy article generation entry point passes article text to the valid
   const server=await fs.readFile(new URL('../server.js',import.meta.url),'utf8');
   const source=server.slice(server.indexOf('async function generateEditorialDraft('),server.indexOf('\nasync function reviewEditorialDraft('));
   const body=article.body.repeat(4);let received;
-  const generate=vm.runInNewContext(source+'\ngenerateEditorialDraft',{aiConfigured:()=>true,requestEditorialText:async()=>JSON.stringify({...article,body,imagePrompt:'old prompt must not be used'}),parseEditorialJson:JSON.parse,generateEditorialCover:async data=>{received=data;return '';}});
+  const generate=vm.runInNewContext(source+'\ngenerateEditorialDraft',{aiConfigured:()=>true,ecosystemCanRun:()=>true,requestEditorialText:async()=>JSON.stringify({...article,body,imagePrompt:'old prompt must not be used'}),parseEditorialJson:JSON.parse,generateEditorialCover:async data=>{received=data;return '';}});
   const result=await generate({title:'Assunto solicitado',portal:'receitas'});
   assert.equal(result.imageUrl,'');assert.equal(received.title,article.title);assert.equal(received.body,body);assert.equal(received.summary,article.summary);assert.equal(received.portal,'receitas');assert.equal(received.imagePrompt,undefined);
+});
+
+test('a pause arriving while article text is generated prevents the next image provider call and preserves the text',async()=>{
+  const server=await fs.readFile(new URL('../server.js',import.meta.url),'utf8');
+  const source=server.slice(server.indexOf('async function generateEditorialDraft('),server.indexOf('\nasync function reviewEditorialDraft('));
+  const body=article.body.repeat(4);let paused=false,textCalls=0,coverCalls=0;
+  const generate=vm.runInNewContext(source+'\ngenerateEditorialDraft',{
+    aiConfigured:()=>true,ecosystemCanRun:()=>!paused,parseEditorialJson:JSON.parse,
+    requestEditorialText:async()=>{textCalls++;paused=true;return JSON.stringify({...article,body});},
+    generateEditorialCover:async()=>{coverCalls++;throw Error('The image provider must not be called while paused.');}
+  });
+  const result=await generate({title:'Assunto solicitado',portal:'receitas'});
+  assert.equal(textCalls,1);assert.equal(coverCalls,0);assert.equal(result.imageUrl,'');assert.equal(result.body,body);assert.equal(result.title,article.title);
 });
