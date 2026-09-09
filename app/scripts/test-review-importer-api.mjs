@@ -37,6 +37,15 @@ try {
   assert.match(html, /Inclui 1 avaliação importada da Shopee/); assert.match(html, /07\/05\/2026/); assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/); assert.doesNotMatch(html, /✓ Compra verificada/);
   const hide = await request(`/api/admin/review-imports/${batch.id}/visibility`, { method: 'POST', headers: { cookie }, body: JSON.stringify({ action: 'hide' }) }); assert.equal(hide.status, 200);
   const hiddenHtml = await (await request(`/produto/${product.id}`)).text(); assert.doesNotMatch(hiddenHtml, /Avaliação importada da Shopee/);
+  const paginationPreview = await request('/api/admin/review-imports/preview', { method: 'POST', headers: { cookie }, body: JSON.stringify({ productId: product.id, sourceUrl: 'https://shopee.com.br/product/390179975/23698375162/', content: JSON.stringify(Array.from({ length: 13 }, (_, index) => ({ author: `Cliente ${index + 1}`, rating: 1 + index % 5, date: '2026-05-01', body: `Comentário de paginação número ${index + 1}.` }))) }) });
+  assert.equal(paginationPreview.status, 200); const paginationBatch = await paginationPreview.json();
+  assert.equal((await request(`/api/admin/review-imports/${paginationBatch.id}/publish`, { method: 'POST', headers: { cookie }, body: JSON.stringify({ confirmed: true }) })).status, 200);
+  const pageOne = await (await request(`/produto/${product.id}`)).text();
+  assert.equal((pageOne.match(/<article class="review">/g) || []).length, 12); assert.match(pageOne, /Página 1 de 2 · 13 avaliações/);
+  const pageTwo = await (await request(`/produto/${product.id}?avaliacoes=2`)).text();
+  assert.equal((pageTwo.match(/<article class="review">/g) || []).length, 1); assert.match(pageTwo, /Comentário de paginação número 1\./); assert.match(pageTwo, /Página 2 de 2 · 13 avaliações/);
+  assert.doesNotMatch(pageOne, /Comentário de paginação número 1\./);
+  const pageClamped = await (await request(`/produto/${product.id}?avaliacoes=999`)).text(); assert.match(pageClamped, /Página 2 de 2 · 13 avaliações/);
   db.pragma('foreign_keys = ON');
   db.prepare('DELETE FROM store_products WHERE id=?').run(product.id);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM marketplace_review_product_links').get().n, 0);
