@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import express from 'express';
-import {createEcosystemOrchestrator,registerEcosystemRoutes,ecosystemLocalWindow} from '../ecosystem-orchestrator.js';
+import {createEcosystemOrchestrator,registerEcosystemRoutes,ecosystemLocalWindow,ecosystemProviderIssue} from '../ecosystem-orchestrator.js';
 
 const defer=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 function fixture(t){
@@ -84,6 +84,9 @@ test('existing worker failures are counted truthfully and provider secrets never
 });
 
 test('central separates account blocks from data policy and never replaces recorded failures with retries',t=>{
+  assert.equal(ecosystemProviderIssue('Geração bloqueada na conta do provedor. Não foi agendado novo envio.').code,'provider_account_block');
+  assert.equal(ecosystemProviderIssue('Provedor indisponível sob a política de dados atual. Não foi agendado novo envio.').code,'provider_data_policy');
+  assert.equal(ecosystemProviderIssue('Provedor recusou por saldo ou limite. Não foi agendado novo envio.').code,'provider_balance');
   const f=fixture(t);f.db.exec(`CREATE TABLE viral_quiz_scenes(id INTEGER,status TEXT,error_message TEXT,updated_at TEXT)`);
   const insert=f.db.prepare('INSERT INTO viral_quiz_scenes VALUES(?,?,?,?)');
   insert.run(1,'failed','Inference is blocked on this account Bearer PRIVATE_KEY','2026-09-08');
