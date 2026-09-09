@@ -83,6 +83,22 @@ test('existing worker failures are counted truthfully and provider secrets never
   const state=f.service.snapshot();assert.equal(state.modules.videos.scenes.failed,1);assert.equal(state.modules.videos.projects.in_production,1);assert.equal(state.modules.videos.issue.code,'provider_data_policy');assert.equal(state.modules.whatsapp.pending,1);assert.equal(state.modules.gestora.weightTraining,false);assert(!JSON.stringify(state).includes('SECRET_VALUE'));assert(state.exceptions.some(x=>x.id==='video-production'));assert.equal(state.agents.find(x=>x.id==='videos').status,'blocked');
 });
 
+test('central separates account blocks from data policy and never replaces recorded failures with retries',t=>{
+  const f=fixture(t);f.db.exec(`CREATE TABLE viral_quiz_scenes(id INTEGER,status TEXT,error_message TEXT,updated_at TEXT)`);
+  const insert=f.db.prepare('INSERT INTO viral_quiz_scenes VALUES(?,?,?,?)');
+  insert.run(1,'failed','Inference is blocked on this account Bearer PRIVATE_KEY','2026-09-08');
+  insert.run(2,'failed','Inference is blocked on this account token: OTHER_SECRET','2026-09-08');
+  insert.run(3,'failed','No endpoints found matching ZDR data policy','2026-09-09');
+  insert.run(4,'downloaded','','2026-09-09');
+  const before=f.db.prepare('SELECT * FROM viral_quiz_scenes').all(),state=f.service.snapshot();
+  assert.deepEqual(state.modules.videos.issues.map(({code,count})=>({code,count})),[{code:'provider_account_block',count:2},{code:'provider_data_policy',count:1}]);
+  assert.equal(state.modules.videos.issue.code,'provider_account_block');
+  const detail=state.exceptions.find(x=>x.id==='video-production').detail;
+  assert.match(detail,/2 cenas:.*conta/);assert.match(detail,/1 cenas:.*política de dados/);
+  assert(!/PRIVATE_KEY|OTHER_SECRET|Bearer/.test(JSON.stringify(state)));
+  assert.deepEqual(f.db.prepare('SELECT * FROM viral_quiz_scenes').all(),before);assert.equal(f.state.calls.length,0);
+});
+
 test('central counts uncertain WhatsApp results separately without rewriting legacy state',t=>{
   const f=fixture(t);f.db.exec(`CREATE TABLE whatsapp_qr_schedules(id TEXT,status TEXT,confirmation_state TEXT DEFAULT '',claimed_at INTEGER,provider_message_id TEXT);
     INSERT INTO whatsapp_qr_schedules(id,status,confirmation_state,provider_message_id) VALUES
