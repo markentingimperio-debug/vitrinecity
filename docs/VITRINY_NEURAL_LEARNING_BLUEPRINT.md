@@ -156,3 +156,17 @@ Vitrine City
 
 ## Regra central
 O Vitriny Neural deve aprender continuamente com evidência, não simplesmente memorizar continuamente tudo o que encontra.
+
+## Dataset Builder v1
+
+O módulo `app/vitriny-neural/dataset-builder.js` transforma exemplos revisados em JSONL de chat para treinamento periódico de um modelo compatível. Nesta versão:
+
+- todo exemplo nasce como candidato;
+- aprovação humana explícita é obrigatória;
+- credenciais, e-mail, telefone, CPF e sequências semelhantes a cartão são rejeitados;
+- somente exemplos aprovados entram na exportação;
+- a divisão treino/validação é determinística e reproduzível;
+- cada versão exportada recebe um identificador derivado do conteúdo aprovado;
+- a exportação não inicia fine-tuning, LoRA nem altera pesos automaticamente.
+
+Os endpoints administrativos ficam sob `/api/admin/vitriny-neural/training/*`. Um piloto só deve ser considerado após reunir pelo menos 50 exemplos diversos e aprovados, manter uma validação separada e comparar o modelo candidato nos benchmarks existentes.
