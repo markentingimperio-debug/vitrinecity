@@ -131,7 +131,7 @@ export function setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, pub
     published_at TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
   CREATE TABLE IF NOT EXISTS marketplace_review_product_links (
-    source_product_key TEXT PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES store_products(id), source_url TEXT NOT NULL
+    source_product_key TEXT PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES store_products(id) ON DELETE CASCADE, source_url TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS marketplace_review_sources (
     review_id INTEGER PRIMARY KEY REFERENCES marketplace_product_reviews(id) ON DELETE CASCADE,

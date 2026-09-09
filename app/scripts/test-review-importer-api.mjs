@@ -37,6 +37,10 @@ try {
   assert.match(html, /Inclui 1 avaliação importada da Shopee/); assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/); assert.doesNotMatch(html, /✓ Compra verificada/);
   const hide = await request(`/api/admin/review-imports/${batch.id}/visibility`, { method: 'POST', headers: { cookie }, body: JSON.stringify({ action: 'hide' }) }); assert.equal(hide.status, 200);
   const hiddenHtml = await (await request(`/produto/${product.id}`)).text(); assert.doesNotMatch(hiddenHtml, /Avaliação importada da Shopee/);
+  db.pragma('foreign_keys = ON');
+  db.prepare('DELETE FROM store_products WHERE id=?').run(product.id);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM marketplace_review_product_links').get().n, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM marketplace_review_sources').get().n, 0);
   console.log('review-importer-api: real admin auth, preview, publish, public escaping, attribution and hide passed');
 } finally {
   db?.close(); child.kill(); if (child.exitCode === null) await new Promise(resolve => child.once('exit', resolve));
