@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Publicações · VitrineCity</title>
+  <link rel="stylesheet" href="/admin-publicacoes.css">
+  <script type="module" src="/admin-publicacoes.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Ir para o conteúdo</a>
+  <header class="topbar"><a class="brand" href="/admin-operacao"><span class="brand-mark" aria-hidden="true">V</span>VitrineCity <span class="brand-area">/ PUBLICAÇÕES</span></a><a class="back-link" href="/admin-operacao">← Central de Operações</a></header>
+  <main id="main">
+    <section class="hero" aria-labelledby="pageTitle"><div><p class="eyebrow">DA VITRINECITY PARA SUA COMUNIDADE</p><h1 id="pageTitle">Seu conteúdo.<br><span>Mais perto das pessoas.</span></h1><p class="intro">Escolha uma publicação aprovada, confira a foto e a descrição, e publique na Página da empresa.</p></div><aside class="principle"><span class="channel-icon" aria-hidden="true">f</span><strong>Uma Página por vez.</strong><p>A publicação acontece após sua confirmação. Os links ficam nas mensagens privadas.</p><small>Facebook · foto e descrição</small></aside></section>
+    <div class="notice-bar"><p id="pubNotice" role="status" aria-live="polite" aria-atomic="true">Consultando conteúdos e Páginas…</p><button id="pubRefresh" class="secondary" type="button">Atualizar painel</button></div>
+    <div class="workspace">
+      <section class="panel editor" aria-labelledby="editorTitle"><div class="section-heading"><div><p class="eyebrow">01 / ESCOLHA E PREPARE</p><h2 id="editorTitle">Nova publicação</h2></div><span class="badge">Facebook</span></div>
+        <form id="pubForm">
+          <fieldset id="pubFields" disabled>
+            <div class="field"><label for="pubSearch">Encontrar um conteúdo</label><input id="pubSearch" type="search" maxlength="120" placeholder="Busque pelo assunto…" autocomplete="off" aria-describedby="pubSourceCount"><small id="pubSourceCount">Aguardando catálogo</small></div>
+            <div class="field"><label for="pubSource">Conteúdo aprovado na Vitrine Social</label><select id="pubSource" required aria-describedby="pubSourceNote"><option value="">Escolha um conteúdo</option></select><small id="pubSourceNote">São exibidas as imagens aprovadas e publicadas na Vitrine Social.</small></div>
+            <div class="field"><label for="pubPage">Página da empresa</label><select id="pubPage" required aria-describedby="pubPageNote"><option value="">Escolha uma Página</option></select><small id="pubPageNote">As permissões serão verificadas ao preparar a prévia.</small><a class="connection-link" href="/api/social/login?intent=comment_replies&amp;returnTo=chatbot">Revisar conexão Meta ↗</a></div>
+            <div class="field"><div class="label-row"><label for="pubCaption">Descrição pública</label><span id="pubCount" class="fine">0 / 1.500 caracteres</span></div><textarea id="pubCaption" rows="8" required minlength="10" maxlength="1500" aria-describedby="pubCaptionHint pubCaptionError" placeholder="Escreva a descrição que acompanhará a foto…"></textarea><small id="pubCaptionHint">Sem links ou endereços de sites. Confira as informações e evite prometer uma resposta automática antes de ela estar ativa. Conteúdo comercial começa com “Publicidade”.</small><p id="pubCaptionError" class="field-error" role="alert" hidden></p></div>
+            <button id="pubPrepare" type="submit" disabled>Preparar prévia <span aria-hidden="true">→</span></button><p class="fine">Preparar a prévia não publica nem envia mensagens.</p>
+          </fieldset>
+        </form>
+      </section>
+      <section id="pubPreview" class="panel preview-panel" aria-labelledby="pubPreviewTitle"><div class="section-heading"><div><p class="eyebrow">02 / CONFIRA ANTES DE PUBLICAR</p><h2 id="pubPreviewTitle" tabindex="-1">Sua prévia</h2></div><span id="pubPreviewState" class="badge">Aguardando</span></div>
+        <div id="pubEmpty" class="preview-empty"><span aria-hidden="true">↗</span><h3>A próxima conversa começa aqui.</h3><p>Escolha o conteúdo e a Página para visualizar exatamente o que será publicado.</p></div>
+        <div id="pubPreviewContent" hidden><article class="post-preview"><header class="post-header"><span class="post-avatar" aria-hidden="true">f</span><div><strong id="pubPreviewPage"></strong><small>Prévia de publicação pública · Facebook</small></div></header><p id="pubPreviewCaption" class="post-caption"></p><div id="pubCover" class="post-cover"></div></article><p id="pubReadiness" class="readiness"></p><ul id="pubMissing" class="missing" hidden></ul><p id="pubPreviewNote" class="fine"></p><details class="review-details"><summary>Identificação da prévia</summary><p>Este código vincula a confirmação à foto, à descrição e à Página revisadas.</p><code id="pubHash"></code></details><label class="confirm"><input id="pubConfirm" type="checkbox" disabled><span>Conferi a foto, a descrição e a Página.<small>Ao publicar, este conteúdo ficará público no Facebook.</small></span></label><button id="pubPublish" class="publish-button" type="button" disabled>Publicar no Facebook</button></div>
+      </section>
+    </div>
+    <section class="panel history-panel" aria-labelledby="historyTitle"><div class="section-heading"><div><p class="eyebrow">03 / ACOMPANHE O RESULTADO</p><h2 id="historyTitle">Histórico de publicações</h2></div><span id="pubHistoryCount" class="badge">—</span></div><p class="section-intro">Uma publicação só aparece como confirmada após a resposta do Facebook. Um envio sem confirmação precisa ser consultado antes de qualquer nova ação.</p><div id="pubHistory" class="history"><p class="empty">Consultando histórico…</p></div></section>
+    <footer><strong>VitrineCity · Publicações da empresa</strong><a href="/admin-operacao">Voltar à Central de Operações →</a></footer>
+  </main>
+</body>
+</html>

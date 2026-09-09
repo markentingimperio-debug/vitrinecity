@@ -1,7 +1,7 @@
 import {createHmac,randomBytes,timingSafeEqual} from 'node:crypto';
 
 const readScopes=['pages_show_list','pages_read_engagement','pages_read_user_content','read_insights','instagram_basic','instagram_manage_insights'];
-const commentScopes=['pages_messaging','pages_manage_metadata','instagram_manage_comments','business_management','pages_manage_engagement'];
+const commentScopes=['pages_messaging','pages_manage_metadata','instagram_manage_comments','business_management','pages_manage_engagement','pages_manage_posts','instagram_content_publish'];
 const fail=(message,status=400)=>Object.assign(new Error(message),{status});
 const intents=new Set(['read_only','comment_replies']);
 const destinations=new Set(['carteira','admin','chatbot']);
