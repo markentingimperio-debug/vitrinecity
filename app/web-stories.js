@@ -69,7 +69,7 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     const draft={...original,title:text(input.title,90,'Título'),description:text(input.description,160,'Descrição',30),cta:button(input.cta,original.cta??storySourceCta(original),'Texto do botão'),homeCta:button(input.homeCta,original.homeCta??'','Convite final')};
     if(!Array.isArray(input.pages)||input.pages.length<10||input.pages.length>40)throw fail('A história deve ter entre 10 e 40 páginas, com conteúdo completo.');
     const unique=new Map();draft.pages=[];
-    for(const p of input.pages){const copy=text(p.text,130,'Texto de cada página'),alt=text(p.alt,150,'Descrição da imagem');if(!unique.has(p.image))unique.set(p.image,await assets.image(p.image,{catalog:p.imageCredit==='Foto do catálogo'}));const asset=unique.get(p.image);draft.pages.push({text:copy,alt,image:asset.url,width:asset.width,height:asset.height,...(['Ilustração IA','Foto do catálogo'].includes(p.imageCredit)?{imageCredit:p.imageCredit}:{})});}
+    for(const p of input.pages){const copy=text(p.text,130,'Texto de cada página'),alt=text(p.alt,150,'Descrição da imagem');if(!unique.has(p.image))unique.set(p.image,await assets.image(p.image,{catalog:p.imageCredit==='Foto do catálogo'}));const asset=unique.get(p.image);draft.pages.push({text:copy,alt,image:asset.url,width:asset.width,height:asset.height,...(['Ilustração IA','Foto do catálogo','Imagem do artigo'].includes(p.imageCredit)?{imageCredit:p.imageCredit}:{}),...(p.layout==='editorial'?{layout:'editorial'}:{})});}
     if(draft.pages.slice(1).map(p=>p.text).join(' ').length<400)throw fail('Inclua o conteúdo completo da história: pelo menos 400 caracteres além da capa.');
     await assets.image(draft.logo,{logo:true});
     // A fresh, immutable portrait poster always represents the first page's actual image.
@@ -96,8 +96,9 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     if(!eligible())throw fail('Rodada pausada ou conteúdo atualizado.',409);
     const previous=existing?JSON.parse(existing.draft_json):{};
     const result=await generateStory(initial,{signal,isCurrent:eligible,buttons:storyButtons(initial,previous)});
-    if(!eligible())throw fail('Rodada pausada ou conteúdo atualizado. Nenhuma publicação foi feita.',409);
-    if(!result?.draft)return {storyId:existing?.id||null,status:'review',summary:String(result?.notes||'Faltam informações verificadas para criar uma história completa.').slice(0,500)};
+    const publicationAllowed=()=>eligible()&&(typeof result?.publicationAllowed!=='function'||result.publicationAllowed()===true);
+    if(!publicationAllowed())throw fail('Rodada pausada ou conteúdo atualizado. Nenhuma publicação foi feita.',409);
+    if(!result?.draft)return {storyId:existing?.id||null,status:'review',summary:String(result?.notes||'Faltam informações verificadas para criar uma história completa.').slice(0,500),diagnostics:result?.diagnostics};
     const companionId=initial.kind==='trend'?'story-companion:'+key:null;
     const previousCompanion=companionId?db.prepare('SELECT * FROM editorial_articles WHERE id=?').get(companionId):null;
     const companionSlug=companionId?(previousCompanion?.slug||result.draft.title.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,80)+'-'+createHash('sha256').update(key).digest('hex').slice(0,8)):null;
@@ -105,6 +106,7 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     if(!sourcePath.startsWith('/')||sourcePath.startsWith('//')||/[\\\u0000-\u0020]/.test(sourcePath))throw fail('O destino da história não é uma página válida da plataforma.');
     const logo=await assets.image('/assets/pwa-icon-192.png',{logo:true});
     const original={title:initial.title,description:initial.summary,category:String(initial.portal||'VitrineCity').replace(/-/g,' ').slice(0,26),logo:logo.url,sourcePath,sourceKind:initial.kind||'article',commercial:!!initial.commercial,...storyButtons(initial,previous),generation:'gestora',affiliateDisclosure:initial.kind==='affiliate'?'Link de afiliado: podemos receber comissão.':'',sources:Array.isArray(initial.sources)?initial.sources.slice(0,5).map(s=>({title:String(s.title||'Fonte').slice(0,120),url:String(s.url||''),...(s.checkedAt?{checkedAt:s.checkedAt}:{})})):[]};
+    if(result.method==='local_editorial'){original.generation='editorial-local';original.aiGenerated=false;original.editorialMethod='source_preserved';}
     const draft=await validateDraft({...result.draft,...(Object.hasOwn(previous,'cta')?{cta:previous.cta}:{}),...(Object.hasOwn(previous,'homeCta')?{homeCta:previous.homeCta}:{})},original);
     const companion=companionId?{title:draft.title,summary:draft.description,body:text(result.draft.articleBody,3000,'Artigo relacionado',900),image_url:draft.pages[0].image,sources_json:JSON.stringify(draft.sources)}:null;
     if(companion)draft.companionHash=companionHash(companion);
@@ -112,7 +114,7 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     const approved=result.approved===true,now=new Date().toISOString(),req={user:{id:'web-story-automation'}};
     let saved;
     db.transaction(()=>{
-      if(!eligible())throw fail('A automação foi pausada ou o conteúdo mudou antes da publicação.',409);
+      if(!publicationAllowed())throw fail('A automação foi pausada ou o conteúdo mudou antes da publicação.',409);
       const latest=db.prepare('SELECT * FROM editorial_web_stories WHERE article_id=?').get(key);
       if(existing){const lastEvent=db.prepare('SELECT event FROM editorial_web_story_events WHERE story_id=? ORDER BY id DESC LIMIT 1').get(existing.id)?.event;if(!latest||latest.revision!==existing.revision||!['generated_automatic','published_automatic'].includes(lastEvent))throw fail('A história foi editada em outra sessão. A edição foi preservada.',409);}
       else if(latest)throw fail('Uma história foi criada em outra sessão. Ela foi preservada.',409);
@@ -128,8 +130,8 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
       if(existing)db.prepare('UPDATE editorial_web_stories SET source_hash=?,draft_json=?,revision=?,previewed_revision=0,updated_at=? WHERE id=?').run(fingerprint,json,revision,now,id);
       else db.prepare('INSERT INTO editorial_web_stories(id,slug,article_id,source_hash,draft_json,revision,created_at,updated_at,created_by) VALUES (?,?,?,?,?,?,?,?,?)').run(id,slug,key,fingerprint,json,revision,now,now,'web-story-automation');
       event(req,{id,revision},'generated_automatic');
-      if(approved){db.prepare('UPDATE editorial_web_stories SET published_json=?,published_at=COALESCE(published_at,?),published_updated_at=?,published_revision=?,reviewed_by=?,published_source_hash=? WHERE id=?').run(json,now,now,revision,'gestora-editorial-check',fingerprint,id);event(req,{id,revision},'published_automatic');}
-      saved={storyId:id,status:approved?'published':'review',summary:String(result.notes||(approved?'História criada e publicada.':'História criada para revisão.')).slice(0,500)};
+      if(approved){db.prepare('UPDATE editorial_web_stories SET published_json=?,published_at=COALESCE(published_at,?),published_updated_at=?,published_revision=?,reviewed_by=?,published_source_hash=? WHERE id=?').run(json,now,now,revision,result.method==='local_editorial'?'source-editorial-check':'gestora-editorial-check',fingerprint,id);event(req,{id,revision},'published_automatic');}
+      saved={storyId:id,status:approved?'published':'review',summary:String(result.notes||(approved?'História criada e publicada.':'História criada para revisão.')).slice(0,500),diagnostics:result.diagnostics};
     }).immediate();
     return saved;
   }

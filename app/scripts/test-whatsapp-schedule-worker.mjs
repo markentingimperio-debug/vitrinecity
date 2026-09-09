@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
-import {createWhatsAppScheduleProcessor} from '../whatsapp-schedule-worker.js';
+import {createWhatsAppScheduleProcessor,whatsappScheduleState,countWhatsAppSchedules} from '../whatsapp-schedule-worker.js';
 
 function fixture() {
   const db=new Database(':memory:');
-  db.exec(`CREATE TABLE whatsapp_qr_schedules(id TEXT PRIMARY KEY,group_jid TEXT,group_name TEXT,sitemap_url TEXT,message TEXT,scheduled_at TEXT,status TEXT DEFAULT 'pending',provider_message_id TEXT,error TEXT,sent_at TEXT,product_slug TEXT)`);
+  db.exec(`CREATE TABLE whatsapp_qr_schedules(id TEXT PRIMARY KEY,group_jid TEXT,group_name TEXT,sitemap_url TEXT,message TEXT,scheduled_at TEXT,status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','sent','failed','cancelled')),provider_message_id TEXT,error TEXT,sent_at TEXT,product_slug TEXT)`);
   const add=(id,product=false,at='2026-09-09T09:00:00.000Z')=>db.prepare('INSERT INTO whatsapp_qr_schedules(id,group_jid,sitemap_url,message,scheduled_at,product_slug) VALUES(?,?,?,?,?,?)').run(id,'123@g.us','https://vitrinecity.com/ofertas/example','Mensagem',at,product?'example':null);
   const image=item=>({pathname:'/chat/send/image',body:{Phone:item.group_jid,Caption:'Foto e link',Image:'data:image/jpeg;base64,/9j/',Id:item.id.replaceAll('-','').toUpperCase()}});
   const options={db,now:()=>new Date('2026-09-09T10:00:00.000Z'),prepareScheduledMessage:async item=>item.product_slug?image(item):null,whatsappQrData:p=>p.data};
@@ -47,7 +47,90 @@ test('a timeout or missing acknowledgment is left for review and never automatic
       await run();await run();
       const row=db.prepare("SELECT * FROM whatsapp_qr_schedules WHERE id='uncertain'").get();
       assert.equal(row.status,'failed');assert.equal(row.provider_message_id,null);assert.ok(row.error);assert.equal(attempts,outcome==='invalid-product'?0:1);
+      assert.equal(row.confirmation_state,outcome==='invalid-product'?'not_submitted':'unknown');
+      assert.equal(row.sent_at,null);
     } finally {db.close();}
+  }
+});
+
+test('both text and images require a real string receipt; invalid responses are unknown and never count as sent',async()=>{
+  for(const product of [false,true])for(const receipt of [null,{},[],{Id:''},{Id:'   '},{Id:123},{Id:{}},{Id:'undefined'},{Id:'bad\nreceipt'},{Id:'x'.repeat(161)}]) {
+    const {db,add,options}=fixture();let attempts=0;
+    try{
+      add('no-ack',product);
+      const run=createWhatsAppScheduleProcessor({...options,whatsappQrRequest:async()=>{attempts++;return {data:receipt};}});
+      await run();await run();
+      const row=db.prepare('SELECT * FROM whatsapp_qr_schedules').get();
+      assert.equal(attempts,1);assert.equal(row.status,'failed');assert.equal(row.confirmation_state,'unknown');
+      assert.equal(row.provider_message_id,null);assert.equal(row.sent_at,null);
+      assert.deepEqual(countWhatsAppSchedules([row]),{pending:0,processing:0,sent:0,failed:0,unknown:1,cancelled:0});
+    }finally{db.close();}
+  }
+});
+
+test('an explicit pre-submission refusal is failed, not unknown, and is not retried',async()=>{
+  const {db,add,options}=fixture();let calls=0;
+  try{
+    add('no-connection');
+    const run=createWhatsAppScheduleProcessor({...options,whatsappQrRequest:async()=>{calls++;throw Object.assign(Error('not configured'),{notSubmitted:true});}});
+    await run();await run();
+    const row=db.prepare('SELECT * FROM whatsapp_qr_schedules').get();
+    assert.equal(row.status,'failed');assert.equal(row.confirmation_state,'not_submitted');assert.equal(calls,1);
+    assert.equal(whatsappScheduleState(row),'failed');
+  }finally{db.close();}
+});
+
+test('bootstrap is additive and preserves every legacy value; read-only projection does not invent old receipts',async()=>{
+  const {db,add,options}=fixture();
+  try{
+    for(const id of ['sent-with-id','sent-without-id','old-processing','old-failed','pending'])add(id);
+    db.prepare("UPDATE whatsapp_qr_schedules SET status='sent',sent_at='2026-09-08' WHERE id LIKE 'sent-%'").run();
+    db.prepare("UPDATE whatsapp_qr_schedules SET provider_message_id='LEGACY_ACK' WHERE id='sent-with-id'").run();
+    db.prepare("UPDATE whatsapp_qr_schedules SET status='processing' WHERE id='old-processing'").run();
+    db.prepare("UPDATE whatsapp_qr_schedules SET status='failed',error='Legacy failure with unknown cause' WHERE id='old-failed'").run();
+    const columns=db.prepare('PRAGMA table_info(whatsapp_qr_schedules)').all(),names=columns.map(x=>x.name).join(','),read=()=>db.prepare('SELECT '+names+' FROM whatsapp_qr_schedules ORDER BY id').all(),before=read();
+    createWhatsAppScheduleProcessor({...options,whatsappQrRequest:async()=>assert.fail('No bootstrap send')});
+    assert.deepEqual(read(),before);
+    const afterColumns=db.prepare('PRAGMA table_info(whatsapp_qr_schedules)').all();
+    assert.deepEqual(afterColumns.slice(0,columns.length),columns);
+    assert.deepEqual(afterColumns.slice(columns.length).map(x=>({name:x.name,type:x.type,notnull:x.notnull,dflt_value:x.dflt_value})),[{name:'confirmation_state',type:'TEXT',notnull:1,dflt_value:"''"},{name:'claimed_at',type:'INTEGER',notnull:0,dflt_value:null}]);
+    const counts=countWhatsAppSchedules(db.prepare('SELECT * FROM whatsapp_qr_schedules').all(),options.now().getTime());
+    assert.deepEqual(counts,{pending:1,processing:0,sent:1,failed:1,unknown:2,cancelled:0});
+    assert.deepEqual(read(),before,'Counting must not rewrite legacy rows');
+  }finally{db.close();}
+});
+
+test('stale and untimed processing claims become unknown even while paused; recent claims are preserved',async()=>{
+  const {db,add,options}=fixture();let calls=0;
+  try{
+    for(const id of ['legacy','stale','recent'])add(id);
+    const run=createWhatsAppScheduleProcessor({...options,canRun:()=>false,whatsappQrRequest:async()=>{calls++;}});
+    db.prepare("UPDATE whatsapp_qr_schedules SET status='processing' WHERE id='legacy'").run();
+    db.prepare("UPDATE whatsapp_qr_schedules SET status='processing',confirmation_state='submitting',claimed_at=? WHERE id='stale'").run(options.now().getTime()-120001);
+    db.prepare("UPDATE whatsapp_qr_schedules SET status='processing',confirmation_state='submitting',claimed_at=? WHERE id='recent'").run(options.now().getTime()-1000);
+    await run();await run();
+    for(const id of ['legacy','stale']){const row=db.prepare('SELECT * FROM whatsapp_qr_schedules WHERE id=?').get(id);assert.equal(row.status,'failed');assert.equal(row.confirmation_state,'unknown');assert.equal(row.sent_at,null);}
+    assert.equal(db.prepare("SELECT status FROM whatsapp_qr_schedules WHERE id='recent'").get().status,'processing');
+    assert.equal(calls,0);
+  }finally{db.close();}
+});
+
+test('slow preparation retired by another worker never submits; a late valid receipt can resolve its original claim once',async()=>{
+  for(const phase of ['preparation','request']){
+    const {db,add,options}=fixture();let clock=options.now().getTime(),release,entered,calls=0;
+    const enteredPromise=new Promise(resolve=>{entered=resolve;}),gate=new Promise(resolve=>{release=resolve;});
+    try{
+      add('slow');
+      const a=createWhatsAppScheduleProcessor({...options,now:()=>new Date(clock),prepareScheduledMessage:async()=>{if(phase==='preparation'){entered();await gate;}return null;},whatsappQrRequest:async()=>{calls++;entered();await gate;return {data:{id:'LATE_ACK'}};}});
+      const pending=a();await enteredPromise;clock+=120001;
+      const b=createWhatsAppScheduleProcessor({...options,now:()=>new Date(clock),canRun:()=>false,whatsappQrRequest:async()=>assert.fail('Recovery cannot send')});
+      await b();assert.equal(db.prepare('SELECT confirmation_state FROM whatsapp_qr_schedules').get().confirmation_state,'unknown');
+      release();await pending;await a();await b();
+      const row=db.prepare('SELECT * FROM whatsapp_qr_schedules').get();
+      assert.equal(calls,phase==='request'?1:0);
+      assert.equal(row.confirmation_state,phase==='request'?'confirmed':'unknown');
+      assert.equal(row.status,phase==='request'?'sent':'failed');
+    }finally{release?.();db.close();}
   }
 });
 

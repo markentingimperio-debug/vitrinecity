@@ -1,4 +1,5 @@
 import {createHash,randomUUID} from 'node:crypto';
+import {storyDiagnostics} from './web-story-diagnostics.js';
 
 export const STORY_AUTOMATION_GROUPS=Object.freeze(['products','services','news','recipes','sports','trends']);
 const ZONE='America/Sao_Paulo',DAY=86400000,LEASE=120000,HEARTBEAT=15000,JOB_TIMEOUT=10*60000,PAGE=200,MAX_PAGES=20;
@@ -34,6 +35,8 @@ export function createStoryAutomation({db,getCandidates,processSource,isConfigur
   db.transaction(()=>{
     if(!db.prepare('PRAGMA table_info(web_story_automation_settings)').all().some(column=>column.name==='groups_json'))
       db.exec(`ALTER TABLE web_story_automation_settings ADD COLUMN groups_json TEXT NOT NULL DEFAULT '${JSON.stringify(STORY_AUTOMATION_GROUPS)}'`);
+    if(!db.prepare('PRAGMA table_info(web_story_automation_jobs)').all().some(column=>column.name==='diagnostics_json'))
+      db.exec("ALTER TABLE web_story_automation_jobs ADD COLUMN diagnostics_json TEXT NOT NULL DEFAULT '{}'");
   }).immediate();
   for(const group of STORY_AUTOMATION_GROUPS)db.prepare('INSERT OR IGNORE INTO web_story_automation_cursors(group_name) VALUES(?)').run(group);
   const settings=()=>db.prepare('SELECT * FROM web_story_automation_settings WHERE id=1').get();
@@ -48,7 +51,7 @@ export function createStoryAutomation({db,getCandidates,processSource,isConfigur
     return {enabled:!!s.enabled,configured:ok,dailyLimit:s.daily_limit,hour:s.hour,timeZone:ZONE,revision:s.revision,groups:selectedGroups(s),running,closed,nextAt,
       quota:{date:p.day,attempted:q.attempted,remaining:Math.max(0,s.daily_limit-q.attempted),published:q.published||0,review:q.review||0,failed:q.failed||0,interrupted:q.interrupted||0,running:q.running||0},
       reason:closed?'closed':!s.enabled?'disabled':!ok?'not_configured':s.last_reason,
-      history:db.prepare('SELECT id,source_key sourceKey,group_name sourceGroup,day,status,reason,story_id storyId,summary,started_at startedAt,finished_at finishedAt FROM web_story_automation_jobs ORDER BY id DESC LIMIT 30').all()};
+      history:db.prepare('SELECT id,source_key sourceKey,group_name sourceGroup,day,status,reason,story_id storyId,summary,started_at startedAt,finished_at finishedAt,diagnostics_json FROM web_story_automation_jobs ORDER BY id DESC LIMIT 30').all().map(({diagnostics_json,...row})=>{let details={};try{details=JSON.parse(diagnostics_json);}catch{}return {...row,diagnostics:storyDiagnostics(details)};})};
   }
   function isCurrent(context){
     if(closed||context.controller.signal.aborted||!configured()||!canRun())return false;
@@ -123,8 +126,8 @@ export function createStoryAutomation({db,getCandidates,processSource,isConfigur
   function finish(context,id,state,reason,result={}){
     const s=settings();
     if(s.lease_owner!==context.owner)return;
-    db.prepare("UPDATE web_story_automation_jobs SET status=?,reason=?,story_id=?,summary=?,finished_at=? WHERE id=? AND owner=? AND status='running'")
-      .run(state,reason,typeof result.storyId==='string'?result.storyId.slice(0,200):null,safeSummary(result.summary),now(),id,context.owner);
+    db.prepare("UPDATE web_story_automation_jobs SET status=?,reason=?,story_id=?,summary=?,diagnostics_json=?,finished_at=? WHERE id=? AND owner=? AND status='running'")
+      .run(state,reason,typeof result.storyId==='string'?result.storyId.slice(0,200):null,safeSummary(result.summary),JSON.stringify(storyDiagnostics(result.diagnostics)),now(),id,context.owner);
   }
   async function work(context){
     active=context;let reason='completed',heartbeat;

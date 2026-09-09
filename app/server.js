@@ -4,10 +4,11 @@ import { setupCatalogProductImages } from './catalog-product-images.js';
 import {setupCityMembership} from './city-membership.js';
 import {setupCampaignPreferences} from './campaign-preferences.js';
 import { integrationObserver, openRouterOperation } from './integration-health.js';
+import {videoReceipt,videoPollingUrl,videoPollState,videoFailureMessage,videoRetryableFailure,videoProjectUnchanged,downloadVideo} from './video-provider-receipts.js';
 import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.js';
-import { createWhatsAppScheduleProcessor } from './whatsapp-schedule-worker.js';
+import { createWhatsAppScheduleProcessor, whatsappScheduleState, countWhatsAppSchedules } from './whatsapp-schedule-worker.js';
 import { registerSocialCommentCampaigns } from './social-comment-campaigns.js';
 import { createEcosystemOrchestrator, registerEcosystemRoutes, ecosystemLocalWindow } from './ecosystem-orchestrator.js';
 import { createEcosystemCatalog } from './ecosystem-catalog.js';
@@ -17,6 +18,7 @@ import { createMetaPhotoApi } from './meta-photo-api.js';
 import { createExternalMetricsStore, createYouTubeMetricsSync, ACTIVE_EXTERNAL_METRICS_SQL } from './external-metrics-store.js';
 import { serviceReplyFromResponse, validateServiceReply } from './service-reply-format.js';
 import { createTikTokTokenRefresh } from './tiktok-token-refresh.js';
+import { createMediaPublicationLifecycle, captureQuizMontage, commitQuizMontage } from './media-publication-lifecycle.js';
 import { createMetaCommentApi } from './meta-comment-api.js';
 import {socialOauthRequest,socialOauthScopes,socialOauthConfigId,signSocialOauthState,verifySocialOauthState,socialOauthDestination} from './social-oauth-intent.js';
 import { createWebStorySources } from './web-story-sources.js';
@@ -2671,6 +2673,10 @@ const publicPage = file => (req, res) => {
 let dailyStories,ecosystem;
 const ecosystemCanRun=()=>ecosystem?.canRun()!==false;
 const requireEcosystemRunning=(_req,res,next)=>ecosystemCanRun()?next():res.status(409).json({error:'A pausa geral está ativa. Retome as rotinas na Central do dia.'});
+const mediaPublications = createMediaPublicationLifecycle({ db, siteUrl:SITE_URL, canRun:ecosystemCanRun,
+  getConfig:()=>({accountId:String(process.env.CLOUDFLARE_ACCOUNT_ID||'').trim(),token:String(process.env.CLOUDFLARE_STREAM_API_TOKEN||'').trim()}),
+  onReady:post=>notifyFollowers(post.user_id,'new_post',post.media_type==='image'?'publicou uma nova foto':'publicou um novo vídeo',post.id),
+  onError:post=>refundSocialLink(post.id,'falha no processamento do vídeo') });
 setupTrendRadar({ app, db, siteUrl:SITE_URL, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft, reviewEditorialDraft, canRun:ecosystemCanRun, automationAllowed:()=>!dailyStories?.automation.status().enabled });
 setupEmissora({app,db,siteUrl:SITE_URL});
 const storyOpenAIRequest=createOpenAIStoryRequest({apiKey:()=>process.env.OPENAI_API_KEY});
@@ -3975,7 +3981,7 @@ function whatsappQrConfig(){
 }
 async function whatsappQrRequest(pathname,options={}){
   const config=whatsappQrConfig();
-  if(!config.configured)throw new Error('whatsapp_qr_not_configured');
+  if(!config.configured)throw Object.assign(new Error('whatsapp_qr_not_configured'),{notSubmitted:true});
   const response=await fetch(config.endpoint+pathname,{...options,headers:{Token:config.userToken,'Content-Type':'application/json',...(options.headers||{})},signal:AbortSignal.timeout(15000)});
   const payload=await response.json().catch(()=>({}));
   if(!response.ok||payload?.success===false)throw new Error(String(payload?.error||payload?.data?.Details||`wuzapi_${response.status}`).slice(0,200));
@@ -4063,7 +4069,7 @@ async function whatsappQrSitemapLinks(){
   return [...new Set(links)].slice(0,1000);
 }
 app.get('/api/admin/whatsapp-qr/sitemap-links',requireAdmin,async(_req,res)=>{try{return res.json({links:await whatsappQrSitemapLinks()})}catch{return res.status(502).json({error:'Não foi possível ler o sitemap agora.'})}});
-app.get('/api/admin/whatsapp-qr/schedules',requireAdmin,(_req,res)=>res.json({schedules:db.prepare(`SELECT id,group_jid groupJid,group_name groupName,sitemap_url sitemapUrl,message,scheduled_at scheduledAt,status,error,created_at createdAt,sent_at sentAt FROM whatsapp_qr_schedules ORDER BY scheduled_at DESC LIMIT 100`).all()}));
+app.get('/api/admin/whatsapp-qr/schedules',requireAdmin,(_req,res)=>res.set('Cache-Control','no-store').json({schedules:db.prepare(`SELECT id,group_jid groupJid,group_name groupName,sitemap_url sitemapUrl,message,scheduled_at scheduledAt,status,confirmation_state confirmationState,claimed_at claimedAt,provider_message_id providerMessageId,error,created_at createdAt,sent_at sentAt FROM whatsapp_qr_schedules ORDER BY scheduled_at DESC LIMIT 100`).all().map(item=>({...item,status:whatsappScheduleState(item)}))}));
 app.get('/api/admin/omnichannel-automation',requireAdmin,(_req,res)=>res.json({configured:aiConfigured(),provider:AI_PROVIDER,model:OPENAI_MODEL,channels:db.prepare(`SELECT channel,enabled,instructions,campaign_mode campaignMode,site_url siteUrl,whatsapp_group_url whatsappGroupUrl,daily_limit dailyLimit,start_hour startHour,end_hour endHour,approval_required approvalRequired,updated_at updatedAt FROM omnichannel_automation_settings ORDER BY channel`).all().map(item=>({...item,enabled:Boolean(item.enabled),approvalRequired:Boolean(item.approvalRequired)})),jobs:db.prepare(`SELECT id,channel,source_text sourceText,reply_text replyText,status,error,created_at createdAt,processed_at processedAt FROM omnichannel_automation_jobs ORDER BY created_at DESC LIMIT 40`).all()}));
 app.put('/api/admin/omnichannel-automation/:channel',requireAdmin,sameOriginOnly,(req,res)=>{
   const channel=String(req.params.channel||'');if(!['facebook','instagram','whatsapp_qr'].includes(channel))return res.status(400).json({error:'Canal inválido.'});
@@ -4122,7 +4128,7 @@ app.post('/api/admin/whatsapp-qr/campaigns/sitemap',requireAdmin,sameOriginOnly,
   const create=db.transaction(()=>{let count=0;for(let index=0;index<slots.length;index++){const link=marketingLinks[index%marketingLinks.length],pathname=new URL(link).pathname,tracked=new URL(link);tracked.searchParams.set('utm_source','whatsapp');tracked.searchParams.set('utm_medium','group');tracked.searchParams.set('utm_campaign','vitrinecity_3d');tracked.searchParams.set('utm_content',`slot_${index+1}`);const message=`🏙️ VitrineCity\n\n${descriptions[pathname]||'Conheça uma nova área da VitrineCity e descubra oportunidades dentro do nosso ecossistema digital.'}\n\nConteúdo informativo. Se não for adequado ao grupo, avise para interrompermos os próximos envios.`;for(const jid of groups){insert.run(randomUUID(),jid,jid.split('@')[0],tracked.toString(),message,slots[index].toISOString(),campaignId);count++}}db.prepare(`INSERT INTO whatsapp_qr_campaigns(id,name,days,interval_hours,start_hour,end_hour,groups_count,schedules_count) VALUES (?,?,?,?,?,?,?,?)`).run(campaignId,'VitrineCity · 3 dias · 2 horas',3,2,9,19,groups.length,count);return count});
   const count=create();return res.status(201).json({ok:true,campaignId,groups:groups.length,slots:slots.length,schedules:count});
 });
-app.get('/api/admin/whatsapp-qr/campaigns',requireAdmin,(_req,res)=>res.json({campaigns:db.prepare(`SELECT c.id,c.name,c.days,c.interval_hours intervalHours,c.groups_count groupsCount,c.schedules_count schedulesCount,c.status,c.created_at createdAt,SUM(CASE WHEN s.status='pending' THEN 1 ELSE 0 END) pending,SUM(CASE WHEN s.status='sent' THEN 1 ELSE 0 END) sent,SUM(CASE WHEN s.status='failed' THEN 1 ELSE 0 END) failed,SUM(CASE WHEN s.status='cancelled' THEN 1 ELSE 0 END) cancelled FROM whatsapp_qr_campaigns c LEFT JOIN whatsapp_qr_schedules s ON s.campaign_id=c.id GROUP BY c.id ORDER BY c.created_at DESC LIMIT 20`).all()}));
+app.get('/api/admin/whatsapp-qr/campaigns',requireAdmin,(_req,res)=>res.set('Cache-Control','no-store').json({campaigns:db.prepare(`SELECT id,name,days,interval_hours intervalHours,groups_count groupsCount,schedules_count schedulesCount,status,created_at createdAt FROM whatsapp_qr_campaigns ORDER BY created_at DESC LIMIT 20`).all().map(item=>({...item,...countWhatsAppSchedules(db.prepare('SELECT status,confirmation_state,claimed_at,provider_message_id FROM whatsapp_qr_schedules WHERE campaign_id=?').all(item.id))}))}));
 app.delete('/api/admin/whatsapp-qr/schedules/:id',requireAdmin,sameOriginOnly,(req,res)=>{const result=db.prepare(`UPDATE whatsapp_qr_schedules SET status='cancelled' WHERE id=? AND status='pending'`).run(String(req.params.id||''));if(!result.changes)return res.status(409).json({error:'Somente agendamentos pendentes podem ser cancelados.'});return res.json({ok:true})});
 const whatsappProductCampaigns = registerWhatsAppProductCampaigns({
   app, db, requireAdmin, sameOriginOnly, siteUrl: SITE_URL, dataDir,
@@ -4862,8 +4868,13 @@ function viralQuizRow(id) {
   if (!row) return null;
   const scenes=db.prepare('SELECT id,scene_number,duration_seconds,status,output_url,error_message FROM viral_quiz_scenes WHERE quiz_id=? ORDER BY scene_number').all(id);
   const distribution=db.prepare('SELECT provider,status,publication_id,error_message,updated_at FROM viral_distribution_jobs WHERE quiz_id=? ORDER BY provider').all(id);
-  const media=row.media_project_id?db.prepare('SELECT output_url,production_status,progress,duration_seconds FROM admin_media_projects WHERE id=?').get(row.media_project_id):null;
-  return { ...row, questions: JSON.parse(row.questions_json || '[]'), scenes, distribution, media };
+  const media=row.media_project_id?mediaFactoryProject(row.media_project_id):null;
+  const publication=media?.publication||null;
+  for(const job of distribution)if(job.provider==='vitrine_social'&&publication&&publication.status!=='not_started'){
+    job.publication=publication;job.status=publication.status==='published'?'published':'pending';job.error_message=publication.status==='published'?'':publication.message;
+  }
+  return { ...row, status:media?.production_status==='cancelled'||media?.task_status==='cancelled'?'cancelled':row.status==='published'&&publication?.status!=='published'?'approved':row.status,
+    questions: JSON.parse(row.questions_json || '[]'), scenes, distribution, media, publication };
 }
 app.get('/api/admin/viral-quizzes', requireAdmin, (_req,res) => {
   const quizzes = db.prepare('SELECT * FROM admin_viral_quizzes ORDER BY id DESC LIMIT 40').all()
@@ -4977,21 +4988,28 @@ async function runViralFactory({force=false,userId=null}={}) {
 function runFfmpeg(args){return new Promise((resolve,reject)=>{const child=spawn('ffmpeg',args,{stdio:['ignore','ignore','pipe']});let error='';child.stderr.on('data',chunk=>error+=chunk);child.once('error',reject);child.once('close',code=>code===0?resolve():reject(new Error(`FFmpeg encerrou com código ${code}: ${error.slice(-500)}`)));});}
 async function finishViralQuizVideo(quizId){
   if(!ecosystemCanRun())return false;
-  const quiz=viralQuizRow(quizId),scenes=db.prepare("SELECT * FROM viral_quiz_scenes WHERE quiz_id=? AND status='downloaded' ORDER BY scene_number").all(quizId);
-  if(!quiz||scenes.length!==9)return false;
+  const capture=captureQuizMontage(db,quizId);
+  if(!capture)return false;
+  const {scenes}=capture;
   const listPath=path.join(generatedMediaDir,`viral-${quizId}-concat.txt`),outputName=`viral-quiz-${quizId}-${Date.now()}.mp4`,outputPath=path.join(generatedMediaDir,outputName);
   fs.writeFileSync(listPath,scenes.map(scene=>`file '${scene.local_path.replaceAll("'","'\\''")}'`).join('\n'));
   try{
     await runFfmpeg(['-y','-f','concat','-safe','0','-i',listPath,'-t','65','-vf','scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p','-c:v','libx264','-preset','veryfast','-c:a','aac','-ar','48000','-movflags','+faststart',outputPath]);
     if(!ecosystemCanRun())return false;
     const url=`/uploads/generated-videos/${outputName}`;
-    db.transaction(()=>{db.prepare("UPDATE admin_viral_quizzes SET status='approved',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(quizId);db.prepare("UPDATE admin_media_projects SET output_url=?,production_status='approved',progress=100,duration_seconds=65,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(url,quiz.media_project_id);db.prepare("UPDATE admin_agent_tasks SET status='completed',result_summary=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").run('Vídeo final de 65 segundos montado com 9 cenas e aprovado pelo time.',quiz.task_id);
-      const add=db.prepare('INSERT OR IGNORE INTO viral_distribution_jobs(quiz_id,provider,status) VALUES (?,?,?)');for(const provider of ['vitrine_social','instagram','facebook','tiktok','youtube','kwai','bilibili'])add.run(quizId,provider,provider==='vitrine_social'?'pending':'awaiting_connection');})();
+    if(!commitQuizMontage({db,capture,outputUrl:url,canRun:ecosystemCanRun}))return false;
     await publishViralToVitrine(quizId).catch(error=>db.prepare("UPDATE viral_distribution_jobs SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE quiz_id=? AND provider='vitrine_social'").run(String(error?.message||'publish_failed').slice(0,500),quizId));return true;
   }finally{try{fs.unlinkSync(listPath)}catch{}}
 }
-async function publishViralToVitrine(quizId){if(!ecosystemCanRun())throw Object.assign(new Error('ecosystem_paused'),{ecosystemPaused:true});const quiz=viralQuizRow(quizId),project=mediaFactoryProject(quiz?.media_project_id);if(!quiz||!project?.output_url)throw new Error('Vídeo final ainda não está disponível.');const administrativeUser=db.prepare('SELECT id,email,is_admin FROM users ORDER BY id').all().find(isAdministrativeUser);const userId=quiz.created_by_user_id||administrativeUser?.id;if(!userId)throw new Error('Nenhum administrador disponível para assinar a publicação.');
-  const accountId=String(process.env.CLOUDFLARE_ACCOUNT_ID||'').trim(),token=String(process.env.CLOUDFLARE_STREAM_API_TOKEN||'').trim();if(!accountId||!token)throw new Error('Cloudflare Stream não está configurado.');const copy=await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/copy`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({url:new URL(project.output_url,SITE_URL).toString(),meta:{name:project.title}}),signal:AbortSignal.timeout(30000)});const payload=await copy.json().catch(()=>({}));if(!copy.ok||!payload?.result?.uid)throw new Error(payload?.errors?.[0]?.message||'Cloudflare Stream recusou o vídeo.');const postId=randomUUID();db.transaction(()=>{db.prepare(`INSERT INTO social_posts (id,user_id,video_uid,caption,category,status,moderation_status,moderated_by,moderated_at) VALUES (?,?,?,?,?,'uploading','approved',?,CURRENT_TIMESTAMP)`).run(postId,userId,payload.result.uid,project.caption||project.title,'quiz',userId);db.prepare("UPDATE viral_distribution_jobs SET status='published',publication_id=?,updated_at=CURRENT_TIMESTAMP WHERE quiz_id=? AND provider='vitrine_social'").run(postId,quizId);db.prepare("UPDATE admin_viral_quizzes SET status='published',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(quizId);db.prepare("UPDATE admin_media_projects SET production_status='published',published_post_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(postId,project.id);})();return postId;}
+async function publishViralToVitrine(quizId){
+  if(!ecosystemCanRun())throw Object.assign(new Error('ecosystem_paused'),{ecosystemPaused:true});
+  const quiz=viralQuizRow(quizId),project=mediaFactoryProject(quiz?.media_project_id);
+  if(!quiz||quiz.status==='cancelled'||!project?.output_url)throw new Error('Vídeo final ainda não está disponível.');
+  const administrativeUser=db.prepare('SELECT id,email,is_admin FROM users ORDER BY id').all().find(isAdministrativeUser);
+  const userId=quiz.created_by_user_id||administrativeUser?.id;
+  if(!userId)throw new Error('Nenhum administrador disponível para assinar a publicação.');
+  return mediaPublications.publish(project.id,userId,'quiz');
+}
 let viralVideoFactoryRunning=false;
 async function processViralVideoFactory(){
   if(!ecosystemCanRun()||viralVideoFactoryRunning||!aiConfigured()||AI_PROVIDER!=='openrouter')return;viralVideoFactoryRunning=true;
@@ -5000,17 +5018,21 @@ async function processViralVideoFactory(){
     const ready=db.prepare("SELECT q.id FROM admin_viral_quizzes q JOIN viral_quiz_scenes s ON s.quiz_id=q.id WHERE q.status='in_production' AND s.status='downloaded' GROUP BY q.id HAVING count(*)=9 LIMIT 1").get();
     if(ready)await finishViralQuizVideo(ready.id);
     if(!ecosystemCanRun())return;
-    const pending=db.prepare(`SELECT s.* FROM viral_quiz_scenes s JOIN admin_viral_quizzes q ON q.id=s.quiz_id WHERE s.status='pending' AND q.status='in_production' ORDER BY s.quiz_id,s.scene_number LIMIT 1`).get();
-    if(pending){const claimed=db.prepare("UPDATE viral_quiz_scenes SET status='submitting',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").run(pending.id);if(claimed.changes)try{
+    const pending=db.prepare(`SELECT s.* FROM viral_quiz_scenes s JOIN admin_viral_quizzes q ON q.id=s.quiz_id WHERE s.status='pending' AND s.remote_job_id='' AND s.polling_url='' AND q.status='in_production' ORDER BY s.quiz_id,s.scene_number LIMIT 1`).get();
+    if(pending){const claimed=db.prepare("UPDATE viral_quiz_scenes SET status='submitting',attempt_count=attempt_count+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND remote_job_id='' AND polling_url=''").run(pending.id);if(claimed.changes)try{
       const models=[...new Set([OPENROUTER_VIDEO_MODEL,...MEDIA_VIDEO_MODELS])],model=models[Math.min(Number(pending.attempt_count||0),models.length-1)];
-      const result=await openRouterRequest('https://openrouter.ai/api/v1/videos',{method:'POST',body:JSON.stringify({model,prompt:pending.prompt,duration:pending.duration_seconds,aspect_ratio:'9:16',resolution:'720p',generate_audio:true})},60000);
-      const jobId=String(result.data?.id||''),pollingUrl=String(result.data?.polling_url||'');if(!jobId||!/^https:\/\/openrouter\.ai\//i.test(pollingUrl))throw new Error('O provedor não devolveu uma tarefa de vídeo válida.');
-      db.prepare("UPDATE viral_quiz_scenes SET status='generating',remote_job_id=?,polling_url=?,model=?,attempt_count=attempt_count+1,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(jobId,pollingUrl,model,pending.id);
-    }catch(error){const message=String(error?.message||'submit_failed').slice(0,500);db.prepare("UPDATE viral_quiz_scenes SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(message,pending.id);}}
+      const result=await openRouterRequest('https://openrouter.ai/api/v1/videos',{method:'POST',redirect:'error',body:JSON.stringify({model,prompt:pending.prompt,duration:pending.duration_seconds,aspect_ratio:'9:16',resolution:'720p',generate_audio:true})},60000);
+      const {jobId,pollingUrl}=videoReceipt(result.data);
+      // Persist a valid ID even if a malformed URL needs manual investigation.
+      db.prepare("UPDATE viral_quiz_scenes SET remote_job_id=?,polling_url=?,model=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(jobId,pollingUrl,model,pending.id);
+      if(!jobId||!pollingUrl)throw new Error('video_receipt_invalid');
+      db.prepare("UPDATE viral_quiz_scenes SET status='generating',error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(pending.id);
+    }catch(error){db.prepare("UPDATE viral_quiz_scenes SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(videoFailureMessage(error),pending.id);}}
     const generating=db.prepare("SELECT * FROM viral_quiz_scenes WHERE status='generating' ORDER BY id LIMIT 3").all();
-    for(const scene of generating)try{if(!ecosystemCanRun())break;const result=await openRouterRequest(scene.polling_url,{method:'GET'},30000),status=String(result.data?.status||'').toLowerCase();if(['failed','cancelled'].includes(status))throw new Error(String(result.data?.error?.message||result.data?.error||result.data?.message||status));if(!['completed','succeeded'].includes(status))continue;
-      const mediaUrl=String(result.data?.unsigned_urls?.[0]||result.data?.data?.[0]?.url||result.data?.content_url||'');if(!/^https:\/\//i.test(mediaUrl))throw new Error('Cena concluída sem arquivo disponível.');const download=await fetch(mediaUrl,{headers:{Authorization:`Bearer ${AI_API_KEY}`},signal:AbortSignal.timeout(120000)});if(!download.ok)throw new Error(`Download da cena falhou (${download.status}).`);const buffer=Buffer.from(await download.arrayBuffer());if(!buffer.length||buffer.length>250*1024*1024)throw new Error('Cena inválida ou maior que 250 MB.');const name=`viral-${scene.quiz_id}-scene-${scene.scene_number}.mp4`,local=path.join(generatedMediaDir,name);fs.writeFileSync(local,buffer);db.prepare("UPDATE viral_quiz_scenes SET status='downloaded',local_path=?,output_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(local,`/uploads/generated-videos/${name}`,scene.id);await finishViralQuizVideo(scene.quiz_id);
-    }catch(error){const message=String(error?.message||'scene_failed').slice(0,500),retry=Number(scene.attempt_count||0)<3&&!/insufficient credits|key limit exceeded/i.test(message);db.prepare("UPDATE viral_quiz_scenes SET status=?,error_message=?,remote_job_id='',polling_url='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(retry?'pending':'failed',message,scene.id);}
+    for(const scene of generating)try{if(!ecosystemCanRun())break;const pollingUrl=videoPollingUrl(scene.polling_url,scene.remote_job_id);if(!pollingUrl)throw new Error('video_receipt_invalid');
+      const result=await openRouterRequest(pollingUrl,{method:'GET',redirect:'error'},30000);if(videoPollState(result.data,scene.remote_job_id)!=='completed')continue;
+      const buffer=await downloadVideo(result.data,scene.remote_job_id,{apiKey:AI_API_KEY});const name=`viral-${scene.quiz_id}-scene-${scene.scene_number}.mp4`,local=path.join(generatedMediaDir,name);fs.writeFileSync(local,buffer);db.prepare("UPDATE viral_quiz_scenes SET status='downloaded',local_path=?,output_url=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(local,`/uploads/generated-videos/${name}`,scene.id);await finishViralQuizVideo(scene.quiz_id);
+    }catch(error){db.prepare("UPDATE viral_quiz_scenes SET status=?,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='generating'").run(videoRetryableFailure(error)?'generating':'failed',videoFailureMessage(error),scene.id);}
   }finally{viralVideoFactoryRunning=false;}
 }
 app.get('/api/admin/viral-factory/automation',requireAdmin,(_req,res)=>res.json({settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get(),trends:db.prepare('SELECT * FROM viral_factory_trends ORDER BY id DESC LIMIT 20').all(),openrouterConfigured:aiConfigured()}));
@@ -5780,9 +5802,10 @@ app.get('/api/admin/agents', requireAdmin, (_req, res) => {
 });
 
 function mediaFactoryProject(id) {
-  return db.prepare(`SELECT m.*,t.title,t.instructions,t.priority,t.status AS task_status,a.name AS agent_name
+  const project=db.prepare(`SELECT m.*,t.title,t.instructions,t.priority,t.status AS task_status,a.name AS agent_name
     FROM admin_media_projects m JOIN admin_agent_tasks t ON t.id=m.task_id
     JOIN admin_specialist_agents a ON a.id=t.agent_id WHERE m.id=?`).get(id);
+  return project?{...project,publication:mediaPublications.snapshot(project)}:null;
 }
 
 app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
@@ -5800,7 +5823,8 @@ app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
   }
   return res.json({ configured: AI_PROVIDER === 'openrouter' && Boolean(AI_API_KEY),
     models: { image: OPENROUTER_IMAGE_MODEL, video: OPENROUTER_VIDEO_MODEL,
-      imageOptions: MEDIA_IMAGE_MODELS, videoOptions: MEDIA_VIDEO_MODELS }, budget, projects });
+      imageOptions: MEDIA_IMAGE_MODELS, videoOptions: MEDIA_VIDEO_MODELS }, budget,
+    projects:projects.map(project=>({...project,publication:mediaPublications.snapshot(project)})) });
 });
 
 app.post('/api/admin/media-factory', requireAdmin, (req, res) => {
@@ -5848,48 +5872,58 @@ app.post('/api/admin/media-projects/:id/generate', requireAdmin, requireEcosyste
       db.prepare("UPDATE admin_agent_tasks SET status='awaiting_approval',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(project.task_id);
       return res.json({ project: mediaFactoryProject(id) });
     }
-    const result = await openRouterRequest('https://openrouter.ai/api/v1/videos', { method: 'POST', body: JSON.stringify({
+    // Claim before any network await. A timeout/crash must never make a second
+    // manual click submit another paid generation for this project.
+    const claim=db.prepare("UPDATE admin_media_projects SET production_status='editing',progress=10,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND production_status IN ('briefing','script','assets') AND remote_job_id='' AND polling_url=''").run(id);
+    if(!claim.changes)return res.status(409).json({error:'Esta geração já foi iniciada e precisa de conferência.'});
+    const result = await openRouterRequest('https://openrouter.ai/api/v1/videos', { method: 'POST', redirect:'error', body: JSON.stringify({
       model: project.model || OPENROUTER_VIDEO_MODEL, prompt: project.prompt, duration: project.duration_seconds,
       aspect_ratio: project.aspect_ratio, resolution: '720p', generate_audio: false
     }) }, 60000);
-    const jobId = String(result.data?.id || ''), pollingUrl = String(result.data?.polling_url || '');
-    if (!jobId || !/^https:\/\/openrouter\.ai\//i.test(pollingUrl)) throw new Error('O provedor não devolveu uma tarefa de vídeo válida.');
-    db.prepare(`UPDATE admin_media_projects SET production_status='editing',progress=20,remote_job_id=?,polling_url=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    const {jobId,pollingUrl}=videoReceipt(result.data);
+    db.prepare(`UPDATE admin_media_projects SET progress=CASE WHEN production_status='editing' THEN 20 ELSE progress END,remote_job_id=?,polling_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND remote_job_id='' AND polling_url=''`)
       .run(jobId, pollingUrl, id);
+    if (!jobId || !pollingUrl) throw new Error('video_receipt_invalid');
+    if(!videoProjectUnchanged(mediaFactoryProject(id),{...project,production_status:'editing',remote_job_id:jobId,polling_url:pollingUrl}))return res.status(409).json({error:'O projeto foi alterado durante a geração. O recibo recebido foi preservado sem reabrir o projeto.'});
     return res.status(202).json({ project: mediaFactoryProject(id) });
   } catch (error) {
-    db.prepare("UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(String(error.message).slice(0,500), id);
-    return res.status(error.status || 502).json({ error: error.message });
+    const message=project.format==='image'?String(error.message).slice(0,500):videoFailureMessage(error);
+    if(project.format==='image')db.prepare("UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(message,id);
+    else db.prepare("UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND production_status='editing'").run(message,id);
+    return res.status(error.status || 502).json({ error: message });
   }
 });
 
 app.post('/api/admin/media-projects/:id/sync', requireAdmin, async (req, res) => {
   const id = Number(req.params.id), project = mediaFactoryProject(id);
-  if (!project?.polling_url || !/^https:\/\/openrouter\.ai\//i.test(project.polling_url)) return res.status(409).json({ error: 'Este projeto não possui vídeo em processamento.' });
+  const pollingUrl=videoPollingUrl(project?.polling_url,project?.remote_job_id);
+  if (!pollingUrl||project.production_status!=='editing') return res.status(409).json({ error: 'Este projeto não possui vídeo em processamento com recibo válido.' });
   try {
-    const result = await openRouterRequest(project.polling_url, { method: 'GET' }, 30000);
-    const status = String(result.data?.status || '').toLowerCase();
-    if (['failed','cancelled'].includes(status)) throw new Error(String(result.data?.error?.message || 'A geração do vídeo falhou.'));
-    if (!['completed','succeeded'].includes(status)) {
+    const result = await openRouterRequest(pollingUrl, { method: 'GET', redirect:'error' }, 30000);
+    const status=videoPollState(result.data,project.remote_job_id);
+    if(!videoProjectUnchanged(mediaFactoryProject(id),project))return res.status(409).json({error:'O projeto foi alterado durante a consulta. Nenhuma conclusão foi aplicada.'});
+    if (status!=='completed') {
       const progress = Math.max(Number(project.progress || 20), status === 'processing' || status === 'in_progress' ? 65 : 35);
       db.prepare('UPDATE admin_media_projects SET progress=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(progress,id);
       return res.status(202).json({ status, project: mediaFactoryProject(id) });
     }
-    const mediaUrl = String(result.data?.unsigned_urls?.[0] || result.data?.data?.[0]?.url || '');
-    if (!/^https:\/\//i.test(mediaUrl)) throw new Error('O vídeo terminou, mas o arquivo não foi disponibilizado.');
-    const download = await fetch(mediaUrl, { headers: { Authorization: `Bearer ${AI_API_KEY}` }, signal: AbortSignal.timeout(120000) });
-    if (!download.ok) throw new Error(`Não foi possível baixar o vídeo (${download.status}).`);
-    const buffer = Buffer.from(await download.arrayBuffer());
-    if (!buffer.length || buffer.length > 250 * 1024 * 1024) throw new Error('O vídeo é inválido ou excede 250 MB.');
-    const file = `factory-${id}-${Date.now()}.mp4`; fs.writeFileSync(path.join(generatedMediaDir,file),buffer,{flag:'wx'});
+    const buffer=await downloadVideo(result.data,project.remote_job_id,{apiKey:AI_API_KEY});
+    const file = `factory-${id}-${Date.now()}.mp4`;
     const cost = Number(result.data?.usage?.cost || result.data?.usage?.total_cost || 0);
-    db.prepare(`UPDATE admin_media_projects SET production_status='review',progress=100,output_url=?,usage_cost_usd=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-      .run(`/uploads/generated-videos/${file}`,cost,id);
-    db.prepare("UPDATE admin_agent_tasks SET status='awaiting_approval',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(project.task_id);
+    const saved=db.transaction(()=>{
+      if(!videoProjectUnchanged(mediaFactoryProject(id),project))return false;
+      fs.writeFileSync(path.join(generatedMediaDir,file),buffer,{flag:'wx'});
+      db.prepare(`UPDATE admin_media_projects SET production_status='review',progress=100,output_url=?,usage_cost_usd=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND production_status='editing' AND remote_job_id=? AND polling_url=?`)
+        .run(`/uploads/generated-videos/${file}`,cost,id,project.remote_job_id,project.polling_url);
+      db.prepare("UPDATE admin_agent_tasks SET status='awaiting_approval',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(project.task_id);
+      return true;
+    })();
+    if(!saved)return res.status(409).json({error:'O projeto foi alterado durante o download. O arquivo e a etapa atuais foram preservados.'});
     return res.json({ project: mediaFactoryProject(id) });
   } catch (error) {
-    db.prepare('UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(String(error.message).slice(0,500),id);
-    return res.status(error.status || 502).json({ error: error.message });
+    const message=videoFailureMessage(error);
+    db.prepare("UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND production_status='editing' AND remote_job_id=? AND polling_url=?").run(message,id,project.remote_job_id,project.polling_url);
+    return res.status(error.status || 502).json({ error: message });
   }
 });
 
@@ -5901,26 +5935,19 @@ app.post('/api/admin/media-projects/:id/approve', requireAdmin, (req,res) => {
   return res.json({project:mediaFactoryProject(id)});
 });
 
-app.post('/api/admin/media-projects/:id/publish-vitriny', requireAdmin, requireEcosystemRunning, async (req,res) => {
-  const id=Number(req.params.id),project=mediaFactoryProject(id);
-  if(!project?.output_url||project.production_status!=='approved')return res.status(409).json({error:'Aprove a criação antes de publicar.'});
+app.post('/api/admin/media-projects/:id/publish-vitriny', requireAdmin, sameOriginOnly, requireEcosystemRunning, async (req,res) => {
+  const id=Number(req.params.id);
   try {
-    const postId=randomUUID(),caption=project.caption||project.title;
-    if(project.format==='image'){
-      db.prepare(`INSERT INTO social_posts (id,user_id,video_uid,media_type,image_url,caption,category,status,moderation_status,moderated_by,moderated_at)
-        VALUES (?,?,?,'image',?,?,'geral','ready','approved',?,CURRENT_TIMESTAMP)`)
-        .run(postId,req.user.id,`factory-image-${id}`,project.output_url,caption,req.user.id);
-    }else{
-      const accountId=String(process.env.CLOUDFLARE_ACCOUNT_ID||'').trim(),token=String(process.env.CLOUDFLARE_STREAM_API_TOKEN||'').trim();
-      if(!accountId||!token)return res.status(503).json({error:'Configure o Cloudflare Stream para publicar vídeos na Vitrine Social.'});
-      const copy=await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/copy`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({url:new URL(project.output_url,SITE_URL).toString(),meta:{name:project.title}}),signal:AbortSignal.timeout(30000)});
-      const payload=await copy.json().catch(()=>({})); if(!copy.ok||!payload?.result?.uid)throw new Error(payload?.errors?.[0]?.message||'Cloudflare Stream não aceitou o vídeo.');
-      db.prepare(`INSERT INTO social_posts (id,user_id,video_uid,caption,category,status,moderation_status,moderated_by,moderated_at)
-        VALUES (?,?,?,?,?,'uploading','approved',?,CURRENT_TIMESTAMP)`).run(postId,req.user.id,payload.result.uid,caption,'geral',req.user.id);
-    }
-    db.prepare("UPDATE admin_media_projects SET production_status='published',published_post_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(postId,id);
-    return res.json({ok:true,postId,project:mediaFactoryProject(id)});
-  }catch(error){return res.status(502).json({error:String(error.message).slice(0,400)});}
+    const publication=await mediaPublications.publish(id,req.user.id);
+    return res.status(publication.status==='published'?200:202).json({ok:true,postId:publication.postId,publication,project:mediaFactoryProject(id)});
+  }catch(error){return res.status(error.status||500).json({error:error.status?error.message:'Não foi possível registrar o envio. Confira o projeto antes de tentar novamente.'});}
+});
+app.post('/api/admin/media-projects/:id/sync-publication', requireAdmin, sameOriginOnly, async (req,res) => {
+  const id=Number(req.params.id);
+  try{
+    const publication=await mediaPublications.reconcile(id);
+    return res.json({ok:true,publication,project:mediaFactoryProject(id)});
+  }catch(error){return res.status(error.status||500).json({error:error.status?error.message:'Não foi possível conferir a publicação agora.'});}
 });
 
 app.post('/api/integrations/binance-local/heartbeat', (req, res) => {
@@ -6081,16 +6108,25 @@ app.patch('/api/admin/agent-tasks/:id', requireAdmin, (req, res) => {
   return res.json({ ok: true, status: next });
 });
 
-app.patch('/api/admin/media-projects/:id', requireAdmin, (req, res) => {
+app.patch('/api/admin/media-projects/:id', requireAdmin, sameOriginOnly, (req, res) => {
   const id = Number(req.params.id);
   const productionStatus = String(req.body?.productionStatus || '');
   const allowed = new Set(['briefing','script','assets','editing','review','approved','published','cancelled']);
   if (!Number.isInteger(id) || !allowed.has(productionStatus)) return res.status(400).json({ error: 'Etapa de produção inválida.' });
   const outputUrl = req.body?.outputUrl == null ? null : String(req.body.outputUrl).trim().slice(0,1000);
   if (outputUrl && !/^https:\/\//i.test(outputUrl)) return res.status(400).json({ error: 'O arquivo final precisa usar uma URL HTTPS.' });
+  const project=mediaFactoryProject(id);
+  if(!project)return res.status(404).json({error:'Projeto de mídia não encontrado.'});
+  if(productionStatus==='published'&&project.publication?.status!=='published')return res.status(409).json({error:'A publicação só é confirmada quando o vídeo está pronto e aprovado.'});
+  if(project.publication?.status!=='not_started'&&((outputUrl!==null&&outputUrl!==project.output_url)||!['approved','published','cancelled'].includes(productionStatus)))
+    return res.status(409).json({error:'Este projeto já tem um envio registrado. Preserve o arquivo e confira a publicação existente.'});
   const result = db.prepare(`UPDATE admin_media_projects SET production_status=?,output_url=COALESCE(?,output_url),updated_at=CURRENT_TIMESTAMP WHERE id=?`)
     .run(productionStatus, outputUrl, id);
   if (!result.changes) return res.status(404).json({ error: 'Projeto de mídia não encontrado.' });
+  if(productionStatus==='cancelled'&&project.published_post_id){
+    db.prepare("UPDATE social_posts SET status='deleted',moderation_status='removed',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(project.published_post_id);
+    mediaPublications.projectChanges(project.published_post_id);
+  }
   return res.json({ ok: true, productionStatus });
 });
 
@@ -9349,7 +9385,7 @@ app.patch('/api/admin/social/posts/:id/moderation', requireAdmin, sameOriginOnly
   }
   db.transaction(() => {
     let status=post.status,moderationStatus=post.moderation_status;
-    if(action==='approve'){status='ready';moderationStatus='approved';notifyFollowers(post.user_id,'new_post',post.media_type==='image'?'publicou uma nova foto':'publicou um novo vídeo',post.id);db.prepare(`UPDATE affiliate_content_submissions SET status='approved',moderation_note=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE social_post_id=? AND status='pending'`).run(note,req.user.id,post.id);}
+    if(action==='approve'){status=mediaPublications.approvalStatus(post);moderationStatus='approved';if(status==='ready'&&post.status!=='ready')notifyFollowers(post.user_id,'new_post',post.media_type==='image'?'publicou uma nova foto':'publicou um novo vídeo',post.id);db.prepare(`UPDATE affiliate_content_submissions SET status='approved',moderation_note=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE social_post_id=? AND status='pending'`).run(note,req.user.id,post.id);}
     if(action==='reject'){status='rejected';moderationStatus='rejected';refundSocialLink(post.id,note);db.prepare(`UPDATE affiliate_content_submissions SET status='rejected',moderation_note=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE social_post_id=? AND status='pending'`).run(note,req.user.id,post.id);}
     if(action==='remove'){status='deleted';moderationStatus='removed';refundSocialLink(post.id,note);}
     if(action==='suspend'){
@@ -9371,6 +9407,8 @@ app.patch('/api/admin/social/posts/:id/moderation', requireAdmin, sameOriginOnly
     }
     db.prepare(`UPDATE social_posts SET status=?,moderation_status=?,moderation_reason=?,moderated_by=?,
       moderated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(status,moderationStatus,note,req.user.id,post.id);
+    mediaPublications.projectChanges(post.id);
+    if(action==='suspend')for(const related of db.prepare('SELECT id FROM social_posts WHERE user_id=?').all(post.user_id))mediaPublications.projectChanges(related.id);
     db.prepare(`INSERT INTO social_moderation_actions(post_id,author_id,admin_id,action,reason_code,note,previous_status,new_status)
       VALUES (?,?,?,?,?,?,?,?)`).run(post.id,post.user_id,req.user.id,action,reasonCode,note,post.status,status);
     db.prepare("UPDATE social_reports SET status=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE post_id=? AND status='open'")
@@ -9390,12 +9428,15 @@ app.patch('/api/admin/social/appeals/:id', requireAdmin, sameOriginOnly, (req, r
     const accepted=action==='accept';
     db.prepare(`UPDATE social_appeals SET status=?,admin_note=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?`)
       .run(accepted?'accepted':'rejected',note,req.user.id,appeal.id);
+    let acceptedStatus=appeal.post_status;
     if(accepted){
-      db.prepare(`UPDATE social_posts SET status='ready',moderation_status='approved',moderation_reason=?,moderated_by=?,moderated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(note,req.user.id,appeal.post_id);
       db.prepare("UPDATE social_account_restrictions SET status='active',updated_at=CURRENT_TIMESTAMP WHERE user_id=?").run(appeal.user_id);
+      acceptedStatus=mediaPublications.approvalStatus(db.prepare('SELECT * FROM social_posts WHERE id=?').get(appeal.post_id));
+      db.prepare(`UPDATE social_posts SET status=?,moderation_status='approved',moderation_reason=?,moderated_by=?,moderated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(acceptedStatus,note,req.user.id,appeal.post_id);
+      mediaPublications.projectChanges(appeal.post_id);
     }
     db.prepare(`INSERT INTO social_moderation_actions(post_id,author_id,admin_id,action,reason_code,note,previous_status,new_status)
-      VALUES (?,?,?,?,?,?,?,?)`).run(appeal.post_id,appeal.user_id,req.user.id,accepted?'appeal_accepted':'appeal_rejected','outro',note,appeal.post_status,accepted?'ready':appeal.post_status);
+      VALUES (?,?,?,?,?,?,?,?)`).run(appeal.post_id,appeal.user_id,req.user.id,accepted?'appeal_accepted':'appeal_rejected','outro',note,appeal.post_status,acceptedStatus);
     createSocialNotification(appeal.user_id,req.user.id,'moderation_decision',accepted?'seu recurso foi aceito':'seu recurso foi recusado',`appeal:${appeal.id}`,appeal.post_id);
   })();
   return res.json({ok:true,status:action==='accept'?'accepted':'rejected'});
@@ -9590,16 +9631,7 @@ app.post('/api/webhooks/cloudflare-stream', (req, res) => {
   if (actual.length !== expectedBuffer.length || !timingSafeEqual(actual, expectedBuffer)) {
     return res.status(401).json({ error: 'Assinatura inválida.' });
   }
-  const video = req.body || {};
-  const state = video.status?.state;
-  const status = video.readyToStream || video.readytoStream || state === 'ready'
-    ? 'pending_review' : state === 'error' ? 'error' : 'processing';
-  const post = db.prepare('SELECT id FROM social_posts WHERE video_uid=?').get(String(video.uid || ''));
-  if (post && status === 'error') refundSocialLink(post.id, 'falha no processamento do vídeo');
-  db.prepare(`UPDATE social_posts SET status=?,moderation_status=CASE WHEN ?='pending_review' THEN
-      CASE WHEN moderation_reason='' THEN 'pending' ELSE 'flagged' END ELSE moderation_status END,
-      duration_seconds=?,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE video_uid=?`).run(status, status,
-      Number(video.duration) || null, String(video.status?.errorReasonText || '').slice(0, 500), String(video.uid || ''));
+  mediaPublications.applyStream(req.body || {});
   return res.json({ ok: true });
 });
 function marketplaceProductSlug(value) {
