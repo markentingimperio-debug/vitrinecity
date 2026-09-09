@@ -12,7 +12,7 @@ const date=value=>{if(value===null||value===undefined||value==='')return null;co
 const dateLabel=value=>{const d=date(value);return d?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'}).format(d):'Horário não informado';};
 const timeLabel=value=>{const d=date(value);return d?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'}).format(d):'—';};
 
-export function operationState(value){return STATES[value]||({connected:['Conectado','neutral'],partial:['Conexão parcial','warn'],missing:['Conexão pendente','warn'],pending:['Pendente','warn']})[value]||['Estado não informado','neutral'];}
+export function operationState(value){return STATES[value]||({preview:['Prévia','neutral'],connected:['Conectado','neutral'],partial:['Conexão parcial','warn'],missing:['Conexão pendente','warn'],pending:['Pendente','warn']})[value]||['Estado não informado','neutral'];}
 export function operationHref(value,origin){
   if(typeof value!=='string'||!value||value.length>2048||/[\u0000-\u0020\u007f\\]/.test(value)||value.startsWith('//'))return '';
   try{const own=new URL(origin),url=new URL(value,own);if(url.username||url.password)return '';if(url.origin===own.origin){if(!value.startsWith('/')&&!/^https?:\/\//.test(value))return '';if(/^\/api(?:\/|$)|^\/(?:logout|sair)(?:[/.]|$)/i.test(url.pathname))return '';return url.pathname+url.search+url.hash;}if(url.protocol!=='https:'||url.port||!url.hostname.includes('.')||/^[\d.]+$/.test(url.hostname)||/[:]|(?:^|\.)(?:localhost|local|internal)$/.test(url.hostname))return '';return url.href;}catch{return '';}

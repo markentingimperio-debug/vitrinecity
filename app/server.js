@@ -2687,7 +2687,7 @@ const socialCommentCampaigns = registerSocialCommentCampaigns({
   metaAdapter:createMetaCommentApi({db,decryptToken:decryptSocialToken})
 });
 setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover,generateBookIllustration,canRun:ecosystemCanRun});
-const ecosystemCatalog=createEcosystemCatalog({db,siteUrl:SITE_URL,sourceCatalog:{get:key=>dailyStories?.catalog?.get(key)||socialCommentSources.get(key)}});
+const ecosystemCatalog=createEcosystemCatalog({db,siteUrl:SITE_URL,services:()=>publicServiceCatalog(),sourceCatalog:{get:key=>dailyStories?.catalog?.get(key)||socialCommentSources.get(key)}});
 const ecosystemInternalSocial=createEcosystemInternalSocial({db,siteUrl:SITE_URL,sourceCatalog:{get:key=>dailyStories?.catalog?.get(key)||socialCommentSources.get(key)},getPolicy:()=>ecosystem.policy(),moderationReason:socialModerationReason,isPublisherAllowed:id=>isAdministrativeUser(db.prepare('SELECT id,email,is_admin FROM users WHERE id=?').get(id))});
 ecosystem=createEcosystemOrchestrator({db,getStories:()=>dailyStories,catalog:ecosystemCatalog,runInternalSocial:options=>ecosystemInternalSocial.run(options),getInternalSocial:()=>ecosystemInternalSocial.snapshot()});
 registerEcosystemRoutes({app,service:ecosystem,requireAdmin,sameOriginOnly});
