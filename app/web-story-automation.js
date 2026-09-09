@@ -14,7 +14,7 @@ const safeSummary=value=>typeof value==='string'?value.replace(/[\x00-\x1f]/g,' 
 /** Durable local scheduler. processSource must obey signal and check synchronous
  * isCurrent() immediately before its publication transaction. Publication itself
  * must also be idempotent by source key, including recovery after a process crash. */
-export function createStoryAutomation({db,getCandidates,processSource,isConfigured=()=>true,canRun=()=>true,autoRunAllowed=()=>true,now=Date.now,schedule=false}){
+export function createStoryAutomation({db,getCandidates,processSource,isConfigured=()=>true,canRun=()=>true,autoRunAllowed=()=>true,recoveryForSource=null,publicationCounts=null,now=Date.now,schedule=false}){
   if(typeof getCandidates!=='function'||typeof processSource!=='function')throw TypeError('Candidate and source processors are required.');
   db.exec(`CREATE TABLE IF NOT EXISTS web_story_automation_settings(
     id INTEGER PRIMARY KEY CHECK(id=1),enabled INTEGER NOT NULL DEFAULT 0,daily_limit INTEGER NOT NULL DEFAULT 6,
@@ -43,15 +43,21 @@ export function createStoryAutomation({db,getCandidates,processSource,isConfigur
   const selectedGroups=s=>JSON.parse(s.groups_json);
   const configured=()=>{try{return isConfigured()===true;}catch{return false;}};
   const quota=day=>{const counts=Object.fromEntries(db.prepare('SELECT status,count(*) total FROM web_story_automation_jobs WHERE day=? GROUP BY status').all(day).map(row=>[row.status,row.total]));return {...counts,attempted:Object.values(counts).reduce((a,b)=>a+b,0)};};
+  function catalogRetry(time=now()){
+    const events=db.prepare("SELECT event,created_at FROM web_story_automation_events WHERE event IN ('candidate_lookup_failed','candidate_lookup_resolved') AND created_at>=? AND created_at<=? ORDER BY id DESC").all(slot(local(time).day,0),time);
+    const attempts=events.filter(item=>item.event==='candidate_lookup_failed').length,pending=events[0]?.event==='candidate_lookup_failed',remaining=Math.max(0,3-attempts);
+    return {pending,attempts,remaining,nextAt:pending&&remaining?new Date(events[0].created_at+Math.min(attempts,2)*15*60000).toISOString():null};
+  }
   let closed=false,pending=null,active=null,scheduleTimer=null;
   function status(){
     const time=now(),p=local(time),s=settings(),q=quota(p.day),ok=configured(),running=!!s.lease_owner&&s.lease_until>time;
     let nextAt=null;
     if(!closed&&s.enabled&&ok){let day=p.day;if(p.day<s.max_day){day=s.max_day;if(quota(day).attempted>=s.daily_limit||s.last_auto_day>=day)day=nextDay(day);}else if(q.attempted>=s.daily_limit||s.last_auto_day>=p.day)day=nextDay(p.day);nextAt=new Date(Math.max(time,slot(day,s.hour))).toISOString();}
+    const retry=catalogRetry(time);if(retry.pending&&s.enabled&&ok&&q.attempted<s.daily_limit&&p.day>=s.max_day)nextAt=retry.nextAt;
     return {enabled:!!s.enabled,configured:ok,dailyLimit:s.daily_limit,hour:s.hour,timeZone:ZONE,revision:s.revision,groups:selectedGroups(s),running,closed,nextAt,
       quota:{date:p.day,attempted:q.attempted,remaining:Math.max(0,s.daily_limit-q.attempted),published:q.published||0,review:q.review||0,failed:q.failed||0,interrupted:q.interrupted||0,running:q.running||0},
-      reason:closed?'closed':!s.enabled?'disabled':!ok?'not_configured':s.last_reason,
-      history:db.prepare('SELECT id,source_key sourceKey,group_name sourceGroup,day,status,reason,story_id storyId,summary,started_at startedAt,finished_at finishedAt,diagnostics_json FROM web_story_automation_jobs ORDER BY id DESC LIMIT 30').all().map(({diagnostics_json,...row})=>{let details={};try{details=JSON.parse(diagnostics_json);}catch{}return {...row,diagnostics:storyDiagnostics(details)};})};
+      reason:closed?'closed':!s.enabled?'disabled':!canRun()?'global_paused':!ok?'not_configured':s.last_reason,catalogRetry:retry,...(publicationCounts?{publications:publicationCounts()}:{}),
+      history:db.prepare('SELECT id,source_key sourceKey,group_name sourceGroup,day,status,reason,story_id storyId,summary,started_at startedAt,finished_at finishedAt,diagnostics_json FROM web_story_automation_jobs ORDER BY id DESC LIMIT 30').all().map(({diagnostics_json,...row})=>{let details={};try{details=JSON.parse(diagnostics_json);}catch{}return {...row,diagnostics:storyDiagnostics(details),...(recoveryForSource?{recovery:recoveryForSource(row.sourceKey)}:{})};})};
   }
   function isCurrent(context){
     if(closed||context.controller.signal.aborted||!configured()||!canRun())return false;
@@ -148,9 +154,9 @@ export function createStoryAutomation({db,getCandidates,processSource,isConfigur
           timeout=setTimeout(()=>jobController.abort(),JOB_TIMEOUT);timeout.unref?.();
           const result=await Promise.race([Promise.resolve().then(()=>{if(!current())throw Error('interrupted');return processSource(pick.source,{signal:jobController.signal,isCurrent:current});}),cancelled]);
           if(!current()){finish(context,id,'interrupted','lease_or_settings_changed');reason='interrupted';break;}
-          if(!result||!['published','review'].includes(result.status))throw Error('invalid_result');
+          if(!result||!['published','review','failed'].includes(result.status))throw Error('invalid_result');
           if(result.status==='published'&&(typeof result.storyId!=='string'||!result.storyId.trim()||(pick.existingStoryId&&result.storyId!==pick.existingStoryId)))throw Error('invalid_story_identity');
-          finish(context,id,result.status,result.status==='review'?'needs_review':'published',result);
+          finish(context,id,result.status,result.status==='review'?'needs_review':result.status==='failed'?'generation_unavailable':'published',result);
         }catch{
           const interrupted=!isCurrent(context);finish(context,id,interrupted?'interrupted':'failed',interrupted?'lease_or_settings_changed':jobController.signal.aborted?'processor_timeout':'processor_failed');
           if(interrupted){reason='interrupted';break;}
@@ -163,7 +169,9 @@ export function createStoryAutomation({db,getCandidates,processSource,isConfigur
       db.transaction(()=>{
         const s=settings();if(s.lease_owner!==context.owner)return;
         db.prepare("UPDATE web_story_automation_jobs SET status='interrupted',reason='worker_stopped',finished_at=? WHERE owner=? AND status='running'").run(now(),context.owner);
-        const autoDay=!context.manual&&['completed','daily_limit','no_candidates','candidate_error'].includes(reason)?context.day:s.last_auto_day;
+        const failed=reason==='candidate_error',retry=catalogRetry();
+        if(failed||retry.pending&&['completed','daily_limit','no_candidates'].includes(reason))db.prepare('INSERT INTO web_story_automation_events(event,actor,revision,created_at) VALUES(?,?,?,?)').run(failed?'candidate_lookup_failed':'candidate_lookup_resolved',context.actor,context.revision,now());
+        const autoDay=!context.manual&&['completed','daily_limit','no_candidates'].includes(reason)?context.day:s.last_auto_day;
         db.prepare("UPDATE web_story_automation_settings SET lease_owner='',lease_until=0,last_reason=?,last_auto_day=? WHERE id=1 AND lease_owner=?").run(reason,autoDay,context.owner);
       }).immediate();
       if(active===context)active=null;
@@ -172,11 +180,11 @@ export function createStoryAutomation({db,getCandidates,processSource,isConfigur
   function run({manual=false,actor='system'}={}){
     if(closed||pending)return status();
     const context=db.transaction(()=>{
-      const s=settings(),time=now(),p=local(time);let reason='';
+      const s=settings(),time=now(),p=local(time),retry=catalogRetry(time);let reason='';
       if(s.lease_until<=time)db.prepare("UPDATE web_story_automation_jobs SET status='interrupted',reason='lease_expired',finished_at=? WHERE status='running'").run(time);
       if(!s.enabled)reason='disabled';else if(!canRun())reason='global_paused';else if(!manual&&!autoRunAllowed())reason='centrally_coordinated';else if(!configured())reason='not_configured';else if(p.day<s.max_day)reason='clock_behind';
       else if(s.lease_owner&&s.lease_until>time)reason='running';else if(quota(p.day).attempted>=s.daily_limit)reason='daily_limit';
-      else if(!manual&&p.hour<s.hour)reason='before_schedule';else if(!manual&&s.last_auto_day>=p.day)reason='already_scheduled';
+      else if(!manual&&p.hour<s.hour)reason='before_schedule';else if(retry.pending&&!retry.remaining)reason='candidate_retry_limit';else if(retry.pending&&Date.parse(retry.nextAt)>time)reason='candidate_retry_wait';else if(!manual&&s.last_auto_day>=p.day&&!retry.pending)reason='already_scheduled';
       if(reason){if(reason!=='running')db.prepare('UPDATE web_story_automation_settings SET last_reason=? WHERE id=1').run(reason);return null;}
       const owner=randomUUID();
       db.prepare("UPDATE web_story_automation_jobs SET status='interrupted',reason='lease_expired',finished_at=? WHERE status='running'").run(time);

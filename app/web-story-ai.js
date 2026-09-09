@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {fetchCatalogImage,originalCatalogImageUrl} from './catalog-product-images.js';
-import {rasterSize} from './web-story-assets.js';
+import {rasterSize,normalizeStoryImagePath} from './web-story-assets.js';
 import {storyPageVisibleText} from './web-story-render.js';
 import {storySourceCta} from './web-story-cta.js';
 
@@ -15,6 +15,13 @@ const reviewFailures=review=>[...reviewCriteria.filter(key=>review?.[key]===fals
 const reviewNotes=value=>plain(value,500).replace(/https?:\/\/\S+|www\.\S+/gi,'[link removido]').replace(/[\w.+-]+@[\w.-]+/g,'[contato removido]');
 const hold=(code,review={},repair=null)=>({draft:null,approved:false,notes:code,qualityFailures:reviewFailures(review),review:{...review,notes:reviewNotes(review?.notes),approved:false,qualityCheckOnly:true},repair:repair?{...repair,outcome:'held'}:{attempted:false}});
 const structuralRepairCodes=new Set(['ai_invalid_json','ai_copy_limits','ai_page_invalid','ai_ten_pages_required']);
+function providerFailure(error,fallback){
+  const code=String(error?.code||''),message=String(error?.message||'');
+  if(/inference is blocked|account.{0,30}(?:blocked|suspended|disabled)|zdr|data.policy|no endpoints found matching|insufficient.{0,30}credits|key limit exceeded|invalid.{0,20}key|unauthorized/i.test(message)||code==='openai_story_not_configured'||code==='openai_story_http_error'&&error.status<500&&error.status!==429)return 'ai_provider_blocked';
+  if(['openai_story_timeout','openai_story_network_error'].includes(code)||code==='openai_story_http_error'&&(error.status>=500||error.status===429))return fallback;
+  if(['story_image_invalid','story_image_quality'].includes(message))return message;
+  return code||fallback;
+}
 // A low-risk editorial repair may improve presentation/completeness, never
 // override a factual, originality, safety or source rejection.
 const editorialRepairAllowed=review=>review.risk==='low'&&review.grounded===true&&review.original===true&&['complete','nonRepetitive','commerceBalanced'].some(key=>review[key]===false);
@@ -57,6 +64,32 @@ function completeRecipePages(source,{homeCta=false}={}) {
   const pages=['Receita completa, passo a passo.',...splitCompleteText(body),'Confira também os cuidados descritos na receita.',homeCta?'Explore este assunto e descubra mais na VitrineCity.':'Veja o modo de preparo na página relacionada.'].map(text=>({text}));
   if(pages.map(p=>p.text).join(' ').length<650)throw fail('source_insufficient_for_ten_pages');
   return pages;
+}
+/** No provider calls or approval: reject only mechanically unusable inputs before
+ * a daily slot is claimed. JSON keys, repeated summaries and tracking metadata
+ * do not supply facts. Factual and editorial review still runs after this gate. */
+export function storySourcePreflight(source,{siteUrl='https://vitrinecity.com',requireEvidence=true}={}) {
+  const blocked=code=>({eligible:false,code});
+  if(!source||!sourcePath(source.sourcePath,new URL(siteUrl).origin))return blocked('source_destination_invalid');
+  if(requireEvidence&&!factualEvidence(source))return blocked('source_needs_verified_evidence');
+  try{if(completeRecipePages(source))return {eligible:true,code:'source_preflight_passed'};}catch{return blocked('source_insufficient_for_ten_pages');}
+  const facts=[];
+  const metadata=/^(?:id|key|slug|url|path|sourcePath|image|image_url|updatedAt|updated_at|publishedAt|checkedAt|linkCheckedAt|excerptHash|platformId|linkHealth|availability|affiliate|category|storeName|businessName|sku)$/i;
+  function collect(value,depth=0){if(depth>4)return;if(typeof value==='string')facts.push(value);else if(Array.isArray(value))value.slice(0,100).forEach(v=>collect(v,depth+1));else if(value&&typeof value==='object')Object.entries(value).slice(0,100).forEach(([key,v])=>{if(!metadata.test(key))collect(v,depth+1);});}
+  collect(source.facts);
+  const seen=new Set(),units=[];
+  for(const value of [source.body,source.summary,...facts])for(const part of String(value||'').slice(0,12000).replace(/https?:\/\/\S+|www\.\S+/gi,'').split(/(?<=[.!?;])\s+|\n+/)){
+    const content=plain(part,12000),key=norm(content).replace(/[.!?;]+$/,'');
+    if(content.length<25||seen.has(key))continue;seen.add(key);units.push(content);
+  }
+  if(units.join(' ').length<220||units.length<3)return blocked('source_insufficient_for_ten_pages');
+  if(['product','service','course','affiliate','store'].includes(source.kind)){
+    const image=source.image_url||source.imageUrl;if(!image)return blocked('catalog_photo_missing');
+    let local=false;try{local=/^\/(?:assets|uploads\/(?:generated-videos|store-assets))\/.+\.(?:png|jpe?g|webp)$/i.test(normalizeStoryImagePath(image,siteUrl));}catch{}
+    let remote=false;try{remote=new URL(image).origin!==new URL(siteUrl).origin&&!!originalCatalogImageUrl(image);}catch{}
+    if(!local&&!remote)return blocked('catalog_photo_unavailable');
+  }
+  return {eligible:true,code:'source_preflight_passed'};
 }
 /** Layout repair only: never drops source words, invents facts or duplicates filler.
  * Oversized framing copy is moved into the body; short framing is nonfactual.
@@ -110,10 +143,10 @@ export function createWebStoryAI({requestText,requestImage,assets,siteUrl='https
   async function generate(source,{signal,isCurrent=()=>true,buttons={}}={}) {
     const checkpoint=async()=>{if(signal?.aborted)throw fail('ai_aborted');if(!await isCurrent(source))throw fail('ai_source_changed');};
     await checkpoint();
-    const destination=sourcePath(source?.sourcePath,origin);if(!destination)return hold('source_destination_invalid');
-    if(!factualEvidence(source))return hold('source_needs_verified_evidence');
+    const preflight=storySourcePreflight(source,{siteUrl:origin});if(!preflight.eligible)return hold(preflight.code);
+    const destination=sourcePath(source?.sourcePath,origin);
     const data={kind:source.kind,title:plain(source.title,180),summary:plain(source.summary,500),body:plain(source.body,12000),facts:source.facts||{},sources:(source.sources||[]).slice(0,5),commercial:source.commercial===true};
-    const sourceText=JSON.stringify(data);if(data.body.length+data.summary.length+JSON.stringify(data.facts).length<220)return hold('source_insufficient_for_ten_pages');
+    const sourceText=JSON.stringify(data);
     const affiliate=source.kind==='affiliate'||source.facts?.affiliate===true,cta=buttons.cta??storySourceCta(source),homeCta=buttons.homeCta??'';
     let realPhoto=null,logo;
     try {
@@ -165,7 +198,7 @@ export function createWebStoryAI({requestText,requestImage,assets,siteUrl='https
         }
         return hold('ai_review_held',review,repair);
       }
-    }catch(error){if(['ai_aborted','ai_source_changed'].includes(error.code))throw error;return hold(error.code||'ai_text_unavailable',review,repair);}
+    }catch(error){if(['ai_aborted','ai_source_changed'].includes(error.code))throw error;return hold(providerFailure(error,'ai_text_unavailable'),review,repair);}
     try {
       await checkpoint();
       // Exactly one image request, after source/text/review checks. No hidden retry.
@@ -174,7 +207,7 @@ export function createWebStoryAI({requestText,requestImage,assets,siteUrl='https
       const poster=await assets.poster(image);await checkpoint();
       const pages=copy.pages.map((p,index)=>{const actual=realPhoto&&index===1,asset=actual?realPhoto:image;return {...p,image:asset.url,width:asset.width,height:asset.height,alt:plain(actual?'Foto do catálogo: '+data.title:'Ilustração gerada por IA sobre '+data.title,150),imageCredit:actual?'Foto do catálogo':'Ilustração IA'};});
       return {approved:true,notes:'quality_checks_passed',review,qualityFailures:[],repair:repair?{...repair,outcome:'corrected'}:{attempted:false},draft:{title:copy.title,description:copy.description,category:plain(source.portal||source.group||'Guia visual',26),logo:logo.url,poster,sourcePath:destination,cta,homeCta,pages,...(copy.articleBody?{articleBody:copy.articleBody}:{}),affiliateDisclosure:affiliate?'Link de afiliado: podemos receber comissão.':'',sources:data.sources.map(x=>({title:plain(x.title,180),url:x.url,checkedAt:x.checkedAt})),aiGenerated:true}};
-    }catch(error){if(['ai_aborted','ai_source_changed'].includes(error.code))throw error;return hold(error.code||'ai_image_unavailable',review,repair);}
+    }catch(error){if(['ai_aborted','ai_source_changed'].includes(error.code))throw error;return hold(providerFailure(error,'ai_image_unavailable'),review,repair);}
   }
   return {generate};
 }

@@ -26,9 +26,10 @@
     <p id="automation-message" class="automation-message" role="status" aria-live="polite">Consultando a rotina…</p>
     <div class="automation-summary">
       <div><small>PRÓXIMA RODADA</small><strong id="automation-next">Carregando…</strong><span>Horário de Brasília</span></div>
-      <div><small>PREPARAÇÕES DE HOJE</small><strong id="automation-quota">—</strong><span id="automation-results">Aguardando informações</span></div>
-      <div><small>PREPARAÇÃO AUTOMÁTICA</small><strong id="automation-provider">Consultando…</strong><span>Texto e imagens pela IA Gestora</span></div>
+      <div><small>TENTATIVAS DE HOJE</small><strong id="automation-quota">—</strong><span id="automation-results">Aguardando informações</span></div>
+      <div><small>PUBLICAÇÕES CONFIRMADAS HOJE</small><strong id="automation-published">Consultando…</strong><span id="automation-publication-note">Inclui a revisão manual quando confirmada pelo servidor.</span></div>
     </div>
+    <p class="muted">Preparação automática: <strong id="automation-provider">Consultando…</strong>. Estar configurada ou programada não significa que a rotina publicou conteúdo.</p>
     <form id="automation-form">
       <label class="check automation-enabled"><input id="automation-enabled" name="enabled" type="checkbox" disabled> Ativar publicação diária</label>
       <div class="automation-settings">
@@ -45,13 +46,14 @@
         <label class="check"><input type="checkbox" name="groups" value="trends" checked disabled> Cidade, tendências e outros assuntos</label>
       </fieldset>
       <div class="actions"><button id="automation-save" disabled>Salvar rotina</button><button id="automation-pause" type="button" class="secondary" disabled hidden>Pausar agora</button><button id="automation-run" type="button" class="secondary" disabled>Executar rodada agora</button><button id="automation-refresh" type="button" class="secondary">Atualizar status</button></div>
-      <p class="muted">“Executar rodada agora” usa as mesmas categorias e o mesmo limite diário. A rotina precisa estar ativa.</p>
+      <p class="muted">“Executar rodada agora” inicia uma rodada dentro do limite diário; não refaz as tentativas em revisão. Use o histórico para abrir o conteúdo correto e continuar a revisão manual.</p>
     </form>
-    <div class="automation-history"><h3>Últimas preparações</h3><ol id="automation-history"><li>Carregando histórico…</li></ol></div>
+    <div class="automation-history"><h3>Últimas tentativas</h3><p class="muted">O resultado de cada tentativa permanece no histórico, mesmo quando uma versão é publicada depois. Abrir a fonte ou o editor não gera nem publica uma história.</p><ol id="automation-history"><li>Carregando histórico…</li></ol></div>
   </section>
   <p id="status" role="status" aria-live="polite"></p>
   <section id="source-manual" class="panel" aria-labelledby="source-heading">
     <p class="eyebrow">EDIÇÃO MANUAL</p><h2 id="source-heading">1. Escolha o conteúdo</h2>
+    <aside id="source-recovery" class="source-recovery" hidden aria-labelledby="source-recovery-title"><h3 id="source-recovery-title"></h3><p>A fonte desta tentativa está selecionada. Confira se o conteúdo está completo e se a imagem corresponde ao assunto. O rascunho usará o texto existente; a tentativa anterior permanece no histórico.</p><a id="source-recovery-link" target="_blank" rel="noopener" hidden>Abrir página de origem ↗</a></aside>
     <form id="source-search" class="actions"><label>Título ou assunto<input name="q" type="search" maxlength="80" placeholder="Buscar conteúdos e ofertas publicados"></label><label>Categoria<select name="group" id="source-group"><option value="all">Todas</option><option value="products">Produtos e ofertas</option><option value="services">Lojas, serviços e cursos</option><option value="news">Notícias e celebridades</option><option value="recipes">Receitas</option><option value="sports">Esportes</option><option value="trends">Cidade, tendências e outros assuntos</option></select></label><button>Buscar conteúdos</button></form>
     <form id="create-story" class="actions"><label>Conteúdo disponível<select id="source" required><option value="">Carregando…</option></select></label><button id="create-button">Montar rascunho</button></form>
     <nav class="actions source-pagination" aria-label="Páginas de conteúdos"><button id="source-previous" type="button" class="secondary" disabled>← Anteriores</button><span id="source-page">Página 1</span><button id="source-next" type="button" class="secondary" disabled>Próximos →</button></nav>
