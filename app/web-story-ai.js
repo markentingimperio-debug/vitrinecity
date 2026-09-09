@@ -27,7 +27,7 @@ function factualEvidence(source) {
   const valid=source.facts.evidence.filter(item=>typeof item.excerpt==='string'&&item.excerpt.length>=500&&item.excerptHash===createHash('sha256').update(item.excerpt).digest('hex')&&source.sources.some(c=>c.url===item.url&&c.publisher===item.publisher&&c.checkedAt===item.checkedAt&&c.excerptHash===item.excerptHash));
   return new Set(valid.map(x=>x.publisher).filter(Boolean)).size>=2;
 }
-function splitCompleteText(value,minPages=7,maxPages=17) {
+export function splitCompleteText(value,minPages=7,maxPages=17) {
   const words=value.split(/\s+/).filter(Boolean);
   if(words.some(word=>word.length>100))throw fail('ai_page_invalid');
   const preferred=Math.max(minPages,Math.min(maxPages,Math.ceil(value.length/90)));
