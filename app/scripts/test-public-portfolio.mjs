@@ -10,7 +10,7 @@ const assetRoot=new URL('../public/assets/portfolio/',import.meta.url);
 
 test('public portfolio links only the approved PDF and bounded public assets, never internal evidence or editor controls',()=>{
   const names=readdirSync(assetRoot).sort((a,b)=>a.localeCompare(b));
-  assert.deepEqual(names,['avenida-conceitual-800.webp','avenida-conceitual.webp','cidade-3d-real.webp','vitrinecity-portfolio-20260909.pdf']);
+  assert.deepEqual(names,['.gitattributes','avenida-conceitual-800.webp','avenida-conceitual.webp','cidade-3d-real.webp','vitrinecity-portfolio-20260909.pdf']);
   const pdf=readFileSync(new URL('vitrinecity-portfolio-20260909.pdf',assetRoot));
   assert.equal(pdf.subarray(0,5).toString(),'%PDF-');
   assert.equal(createHash('sha256').update(pdf).digest('hex'),'e1587109f27ca4c017ffa044c9b82747c804fbc74c9213d4bbce4cdcc937f76a');
