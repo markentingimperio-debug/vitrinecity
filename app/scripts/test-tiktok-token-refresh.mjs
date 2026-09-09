@@ -16,6 +16,7 @@ function fixture(t,{file=':memory:',seed=true,...overrides}={}){
       CREATE TABLE social_provider_credentials(provider TEXT PRIMARY KEY,credentials_encrypted TEXT,updated_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
     db.prepare("INSERT INTO tiktok_oauth_account(id,open_id,refresh_token_encrypted,scopes,expires_at,refresh_expires_at,status) VALUES (1,'creator-1',?,'user.info.basic,video.list',?,?,'connected')").run(enc('OLD_REFRESH_SECRET'),state.time-1000,state.time+86400_000);
     db.prepare("INSERT INTO social_provider_credentials(provider,credentials_encrypted) VALUES ('tiktok',?)").run(enc(JSON.stringify({TIKTOK_CONTENT_ACCESS_TOKEN:'OLD_ACCESS_SECRET'})));
+    db.exec("UPDATE tiktok_oauth_account SET updated_at='2026-09-09 11:00:00'; UPDATE social_provider_credentials SET updated_at='2026-09-09 11:00:00';");
   }
   const data=()=>({open_id:'creator-1',access_token:'NEW_ACCESS_SECRET',refresh_token:'NEW_REFRESH_SECRET',scope:'user.info.basic,video.list',expires_in:86400,refresh_expires_in:31536000,token_type:'Bearer'});
   const fetchImpl=async(url,options)=>{state.calls.push({url,options});return {ok:true,status:200,json:async()=>data()};};
@@ -33,6 +34,7 @@ test('factory is inert; explicit renewal uses OAuth refresh and stores rotated t
   assert.deepEqual([...call.options.body.keys()].sort(),['client_key','client_secret','grant_type','refresh_token']);assert.equal(call.options.body.get('grant_type'),'refresh_token');
   assert.equal(dec(f.account().refresh_token_encrypted),'NEW_REFRESH_SECRET');assert.equal(f.access().TIKTOK_CONTENT_ACCESS_TOKEN,'NEW_ACCESS_SECRET');
   assert.equal(f.account().expires_at,f.state.time+86400_000);assert.equal(f.account().refresh_lock_owner,'');assert.equal(f.account().scopes,'user.info.basic,video.list');
+  assert.equal(f.account().updated_at,f.db.prepare("SELECT updated_at FROM social_provider_credentials WHERE provider='tiktok'").get().updated_at);
 });
 test('fresh authorization makes no request and does not imply publishing permission',async t=>{
   const f=fixture(t);f.db.prepare('UPDATE tiktok_oauth_account SET expires_at=?').run(f.state.time+3600_000);

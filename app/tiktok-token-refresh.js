@@ -107,14 +107,14 @@ export function createTikTokTokenRefresh({db,decrypt,encrypt,getAppConfig,fetchI
     return db.transaction(()=>{
       const current=read(),a=current.account;
       if(a?.refresh_lock_owner!==attempt.lock||revision(current)!==attempt.rev)return null;
-      const timestamp=now(),expiresAt=timestamp+data.expires_in*1000,refreshExpiresAt=timestamp+data.refresh_expires_in*1000;
+      const timestamp=now(),expiresAt=timestamp+data.expires_in*1000,refreshExpiresAt=timestamp+data.refresh_expires_in*1000,updatedAt=new Date(timestamp).toISOString().slice(0,19).replace('T',' ');
       if(Number(a.refresh_lock_until)<=timestamp)return null;
       const scopes=[...new Set(data.scope.split(',').map(s=>s.trim()).filter(Boolean))].join(',');
-      const accountUpdate=db.prepare("UPDATE tiktok_oauth_account SET refresh_token_encrypted=?,scopes=?,expires_at=?,refresh_expires_at=?,status='connected',updated_at=CURRENT_TIMESTAMP,refresh_lock_owner='',refresh_lock_until=0 WHERE id=1 AND open_id=? AND refresh_token_encrypted IS ? AND refresh_lock_owner=? AND refresh_lock_until=?")
-        .run(encryptedRefresh,scopes,expiresAt,refreshExpiresAt,a.open_id,a.refresh_token_encrypted,attempt.lock,attempt.until);
+      const accountUpdate=db.prepare("UPDATE tiktok_oauth_account SET refresh_token_encrypted=?,scopes=?,expires_at=?,refresh_expires_at=?,status='connected',updated_at=?,refresh_lock_owner='',refresh_lock_until=0 WHERE id=1 AND open_id=? AND refresh_token_encrypted IS ? AND refresh_lock_owner=? AND refresh_lock_until=?")
+        .run(encryptedRefresh,scopes,expiresAt,refreshExpiresAt,updatedAt,a.open_id,a.refresh_token_encrypted,attempt.lock,attempt.until);
       if(accountUpdate.changes!==1)throw Error('write_conflict');
-      const credentialUpdate=db.prepare("UPDATE social_provider_credentials SET credentials_encrypted=?,updated_at=CURRENT_TIMESTAMP WHERE provider='tiktok' AND credentials_encrypted=?")
-        .run(encryptedAccess,attempt.baseline.credentials.credentials_encrypted);
+      const credentialUpdate=db.prepare("UPDATE social_provider_credentials SET credentials_encrypted=?,updated_at=? WHERE provider='tiktok' AND credentials_encrypted=?")
+        .run(encryptedAccess,updatedAt,attempt.baseline.credentials.credentials_encrypted);
       if(credentialUpdate.changes!==1)throw Error('write_conflict');
       return {openId:a.open_id,scopes:scopes.split(',').filter(Boolean),expiresAt,refreshExpiresAt};
     }).immediate();
