@@ -4,6 +4,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {rasterSize} from './web-story-assets.js';
 import {validAffiliateUrl} from './affiliate-catalog.js';
+import {ensureWhatsAppScheduleConfirmation,countWhatsAppSchedules} from './whatsapp-schedule-worker.js';
 
 const API = '/api/admin/whatsapp-qr/product-campaigns';
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -73,6 +74,7 @@ export function registerWhatsAppProductCampaigns({app,db,requireAdmin,sameOrigin
   );`);
   const columns = new Set(db.prepare('PRAGMA table_info(whatsapp_qr_schedules)').all().map(column => column.name));
   if(!columns.size)throw Error('whatsapp_qr_schedules must be initialized before product campaigns');
+  ensureWhatsAppScheduleConfirmation(db);
   for(const column of ['campaign_id','product_slug','image_path'])if(!columns.has(column))db.exec(`ALTER TABLE whatsapp_qr_schedules ADD COLUMN ${column} TEXT`);
   db.exec('CREATE INDEX IF NOT EXISTS idx_whatsapp_product_schedule_campaign ON whatsapp_qr_schedules(campaign_id)');
 
@@ -87,11 +89,10 @@ export function registerWhatsAppProductCampaigns({app,db,requireAdmin,sameOrigin
   const caption = (product,id) => `${product.title}\n\n${product.message}\n\n${DISCLOSURE}\n\n${publicUrl(product.slug,id)}`;
   function campaignDto(row) {
     const products = JSON.parse(row.products_json), groups = JSON.parse(row.groups_json);
-    const counts = {pending:0,processing:0,sent:0,failed:0,cancelled:0};
-    for(const schedule of getSchedules(row.id))if(Object.hasOwn(counts,schedule.status))counts[schedule.status]++;
+    const counts = countWhatsAppSchedules(getSchedules(row.id),now());
     const total = products.length * groups.length;
     const settled = row.status === 'queued' && !counts.pending && !counts.processing;
-    const status = settled && counts.failed ? 'needs_review' : settled && counts.sent + counts.cancelled === total ? 'completed' : row.status;
+    const status = settled && (counts.failed||counts.unknown) ? 'needs_review' : settled && counts.sent + counts.cancelled === total ? 'completed' : row.status;
     return {id:row.id,status,products:products.map(product => ({slug:product.slug,title:product.title,
       image:`${API}/${row.id}/images/${product.slug}`,caption:caption(product,row.id),url:publicUrl(product.slug,row.id)})),
       groups,startAt:row.start_at,intervalMinutes:row.interval_minutes,total,counts,createdAt:row.created_at,publishedAt:row.published_at};

@@ -77,3 +77,11 @@ test('reload restores only the saved campaign id with read-only requests, and st
   const calls=[],f=fixture(t,async(url,options)=>{calls.push({url,options});return response(url.endsWith('/catalog')?{items,groups}:dto({status:'completed',counts:{sent:2}}));},{saved:'abc-123'});await tick();assert.equal(calls.length,2);assert.ok(calls.every(call=>!call.options.method));assert.equal(f.nodes.PreviewTitle.textContent,'Campanha concluída');assert.equal(f.nodes.ProductCount.textContent,'0 de 5 selecionados');assert.equal(f.timers.size,0);
   const denied=fixture(t,async()=>response({items,groups}),{denyStorage:true});await tick();assert.equal(denied.nodes.Prepare.disabled,false);
 });
+
+test('unknown confirmations are shown for review, excluded from sent totals, and cannot enable publish',async t=>{
+  const calls=[],f=fixture(t,async(url,options)=>{calls.push({url,options});return response(url.endsWith('/catalog')?{items,groups}:dto({status:'needs_review',counts:{unknown:2,sent:0,failed:0}}));},{saved:'abc-123'});
+  await tick();
+  assert.match(f.nodes.Counts.textContent,/Aceitos pelo serviço: 0/);assert.match(f.nodes.Counts.textContent,/Conferir envio: 2/);
+  assert.match(f.nodes.PreviewNote.textContent,/Confira as conversas/);assert.equal(f.nodes.Publish.disabled,true);assert.equal(f.timers.size,0);
+  f.nodes.Publish.dispatch('click');await tick();assert(calls.every(call=>!call.options.method));
+});

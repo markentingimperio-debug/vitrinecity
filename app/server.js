@@ -7,7 +7,7 @@ import { integrationObserver, openRouterOperation } from './integration-health.j
 import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.js';
-import { createWhatsAppScheduleProcessor } from './whatsapp-schedule-worker.js';
+import { createWhatsAppScheduleProcessor, whatsappScheduleState, countWhatsAppSchedules } from './whatsapp-schedule-worker.js';
 import { registerSocialCommentCampaigns } from './social-comment-campaigns.js';
 import { createEcosystemOrchestrator, registerEcosystemRoutes, ecosystemLocalWindow } from './ecosystem-orchestrator.js';
 import { createEcosystemCatalog } from './ecosystem-catalog.js';
@@ -3975,7 +3975,7 @@ function whatsappQrConfig(){
 }
 async function whatsappQrRequest(pathname,options={}){
   const config=whatsappQrConfig();
-  if(!config.configured)throw new Error('whatsapp_qr_not_configured');
+  if(!config.configured)throw Object.assign(new Error('whatsapp_qr_not_configured'),{notSubmitted:true});
   const response=await fetch(config.endpoint+pathname,{...options,headers:{Token:config.userToken,'Content-Type':'application/json',...(options.headers||{})},signal:AbortSignal.timeout(15000)});
   const payload=await response.json().catch(()=>({}));
   if(!response.ok||payload?.success===false)throw new Error(String(payload?.error||payload?.data?.Details||`wuzapi_${response.status}`).slice(0,200));
@@ -4063,7 +4063,7 @@ async function whatsappQrSitemapLinks(){
   return [...new Set(links)].slice(0,1000);
 }
 app.get('/api/admin/whatsapp-qr/sitemap-links',requireAdmin,async(_req,res)=>{try{return res.json({links:await whatsappQrSitemapLinks()})}catch{return res.status(502).json({error:'Não foi possível ler o sitemap agora.'})}});
-app.get('/api/admin/whatsapp-qr/schedules',requireAdmin,(_req,res)=>res.json({schedules:db.prepare(`SELECT id,group_jid groupJid,group_name groupName,sitemap_url sitemapUrl,message,scheduled_at scheduledAt,status,error,created_at createdAt,sent_at sentAt FROM whatsapp_qr_schedules ORDER BY scheduled_at DESC LIMIT 100`).all()}));
+app.get('/api/admin/whatsapp-qr/schedules',requireAdmin,(_req,res)=>res.set('Cache-Control','no-store').json({schedules:db.prepare(`SELECT id,group_jid groupJid,group_name groupName,sitemap_url sitemapUrl,message,scheduled_at scheduledAt,status,confirmation_state confirmationState,claimed_at claimedAt,provider_message_id providerMessageId,error,created_at createdAt,sent_at sentAt FROM whatsapp_qr_schedules ORDER BY scheduled_at DESC LIMIT 100`).all().map(item=>({...item,status:whatsappScheduleState(item)}))}));
 app.get('/api/admin/omnichannel-automation',requireAdmin,(_req,res)=>res.json({configured:aiConfigured(),provider:AI_PROVIDER,model:OPENAI_MODEL,channels:db.prepare(`SELECT channel,enabled,instructions,campaign_mode campaignMode,site_url siteUrl,whatsapp_group_url whatsappGroupUrl,daily_limit dailyLimit,start_hour startHour,end_hour endHour,approval_required approvalRequired,updated_at updatedAt FROM omnichannel_automation_settings ORDER BY channel`).all().map(item=>({...item,enabled:Boolean(item.enabled),approvalRequired:Boolean(item.approvalRequired)})),jobs:db.prepare(`SELECT id,channel,source_text sourceText,reply_text replyText,status,error,created_at createdAt,processed_at processedAt FROM omnichannel_automation_jobs ORDER BY created_at DESC LIMIT 40`).all()}));
 app.put('/api/admin/omnichannel-automation/:channel',requireAdmin,sameOriginOnly,(req,res)=>{
   const channel=String(req.params.channel||'');if(!['facebook','instagram','whatsapp_qr'].includes(channel))return res.status(400).json({error:'Canal inválido.'});
@@ -4122,7 +4122,7 @@ app.post('/api/admin/whatsapp-qr/campaigns/sitemap',requireAdmin,sameOriginOnly,
   const create=db.transaction(()=>{let count=0;for(let index=0;index<slots.length;index++){const link=marketingLinks[index%marketingLinks.length],pathname=new URL(link).pathname,tracked=new URL(link);tracked.searchParams.set('utm_source','whatsapp');tracked.searchParams.set('utm_medium','group');tracked.searchParams.set('utm_campaign','vitrinecity_3d');tracked.searchParams.set('utm_content',`slot_${index+1}`);const message=`🏙️ VitrineCity\n\n${descriptions[pathname]||'Conheça uma nova área da VitrineCity e descubra oportunidades dentro do nosso ecossistema digital.'}\n\nConteúdo informativo. Se não for adequado ao grupo, avise para interrompermos os próximos envios.`;for(const jid of groups){insert.run(randomUUID(),jid,jid.split('@')[0],tracked.toString(),message,slots[index].toISOString(),campaignId);count++}}db.prepare(`INSERT INTO whatsapp_qr_campaigns(id,name,days,interval_hours,start_hour,end_hour,groups_count,schedules_count) VALUES (?,?,?,?,?,?,?,?)`).run(campaignId,'VitrineCity · 3 dias · 2 horas',3,2,9,19,groups.length,count);return count});
   const count=create();return res.status(201).json({ok:true,campaignId,groups:groups.length,slots:slots.length,schedules:count});
 });
-app.get('/api/admin/whatsapp-qr/campaigns',requireAdmin,(_req,res)=>res.json({campaigns:db.prepare(`SELECT c.id,c.name,c.days,c.interval_hours intervalHours,c.groups_count groupsCount,c.schedules_count schedulesCount,c.status,c.created_at createdAt,SUM(CASE WHEN s.status='pending' THEN 1 ELSE 0 END) pending,SUM(CASE WHEN s.status='sent' THEN 1 ELSE 0 END) sent,SUM(CASE WHEN s.status='failed' THEN 1 ELSE 0 END) failed,SUM(CASE WHEN s.status='cancelled' THEN 1 ELSE 0 END) cancelled FROM whatsapp_qr_campaigns c LEFT JOIN whatsapp_qr_schedules s ON s.campaign_id=c.id GROUP BY c.id ORDER BY c.created_at DESC LIMIT 20`).all()}));
+app.get('/api/admin/whatsapp-qr/campaigns',requireAdmin,(_req,res)=>res.set('Cache-Control','no-store').json({campaigns:db.prepare(`SELECT id,name,days,interval_hours intervalHours,groups_count groupsCount,schedules_count schedulesCount,status,created_at createdAt FROM whatsapp_qr_campaigns ORDER BY created_at DESC LIMIT 20`).all().map(item=>({...item,...countWhatsAppSchedules(db.prepare('SELECT status,confirmation_state,claimed_at,provider_message_id FROM whatsapp_qr_schedules WHERE campaign_id=?').all(item.id))}))}));
 app.delete('/api/admin/whatsapp-qr/schedules/:id',requireAdmin,sameOriginOnly,(req,res)=>{const result=db.prepare(`UPDATE whatsapp_qr_schedules SET status='cancelled' WHERE id=? AND status='pending'`).run(String(req.params.id||''));if(!result.changes)return res.status(409).json({error:'Somente agendamentos pendentes podem ser cancelados.'});return res.json({ok:true})});
 const whatsappProductCampaigns = registerWhatsAppProductCampaigns({
   app, db, requireAdmin, sameOriginOnly, siteUrl: SITE_URL, dataDir,

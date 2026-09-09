@@ -7,6 +7,7 @@ import { DISTRICT_INTEGRATIONS } from './public/vitriny-district-integrations.js
 import { toCleanPublicHref } from './public/vitriny-public-routes.js';
 import { acquisitionReport } from './organic-acquisition.js';
 import { createHash } from 'node:crypto';
+import { countWhatsAppSchedules } from './whatsapp-schedule-worker.js';
 
 const TYPES = {products:['Produtos','/admin-vendas-afiliadas.html'],stores:['Lojas','/admin-lojas.html'],pages:['Páginas e conteúdos','/admin-conteudos.html'],buildings:['Prédios e destinos','/multiverso?city=vitrine-city'],networks:['Redes e conexões','/admin-chatbotx.html']};
 const text = value => String(value ?? '').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
@@ -123,8 +124,8 @@ export function createEcosystemCatalog({db,siteUrl,sourceCatalog,services=()=>[]
     const tik=exists('tiktok_oauth_account')?db.prepare('SELECT status,expires_at,refresh_expires_at FROM tiktok_oauth_account WHERE id=1').get():null;
     const timestamp=new Date(now()).getTime();
     const expiryMs=value=>Number(value)>1e12?Number(value):Number(value)*1000;
-    const whatsapp=exists('whatsapp_qr_schedules')?db.prepare("SELECT status,COUNT(*) n FROM whatsapp_qr_schedules GROUP BY status").all():[];
-    const whatsappAccepted=Number(whatsapp.find(row=>row.status==='sent')?.n||0),whatsappPending=Number(whatsapp.find(row=>row.status==='pending')?.n||0);
+    const whatsapp=exists('whatsapp_qr_schedules')?db.prepare('SELECT status,confirmation_state,claimed_at,provider_message_id FROM whatsapp_qr_schedules').all():[];
+    const whatsappCounts=countWhatsAppSchedules(whatsapp,timestamp);
     const external=(id,label,rows,reason,adminUrl='/admin-chatbotx.html')=>({id,label,accounts:rows,connectedCount:rows.length,status:rows.length?'partial':'missing',canPublish:false,reason,adminUrl});
     const result=[
       {id:'vitriny_social',label:'Vitriny Social',accounts:[],connectedCount:1,status:'connected',canPublish:true,reason:'Publicação de conteúdo próprio aprovado; ativação e identidade na política da central.',adminUrl:'/social'},
@@ -133,7 +134,7 @@ export function createEcosystemCatalog({db,siteUrl,sourceCatalog,services=()=>[]
       external('youtube','YouTube',saved.has('youtube')?[{id:'youtube',name:'Credencial cadastrada'}]:[],'Credencial de consulta não comprova autorização ou integração de envio de vídeos.','/admin-metricas-externas.html'),
       external('tiktok','TikTok',tik?[{id:'tiktok',name:'Conta cadastrada'}]:[],tik?(expiryMs(tik.expires_at)<=timestamp?'Acesso expirado; renovar a conexão antes de validar publicação.':'Conta cadastrada; envio de vídeos ainda precisa de validação.'):'Conectar uma conta e validar a permissão de publicação.','/admin-tiktok.html'),
       external('kwai','Kwai',saved.has('kwai')?[{id:'kwai',name:'Credencial cadastrada'}]:[],'A disponibilidade de publicação automática depende de integração oficial.','/admin-metricas-externas.html'),
-      external('whatsapp','WhatsApp',whatsapp.length?[{id:'whatsapp-queue',name:'Campanhas existentes'}]:[],whatsapp.length?`${whatsappAccepted} envios aceitos pelo serviço e ${whatsappPending} pendentes na fila existente. Isso não comprova entrega, leitura ou conexão online neste momento.`:'Consulte a conexão e as campanhas no painel do chatbot.','/admin-chatbotx.html'),
+      external('whatsapp','WhatsApp',whatsapp.length?[{id:'whatsapp-queue',name:'Campanhas existentes'}]:[],whatsapp.length?`${whatsappCounts.sent} envios aceitos pelo serviço e ${whatsappCounts.pending} pendentes na fila existente; ${whatsappCounts.unknown} sem confirmação. Isso não comprova entrega, leitura ou conexão online neste momento.`:'Consulte a conexão e as campanhas no painel do chatbot.','/admin-chatbotx.html'),
       external('google','Google / Search Console',exists('google_search_oauth')&&db.prepare('SELECT COUNT(*) n FROM google_search_oauth').get().n?[{id:'google',name:'Autorização cadastrada'}]:[],'Sitemaps e páginas publicadas podem ser descobertos. Indexação e posição não são garantidas.','/admin-google-search.html')
     ];
     return result;

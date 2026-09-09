@@ -101,7 +101,7 @@ test('preview persists exact photos and recipients, but creates no sends; snapsh
   const f = await fixture(t);
   const result = await f.req('/preview',f.input());
   assert.equal(result.status,201);assert.equal(result.body.status,'draft');assert.equal(result.body.total,4);
-  assert.deepEqual(result.body.counts,{pending:0,processing:0,sent:0,failed:0,cancelled:0});
+  assert.deepEqual(result.body.counts,{pending:0,processing:0,sent:0,failed:0,unknown:0,cancelled:0});
   assert.equal(f.db.prepare('SELECT COUNT(*) n FROM whatsapp_qr_schedules').get().n,0);
   assert.equal(f.state.fetches.length,2);
   for(const product of result.body.products) {
@@ -245,7 +245,20 @@ test('terminal failure status reports review, and repeat publication never recre
   assert.equal(result.body.status,'needs_review');assert.equal(result.body.counts.failed,4);
   assert.equal(result.body.counts.pending,0);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM whatsapp_qr_schedules').get().n,4);
   f.db.prepare("UPDATE whatsapp_qr_schedules SET status='sent' WHERE campaign_id=?").run(draft.id);
+  const unverified=await f.req('/'+draft.id);assert.equal(unverified.body.status,'needs_review');assert.equal(unverified.body.counts.unknown,4);assert.equal(unverified.body.counts.sent,0);
+  assert.equal(f.db.prepare("SELECT COUNT(*) n FROM whatsapp_qr_schedules WHERE status='sent' AND provider_message_id IS NULL").get().n,4,'Projection preserves old rows');
+  f.db.prepare("UPDATE whatsapp_qr_schedules SET provider_message_id='ACK_'||id WHERE campaign_id=?").run(draft.id);
   assert.equal((await f.req('/'+draft.id)).body.status,'completed');
+});
+
+test('unknown sends are visible as review and replaying campaign publication cannot requeue them',async t=>{
+  const f=await fixture(t),draft=(await f.req('/preview',f.input())).body;
+  await f.req('/'+draft.id+'/publish',{});
+  f.db.prepare("UPDATE whatsapp_qr_schedules SET status='failed',confirmation_state='unknown',error='Confirmar conversa' WHERE campaign_id=?").run(draft.id);
+  const before=f.db.prepare('SELECT * FROM whatsapp_qr_schedules ORDER BY id').all();
+  const result=await f.req('/'+draft.id+'/publish',{});
+  assert.equal(result.body.status,'needs_review');assert.equal(result.body.counts.unknown,4);assert.equal(result.body.counts.sent,0);assert.equal(result.body.counts.failed,0);
+  assert.deepEqual(f.db.prepare('SELECT * FROM whatsapp_qr_schedules ORDER BY id').all(),before);
 });
 
 test('cancellation or product pause during image read is rechecked before preparing the send',async t => {

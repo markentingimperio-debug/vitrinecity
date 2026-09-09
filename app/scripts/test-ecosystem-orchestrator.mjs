@@ -78,9 +78,20 @@ test('São Paulo windows cover local day and business hours independently of pro
 test('existing worker failures are counted truthfully and provider secrets never enter the central snapshot',t=>{
   const f=fixture(t);f.db.exec(`CREATE TABLE admin_viral_quizzes(id INTEGER,status TEXT);INSERT INTO admin_viral_quizzes VALUES(1,'in_production');
     CREATE TABLE viral_quiz_scenes(id INTEGER,status TEXT,error_message TEXT,updated_at TEXT);INSERT INTO viral_quiz_scenes VALUES(1,'failed','No endpoints found matching ZDR data policy Bearer SECRET_VALUE','2026-09-09');
-    CREATE TABLE whatsapp_qr_schedules(id TEXT,status TEXT);INSERT INTO whatsapp_qr_schedules VALUES('1','pending'),('2','failed');
+    CREATE TABLE whatsapp_qr_schedules(id TEXT,status TEXT,confirmation_state TEXT DEFAULT '',claimed_at INTEGER,provider_message_id TEXT);INSERT INTO whatsapp_qr_schedules(id,status) VALUES('1','pending'),('2','failed');
     CREATE TABLE admin_agent_tasks(id INTEGER,status TEXT);INSERT INTO admin_agent_tasks VALUES(1,'awaiting_approval');`);
   const state=f.service.snapshot();assert.equal(state.modules.videos.scenes.failed,1);assert.equal(state.modules.videos.projects.in_production,1);assert.equal(state.modules.videos.issue.code,'provider_data_policy');assert.equal(state.modules.whatsapp.pending,1);assert.equal(state.modules.gestora.weightTraining,false);assert(!JSON.stringify(state).includes('SECRET_VALUE'));assert(state.exceptions.some(x=>x.id==='video-production'));assert.equal(state.agents.find(x=>x.id==='videos').status,'blocked');
+});
+
+test('central counts uncertain WhatsApp results separately without rewriting legacy state',t=>{
+  const f=fixture(t);f.db.exec(`CREATE TABLE whatsapp_qr_schedules(id TEXT,status TEXT,confirmation_state TEXT DEFAULT '',claimed_at INTEGER,provider_message_id TEXT);
+    INSERT INTO whatsapp_qr_schedules(id,status,confirmation_state,provider_message_id) VALUES
+      ('legacy-unverified','sent','',''),('known','sent','confirmed','ACK1'),('unknown','failed','unknown',NULL),('rejected','failed','not_submitted',NULL);`);
+  const before=f.db.prepare('SELECT * FROM whatsapp_qr_schedules ORDER BY id').all(),state=f.service.snapshot();
+  assert.deepEqual(state.modules.whatsapp,{pending:0,processing:0,sent:1,failed:1,unknown:2,cancelled:0});
+  assert.equal(state.agents.find(x=>x.id==='whatsapp').status,'review');
+  assert.match(state.agents.find(x=>x.id==='whatsapp').detail,/2 sem confirmação/);
+  assert.deepEqual(f.db.prepare('SELECT * FROM whatsapp_qr_schedules ORDER BY id').all(),before);
 });
 
 test('routes require admin and same-origin mutation; run is asynchronous and never accepts a body publisher',async t=>{
