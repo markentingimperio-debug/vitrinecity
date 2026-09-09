@@ -10,7 +10,7 @@ import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.j
 import { createWhatsAppScheduleProcessor } from './whatsapp-schedule-worker.js';
 import { registerSocialCommentCampaigns } from './social-comment-campaigns.js';
 import { createMetaCommentApi } from './meta-comment-api.js';
-import {socialOauthRequest,socialOauthScopes,signSocialOauthState,verifySocialOauthState,socialOauthDestination} from './social-oauth-intent.js';
+import {socialOauthRequest,socialOauthScopes,socialOauthConfigId,signSocialOauthState,verifySocialOauthState,socialOauthDestination} from './social-oauth-intent.js';
 import { createWebStorySources } from './web-story-sources.js';
 import {ADS_TERMS_VERSION,ADS_VALIDITY_DAYS,creditExpiryForOrder} from './credits-policy.js';
 import {setupCityChat} from './city-chat.js';
@@ -4672,11 +4672,13 @@ async function socialPagesFromToken(accessToken) {
 
 app.get('/api/social/login', requireUser, (req,res,next)=>req.query.intent==='comment_replies'?requireAdmin(req,res,next):next(), (req, res) => {
   const isAdmin = Boolean(req.user.is_admin || adminEmails.has(String(req.user.email).toLowerCase()));
-  let connection;
-  try { connection=socialOauthRequest(req.query,isAdmin); }
+  let connection,configId;
+  try {
+    connection=socialOauthRequest(req.query,isAdmin);
+    configId=socialOauthConfigId(connection.intent,{readOnlyConfigId:process.env.META_SOCIAL_LOGIN_CONFIG_ID,commentConfigId:process.env.META_SOCIAL_COMMENT_LOGIN_CONFIG_ID});
+  }
   catch(error) { return res.status(error.status||400).send(error.message); }
-  if (!process.env.META_SOCIAL_APP_ID || !process.env.META_SOCIAL_APP_SECRET ||
-      !process.env.META_SOCIAL_LOGIN_CONFIG_ID) {
+  if (!process.env.META_SOCIAL_APP_ID || !process.env.META_SOCIAL_APP_SECRET) {
     return res.status(503).send('Integração da Meta ainda não configurada.');
   }
   const redirectUri = SITE_URL + '/api/social/callback';
@@ -4685,7 +4687,7 @@ app.get('/api/social/login', requireUser, (req,res,next)=>req.query.intent==='co
   login.searchParams.set('redirect_uri',redirectUri);
   login.searchParams.set('state',signSocialOauthState({userId:req.user.id,...connection},{secret:String(process.env.META_SOCIAL_APP_SECRET)}));
   login.searchParams.set('response_type','code');
-  login.searchParams.set('config_id',String(process.env.META_SOCIAL_LOGIN_CONFIG_ID));
+  login.searchParams.set('config_id',configId);
   login.searchParams.set('scope',socialOauthScopes(connection.intent).join(','));
   login.searchParams.set('auth_type','rerequest');
   return res.redirect(302,login.toString());

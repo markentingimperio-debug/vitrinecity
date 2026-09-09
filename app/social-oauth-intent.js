@@ -19,6 +19,16 @@ export function socialOauthScopes(intent='read_only'){
   return intent==='comment_replies'?[...readScopes,...commentScopes]:[...readScopes];
 }
 
+export function socialOauthConfigId(intent='read_only',{readOnlyConfigId,commentConfigId}={}){
+  if(!intents.has(intent))throw fail('Finalidade inválida.');
+  const value=intent==='comment_replies'?commentConfigId:readOnlyConfigId;
+  if(typeof value!=='string'||!/^[1-9]\d{4,29}$/.test(value))throw fail(intent==='comment_replies'
+    ?'A conexão para respostas a comentários ainda precisa de uma configuração própria da Meta. Configure META_SOCIAL_COMMENT_LOGIN_CONFIG_ID no servidor.'
+    :'A conexão de leitura da Meta ainda não está configurada corretamente.',503);
+  if(intent==='comment_replies'&&value===readOnlyConfigId)throw fail('Use uma configuração da Meta exclusiva para respostas a comentários, diferente da conexão de leitura.',503);
+  return value;
+}
+
 export function signSocialOauthState({userId,returnTo,intent='read_only'},{secret,now=Date.now()}={}){
   if(!secret||!Number.isSafeInteger(Number(userId))||Number(userId)<1||!destinations.has(returnTo)||!intents.has(intent))throw fail('Não foi possível preparar a conexão Meta.');
   const payload=Buffer.from(JSON.stringify({userId:Number(userId),returnTo,intent,issuedAt:now,nonce:randomBytes(12).toString('hex')})).toString('base64url');
