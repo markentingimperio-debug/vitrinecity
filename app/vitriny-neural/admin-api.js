@@ -38,6 +38,27 @@ export function mountVitrinyNeuralAdmin({app,runtime=null,service=null,requireAd
     if(!service?.budget?.recent)return res.status(503).json({error:'Action budget indisponível.'});
     return res.json({ok:true,usage:service.budget.usage(),items:service.budget.recent(50)});
   });
+  app.get(API+'/training/status',(_req,res)=>{
+    if(!service?.training?.status)return res.status(503).json({error:'Dataset Builder indisponível.'});
+    return res.json({ok:true,...service.training.status()});
+  });
+  app.get(API+'/training/examples',(req,res)=>{
+    try{
+      if(!service?.training?.list)return res.status(503).json({error:'Dataset Builder indisponível.'});
+      return res.json({ok:true,items:service.training.list({status:String(req.query.status||'candidate'),domain:String(req.query.domain||''),limit:Number(req.query.limit)||50})});
+    }catch(error){return res.status(error?.status||400).json({error:String(error?.message||'Consulta de treinamento inválida.').slice(0,400)});}
+  });
+  app.get(API+'/training/export',(req,res)=>{
+    try{
+      if(!service?.training?.exportDataset)return res.status(503).json({error:'Dataset Builder indisponível.'});
+      const dataset=service.training.exportDataset({split:String(req.query.split||'all'),validationPercent:Number(req.query.validationPercent)||20});
+      res.set('Content-Type','application/x-ndjson; charset=utf-8');
+      res.set('Content-Disposition',`attachment; filename="${dataset.datasetId}-${dataset.split}.jsonl"`);
+      res.set('X-Vitriny-Dataset-Id',dataset.datasetId);
+      res.set('X-Vitriny-Dataset-Examples',String(dataset.examples));
+      return res.send(dataset.jsonl);
+    }catch(error){return res.status(error?.status||400).json({error:String(error?.message||'Exportação de treinamento inválida.').slice(0,400)});}
+  });
   app.post(API+'/benchmark/start',(req,res)=>{
     try{
       if(!service?.benchmarks?.start)return res.status(503).json({error:'Benchmark indisponível.'});
@@ -59,6 +80,20 @@ export function mountVitrinyNeuralAdmin({app,runtime=null,service=null,requireAd
       if(!['approved','rejected','candidate'].includes(status))return res.status(400).json({error:'Status de revisão inválido.'});
       return res.json({ok:true,item:service.webResearch.reviewCandidate(req.params.id,{status,note:String(body.note||'').slice(0,500)})});
     }catch(error){return res.status(400).json({error:String(error?.message||'Falha ao revisar candidato.').slice(0,400)});}
+  });
+  app.post(API+'/training/examples',(req,res)=>{
+    try{
+      if(!service?.training?.createCandidate)return res.status(503).json({error:'Dataset Builder indisponível.'});
+      const body=safeBody(req.body),item=service.training.createCandidate({...body,actor:`admin:${req.user?.id||'unknown'}`});
+      return res.status(item.duplicate?200:201).json({ok:true,item});
+    }catch(error){return res.status(error?.status||400).json({error:String(error?.message||'Exemplo de treinamento inválido.').slice(0,400)});}
+  });
+  app.post(API+'/training/examples/:id/review',(req,res)=>{
+    try{
+      if(!service?.training?.review)return res.status(503).json({error:'Dataset Builder indisponível.'});
+      const body=safeBody(req.body),item=service.training.review(req.params.id,{status:body.status,reason:body.reason,confirmed:body.confirmed===true,actor:`admin:${req.user?.id||'unknown'}`});
+      return res.json({ok:true,item});
+    }catch(error){return res.status(error?.status||400).json({error:String(error?.message||'Revisão de treinamento inválida.').slice(0,400)});}
   });
   app.post(API+'/readiness',(req,res)=>{
     try{
