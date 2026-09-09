@@ -70,3 +70,32 @@ test('Trends query/group/offset pagination has no hidden first-200 cutoff and or
   const later=research.list({q:'BRASÍLIA',group:'trends',offset:220,limit:3});assert.deepEqual(later.map(x=>x.key),['trend:220','trend:221','trend:222']);
   assert.equal(research.list({group:'sports'}).length,0);assert.equal(research.list({q:'inexistente'}).length,0);assert.equal(research.list({group:'invalid'}).length,0);assert.equal(research.list({limit:0}).length,0);db.close();
 });
+
+test('automatic preflight uses stored references and filters before pagination without fetching or changing manual visibility',()=>{
+  const {db,research,calls}=setup();const save=db.prepare('INSERT INTO web_story_trend_topics(id,title,topic_group,published_at,references_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)');
+  const allowed=[{url:'https://www.bbc.com/a'},{url:'https://www.estadao.com.br/b'}];
+  for(let i=0;i<253;i++){const date=new Date(clock-i*60000).toISOString();save.run(String(i).padStart(3,'0'),'Tema '+i,'news',date,JSON.stringify(i>=250?allowed:i%2?[{url:'https://www.bbc.com/a'},{url:'https://www.bbc.com/b'}]:[]),date,date);}
+  assert.equal(research.list({group:'news',limit:1})[0].key,'trend:000');
+  assert.deepEqual(research.list({group:'news',automatic:true,limit:2,offset:1}).map(s=>s.key),['trend:251','trend:252']);
+  assert.equal(research.automaticEligible(research.get('trend:250')),true);
+  assert.equal(research.automaticEligible({...research.get('trend:000'),evidenceReady:true,sources:allowed}),false,'caller annotations cannot replace stored feed references');
+  assert.equal(research.automaticEligible({kind:'trend',key:'trend:missing',sources:allowed}),false);
+  assert.equal(calls.length,0);assert.equal(db.prepare('SELECT count(*) n FROM web_story_trend_topics WHERE checked_at IS NOT NULL').get().n,0);db.close();
+});
+
+test('article feasibility counts allowed publisher families and never treats Trends or fabricated readiness as evidence',()=>{
+  const {db,research,calls}=setup(),article=ownArticle();
+  assert.equal(research.automaticEligible(article),true);
+  assert.equal(research.automaticEligible({...article,sources:[{url:'https://trends.google.com/trending?geo=BR'}],evidenceReady:true}),false);
+  assert.equal(research.automaticEligible({...article,sources:[{url:'https://www.bbc.com/a',publisher:'bbc'},{url:'https://www.bbc.com/b',publisher:'different'}]}),false);
+  assert.equal(research.automaticEligible({...article,sources:[{url:'https://www.bbc.com/a'},{url:'https://www.bbc.com.evil.test/b'}]}),false);
+  for(const kind of ['product','service','course','affiliate','store','city'])assert.equal(research.automaticEligible({kind,group:'services',sources:[]}),true);
+  assert.equal(research.automaticEligible({...article,group:'recipes',portal:'receitas',sources:[]}),true);
+  assert.equal(calls.length,0);assert.equal(db.prepare('SELECT count(*) n FROM web_story_article_evidence').get().n,0);db.close();
+});
+
+test('feasible references do not approve content when fetched source text fails the unchanged evidence checks',async()=>{
+  const x=setup({respond:url=>url.includes('trends.google.com')?undefined:new Response('<article><p>Texto curto.</p></article>',{headers:{'content-type':'text/html'}})});
+  await x.research.syncTrends();const candidate=x.research.list({automatic:true})[0];assert.ok(candidate);assert.equal(x.research.automaticEligible(candidate),true);
+  const checked=await x.research.enrich(candidate);assert.equal(checked.evidenceReady,false);assert.equal(checked.body,'');assert.equal(x.calls.length,3);x.db.close();
+});

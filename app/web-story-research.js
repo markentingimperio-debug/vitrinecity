@@ -106,7 +106,10 @@ export function createWebStoryResearch({db,fetchImpl,now=Date.now}) {
   const needsArticleEvidence=item=>item?.kind==='article'&&['news','sports','noticias','esportes'].includes(item.group||item.portal);
   const baseArticle=item=>enrichmentOrigins.get(item)||item;
   const articleFingerprint=item=>hash({key:item.key||item.id,title:item.title,summary:item.summary,body:item.body,image_url:item.image_url,portal:item.portal,group:item.group,updated_at:item.updated_at,sourcePath:item.sourcePath,sources:item.sources,facts:item.facts});
-  const evidenceReady=(evidence,checkedAt)=>fresh(checkedAt)&&new Set(evidence.filter(x=>storyResearchUrl(x.url)&&STORY_RESEARCH_PUBLISHERS[new URL(x.url).hostname]===x.publisher&&x.excerpt?.length>=500&&x.excerptHash===hash(x.excerpt)&&fresh(x.checkedAt)).map(x=>x.publisher)).size>=2;
+  const evidenceReady=(evidence,checkedAt)=>fresh(checkedAt)&&new Set(evidence.filter(x=>x&&storyResearchUrl(x.url)&&STORY_RESEARCH_PUBLISHERS[new URL(x.url).hostname]===x.publisher&&x.excerpt?.length>=500&&x.excerptHash===hash(x.excerpt)&&fresh(x.checkedAt)).map(x=>x.publisher)).size>=2;
+  const storedArray=value=>{try{const items=JSON.parse(value);return Array.isArray(items)?items:[];}catch{return [];}};
+  const independentReferences=refs=>new Set((Array.isArray(refs)?refs:[]).flatMap(ref=>{const url=storyResearchUrl(ref?.url);return url?[STORY_RESEARCH_PUBLISHERS[new URL(url).hostname]]:[];})).size>=2;
+  const topicCanBeResearched=item=>!!item&&(evidenceReady(storedArray(item.evidence_json),item.checked_at)||independentReferences(storedArray(item.references_json)));
   const citations=evidence=>evidence.map(({title,url,publisher,checkedAt,excerptHash})=>({title,url,publisher,checkedAt,excerptHash}));
   function getEnriched(input) {
     if(!input||!needsArticleEvidence(input))return input;
@@ -123,13 +126,22 @@ export function createWebStoryResearch({db,fetchImpl,now=Date.now}) {
     result.hash=hash(result);result.sourceHash=result.hash;return result;
   }
   function get(key){return source(row(key));}
-  function list({q='',group='all',limit=50,offset=0}={}) {
+  // This is feasibility, not approval: actual fetching, freshness, grounding and
+  // independent editorial review still run after a candidate is selected.
+  // Trend references come from the persisted feed, never caller-supplied flags.
+  function automaticEligible(input){
+    if(input?.kind==='trend')return topicCanBeResearched(row(input.key||input.id));
+    if(!needsArticleEvidence(input))return true;
+    const base=baseArticle(input);
+    return getEnriched(base).evidenceReady===true||independentReferences(base.sources);
+  }
+  function list({q='',group='all',limit=50,offset=0,automatic=false}={}) {
     if(!['all','news','sports','trends'].includes(group))return [];
     const take=Math.max(0,Math.min(200,Number.isFinite(Number(limit))?Math.trunc(Number(limit)):50)),skip=Math.max(0,Number.isSafeInteger(Number(offset))?Number(offset):0);
     if(!take)return [];
     const terms=normalize(String(q).slice(0,200)).split(' ').filter(Boolean).slice(0,12);
     return db.prepare("SELECT * FROM web_story_trend_topics WHERE published_at>=? AND (?='all' OR topic_group=?) ORDER BY published_at DESC,checked_at DESC,id ASC").all(new Date(now()-7*MAX_AGE).toISOString(),group,group)
-      .filter(x=>terms.every(t=>normalize(x.title+' '+x.topic_group+' '+x.references_json).includes(t))).slice(skip,skip+take).map(source);
+      .filter(x=>terms.every(t=>normalize(x.title+' '+x.topic_group+' '+x.references_json).includes(t))&&(!automatic||topicCanBeResearched(x))).slice(skip,skip+take).map(source);
   }
   async function syncTrends({signal}={}) {
     const xml=await fetchStoryResearchText(RSS,{signal,fetchImpl,feed:true}),topics=parseStoryTrends(xml),timestamp=new Date(now()).toISOString();checkSignal(signal);
@@ -169,5 +181,5 @@ export function createWebStoryResearch({db,fetchImpl,now=Date.now}) {
     db.prepare('UPDATE web_story_trend_topics SET evidence_json=?,checked_at=?,updated_at=? WHERE id=?').run(JSON.stringify(evidence),timestamp,timestamp,original.id);
     return get(key);
   }
-  return {syncTrends,list,get,enrich,getEnriched};
+  return {syncTrends,list,get,enrich,getEnriched,automaticEligible};
 }

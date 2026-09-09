@@ -18,7 +18,7 @@ async function fixture(t,options={}){
   const sourceCatalog={get:key=>state.sources.get(key),list:({q='',limit=200}={})=>[...state.sources.values()].filter(source=>!q||source.title.toLowerCase().includes(q.toLowerCase())).slice(0,limit)};
   const metaAdapter={inspect:async input=>{state.inspections.push(input);if(state.inspectHook)return state.inspectHook(input);return {ready:state.ready,missing:state.ready?[]:['Falta a permissão necessária.'],postUrl:'https://www.facebook.com/100/posts/'+input.postId};},send:async input=>{state.sends.push(input);state.sequence.push('private');if(state.sendHook)return state.sendHook(input);return {messageId:'message_'+state.sends.length};},replyPublic:async input=>{state.publicReplies.push(input);state.sequence.push('public');if(state.publicHook)return state.publicHook(input);return {commentId:'900_'+state.publicReplies.length};},likeComment:async input=>{state.reactions.push(input);state.sequence.push('reaction');if(state.reactionHook)return state.reactionHook(input);return {success:true};}};
   const app=express();app.use(express.json());
-  const register=app=>registerSocialCommentCampaigns({app,db,sourceCatalog,metaAdapter,commentModerationReason:options.commentModerationReason,siteUrl:origin,now:()=>state.time,sendTimeoutMs:options.sendTimeoutMs??50,inspectTimeoutMs:options.inspectTimeoutMs??1000,
+  const register=app=>registerSocialCommentCampaigns({app,db,sourceCatalog,metaAdapter,canRun:()=>!state.paused,commentModerationReason:options.commentModerationReason,siteUrl:origin,now:()=>state.time,sendTimeoutMs:options.sendTimeoutMs??50,inspectTimeoutMs:options.inspectTimeoutMs??1000,
     requireAdmin:(req,res,next)=>req.headers['x-admin']==='yes'?next():res.status(401).end(),
     sameOriginOnly:(req,res,next)=>req.headers.origin===origin?next():res.status(403).end()});
   const service=register(app);
@@ -39,6 +39,22 @@ async function fixture(t,options={}){
   const rows=()=>db.prepare('SELECT * FROM social_content_comment_events ORDER BY received_at,id').all();
   return {db,state,service,request,preview,activate,facebook,instagram,rows,secondService:()=>register(express())};
 }
+
+test('global pause during inspection retains private reply and extras without repeating confirmed sends',async t=>{
+  const f=await fixture(t);await f.activate({publicReplyEnabled:true,reactEnabled:true});f.service.ingestWebhook(f.facebook());
+  f.state.paused=true;await f.service.processPending();assert.equal(f.state.sends.length,0);assert.equal(f.rows()[0].status,'pending');
+  f.state.paused=false;f.state.inspectHook=async()=>{f.state.paused=true;return {ready:true,missing:[]};};
+  await f.service.processPending();assert.equal(f.state.sends.length,0);assert.equal(f.rows()[0].status,'pending');
+  f.state.paused=false;f.state.inspectHook=null;f.state.sendHook=async()=>{f.state.paused=true;return {messageId:'confirmed'};};
+  await f.service.processPending();assert.equal(f.state.sends.length,1);assert.equal(f.rows()[0].status,'sent');assert.equal(f.state.publicReplies.length,0);assert.equal(f.state.reactions.length,0);
+  f.state.paused=false;await f.service.processPending();await f.service.processPending();assert.equal(f.state.sends.length,1);assert.equal(f.state.publicReplies.length,1);assert.equal(f.state.reactions.length,1);
+});
+
+test('global pause never changes an uncertain provider attempt into a retry',async t=>{
+  const f=await fixture(t);await f.activate();f.service.ingestWebhook(f.facebook());
+  f.state.sendHook=async()=>{f.state.paused=true;throw Object.assign(Error('timeout'),{uncertain:true});};
+  await f.service.processPending();assert.equal(f.rows()[0].status,'unknown');f.state.paused=false;await f.service.processPending();assert.equal(f.state.sends.length,1);
+});
 
 test('catalog and routes require admin; mutations require origin; account tokens never leave catalog',async t=>{
   const f=await fixture(t);

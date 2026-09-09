@@ -50,3 +50,17 @@ test('a timeout or missing acknowledgment is left for review and never automatic
     } finally {db.close();}
   }
 });
+
+test('global pause keeps unsubmitted work pending and resumes once; uncertain sends stay terminal',async()=>{
+  const {db,add,options}=fixture();let paused=true,attempts=0,pauseDuringPrepare=false;
+  try{
+    add('paused',true);
+    const run=createWhatsAppScheduleProcessor({...options,canRun:()=>!paused,prepareScheduledMessage:async item=>{if(pauseDuringPrepare)paused=true;return options.prepareScheduledMessage(item);},whatsappQrRequest:async()=>{attempts++;return {data:{Id:'confirmed'}};}});
+    await run();assert.equal(attempts,0);assert.equal(db.prepare("SELECT status FROM whatsapp_qr_schedules WHERE id='paused'").get().status,'pending');
+    paused=false;pauseDuringPrepare=true;await run();assert.equal(attempts,0);assert.equal(db.prepare("SELECT status FROM whatsapp_qr_schedules WHERE id='paused'").get().status,'pending');
+    paused=false;pauseDuringPrepare=false;await run();await run();assert.equal(attempts,1);
+    add('unknown',true);
+    const uncertain=createWhatsAppScheduleProcessor({...options,canRun:()=>!paused,whatsappQrRequest:async()=>{attempts++;paused=true;throw Error('timeout after submission');}});
+    await uncertain();paused=false;await uncertain();assert.equal(attempts,2);assert.equal(db.prepare("SELECT status FROM whatsapp_qr_schedules WHERE id='unknown'").get().status,'failed');
+  }finally{db.close();}
+});

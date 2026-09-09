@@ -21,6 +21,17 @@ async function fixture(t,{sources=[source('product:1')],processor,configured=tru
     second:options=>{const other=new Database(dbPath);databases.push(other);return make({db:other,...options});}};
 }
 const update=(engine,input,actor)=>engine.updateSettings({revision:engine.status().revision,...input},actor);
+
+test('global pause gates claims and publication while central coordination suppresses only automatic ticks',async t=>{
+  const f=await fixture(t);let paused=true,central=true;
+  const engine=f.make({canRun:()=>!paused,autoRunAllowed:()=>!central});update(engine,{enabled:true});
+  engine.run({manual:true});await engine.awaitIdle();assert.equal(f.called.length,0);assert.equal(engine.status().reason,'global_paused');
+  paused=false;engine.run();await engine.awaitIdle();assert.equal(f.called.length,0);assert.equal(engine.status().reason,'centrally_coordinated');
+  engine.run({manual:true});await engine.awaitIdle();assert.equal(f.called.length,1);
+  f.sources.push(source('paused-publication'));const wait=deferred();let started=false,published=0;
+  const second=f.make({canRun:()=>!paused,processSource:async(_source,context)=>{started=true;await wait.promise;if(context.isCurrent())published++;return {status:'published',storyId:'second'};}});
+  second.run({manual:true});await new Promise(r=>setImmediate(r));assert(started);paused=true;wait.resolve();await second.awaitIdle();assert.equal(published,0);assert.equal(second.status().quota.interrupted,1);
+});
 const run=async(engine,options={manual:true})=>{engine.run(options);return engine.awaitIdle();};
 
 test('defaults disabled, no automatic timer or provider activity, strict configurable bounds',async t=>{
