@@ -16,7 +16,7 @@ test('ordinary connections remain read-only; only admins can request comment per
   assert.throws(()=>socialOauthRequest({intent:['comment_replies']},true));
   const request=socialOauthRequest({intent:'comment_replies',returnTo:'chatbot'},true);assert.deepEqual(request,{intent:'comment_replies',returnTo:'chatbot'});
   const readonly=socialOauthScopes(),expanded=socialOauthScopes(request.intent);
-  for(const name of ['pages_messaging','pages_manage_metadata','instagram_manage_comments']){assert.ok(expanded.includes(name));assert.ok(!readonly.includes(name));}
+  for(const name of ['pages_messaging','pages_manage_metadata','instagram_manage_comments','business_management','pages_manage_engagement']){assert.ok(expanded.includes(name));assert.ok(!readonly.includes(name));}
   assert.ok(!expanded.includes('instagram_manage_messages'));assert.deepEqual(expanded.slice(0,readonly.length),readonly);
 });
 

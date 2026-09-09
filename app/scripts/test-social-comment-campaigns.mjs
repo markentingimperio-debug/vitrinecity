@@ -10,15 +10,15 @@ async function fixture(t,options={}){
   const db=new Database(':memory:');
   db.exec(`CREATE TABLE social_accounts(id INTEGER PRIMARY KEY,page_id TEXT,page_name TEXT,instagram_id TEXT,instagram_username TEXT,token_encrypted TEXT,status TEXT,updated_at TEXT);
     INSERT INTO social_accounts VALUES (1,'100','Página VitrineCity','200','vitrinecity','SECRET_MUST_NEVER_APPEAR','connected','2026-09-09');`);
-  const state={time:Date.parse('2026-09-10T12:00:00Z'),ready:true,inspections:[],sends:[],inspectHook:null,sendHook:null,sources:new Map([
+  const state={time:Date.parse('2026-09-10T12:00:00Z'),ready:true,inspections:[],sends:[],publicReplies:[],reactions:[],sequence:[],inspectHook:null,sendHook:null,publicHook:null,reactionHook:null,sources:new Map([
     ['recipe',{key:'recipe',title:'Bolo de cenoura',summary:'Receita com ingredientes e preparo explicados.',image_url:'/assets/bolo.jpg',sourcePath:'/artigo/bolo-de-cenoura',commercial:false,facts:{category:'receitas'},body:'Ingredientes e preparo completos.'}],
     ['plant',{key:'plant',title:'Guia de plantas',summary:'Entenda os cuidados básicos.',image_url:'/uploads/guia.png',sourcePath:'/artigo/plantas',commercial:false,facts:{category:'plantas'},body:'Cuidados com plantas.'}],
     ['product',{key:'product',title:'Adubo para plantas',summary:'Conheça a apresentação e confira a oferta.',image_url:'https://http2.mlstatic.com/D_NQ_NP_2X_123-F.webp',sourcePath:'/ofertas/adubo',commercial:true,facts:{affiliate:true},body:'Descrição conferida.'}]
   ])};
   const sourceCatalog={get:key=>state.sources.get(key),list:({q='',limit=200}={})=>[...state.sources.values()].filter(source=>!q||source.title.toLowerCase().includes(q.toLowerCase())).slice(0,limit)};
-  const metaAdapter={inspect:async input=>{state.inspections.push(input);if(state.inspectHook)return state.inspectHook(input);return {ready:state.ready,missing:state.ready?[]:['Falta a permissão necessária.'],postUrl:'https://www.facebook.com/100/posts/'+input.postId};},send:async input=>{state.sends.push(input);if(state.sendHook)return state.sendHook(input);return {messageId:'message_'+state.sends.length};}};
+  const metaAdapter={inspect:async input=>{state.inspections.push(input);if(state.inspectHook)return state.inspectHook(input);return {ready:state.ready,missing:state.ready?[]:['Falta a permissão necessária.'],postUrl:'https://www.facebook.com/100/posts/'+input.postId};},send:async input=>{state.sends.push(input);state.sequence.push('private');if(state.sendHook)return state.sendHook(input);return {messageId:'message_'+state.sends.length};},replyPublic:async input=>{state.publicReplies.push(input);state.sequence.push('public');if(state.publicHook)return state.publicHook(input);return {commentId:'900_'+state.publicReplies.length};},likeComment:async input=>{state.reactions.push(input);state.sequence.push('reaction');if(state.reactionHook)return state.reactionHook(input);return {success:true};}};
   const app=express();app.use(express.json());
-  const register=app=>registerSocialCommentCampaigns({app,db,sourceCatalog,metaAdapter,siteUrl:origin,now:()=>state.time,sendTimeoutMs:options.sendTimeoutMs??50,inspectTimeoutMs:options.inspectTimeoutMs??1000,
+  const register=app=>registerSocialCommentCampaigns({app,db,sourceCatalog,metaAdapter,commentModerationReason:options.commentModerationReason,siteUrl:origin,now:()=>state.time,sendTimeoutMs:options.sendTimeoutMs??50,inspectTimeoutMs:options.inspectTimeoutMs??1000,
     requireAdmin:(req,res,next)=>req.headers['x-admin']==='yes'?next():res.status(401).end(),
     sameOriginOnly:(req,res,next)=>req.headers.origin===origin?next():res.status(403).end()});
   const service=register(app);
@@ -223,4 +223,109 @@ test('source and image URLs reject administrative, encoded and external destinat
   f.state.sources.get('plant').sourcePath='/artigo/plantas';f.state.sources.get('plant').image_url='https://evil.test/photo.jpg';
   const draft=await f.preview({sourceKey:'plant'});assert.equal(draft.body.source.image,'');assert.equal(draft.body.readiness.ready,false);
   await f.activate({surface:'instagram',postId:'800'});f.service.ingestWebhook(f.instagram({self_ig_scoped_id:'400'}));await f.service.processPending();assert.equal(f.state.sends.length,0);
+});
+
+test('trigger and interaction options are explicit, preview-only, idempotent and checked by connection readiness',async t=>{
+  const f=await fixture(t),base=(await f.preview()).body;
+  assert.equal(base.triggerMode,'keyword');assert.equal(base.publicReplyEnabled,false);assert.equal(base.reactEnabled,false);assert.equal(base.publicReplyPreview,'');
+  const idempotencyKey=randomUUID(),options={triggerMode:'any_comment',publicReplyEnabled:true,reactEnabled:true,idempotencyKey,caption:''};
+  const draft=await f.preview(options);assert.equal(draft.status,200);assert.equal(draft.body.status,'draft');assert.match(draft.body.publicReplyPreview,/\{nome\}, obrigado/);
+  assert(!draft.body.privateReply.includes('você pediu'));assert.match(draft.body.caption,/Deixe seu comentário/);assert.equal(f.state.sends.length,0);
+  assert.equal((await f.preview(options)).body.id,draft.body.id);assert.equal((await f.preview({...options,reactEnabled:false})).status,409);
+  for(const invalid of [{triggerMode:'all'},{publicReplyEnabled:'true'},{reactEnabled:1},{surface:'instagram',postId:'800',reactEnabled:true}])assert.equal((await f.preview(invalid)).status,400);
+  assert.equal((await f.request('/connection?accountId=1&surface=instagram&reactEnabled=true')).status,400);
+  assert.equal((await f.request('/connection?accountId=1&surface=facebook_page&publicReplyEnabled=true&reactEnabled=true')).status,200);
+  assert.equal(f.state.inspections.at(-1).publicReplyEnabled,true);assert.equal(f.state.inspections.at(-1).reactEnabled,true);
+});
+
+test('any comment sends related content first, then named public thanks and Facebook like, all exactly once',async t=>{
+  const f=await fixture(t),campaign=await f.activate({triggerMode:'any_comment',publicReplyEnabled:true,reactEnabled:true});
+  const event=f.facebook({text:'Que planta bonita!',from:{id:'300',name:'Maria Silva'}});f.service.ingestWebhook(event);f.service.ingestWebhook(event);
+  f.service.ingestWebhook(f.facebook({id:'300_2',text:'Também gostei',from:{id:'300',name:'Maria'}}));
+  const result=await f.service.processPending();assert.equal(result.actions,3);assert.equal(result.processed,1);
+  assert.deepEqual(f.state.sequence,['private','public','reaction']);assert.match(f.state.publicReplies[0].text,/^Maria, obrigado/);assert.match(f.state.publicReplies[0].text,/presente/);assert(!f.state.sends[0].text.includes('pediu'));
+  await f.service.processPending();assert.equal(f.state.sequence.length,3);
+  const row=f.rows().find(row=>row.status==='sent');assert.equal(row.author_name,'Maria');assert.equal(row.public_status,'sent');assert.equal(row.reaction_status,'sent');assert.equal(row.public_provider_id,'900_1');assert.equal(row.provider_message_id,'message_1');
+  const dto=(await f.request('/'+campaign.id)).body;assert.equal(dto.counts.sent,1);assert.equal(dto.publicReplyCounts.sent,1);assert.equal(dto.reactionCounts.sent,1);
+});
+
+test('commercial replies disclose an offer instead of a gift and absent or unsafe names use generic thanks',async t=>{
+  for(const name of [undefined,'<script>bad</script>','https://spam.test','']){
+    const f=await fixture(t);await f.activate({triggerMode:'any_comment',sourceKey:'product',publicReplyEnabled:true});
+    f.service.ingestWebhook(f.facebook({text:'Gostei deste produto',from:{id:'300',name}}));await f.service.processPending();
+    assert.match(f.state.publicReplies[0].text,/^Obrigado pelo comentário! Enviei o link da oferta/);assert(!f.state.publicReplies[0].text.includes('presente'));assert.match(f.state.sends[0].text,/Publicidade/);
+  }
+});
+
+test('any-comment mode retains moderation, opt-out, authorship, timestamp, edit and nested-comment guards',async t=>{
+  const f=await fixture(t,{commentModerationReason:text=>text==='retido pelo sistema'?'retido':''});await f.activate({triggerMode:'any_comment',publicReplyEnabled:true,reactEnabled:true});
+  const cases=[{text:'não quero receber mensagens'},{text:'Pare de enviar'},{text:'PARAR'},{text:'pare'},{text:'não me mande mensagem'},{text:'não me contate'},{text:'https://spam.test'},{text:'vai se foder'},{text:'retido pelo sistema'},{text:''},{author:'100'},{author:''},{verb:'edited'},{verb:'remove'},{parent_id:'another_comment'},{created_time:undefined},{time:f.state.time-5000},{live_video_id:'live'}];
+  for(const [index,input] of cases.entries())f.service.ingestWebhook(f.facebook({id:'bad_'+index,author:'person_'+index,text:'Gostei',...input}));
+  await f.service.processPending();assert.equal(f.state.sequence.length,0);assert(f.rows().every(row=>row.status==='ignored'&&row.public_status==='not_requested'&&row.reaction_status==='not_requested'));
+});
+
+test('private refusal, timeout or missing confirmation never announces delivery or likes the comment',async t=>{
+  for(const mode of ['refused','timeout','missing']){
+    const f=await fixture(t,{sendTimeoutMs:10});await f.activate({triggerMode:'any_comment',publicReplyEnabled:true,reactEnabled:true});f.service.ingestWebhook(f.facebook({text:'Gostei'}));
+    f.state.sendHook=mode==='refused'?async()=>{throw Object.assign(Error('SECRET'),{definitive:true});}:mode==='timeout'?()=>new Promise(()=>{}):async()=>({});
+    await f.service.processPending();await f.service.processPending();assert.deepEqual(f.state.sequence,['private']);assert.equal(f.rows()[0].status,mode==='refused'?'failed':'unknown');assert.equal(f.rows()[0].public_status,'cancelled');assert.equal(f.rows()[0].reaction_status,'cancelled');
+  }
+});
+
+test('public and like failures are independent and terminal, never resending the confirmed private reply',async t=>{
+  for(const prefix of ['public','reaction'])for(const mode of ['refused','timeout','missing']){
+    const f=await fixture(t,{sendTimeoutMs:10});await f.activate({triggerMode:'any_comment',publicReplyEnabled:true,reactEnabled:true});f.service.ingestWebhook(f.facebook({text:'Gostei'}));
+    f.state[prefix==='public'?'publicHook':'reactionHook']=mode==='refused'?async()=>{throw Object.assign(Error('SECRET'),{definitive:true});}:mode==='timeout'?()=>new Promise(()=>{}):async()=>({});
+    await f.service.processPending();await f.service.processPending();assert.deepEqual(f.state.sequence,['private','public','reaction']);assert.equal(f.rows()[0].status,'sent');assert.equal(f.rows()[0][prefix+'_status'],mode==='refused'?'failed':'unknown');assert.equal(f.rows()[0][(prefix==='public'?'reaction':'public')+'_status'],'sent');assert(!JSON.stringify(f.rows()).includes('SECRET'));
+  }
+});
+
+test('pause, changed source and comment removal after private confirmation cancel the remaining interactions',async t=>{
+  for(const mode of ['pause','source','remove']){
+    const f=await fixture(t),campaign=await f.activate({triggerMode:'any_comment',publicReplyEnabled:true,reactEnabled:true});f.service.ingestWebhook(f.facebook({text:'Gostei'}));
+    f.state.sendHook=async()=>{if(mode==='pause')await f.request('/'+campaign.id+'/pause','POST',{});if(mode==='source')f.state.sources.get('recipe').body+=' Changed';if(mode==='remove')f.service.ingestWebhook(f.facebook({verb:'remove'}));return {messageId:'confirmed'};};
+    await f.service.processPending();await f.service.processPending();assert.deepEqual(f.state.sequence,['private']);assert.equal(f.rows()[0].status,'sent');assert.equal(f.rows()[0].public_status,'cancelled');assert.equal(f.rows()[0].reaction_status,'cancelled');
+  }
+});
+
+test('independent workers claim each public reply and like once and recover stale claims without reissuing them',async t=>{
+  const f=await fixture(t),second=f.secondService();await f.activate({triggerMode:'any_comment',publicReplyEnabled:true,reactEnabled:true});f.service.ingestWebhook(f.facebook({text:'Gostei'}));
+  await Promise.all([f.service.processPending(),second.processPending()]);await second.processPending();assert.equal(f.state.sends.length,1);assert.equal(f.state.publicReplies.length,1);assert.equal(f.state.reactions.length,1);
+  f.db.prepare("UPDATE social_content_comment_events SET public_status='processing',public_claimed_at=?,reaction_status='processing',reaction_claimed_at=?").run(f.state.time-121000,f.state.time-1000);
+  await f.service.processPending();assert.equal(f.rows()[0].public_status,'unknown');assert.equal(f.rows()[0].reaction_status,'processing');assert.equal(f.state.sequence.length,3);
+  f.state.time+=121000;await second.processPending();assert.equal(f.rows()[0].reaction_status,'unknown');assert.equal(f.state.sequence.length,3);
+});
+
+test('Facebook add-ons share a three-action pass budget and Instagram supports public replies without likes',async t=>{
+  const f=await fixture(t);await f.activate({triggerMode:'any_comment',publicReplyEnabled:true,reactEnabled:true});
+  for(let i=0;i<4;i++)f.service.ingestWebhook(f.facebook({id:'comment_'+i,author:'author_'+i,text:'Bonito'}));
+  assert.equal((await f.service.processPending()).actions,3);assert.equal(f.state.sequence.length,3);assert.equal(f.state.sends.length,1);
+  const ig=await fixture(t);await ig.activate({surface:'instagram',postId:'800',triggerMode:'any_comment',publicReplyEnabled:true});ig.service.ingestWebhook(ig.instagram({text:'Adorei',from:{id:'400',username:'ana.plantas'}}));await ig.service.processPending();
+  assert.deepEqual(ig.state.sequence,['private','public']);assert.match(ig.state.publicReplies[0].text,/^Obrigado pelo comentário/);assert.equal(ig.rows()[0].reaction_status,'not_requested');
+});
+
+test('a later opt-out from the same author cancels queued work, in-flight add-ons and future requests on that post',async t=>{
+  for(const phase of ['before_worker','during_inspect','after_private']){
+    const f=await fixture(t);await f.activate({triggerMode:'any_comment',publicReplyEnabled:true,reactEnabled:true});f.service.ingestWebhook(f.facebook({text:'Parece delicioso!'}));
+    const optOut=()=>f.service.ingestWebhook(f.facebook({id:'300_2',text:'Não quero mensagens'}));
+    if(phase==='before_worker')optOut();
+    if(phase==='during_inspect')f.state.inspectHook=async()=>{optOut();return {ready:true};};
+    if(phase==='after_private')f.state.sendHook=async()=>{optOut();return {messageId:'confirmed'};};
+    await f.service.processPending();f.state.inspectHook=null;f.state.sendHook=null;
+    f.service.ingestWebhook(f.facebook({id:'300_3',text:'QUERO RECEITA'}));await f.service.processPending();
+    assert.deepEqual(f.state.sequence,phase==='after_private'?['private']:[]);const original=f.rows().find(row=>row.comment_id==='300_1');assert.equal(original.public_status,'cancelled');assert.equal(original.reaction_status,'cancelled');assert.notEqual(original.invalidated_at,null);
+  }
+  const f=await fixture(t);await f.activate({triggerMode:'any_comment'});f.service.ingestWebhook(f.facebook({text:'PARAR'}));f.service.ingestWebhook(f.facebook({id:'300_2',text:'Gostei'}));await f.service.processPending();assert.equal(f.state.sends.length,0);
+});
+
+test('public copy rejects bare domains, strips source links and omits link-like names while private links remain',async t=>{
+  const f=await fixture(t);
+  for(const link of ['wa.me/5511999999999','t.me/canal','bit.ly','vitrinecity.com.br','example.io','curso.dev','https://site.test','ftp://site.test','www.exemplo.com'])assert.equal((await f.preview({caption:'Comente QUERO RECEITA '+link})).status,400,link);
+  const ordinary='Bolo fofinho com 1.5 xícara de farinha e preço de R$ 10,50. Comente QUERO RECEITA!';assert.equal((await f.preview({caption:ordinary})).body.caption,ordinary);
+  f.state.sources.get('recipe').title='Bolo de cenoura em wa.me/123';f.state.sources.get('recipe').summary='Receita em bit.ly ou vitrinecity.com.br. Use 1.5 xícara de farinha.';
+  const generated=(await f.preview({caption:''})).body;assert(!/wa\.me|bit\.ly|vitrinecity\.com\.br/.test(generated.caption));assert.match(generated.caption,/1\.5 xícara/);assert.match(generated.privateReply,/https:\/\/vitrinecity\.com\/artigo/);
+  await f.activate({triggerMode:'any_comment',publicReplyEnabled:true});
+  for(const [index,name] of ['bit.ly','wa.me','empresa.com.br','Maria Silva'].entries())f.service.ingestWebhook(f.facebook({id:'name_'+index,text:'Gostei!',from:{id:'person_'+index,name}}));
+  for(let i=0;i<4;i++)await f.service.processPending();assert.equal(f.state.publicReplies.length,4);
+  assert.equal(f.state.publicReplies.filter(item=>/^Obrigado pelo comentário/.test(item.text)).length,3);assert.equal(f.state.publicReplies.filter(item=>/^Maria, obrigado/.test(item.text)).length,1);assert(f.state.publicReplies.every(item=>!/wa\.me|bit\.ly|empresa\.com\.br|https?:\/\//.test(item.text)));
 });

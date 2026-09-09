@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {socialCampaignPayload,socialRequestKey,socialImageUrl,socialPageUrl,suggestedCaption,mountSocialCampaigns} from '../public/admin-social-comment-campaigns.js';
+import {publicCopyHasLinks,removePublicLinks} from '../public/social-public-copy.js';
 
 const origin='https://vitrinecity.com',tick=()=>new Promise(resolve=>setImmediate(resolve));
 const response=(data,status=200)=>({ok:status>=200&&status<300,status,json:async()=>data});
@@ -13,7 +14,7 @@ const catalog={items:[source,{...source,key:'editorial:plantas',title:'<b>Planta
 
 function fixture(t,fetcher,{saved='',denyStorage=false}={}){
   class Element{
-    constructor(tag='div'){this.tagName=tag.toUpperCase();this.children=[];this.listeners={};this.dataset={};this.attrs={};this.value='';this.textContent='';this.disabled=false;this.hidden=false;}
+    constructor(tag='div'){this.tagName=tag.toUpperCase();this.children=[];this.listeners={};this.dataset={};this.attrs={};this.value='';this.textContent='';this.disabled=false;this.hidden=false;this.checked=false;}
     append(...items){this.children.push(...items);}
     replaceChildren(...items){this.children=items;}
     setAttribute(name,value){this.attrs[name]=value;}
@@ -26,9 +27,9 @@ function fixture(t,fetcher,{saved='',denyStorage=false}={}){
   }
   const document=new Element(),window=new Element(),root=new Element(),nodes={};document.hidden=false;document.createElement=tag=>new Element(tag);root.ownerDocument=document;document.defaultView=window;window.location={origin};
   let stored=saved,copied='';window.localStorage={getItem:()=>{if(denyStorage)throw Error('denied');return stored;},setItem:(_key,value)=>{if(denyStorage)throw Error('denied');stored=value;}};window.navigator={clipboard:{writeText:async value=>{copied=value;}}};
-  for(const id of ['Form','Notice','Reload','Search','SearchCatalog','Source','SourceCount','SourceCard','Account','Surface','CheckConnection','ConnectionState','ConnectionTitle','ConnectionMissing','ConnectionChecks','PostId','GroupId','GroupField','Keyword','Caption','Suggest','Invite','Prepare','Preview','PreviewTitle','Summary','Readiness','Missing','Cover','PublicCaption','PrivateReply','Copy','Counts','PreviewNote','Activate','Pause','Refresh','History'])nodes[id]=new Element();
-  nodes.Surface.value='facebook_page';nodes.Keyword.value='QUERO RECEITA';nodes.Invite.value='none';
-  root.querySelector=selector=>nodes[selector.slice(3)];nodes.Form.querySelectorAll=()=>['Search','SearchCatalog','Source','Account','Surface','CheckConnection','PostId','GroupId','Keyword','Caption','Suggest','Invite','Prepare'].map(key=>nodes[key]);
+  for(const id of ['Form','Notice','Reload','Search','SearchCatalog','Source','SourceCount','SourceCard','Account','Surface','CheckConnection','ConnectionState','ConnectionTitle','ConnectionMissing','ConnectionChecks','PostId','GroupId','GroupField','TriggerMode','TriggerHint','KeywordField','Keyword','PublicReplyEnabled','ReactEnabled','ReactionHint','Caption','Suggest','Invite','Prepare','Preview','PreviewTitle','Summary','Readiness','Missing','Cover','PublicCaption','PrivateReply','PublicReplyCard','PublicReply','ReactionPreview','Copy','Counts','PublicCounts','ReactionCounts','PreviewNote','Activate','Pause','Refresh','History'])nodes[id]=new Element();
+  nodes.Surface.value='facebook_page';nodes.TriggerMode.value='keyword';nodes.Keyword.value='QUERO RECEITA';nodes.Invite.value='none';
+  root.querySelector=selector=>nodes[selector.slice(3)];nodes.Form.querySelectorAll=()=>['Search','SearchCatalog','Source','Account','Surface','CheckConnection','PostId','GroupId','TriggerMode','Keyword','PublicReplyEnabled','ReactEnabled','Caption','Suggest','Invite','Prepare'].map(key=>nodes[key]);
   const timers=new Map();let timerId=0,keyCount=0;
   const controller=mountSocialCampaigns(root,{document,window,fetcher,randomUUID:()=>`key-${++keyCount}`,setTimer:fn=>{timers.set(++timerId,fn);return timerId;},clearTimer:id=>timers.delete(id)});
   t.after(()=>controller.destroy());
@@ -90,4 +91,47 @@ test('server search keeps matches found in the article body instead of filtering
   f.nodes.Search.value='farinha & ovos';f.nodes.Search.dispatch('input');assert.equal(f.nodes.Source.children.length,1);f.nodes.SearchCatalog.dispatch('click');await tick();
   assert.ok(calls.some(call=>call.url.endsWith('/catalog?q=farinha%20%26%20ovos')));assert.equal(f.nodes.Source.children.length,2);assert.equal(f.nodes.Source.children[1].textContent,source.title);assert.ok(calls.every(call=>!call.options.method));
   assert.equal(socialCampaignPayload(payload({sourceKey:'a'.repeat(300)})).sourceKey.length,300);assert.throws(()=>socialCampaignPayload(payload({sourceKey:'a'.repeat(301)})));
+});
+
+test('public description validation and suggestions share bare-domain filtering without deleting decimals or Portuguese prose',()=>{
+  for(const link of ['wa.me/5511999999999','t.me/canal','bit.ly','empresa.com.br','oferta.io','curso.dev','www.site.test','https://site.test','ftp://site.test']){
+    assert.equal(publicCopyHasLinks(link),true,link);assert.throws(()=>socialCampaignPayload(payload({caption:caption+' '+link})),/Retire os links/);
+    const suggestion=suggestedCaption({...source,title:'Bolo de cenoura '+link,summary:'Receita completa '+link},'QUERO RECEITA');assert.equal(publicCopyHasLinks(suggestion),false,link);assert(!suggestion.includes(link));
+  }
+  const ordinary='Uma receita deliciosa. Use 1.5 xícara e aproveite! Comente QUERO RECEITA. Preço R$ 10,50.';
+  assert.equal(publicCopyHasLinks(ordinary),false);assert.equal(removePublicLinks(ordinary),ordinary);assert.equal(socialCampaignPayload(payload({caption:ordinary})).caption,ordinary);
+});
+
+test('new action flags default off; any-comment captions remove the keyword requirement without promising a free product',()=>{
+  const previous=socialCampaignPayload(payload());assert.equal(previous.triggerMode,'keyword');assert.equal(previous.publicReplyEnabled,false);assert.equal(previous.reactEnabled,false);
+  const anyCaption=suggestedCaption(source,'QUERO RECEITA','any_comment');assert.doesNotMatch(anyCaption,/Comente QUERO RECEITA/);assert.match(anyCaption,/mensagem privada/);
+  const any=socialCampaignPayload(payload({triggerMode:'any_comment',caption:anyCaption,publicReplyEnabled:true,reactEnabled:true}));assert.equal(any.publicReplyEnabled,true);assert.equal(any.reactEnabled,true);assert.equal(any.triggerMode,'any_comment');
+  assert.throws(()=>socialCampaignPayload(payload({caption:anyCaption})),/Inclua na descrição/);
+  const commercial=suggestedCaption({...source,commercial:true},'EU QUERO','any_comment');assert.match(commercial,/detalhes e as condições/);assert.match(commercial,/Publicidade/);assert.doesNotMatch(commercial,/presente|grátis|gratuito/i);
+  for(const change of [{triggerMode:'all_likers'},{publicReplyEnabled:'true'},{reactEnabled:1},{reactEnabled:true,surface:'instagram'}])assert.throws(()=>socialCampaignPayload(payload(change)));
+  let count=0;const key=socialRequestKey(()=>String(++count));const base=key(previous);assert.notEqual(key({...previous,triggerMode:'any_comment'}),base);assert.notEqual(key({...previous,publicReplyEnabled:true}),base);assert.notEqual(key({...previous,reactEnabled:true}),base);
+});
+
+test('any-comment preview sends selected actions once, renders server copy safely and never sends or activates by itself',async t=>{
+  const calls=[],publicCopy='{nome}, obrigado! Enviei o conteúdo desta publicação por mensagem privada.';
+  const f=fixture(t,async(url,options)=>{calls.push({url,options});if(url.endsWith('/catalog'))return response(catalog);if(url.endsWith('/preview'))return response(dto({triggerMode:'any_comment',publicReplyEnabled:true,reactEnabled:true,publicReplyPreview:publicCopy,publicReplyCounts:{sent:2,failed:1},reactionCounts:{sent:1,unknown:1}}));return response({campaigns:[]});});await tick();f.select();
+  assert.equal(f.nodes.TriggerMode.value,'keyword');assert.equal(f.nodes.PublicReplyEnabled.checked,false);assert.equal(f.nodes.ReactEnabled.checked,false);
+  f.nodes.TriggerMode.value='any_comment';f.nodes.TriggerMode.dispatch('change');assert.equal(f.nodes.KeywordField.hidden,true);assert.equal(f.nodes.Keyword.disabled,true);f.nodes.Suggest.dispatch('click');assert.doesNotMatch(f.nodes.Caption.value,/Comente QUERO RECEITA/);
+  f.nodes.PublicReplyEnabled.checked=true;f.nodes.PublicReplyEnabled.dispatch('change');f.nodes.ReactEnabled.checked=true;f.nodes.ReactEnabled.dispatch('change');f.nodes.Form.dispatch('submit');f.nodes.Form.dispatch('submit');await tick();
+  const posts=calls.filter(call=>call.options.method==='POST');assert.equal(posts.length,1);assert.match(posts[0].url,/\/preview$/);const body=JSON.parse(posts[0].options.body);assert.equal(body.triggerMode,'any_comment');assert.equal(body.publicReplyEnabled,true);assert.equal(body.reactEnabled,true);
+  assert.equal(f.nodes.PublicReply.textContent,publicCopy);assert.equal(f.nodes.PublicReplyCard.hidden,false);assert.equal(f.nodes.PublicCounts.hidden,false);assert.match(f.nodes.PublicCounts.textContent,/confirmados: 2.*Falhas: 1/);assert.match(f.nodes.ReactionCounts.textContent,/confirmadas: 1.*Sem confirmação: 1/);assert.match(f.nodes.ReactionPreview.textContent,/depois da confirmação/);
+  assert.equal(f.nodes.Activate.disabled,false);f.nodes.PublicReplyEnabled.checked=false;f.nodes.PublicReplyEnabled.dispatch('change');assert.equal(f.nodes.Activate.disabled,true);assert.match(f.nodes.PreviewNote.textContent,/formulário mudou/);
+});
+
+test('connection audit includes chosen public actions; Instagram clears reaction and requires another preview',async t=>{
+  const calls=[],f=fixture(t,async(url,options)=>{calls.push({url,options});if(url.endsWith('/catalog'))return response(catalog);if(url.includes('/connection?'))return response({account,surface:'facebook_page',readiness:{ready:false,missing:['Autorize pages_manage_engagement.'],details:{}}});return response({campaigns:[]});});await tick();f.select();
+  f.nodes.PublicReplyEnabled.checked=true;f.nodes.PublicReplyEnabled.dispatch('change');f.nodes.ReactEnabled.checked=true;f.nodes.ReactEnabled.dispatch('change');f.nodes.CheckConnection.dispatch('click');await tick();
+  assert.match(calls.at(-1).url,/publicReplyEnabled=true&reactEnabled=true$/);assert.ok(calls.every(call=>!call.options.method));assert.match(f.nodes.ConnectionMissing.children[0].textContent,/pages_manage_engagement/);
+  f.nodes.Surface.value='instagram';f.nodes.Surface.dispatch('change');assert.equal(f.nodes.ReactEnabled.checked,false);assert.equal(f.nodes.ReactEnabled.disabled,true);assert.equal(f.nodes.ConnectionState.hidden,true);assert.equal(f.nodes.PublicReplyEnabled.checked,true);
+  f.nodes.Surface.value='facebook_page';f.nodes.Surface.dispatch('change');assert.equal(f.nodes.ReactEnabled.disabled,false);assert.equal(f.nodes.ReactEnabled.checked,false);
+});
+
+test('public confirmation cannot activate without server preview; old restored campaigns keep all new actions off',async t=>{
+  const f=fixture(t,async(url,options)=>response(url.endsWith('/catalog')?catalog:url.endsWith('/preview')?dto({publicReplyEnabled:true}):{campaigns:[]}));await tick();f.select();f.nodes.PublicReplyEnabled.checked=true;f.nodes.PublicReplyEnabled.dispatch('change');f.nodes.Form.dispatch('submit');await tick();assert.equal(f.nodes.Activate.disabled,true);assert.match(f.nodes.Notice.textContent,/prévia das ações não está completa/);
+  const calls=[],restored=fixture(t,async(url,options)=>{calls.push({url,options});return response(url.endsWith('/catalog')?catalog:url.endsWith('/campaign-1')?dto():{campaigns:[]});},{saved:'campaign-1'});await tick();assert.ok(calls.every(call=>!call.options.method));assert.equal(restored.nodes.PublicReplyCard.hidden,true);assert.equal(restored.nodes.PublicCounts.hidden,true);assert.equal(restored.nodes.ReactionCounts.hidden,true);assert.equal(restored.nodes.Activate.disabled,true);assert.match(restored.nodes.Summary.textContent,/Pedido: QUERO RECEITA/);
 });
