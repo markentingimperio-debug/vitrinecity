@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {socialCampaignPayload,socialRequestKey,socialImageUrl,socialPageUrl,suggestedCaption,mountSocialCampaigns} from '../public/admin-social-comment-campaigns.js';
+import {publicCopyHasLinks,removePublicLinks} from '../public/social-public-copy.js';
 
 const origin='https://vitrinecity.com',tick=()=>new Promise(resolve=>setImmediate(resolve));
 const response=(data,status=200)=>({ok:status>=200&&status<300,status,json:async()=>data});
@@ -90,6 +91,15 @@ test('server search keeps matches found in the article body instead of filtering
   f.nodes.Search.value='farinha & ovos';f.nodes.Search.dispatch('input');assert.equal(f.nodes.Source.children.length,1);f.nodes.SearchCatalog.dispatch('click');await tick();
   assert.ok(calls.some(call=>call.url.endsWith('/catalog?q=farinha%20%26%20ovos')));assert.equal(f.nodes.Source.children.length,2);assert.equal(f.nodes.Source.children[1].textContent,source.title);assert.ok(calls.every(call=>!call.options.method));
   assert.equal(socialCampaignPayload(payload({sourceKey:'a'.repeat(300)})).sourceKey.length,300);assert.throws(()=>socialCampaignPayload(payload({sourceKey:'a'.repeat(301)})));
+});
+
+test('public description validation and suggestions share bare-domain filtering without deleting decimals or Portuguese prose',()=>{
+  for(const link of ['wa.me/5511999999999','t.me/canal','bit.ly','empresa.com.br','oferta.io','curso.dev','www.site.test','https://site.test','ftp://site.test']){
+    assert.equal(publicCopyHasLinks(link),true,link);assert.throws(()=>socialCampaignPayload(payload({caption:caption+' '+link})),/Retire os links/);
+    const suggestion=suggestedCaption({...source,title:'Bolo de cenoura '+link,summary:'Receita completa '+link},'QUERO RECEITA');assert.equal(publicCopyHasLinks(suggestion),false,link);assert(!suggestion.includes(link));
+  }
+  const ordinary='Uma receita deliciosa. Use 1.5 xícara e aproveite! Comente QUERO RECEITA. Preço R$ 10,50.';
+  assert.equal(publicCopyHasLinks(ordinary),false);assert.equal(removePublicLinks(ordinary),ordinary);assert.equal(socialCampaignPayload(payload({caption:ordinary})).caption,ordinary);
 });
 
 test('new action flags default off; any-comment captions remove the keyword requirement without promising a free product',()=>{

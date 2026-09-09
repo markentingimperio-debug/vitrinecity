@@ -1,3 +1,5 @@
+import {publicCopyHasLinks} from './public/social-public-copy.js';
+
 const ID=/^[0-9]{1,40}$/;
 const POST=/^[0-9]{1,40}(?:_[0-9]{1,40})?$/;
 const surfaces=new Set(['facebook_page','facebook_group','instagram']);
@@ -115,7 +117,7 @@ export function createMetaCommentApi({db,decryptToken,env=process.env,fetchImpl=
   }
   async function replyPublic({accountId,surface,commentId,text}){
     const account=accountFor(accountId,surface);
-    if(!POST.test(String(commentId))||typeof text!=='string'||!text.trim()||text.length>1900||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text))throw error('Confira o comentário e a resposta pública.');
+    if(!POST.test(String(commentId))||typeof text!=='string'||!text.trim()||text.length>1900||publicCopyHasLinks(text)||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text))throw error('Confira o comentário e a resposta pública. A resposta pública não pode conter links.');
     let token;try{token=decryptToken(account.token_encrypted);}catch{throw error('Reconecte a conta Meta antes de responder.');}
     const result=await request(String(commentId)+(surface==='instagram'?'/replies':'/comments'),{token,body:{message:text}});
     if(typeof result?.id!=='string'||!POST.test(result.id))throw error('A Meta não confirmou a resposta pública. Confira a publicação antes de tentar novamente.',true);

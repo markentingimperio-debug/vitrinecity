@@ -1,5 +1,6 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {safeResultImageUrl} from './public/search-result-image.js';
+import {publicCopyHasLinks,removePublicLinks} from './public/social-public-copy.js';
 
 const API='/api/admin/social-comment-campaigns', DAY=86400000;
 const SURFACES=new Set(['facebook_page','facebook_group','instagram']);
@@ -20,8 +21,8 @@ const interactionReason=text=>{
   if(/https?:\/\/|www\.|\b(porn\w*|nudes?|sexo explicito|supremacia|ataque racial|exterminar|tortura|estupro|pedofil\w*|vai se foder|filh[oa] da puta|vtnc)\b/.test(value))return 'Comentário retido pela moderação automática.';
   return '';
 };
-const authorName=value=>{const name=clean(value).replace(/\s+/g,' ');return /^[\p{L}\p{N}][\p{L}\p{N} ._'’\-]{0,79}$/u.test(name)&&!interactionReason(name)?name.split(' ')[0]:'';};
-const publicThanks=(source,name='')=>`${name?name+', obrigado':'Obrigado'} pelo comentário! ${source.commercial?'Enviei o link da oferta no privado.':'Enviei um presente no privado: o conteúdo desta publicação.'}`;
+const authorName=value=>{const name=clean(value).replace(/\s+/g,' ');return /^[\p{L}\p{N}][\p{L}\p{N} ._'’\-]{0,79}$/u.test(name)&&!publicCopyHasLinks(name)&&!interactionReason(name)?name.split(' ')[0]:'';};
+const publicThanks=(source,name='')=>{const safeName=name==='{nome}'?name:authorName(name);return `${safeName?safeName+', obrigado':'Obrigado'} pelo comentário! ${source.commercial?'Enviei o link da oferta no privado.':'Enviei um presente no privado: o conteúdo desta publicação.'}`;};
 const eventTime=value=>{
   if(value===undefined||value===null||value==='')return NaN;
   if(typeof value==='number'||/^\d+(?:\.\d+)?$/.test(String(value))){const n=Number(value);return n<1e12?n*1000:n;}
@@ -117,7 +118,7 @@ export function registerSocialCommentCampaigns({app,db,requireAdmin,sameOriginOn
     if(reactEnabled&&surface==='instagram')throw fail('A curtida automática de comentários está disponível somente no Facebook.');
     if(!sourceKey||sourceKey.length>300||!Number.isSafeInteger(accountId)||accountId<1||!SURFACES.has(surface)||!KEYWORDS.has(keyword)||!['none','city','vip'].includes(invite)||!/^[A-Za-z0-9_-]{8,100}$/.test(idempotencyKey))throw fail('Revise o conteúdo, a conta, a palavra escolhida e os dados da prévia.');
     if((postId&&!identifier(postId))||(surface==='facebook_group'&&((postId&&!identifier(groupId))||(groupId&&!identifier(groupId))))||(surface!=='facebook_group'&&groupId))throw fail('Use os IDs da publicação e do grupo, sem inserir links nesses campos.');
-    if(caption.length>1800||/(?:https?:\/\/|www\.|\b[a-z0-9-]+\.(?:com|net|org|com\.br)\b)/i.test(caption)||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(caption))throw fail('A descrição deve ter até 1.800 caracteres e não deve conter links.');
+    if(caption.length>1800||publicCopyHasLinks(caption)||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(caption))throw fail('A descrição deve ter até 1.800 caracteres e não deve conter links.');
     const account=accountById(accountId);if(!account)throw fail('Escolha uma conta conectada.',409);
     const objectId=surface==='instagram'?clean(account.instagram_id):clean(account.page_id);if(!identifier(objectId))throw fail('Esta conta não tem a Página ou o Instagram necessário.',409);
     return {sourceKey,accountId,surface,postId,groupId,keyword,triggerMode,publicReplyEnabled,reactEnabled,caption,invite,idempotencyKey,account:publicAccount(account),objectId};
@@ -154,8 +155,7 @@ export function registerSocialCommentCampaigns({app,db,requireAdmin,sameOriginOn
     if(inflight.size>=3)throw fail('Há prévias em preparação. Aguarde um instante.',429);
     const promise=(async()=>{
       const {snapshot,fingerprint}=sourceSnapshot(data.sourceKey),readiness=await inspect(data,snapshot),id=randomUUID(),created=now();
-      const withoutLinks=text=>text.replace(/https?:\/\/\S+|www\.\S+|\b[a-z0-9-]+\.(?:com|net|org)(?:\.br)?\S*/gi,'').trim();
-      const caption=data.caption||`${withoutLinks(snapshot.title)}\n\n${withoutLinks(snapshot.summary.slice(0,650))}\n\n${data.triggerMode==='any_comment'?'Deixe seu comentário e enviaremos o link relacionado a esta publicação por mensagem privada.':`Quer acessar o conteúdo completo? Comente ${data.keyword} para receber o link por mensagem.`}`,privateReply=reply(snapshot,data.invite,id,data.surface,data.triggerMode);
+      const caption=data.caption||`${removePublicLinks(snapshot.title)}\n\n${removePublicLinks(snapshot.summary.slice(0,650))}\n\n${data.triggerMode==='any_comment'?'Deixe seu comentário e enviaremos o link relacionado a esta publicação por mensagem privada.':`Quer acessar o conteúdo completo? Comente ${data.keyword} para receber o link por mensagem.`}`,privateReply=reply(snapshot,data.invite,id,data.surface,data.triggerMode);
       if(privateReply.length>1900)throw fail('O endereço e o título deste conteúdo excedem o tamanho permitido na mensagem.',409);
       db.prepare(`INSERT INTO social_content_campaigns (id,idempotency_key,request_hash,status,source_key,source_json,source_hash,account_id,account_json,object_id,surface,post_id,group_id,keyword,caption,invite,private_reply,readiness_json,created_at,activated_at,updated_at,trigger_mode,public_reply_enabled,react_enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,data.idempotencyKey,requestHash,'draft',data.sourceKey,JSON.stringify(snapshot),fingerprint,data.accountId,JSON.stringify(data.account),data.objectId,data.surface,data.postId,data.groupId,data.keyword,caption,data.invite,privateReply,JSON.stringify(readiness),created,null,created,data.triggerMode,data.publicReplyEnabled?1:0,data.reactEnabled?1:0);
       return rowById(id);

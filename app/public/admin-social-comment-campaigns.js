@@ -1,4 +1,5 @@
 import {safeResultImageUrl} from './search-result-image.js';
+import {publicCopyHasLinks,removePublicLinks} from './social-public-copy.js';
 
 const API='/api/admin/social-comment-campaigns',STORAGE='vc-social-comment-campaign-v1';
 const statuses={draft:'Prévia preparada',active:'Respostas ativas',paused:'Respostas pausadas'};
@@ -10,8 +11,8 @@ const compact=(value,max=2000)=>String(value??'').trim().slice(0,max);
 const normalized=value=>String(value??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 
 export function suggestedCaption(source,keyword='EU QUERO',triggerMode='keyword') {
-  const title=compact(source?.title,220).replace(/(?:https?:\/\/|www\.)\S+/gi,'').trim();
-  const summary=compact(source?.summary,300).replace(/(?:https?:\/\/|www\.)\S+/gi,'').trim();
+  const title=removePublicLinks(compact(source?.title,220));
+  const summary=removePublicLinks(compact(source?.summary,300));
   const term=keywords.includes(keyword)?keyword:'EU QUERO';
   const invitation=triggerMode==='any_comment'
     ?source?.commercial?'Deixe seu comentário para receber por mensagem privada o link com os detalhes e as condições.':'Deixe seu comentário para receber por mensagem privada este conteúdo relacionado à publicação.'
@@ -30,7 +31,7 @@ export function socialCampaignPayload(values) {
   if(groupId&&!/^\d+$/.test(groupId))throw Error('Informe somente os números do ID do grupo.');
   if(surface==='facebook_group'&&postId&&!groupId)throw Error('Informe também o ID do grupo da publicação.');
   if(typeof caption!=='string'||!caption.trim()||caption.length>1800)throw Error('Escreva uma descrição com até 1.800 caracteres.');
-  if(/(?:https?:\/\/|www\.|\b(?:meli\.la|bit\.ly|t\.co)\/)/i.test(caption))throw Error('Retire os links da descrição. O link será mostrado na resposta privada.');
+  if(publicCopyHasLinks(caption))throw Error('Retire os links da descrição. O link será mostrado na resposta privada.');
   if(triggerMode==='keyword'&&!caption.toUpperCase().includes(keyword))throw Error('Inclua na descrição a frase que a pessoa deve comentar: '+keyword+'.');
   return {sourceKey,accountId,surface,postId,groupId:surface==='facebook_group'?groupId:'',keyword,caption:caption.trim(),invite,triggerMode,publicReplyEnabled,reactEnabled};
 }

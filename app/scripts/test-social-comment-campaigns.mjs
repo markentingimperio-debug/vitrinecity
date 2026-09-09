@@ -301,7 +301,7 @@ test('Facebook add-ons share a three-action pass budget and Instagram supports p
   for(let i=0;i<4;i++)f.service.ingestWebhook(f.facebook({id:'comment_'+i,author:'author_'+i,text:'Bonito'}));
   assert.equal((await f.service.processPending()).actions,3);assert.equal(f.state.sequence.length,3);assert.equal(f.state.sends.length,1);
   const ig=await fixture(t);await ig.activate({surface:'instagram',postId:'800',triggerMode:'any_comment',publicReplyEnabled:true});ig.service.ingestWebhook(ig.instagram({text:'Adorei',from:{id:'400',username:'ana.plantas'}}));await ig.service.processPending();
-  assert.deepEqual(ig.state.sequence,['private','public']);assert.match(ig.state.publicReplies[0].text,/^ana\.plantas, obrigado/);assert.equal(ig.rows()[0].reaction_status,'not_requested');
+  assert.deepEqual(ig.state.sequence,['private','public']);assert.match(ig.state.publicReplies[0].text,/^Obrigado pelo comentário/);assert.equal(ig.rows()[0].reaction_status,'not_requested');
 });
 
 test('a later opt-out from the same author cancels queued work, in-flight add-ons and future requests on that post',async t=>{
@@ -316,4 +316,16 @@ test('a later opt-out from the same author cancels queued work, in-flight add-on
     assert.deepEqual(f.state.sequence,phase==='after_private'?['private']:[]);const original=f.rows().find(row=>row.comment_id==='300_1');assert.equal(original.public_status,'cancelled');assert.equal(original.reaction_status,'cancelled');assert.notEqual(original.invalidated_at,null);
   }
   const f=await fixture(t);await f.activate({triggerMode:'any_comment'});f.service.ingestWebhook(f.facebook({text:'PARAR'}));f.service.ingestWebhook(f.facebook({id:'300_2',text:'Gostei'}));await f.service.processPending();assert.equal(f.state.sends.length,0);
+});
+
+test('public copy rejects bare domains, strips source links and omits link-like names while private links remain',async t=>{
+  const f=await fixture(t);
+  for(const link of ['wa.me/5511999999999','t.me/canal','bit.ly','vitrinecity.com.br','example.io','curso.dev','https://site.test','ftp://site.test','www.exemplo.com'])assert.equal((await f.preview({caption:'Comente QUERO RECEITA '+link})).status,400,link);
+  const ordinary='Bolo fofinho com 1.5 xícara de farinha e preço de R$ 10,50. Comente QUERO RECEITA!';assert.equal((await f.preview({caption:ordinary})).body.caption,ordinary);
+  f.state.sources.get('recipe').title='Bolo de cenoura em wa.me/123';f.state.sources.get('recipe').summary='Receita em bit.ly ou vitrinecity.com.br. Use 1.5 xícara de farinha.';
+  const generated=(await f.preview({caption:''})).body;assert(!/wa\.me|bit\.ly|vitrinecity\.com\.br/.test(generated.caption));assert.match(generated.caption,/1\.5 xícara/);assert.match(generated.privateReply,/https:\/\/vitrinecity\.com\/artigo/);
+  await f.activate({triggerMode:'any_comment',publicReplyEnabled:true});
+  for(const [index,name] of ['bit.ly','wa.me','empresa.com.br','Maria Silva'].entries())f.service.ingestWebhook(f.facebook({id:'name_'+index,text:'Gostei!',from:{id:'person_'+index,name}}));
+  for(let i=0;i<4;i++)await f.service.processPending();assert.equal(f.state.publicReplies.length,4);
+  assert.equal(f.state.publicReplies.filter(item=>/^Obrigado pelo comentário/.test(item.text)).length,3);assert.equal(f.state.publicReplies.filter(item=>/^Maria, obrigado/.test(item.text)).length,1);assert(f.state.publicReplies.every(item=>!/wa\.me|bit\.ly|empresa\.com\.br|https?:\/\//.test(item.text)));
 });

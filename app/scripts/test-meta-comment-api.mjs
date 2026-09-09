@@ -166,3 +166,9 @@ test('public and reaction acknowledgments are mandatory, with definitive refusal
   }
   const f=fixture(t);for(const method of ['replyPublic','likeComment'])await assert.rejects(f.api[method]({accountId:1,surface:'facebook_page',commentId:'../messages',text:'Obrigado!'}),error=>error.definitive===true);assert.equal(f.state.calls.length,0);
 });
+
+test('the public reply adapter rejects links before sending while private replies keep their destination link',async t=>{
+  const f=fixture(t);
+  for(const link of ['wa.me','bit.ly/abc','empresa.com.br','oferta.io','https://vitrinecity.com/artigo/bolo'])await assert.rejects(f.api.replyPublic({accountId:1,surface:'facebook_page',commentId:'900_301',text:'Obrigado, visite '+link}),error=>error.definitive===true);
+  assert.equal(f.state.calls.length,0);assert.equal((await f.send()).messageId,'opaque_message_id');assert.match(f.state.calls[0].init.body,/https:\/\/vitrinecity\.com\/artigo/);
+});
