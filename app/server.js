@@ -12,6 +12,8 @@ import { registerSocialCommentCampaigns } from './social-comment-campaigns.js';
 import { createEcosystemOrchestrator, registerEcosystemRoutes, ecosystemLocalWindow } from './ecosystem-orchestrator.js';
 import { createEcosystemCatalog } from './ecosystem-catalog.js';
 import { createEcosystemInternalSocial } from './ecosystem-internal-social.js';
+import { registerFacebookPhotoPublisher, createApprovedFacebookPosterReader } from './facebook-photo-publisher.js';
+import { createMetaPhotoApi } from './meta-photo-api.js';
 import { serviceReplyFromResponse, validateServiceReply } from './service-reply-format.js';
 import { createTikTokTokenRefresh } from './tiktok-token-refresh.js';
 import { createMetaCommentApi } from './meta-comment-api.js';
@@ -2060,7 +2062,7 @@ function recordAdminLogin(req,email,success,reason){
 }
 
 const ADMIN_HTML_PATHS=new Set(['/admin-vendas-afiliadas.html','/admin','/admin.html','/admin-agentes.html','/admin-sales-agents.html','/admin-crypto-matrix.html','/admin-quizzes.html','/admin-growth.html','/admin-tiktok.html','/admin-lojas.html','/admin-servicos.html','/admin-conteudos.html','/admin-entregas.html']);
-for(const page of ['admin-midia','admin-parceiros','admin-chat-cidade','admin-recompensas','admin-web-stories','admin-operacao']){ADMIN_HTML_PATHS.add('/'+page+'.html');ADMIN_HTML_PATHS.add('/'+page);}
+for(const page of ['admin-midia','admin-parceiros','admin-chat-cidade','admin-recompensas','admin-web-stories','admin-operacao','admin-publicacoes']){ADMIN_HTML_PATHS.add('/'+page+'.html');ADMIN_HTML_PATHS.add('/'+page);}
 ADMIN_HTML_PATHS.add('/admin-live.html');
 ADMIN_HTML_PATHS.add('/admin-jarvis.html');
 ADMIN_HTML_PATHS.add('/admin-jarvis-public.html');
@@ -2691,6 +2693,11 @@ const ecosystemCatalog=createEcosystemCatalog({db,siteUrl:SITE_URL,services:()=>
 const ecosystemInternalSocial=createEcosystemInternalSocial({db,siteUrl:SITE_URL,sourceCatalog:{get:key=>dailyStories?.catalog?.get(key)||socialCommentSources.get(key)},getPolicy:()=>ecosystem.policy(),moderationReason:socialModerationReason,isPublisherAllowed:id=>isAdministrativeUser(db.prepare('SELECT id,email,is_admin FROM users WHERE id=?').get(id))});
 ecosystem=createEcosystemOrchestrator({db,getStories:()=>dailyStories,catalog:ecosystemCatalog,runInternalSocial:options=>ecosystemInternalSocial.run(options),getInternalSocial:()=>ecosystemInternalSocial.snapshot()});
 registerEcosystemRoutes({app,service:ecosystem,requireAdmin,sameOriginOnly});
+const facebookPublisherAccountAllowed=account=>isAdministrativeUser(db.prepare('SELECT id,email,is_admin FROM users WHERE id=?').get(account.user_id));
+registerFacebookPhotoPublisher({app,db,requireAdmin,sameOriginOnly,siteUrl:SITE_URL,canRun:ecosystemCanRun,
+  sourceCatalog:{get:key=>dailyStories?.catalog?.get(key)||socialCommentSources.get(key)},
+  readPoster:createApprovedFacebookPosterReader({dataDir}),accountAllowed:facebookPublisherAccountAllowed,moderationReason:socialModerationReason,
+  metaAdapter:createMetaPhotoApi({db,decryptToken:decryptSocialToken,accountAllowed:facebookPublisherAccountAllowed})});
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
   const tags = [...scripts, '/social-accessibility.js','/global-market-banner.js?v=3'].map(src => `<script src="${src}" defer></script>`).join('');
@@ -2742,6 +2749,7 @@ app.get('/admin-crypto-matrix.html',requireAdmin,publicPage('admin-crypto-matrix
 app.get('/admin-quizzes.html',requireAdmin,publicPage('admin-quizzes.html'));
 app.get('/admin-growth.html',requireAdmin,publicPage('admin-growth.html'));
 app.get(['/admin-operacao','/admin-operacao.html'],requireAdmin,publicPage('admin-operacao.html'));
+app.get(['/admin-publicacoes','/admin-publicacoes.html'],requireAdmin,publicPage('admin-publicacoes.html'));
 app.get('/admin-tiktok.html',requireAdmin,publicPage('admin-tiktok.html'));
 setupSalesAgentEngine({app,db,requireAdmin});
 app.get(['/admin-live.html','/admin-live'],requireAdmin,publicPage('admin-live.html'));
