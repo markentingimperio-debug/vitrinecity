@@ -63,7 +63,7 @@ test('reviewed service guidance enriches the source without replacing the commer
   const sources=createWebStorySources({db:f.db,services:()=>registry});
   const selected=['ads-banner-outdoor-15-dias','10-videos-loja'];
   assert.deepEqual(Object.keys(SERVICE_EDITORIAL_GUIDES),selected);assert.ok(Object.isFrozen(SERVICE_EDITORIAL_GUIDES));
-  for(const guide of Object.values(SERVICE_EDITORIAL_GUIDES)){assert.ok(Object.isFrozen(guide));assert.deepEqual(Object.keys(guide).sort(),['editorialBody','editorialImageUrl']);}
+  for(const guide of Object.values(SERVICE_EDITORIAL_GUIDES)){assert.ok(Object.isFrozen(guide));assert.deepEqual(Object.keys(guide).sort((a,b)=>a.localeCompare(b)),['editorialBody','editorialImageUrl']);}
   assert.deepEqual(Object.keys(registry).filter(key=>registry[key].editorialBody),selected);
   for(const [slug,price] of [[selected[0],7500],[selected[1],20000]]){
     const source=sources.get('service:'+slug),row=registry[slug];
