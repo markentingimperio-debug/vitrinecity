@@ -77,6 +77,8 @@ export function setupDigitalPublisher({
   generateBookChapter,
   generateBookCover,
   generateBookIllustration,
+  canRun=()=>true,
+  schedule=true,
 }) {
   db.exec(`CREATE TABLE IF NOT EXISTS digital_books(id TEXT PRIMARY KEY,slug TEXT NOT NULL UNIQUE,title TEXT NOT NULL,category TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',audience TEXT NOT NULL DEFAULT '',keywords_json TEXT NOT NULL DEFAULT '[]',cover_url TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'planning',word_count INTEGER NOT NULL DEFAULT 0,page_count INTEGER NOT NULL DEFAULT 0,price_cents INTEGER NOT NULL DEFAULT 999,source_trend_id TEXT,review_notes TEXT NOT NULL DEFAULT '',published_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS digital_book_chapters(id INTEGER PRIMARY KEY,book_id TEXT NOT NULL,position INTEGER NOT NULL,title TEXT NOT NULL,brief TEXT NOT NULL DEFAULT '',content TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'pending',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(book_id,position));
@@ -265,6 +267,7 @@ export function setupDigitalPublisher({
     requireAdmin,
     sameOriginOnly,
     (req, res) => {
+      if (!canRun()) return res.status(409).json({error:'A pausa geral está ativa. Retome as rotinas na Central do dia.'});
       const item = book(req.params.id);
       if (!item)
         return res.status(404).json({ error: "Livro não encontrado." });
@@ -348,7 +351,7 @@ export function setupDigitalPublisher({
   });
   let running = false;
   async function worker() {
-    if (running || process.env.BOOK_AUTOMATION_ENABLED === "false") return;
+    if (running || !canRun() || process.env.BOOK_AUTOMATION_ENABLED === "false") return;
     running = true;
     try {
       const today = Number(
@@ -393,6 +396,7 @@ export function setupDigitalPublisher({
         )
         .all();
       for (const chapter of pending) {
+        if(!canRun())return;
         const content = await generateBookChapter(chapter);
         const words = String(content).trim().split(/\s+/).length;
         if (words < 700) continue;
@@ -408,6 +412,7 @@ export function setupDigitalPublisher({
           "UPDATE digital_books SET word_count=?,page_count=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
         ).run(totals.words, Math.floor(totals.words / 300), chapter.book_id);
         if (totals.approved >= 10 && totals.words >= 9000) {
+          if(!canRun())return;
           const b = book(chapter.book_id);
           const cover = await generateBookCover(b);
           db.prepare(
@@ -421,6 +426,7 @@ export function setupDigitalPublisher({
         )
         .all();
       for (const item of readyForCover) {
+        if(!canRun())return;
         const approved = Number(
           db
             .prepare(
@@ -440,6 +446,7 @@ export function setupDigitalPublisher({
         )
         .get();
       if (illustration) {
+        if(!canRun())return;
         const image = await generateBookIllustration(illustration);
         db.prepare(
           "UPDATE digital_book_chapters SET image_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -458,6 +465,7 @@ export function setupDigitalPublisher({
     "UPDATE digital_books SET category='finanças pessoais educativas' WHERE lower(category) LIKE '%econom%' OR lower(category) LIKE '%salário%'",
   ).run();
   for(const item of db.prepare("SELECT slug FROM digital_books WHERE status='published'").all())db.prepare("UPDATE managed_courses SET material_url=? WHERE slug=?").run(`/ler-livro/${item.slug}`,`livro-${item.slug}`);
-  setTimeout(worker, 15000).unref();
-  setInterval(worker, 2 * 60 * 1000).unref();
+  const first=schedule?setTimeout(worker,15000):null,timer=schedule?setInterval(worker,2*60*1000):null;
+  first?.unref();timer?.unref();
+  return {worker,close(){clearTimeout(first);clearInterval(timer);}};
 }

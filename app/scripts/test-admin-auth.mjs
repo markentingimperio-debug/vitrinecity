@@ -16,11 +16,14 @@ const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';function decode(secret){let bi
 async function wait(){for(let i=0;i<80;i++){try{if((await fetch(origin+'/api/health')).ok)return}catch{}await new Promise(r=>setTimeout(r,100))}throw new Error(output)}
 try{
   await wait();const email=`admin-${port}@example.com`,password='senha-administrativa-123';
+  assert.equal((await request('/api/admin/social/intelligence/tiktok/refresh',{method:'POST'})).status,401);
   let response=await request('/admin');assert.equal(response.status,302);assert.equal(response.headers.get('location'),'/admin-login.html');
   assert.equal((await request('/api/admin/crypto-matrix')).status,401);
   assert.equal((await request('/admin-jarvis.html')).status,302);
   assert.equal((await request('/admin-jarvis')).status,302);
   assert.equal((await request('/api/admin/jarvis/status')).status,401);
+  for(const route of ['/admin-operacao','/admin-operacao.html'])assert.equal((await request(route)).status,302);
+  assert.equal((await request('/api/admin/ecosystem')).status,401);
   response=await request('/api/auth/register',{method:'POST',body:JSON.stringify({name:'Gestor Teste',email,password,adultConfirmed:true,termsAccepted:true})});assert.equal(response.status,201);const regularCookie=response.headers.get('set-cookie').split(';')[0];
   assert.equal((await request('/api/admin/crypto-matrix',{headers:{cookie:regularCookie}})).status,403);
   assert.equal((await request('/api/admin/jarvis/status',{headers:{cookie:regularCookie}})).status,403);
@@ -48,6 +51,17 @@ try{
   db.prepare("INSERT INTO social_algorithm_metrics_daily(version,metric_day,impressions,watch_ms,completions,skips,replays,clicks,conversions) VALUES ('vitriny-feed-legacy','2026-07-15',100,750000,40,30,5,10,1)").run();db.close();
   response=await request('/api/admin/auth/login',{method:'POST',headers:{cookie:regularCookie},body:JSON.stringify({email,password})});assert.equal(response.status,200);const setCookie=response.headers.get('set-cookie')||'';assert.match(setCookie,/Max-Age=28800/);let adminCookie=setCookie.split(';')[0];
   response=await request('/api/admin/auth/status',{headers:{cookie:adminCookie}});let adminStatus=await response.json();assert.equal(adminStatus.administrator,true);assert.equal(adminStatus.mfaEnabled,false);
+  response=await request('/api/admin/ecosystem',{headers:{cookie:adminCookie}});assert.equal(response.status,200);const ecosystemInitial=await response.json();assert.equal(ecosystemInitial.policy.enabled,false);assert.equal(ecosystemInitial.policy.internalSocialEnabled,false);assert.ok(Array.isArray(ecosystemInitial.inventory));assert.ok(Array.isArray(ecosystemInitial.metrics.items));
+  response=await request('/api/admin/ecosystem/policy',{method:'POST',headers:{cookie:adminCookie},body:JSON.stringify({revision:ecosystemInitial.policy.revision,paused:true})});assert.equal(response.status,200);const ecosystemPaused=await response.json();assert.equal(ecosystemPaused.policy.paused,true);
+  for(const endpoint of ['/api/admin/media-projects/0/generate','/api/admin/media-projects/0/publish-vitriny','/api/admin/books/0/publish','/api/admin/web-stories/0/publish','/api/admin/articles/0/publish','/api/admin/ecosystem/run'])assert.equal((await request(endpoint,{method:'POST',headers:{cookie:adminCookie},body:'{}'})).status,409,endpoint);
+  response=await request('/api/admin/ecosystem/policy',{method:'POST',headers:{cookie:adminCookie},body:JSON.stringify({revision:ecosystemPaused.policy.revision,paused:false})});assert.equal(response.status,200);
+  const replyDb=new Database(path.join(dataDir,'vitrinecity.db'));
+  replyDb.prepare("UPDATE omnichannel_automation_settings SET enabled=1 WHERE channel='whatsapp_qr'").run();
+  replyDb.prepare("INSERT INTO omnichannel_automation_jobs(id,channel,external_id,destination,source_text,status,reply_text) VALUES('invalid-legacy-reply','whatsapp_qr','legacy-reply-1','test-only','Pergunta de teste','awaiting_approval',?)").run("Here's a thinking process: PRIVATE_MARKER");
+  response=await request('/api/admin/omnichannel-automation/jobs/invalid-legacy-reply/approve',{method:'POST',headers:{cookie:adminCookie},body:'{}'});assert.equal(response.status,502);
+  const rejectedReply=replyDb.prepare("SELECT status,error FROM omnichannel_automation_jobs WHERE id='invalid-legacy-reply'").get();assert.equal(rejectedReply.status,'failed');assert.match(rejectedReply.error,/mensagem final válida/);assert.ok(!rejectedReply.error.includes('PRIVATE_MARKER'));
+  assert.equal((await request('/api/admin/omnichannel-automation/jobs/invalid-legacy-reply/approve',{method:'POST',headers:{cookie:adminCookie},body:'{}'})).status,409);
+  replyDb.prepare("UPDATE omnichannel_automation_settings SET enabled=0 WHERE channel='whatsapp_qr'").run();replyDb.close();
   response=await request('/api/social/login?returnTo=chatbot&intent=comment_replies',{headers:{cookie:adminCookie}});assert.equal(response.status,302);const commentMeta=new URL(response.headers.get('location'));const commentScopes=commentMeta.searchParams.get('scope').split(',');for(const scope of ['pages_messaging','pages_manage_metadata','instagram_manage_comments','business_management','pages_manage_engagement']){assert.ok(commentScopes.includes(scope));assert.ok(!normalMeta.searchParams.get('scope').split(',').includes(scope));}assert.ok(!commentScopes.includes('instagram_manage_messages'));
   assert.equal(commentMeta.searchParams.get('config_id'),'987654322');assert.notEqual(commentMeta.searchParams.get('config_id'),normalMeta.searchParams.get('config_id'));
   const commentMetaState=JSON.parse(Buffer.from(commentMeta.searchParams.get('state').split('.')[0],'base64url'));assert.equal(commentMetaState.returnTo,'chatbot');assert.equal(commentMetaState.intent,'comment_replies');

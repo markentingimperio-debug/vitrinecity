@@ -2,7 +2,7 @@ import * as THREE from '/vendor/three/three.module.js';
 
 // Directory links use the existing authenticated administration routes.
 export const headquartersSectors=Object.freeze([
-  ['Direção e operação','/admin'],['Lojas e lojistas','/admin-lojas.html'],
+  ['Central do dia · conteúdo e divulgação','/admin-operacao'],['Direção e operação','/admin'],['Lojas e lojistas','/admin-lojas.html'],
   ['Finanças e pagamentos','/admin-pagamentos.html'],['Publicidade e campanhas','/admin-vitrine-ads.html'],
   ['Inteligência artificial · Jarvis','/admin-jarvis.html'],['Vitriny Neural','/admin-vitriny-neural.html'],
   ['Agentes e automação','/admin-agentes.html'],['Agentes de vendas','/admin-sales-agents.html'],

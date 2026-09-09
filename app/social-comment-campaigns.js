@@ -34,7 +34,7 @@ const openHours=time=>{const hour=Number(localParts(time).hour);return hour>=9&&
 
 /** Routes prepare copy only. An authenticated, signature-verified Meta webhook is
  * the sole queue input. This module never publishes a post or messages a liker. */
-export function registerSocialCommentCampaigns({app,db,requireAdmin,sameOriginOnly,siteUrl,sourceCatalog,metaAdapter,commentModerationReason=()=>'',now=Date.now,sendTimeoutMs=20000,inspectTimeoutMs=35000}) {
+export function registerSocialCommentCampaigns({app,db,requireAdmin,sameOriginOnly,siteUrl,sourceCatalog,metaAdapter,commentModerationReason=()=>'',canRun=()=>true,now=Date.now,sendTimeoutMs=20000,inspectTimeoutMs=35000}) {
   const origin=new URL(siteUrl).origin, inflight=new Map(),connectionChecks=new Map();let processing=false,inspectionCount=0;
   db.exec(`CREATE TABLE IF NOT EXISTS social_content_campaigns (
     id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,request_hash TEXT NOT NULL,
@@ -227,7 +227,7 @@ export function registerSocialCommentCampaigns({app,db,requireAdmin,sameOriginOn
   }
   function claim(id){
     return db.transaction(()=>{
-      const time=now();if(!openHours(time)||db.prepare('SELECT COUNT(*) AS total FROM social_content_comment_events WHERE attempt_day=?').get(dayKey(time)).total>=30)return null;
+      const time=now();if(!canRun()||!openHours(time)||db.prepare('SELECT COUNT(*) AS total FROM social_content_comment_events WHERE attempt_day=?').get(dayKey(time)).total>=30)return null;
       const row=db.prepare("SELECT * FROM social_content_comment_events WHERE id=? AND status='pending'").get(id);if(!row)return null;
       if(!db.prepare("UPDATE social_content_comment_events SET status='processing',attempt_day=?,claimed_at=? WHERE id=? AND status='pending'").run(dayKey(time),time,id).changes)return null;return row;
     })();
@@ -241,26 +241,28 @@ export function registerSocialCommentCampaigns({app,db,requireAdmin,sameOriginOn
     return campaign;
   }
   const validProviderId=id=>typeof id==='string'&&id.trim()&&id.length<=500&&!/[\x00-\x1f\x7f]/.test(id);
-  async function timedSend(action){let timer;try{return await Promise.race([Promise.resolve().then(action),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('send_timeout')),Math.max(1,Math.min(sendTimeoutMs,30000)));})]);}finally{clearTimeout(timer);}}
+  const restorePrivate=id=>db.prepare("UPDATE social_content_comment_events SET status='pending',attempt_day=NULL,claimed_at=NULL WHERE id=? AND status='processing'").run(id);
+  const restoreExtra=(id,prefix)=>db.prepare(`UPDATE social_content_comment_events SET ${prefix}_status='pending',${prefix}_attempt_day=NULL,${prefix}_claimed_at=NULL WHERE id=? AND ${prefix}_status='processing'`).run(id);
+  async function timedSend(action){let timer;try{return await Promise.race([Promise.resolve().then(()=>{if(!canRun())throw Object.assign(Error('global_paused'),{ecosystemPaused:true});return action();}),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('send_timeout')),Math.max(1,Math.min(sendTimeoutMs,30000)));})]);}finally{clearTimeout(timer);}}
   async function processExtra(event,prefix){
     const claimed=db.transaction(()=>{
-      if(!openHours(now())||db.prepare(`SELECT COUNT(*) AS total FROM social_content_comment_events WHERE ${prefix}_attempt_day=?`).get(dayKey(now())).total>=30)return false;
+      if(!canRun()||!openHours(now())||db.prepare(`SELECT COUNT(*) AS total FROM social_content_comment_events WHERE ${prefix}_attempt_day=?`).get(dayKey(now())).total>=30)return false;
       return db.prepare(`UPDATE social_content_comment_events SET ${prefix}_status='processing',${prefix}_claimed_at=?,${prefix}_attempt_day=? WHERE id=? AND status='sent' AND provider_message_id IS NOT NULL AND ${prefix}_status='pending'`).run(now(),dayKey(now()),event.id).changes>0;
     })();if(!claimed)return false;
     let campaign;
     try{campaign=freshCampaign(event,'sent');const readiness=await inspect(inspectionInput(campaign),JSON.parse(campaign.source_json));if(!readiness.ready)throw fail('Conexão indisponível.');campaign=freshCampaign(event,'sent');if(!openHours(now()))throw fail('Fora do horário de envio.');}
-    catch{db.prepare(`UPDATE social_content_comment_events SET ${prefix}_status='cancelled',${prefix}_reason='Interação cancelada na verificação anterior ao envio.' WHERE id=? AND ${prefix}_status='processing'`).run(event.id);return true;}
+    catch{if(!canRun()){restoreExtra(event.id,prefix);return true;}db.prepare(`UPDATE social_content_comment_events SET ${prefix}_status='cancelled',${prefix}_reason='Interação cancelada na verificação anterior ao envio.' WHERE id=? AND ${prefix}_status='processing'`).run(event.id);return true;}
     try{
       const input={accountId:campaign.account_id,surface:campaign.surface,commentId:event.comment_id};
       let result;
       if(prefix==='public'){input.text=publicThanks(JSON.parse(campaign.source_json),event.author_name);db.prepare('UPDATE social_content_comment_events SET public_text=? WHERE id=?').run(input.text,event.id);result=await timedSend(()=>metaAdapter.replyPublic(input));if(!validProviderId(result?.commentId))throw Error('missing_public_confirmation');}
       else {result=await timedSend(()=>metaAdapter.likeComment(input));if(result?.success!==true)throw Error('missing_like_confirmation');}
       db.prepare(`UPDATE social_content_comment_events SET ${prefix}_status='sent',${prefix}_provider_id=?,${prefix}_sent_at=?,${prefix}_reason=NULL WHERE id=? AND ${prefix}_status='processing'`).run(prefix==='public'?result.commentId:null,now(),event.id);
-    }catch(error){db.prepare(`UPDATE social_content_comment_events SET ${prefix}_status=?,${prefix}_reason=? WHERE id=? AND ${prefix}_status='processing'`).run(error?.definitive===true?'failed':'unknown',error?.definitive===true?'A Meta recusou esta interação. Não haverá repetição automática.':'Resultado desta interação desconhecido. Não haverá repetição automática.',event.id);}
+    }catch(error){if(error?.ecosystemPaused){restoreExtra(event.id,prefix);return true;}db.prepare(`UPDATE social_content_comment_events SET ${prefix}_status=?,${prefix}_reason=? WHERE id=? AND ${prefix}_status='processing'`).run(error?.definitive===true?'failed':'unknown',error?.definitive===true?'A Meta recusou esta interação. Não haverá repetição automática.':'Resultado desta interação desconhecido. Não haverá repetição automática.',event.id);}
     return true;
   }
   async function processPending(){
-    if(processing)return {processed:0};
+    if(processing||!canRun())return {processed:0};
     // Claims cannot be replayed after a crash: an absent acknowledgment may still
     // represent an accepted private reply. Preserve them for manual review.
     db.prepare("UPDATE social_content_comment_events SET status='unknown',reason='Envio interrompido sem confirmação. Confira a conversa antes de qualquer novo envio.' WHERE status='processing' AND claimed_at<?").run(now()-120000);
@@ -281,12 +283,12 @@ export function registerSocialCommentCampaigns({app,db,requireAdmin,sameOriginOn
         campaign=freshCampaign(event);const readiness=await inspect(inspectionInput(campaign),JSON.parse(campaign.source_json));
         if(!readiness.ready)throw fail('A conexão ou a publicação deixou de estar pronta.',409);
         campaign=freshCampaign(event);if(!openHours(now()))throw fail('O período de envio encerrou durante a verificação.',409);
-      }catch{db.prepare("UPDATE social_content_comment_events SET status='cancelled',reason='Pedido cancelado na verificação anterior ao envio.' WHERE id=? AND status='processing'").run(event.id);cancelExtras('id',event.id,'Mensagem privada cancelada.');continue;}
+      }catch{if(!canRun()){restorePrivate(event.id);break;}db.prepare("UPDATE social_content_comment_events SET status='cancelled',reason='Pedido cancelado na verificação anterior ao envio.' WHERE id=? AND status='processing'").run(event.id);cancelExtras('id',event.id,'Mensagem privada cancelada.');continue;}
       try{
         const result=await timedSend(()=>metaAdapter.send({accountId:campaign.account_id,surface:campaign.surface,commentId:event.comment_id,text:campaign.private_reply}));
         if(!validProviderId(result?.messageId))throw Error('missing_provider_confirmation');
         db.prepare("UPDATE social_content_comment_events SET status='sent',provider_message_id=?,sent_at=?,reason=NULL WHERE id=? AND status='processing'").run(result.messageId,now(),event.id);
-      }catch(error){db.prepare("UPDATE social_content_comment_events SET status=?,reason=? WHERE id=? AND status='processing'").run(error?.definitive===true?'failed':'unknown',error?.definitive===true?'O serviço recusou o envio. Nenhuma repetição automática será feita.':'Confirmação de envio desconhecida. Confira a conversa antes de qualquer novo envio.',event.id);cancelExtras('id',event.id,'A mensagem privada não foi confirmada.');}
+      }catch(error){if(error?.ecosystemPaused){restorePrivate(event.id);break;}db.prepare("UPDATE social_content_comment_events SET status=?,reason=? WHERE id=? AND status='processing'").run(error?.definitive===true?'failed':'unknown',error?.definitive===true?'O serviço recusou o envio. Nenhuma repetição automática será feita.':'Confirmação de envio desconhecida. Confira a conversa antes de qualquer novo envio.',event.id);cancelExtras('id',event.id,'A mensagem privada não foi confirmada.');}
       await extras(db.prepare('SELECT * FROM social_content_comment_events WHERE id=?').get(event.id));
     }}finally{processing=false;}return {processed,actions};
   }

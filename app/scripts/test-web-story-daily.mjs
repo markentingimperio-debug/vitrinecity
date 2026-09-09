@@ -9,11 +9,11 @@ import {setupDailyWebStories} from '../web-story-daily.js';
 const origin='https://vitrinecity.test',sha=value=>createHash('sha256').update(value).digest('hex');
 const paragraph='Observe as informações disponíveis e consulte a página de origem antes de escolher. O guia explica os cuidados, as condições e as possibilidades em detalhes para ajudar a compreender o assunto. ';
 const recipe='Ingredientes da massa: 3 cenouras médias; 3 ovos; 1 xícara de óleo; 2 xícaras de açúcar; 2 e meia xícaras de farinha; 1 colher de sopa de fermento. Para a cobertura: 4 colheres de sopa de chocolate em pó; 4 colheres de sopa de açúcar; 2 colheres de sopa de manteiga; meia xícara de leite. Preparo: aqueça o forno a 180 °C e unte uma forma média. Bata as cenouras, os ovos e o óleo até obter uma mistura uniforme. Misture o açúcar e a farinha em uma tigela. Adicione o líquido aos poucos e mexa até incorporar. Acrescente o fermento delicadamente. Asse por aproximadamente 35 a 45 minutos, conforme o forno. Faça o teste do palito no centro e retire quando ele sair sem massa crua. Espere amornar antes de desenformar. Para a cobertura, leve os ingredientes ao fogo baixo, mexendo até engrossar levemente. Espalhe sobre o bolo morno. Conserve o bolo coberto e sob refrigeração em dias quentes se a cobertura levar leite.';
-function setup({trends=[],enrich,getEnriched,text,configured=true}={}) {
+function setup({trends=[],enrich,getEnriched,automaticEligible=()=>false,text,configured=true}={}) {
   const db=new Database(':memory:');db.exec('CREATE TABLE editorial_articles(id TEXT PRIMARY KEY,slug TEXT,title TEXT,summary TEXT,body TEXT,image_url TEXT,portal TEXT,status TEXT,updated_at TEXT,published_at TEXT,sources_json TEXT);');
   const add=(id,portal='receitas')=>db.prepare('INSERT INTO editorial_articles VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,id.replace(/:/g,'-'),'Guia público completo '+id,paragraph,portal==='receitas'?recipe:paragraph.repeat(5),'/assets/guide.png',portal,'published','2026-09-08T12:00:00Z','2026-09-08T12:00:00Z','[]');
   const app=express();app.use(express.json());const calls={configured:0,text:0,image:0,sync:0};
-  const research={list:({q='',group='all',limit=50,offset=0}={})=>trends.filter(x=>(group==='all'||x.group===group)&&x.title.includes(q)).slice(offset,offset+limit),get:key=>trends.find(x=>x.key===key)||null,getEnriched:getEnriched||((s)=>s),enrich:enrich||((s)=>s),syncTrends:async()=>{calls.sync++;return {count:trends.length};}};
+  const research={list:({q='',group='all',limit=50,offset=0}={})=>trends.filter(x=>(group==='all'||x.group===group)&&x.title.includes(q)).slice(offset,offset+limit),get:key=>trends.find(x=>x.key===key)||null,getEnriched:getEnriched||((s)=>s),enrich:enrich||((s)=>s),automaticEligible,syncTrends:async()=>{calls.sync++;return {count:trends.length};}};
   const daily=setupDailyWebStories({app,db,siteUrl:origin,publicDir:fileURLToPath(new URL('../public',import.meta.url)),dataDir:'.',schedule:false,research,services:()=>[],courses:()=>[],isConfigured:()=>{calls.configured++;return configured;},requireAdmin:(req,res,next)=>{const role=req.headers['x-test-role'];if(!role)return res.sendStatus(401);if(role!=='admin')return res.sendStatus(403);req.user={id:1};next();},sameOriginOnly:(req,res,next)=>req.headers.origin===origin?next():res.sendStatus(403),requestText:async()=>{calls.text++;if(text)return text();return JSON.stringify({insufficient:true});},requestImage:async()=>{calls.image++;throw Error('unexpected image');},assets:{outputDir:fileURLToPath(new URL('../public/assets',import.meta.url)),image:async(url,{logo=false}={})=>({url,width:logo?192:1080,height:logo?192:1920,hash:'a'.repeat(64)}),poster:async()=>'/story-assets/a.jpg',library:async()=>[]}});
   return {db,add,app,calls,daily,close:()=>{daily.close();db.close();}};
 }
@@ -30,7 +30,7 @@ test('merged pagination reaches >200 Trends and then own sources; legacy IDs win
 test('article fingerprint is raw-source stable after evidence enrichment, without extra jobs',async()=>{
   let checked=false;const evidence=['bbc','estadao'].map(publisher=>({publisher,url:'https://'+publisher+'.example/article',title:'Fonte '+publisher,excerpt:paragraph.repeat(4),excerptHash:sha(paragraph.repeat(4)),checkedAt:'2026-09-08T18:00:00Z'}));
   const enrichSource=s=>checked?{...s,summary:'Pesquisa verificada',body:paragraph.repeat(8),sources:evidence.map(({excerpt,...rest})=>rest),facts:{evidence},evidenceReady:true}:s;
-  const x=setup({getEnriched:enrichSource,enrich:async s=>{checked=true;return enrichSource(s);}});x.add('article-news','noticias');
+  const x=setup({automaticEligible:()=>true,getEnriched:enrichSource,enrich:async s=>{checked=true;return enrichSource(s);}});x.add('article-news','noticias');
   x.daily.automation.updateSettings({revision:1,enabled:true,dailyLimit:2,groups:['news']});x.daily.automation.run({manual:true});await x.daily.automation.awaitIdle();assert.equal(checked,true);assert.equal(x.daily.automation.status().quota.attempted,1);
   x.daily.automation.run({manual:true});await x.daily.automation.awaitIdle();assert.equal(x.daily.automation.status().quota.attempted,1,'cache metadata is not a new editorial version');assert.equal(x.calls.text,1);x.close();
 });
@@ -52,4 +52,32 @@ test('HTTP admin + same-origin protection, category settings and manual run resp
 test('unknown provider codes never reach history; not-configured API does not enable jobs',async()=>{
   const secret='account private-token fixture';const x=setup({text:()=>{throw Object.assign(Error(secret),{code:secret});}});x.add('recipe');x.daily.automation.updateSettings({revision:1,enabled:true,dailyLimit:1,groups:['recipes']});x.daily.automation.run({manual:true});await x.daily.automation.awaitIdle();assert.doesNotMatch(JSON.stringify(x.daily.automation.status()),/private-token|account/);assert.match(x.daily.automation.status().history[0].summary,/precisa de revisão/);x.close();
   const y=setup({configured:false});y.add('recipe');const server=y.app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));try{const response=await fetch('http://127.0.0.1:'+server.address().port+'/api/admin/web-story-automation',{method:'PUT',headers:{'content-type':'application/json','x-test-role':'admin',origin},body:JSON.stringify({revision:1,enabled:true})});assert.equal(response.status,503);assert.equal(y.daily.automation.status().enabled,false);assert.equal(y.calls.sync,0);assert.equal(y.calls.text,0);}finally{await new Promise(resolve=>server.close(resolve));y.close();}
+});
+
+test('automatic feasibility filters before merged pagination while manual sources remain visible',()=>{
+  const trends=Array.from({length:251},(_,i)=>({key:'trend:'+i,id:'trend:'+i,kind:'trend',group:'news',title:'Tema '+i}));
+  const x=setup({trends,automaticEligible:s=>s.key==='trend:250'||s.key.startsWith('eligible-')});
+  for(let i=0;i<225;i++)x.add('blocked-'+String(i).padStart(3,'0'),'noticias');
+  x.add('eligible-a','noticias');x.add('eligible-b','noticias');
+  assert.deepEqual(x.daily.catalog.list({group:'news',automatic:true,limit:2}).map(s=>s.key),['trend:250','eligible-a']);
+  assert.deepEqual(x.daily.catalog.list({group:'news',automatic:true,offset:1,limit:3}).map(s=>s.key),['eligible-a','eligible-b']);
+  assert.deepEqual(x.daily.catalog.list({group:'news',automatic:true,offset:2,limit:2}).map(s=>s.key),['eligible-b']);
+  assert.equal(x.daily.catalog.list({group:'news',limit:1})[0].key,'trend:0');
+  assert.ok(x.daily.catalog.get('blocked-000'));assert.equal(x.calls.text,0);assert.equal(x.calls.sync,0);x.close();
+});
+
+test('impossible news and sports consume no job/quota while recipes still enter the normal quality checks',async()=>{
+  const x=setup();x.add('blocked-news','noticias');x.add('blocked-sports','esportes');x.add('eligible-recipe');
+  x.daily.automation.updateSettings({revision:1,enabled:true,dailyLimit:3,groups:['news','sports','recipes']});
+  x.daily.automation.run({manual:true});await x.daily.automation.awaitIdle();
+  assert.equal(x.daily.automation.status().quota.attempted,1);assert.equal(x.calls.text,1);assert.equal(x.calls.image,0);
+  assert.deepEqual(x.daily.automation.status().history.map(job=>job.sourceKey),['eligible-recipe']);
+  assert.equal(x.daily.catalog.list({group:'news'}).length,1);assert.equal(x.daily.catalog.list({group:'sports'}).length,1);x.close();
+});
+
+test('an entirely impossible research list completes with zero attempts, calls or hidden queue entries',async()=>{
+  const x=setup({trends:[{key:'trend:blocked',id:'trend:blocked',kind:'trend',group:'news',title:'Tema sem fontes'}]});x.add('article-blocked','noticias');
+  x.daily.automation.updateSettings({revision:1,enabled:true,dailyLimit:6,groups:['news']});
+  x.daily.automation.run({manual:true});await x.daily.automation.awaitIdle();
+  const status=x.daily.automation.status();assert.equal(status.quota.attempted,0);assert.equal(status.quota.remaining,6);assert.equal(status.reason,'no_candidates');assert.deepEqual(status.history,[]);assert.equal(x.calls.text,0);assert.equal(x.calls.image,0);assert.equal(x.calls.sync,0);x.close();
 });

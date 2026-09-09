@@ -173,6 +173,7 @@ export function setupTrendRadar({
   generateEditorialDraft,
   reviewEditorialDraft,
   automationAllowed = () => true,
+  canRun = () => true,
 }) {
   db.exec(`CREATE TABLE IF NOT EXISTS trend_topics(id TEXT PRIMARY KEY,title TEXT NOT NULL UNIQUE,traffic TEXT NOT NULL DEFAULT '',published_at TEXT,portal TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new',source_url TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS editorial_articles(id TEXT PRIMARY KEY,trend_id TEXT,slug TEXT NOT NULL UNIQUE,portal TEXT NOT NULL,title TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',body TEXT NOT NULL DEFAULT '',image_url TEXT NOT NULL DEFAULT '',sources_json TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL DEFAULT 'draft',published_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -255,6 +256,7 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
     return items.length;
   }
   async function createAutomatedArticle(trend) {
+    if(!canRun())throw Error('ecosystem_paused');
     const generated = await generateEditorialDraft({
       title: trend.title,
       portal: trend.portal,
@@ -273,7 +275,8 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
       : [];
     let director = { approved: false, requiresSources: true, risk: "high", notes: "Diretoria indisponível." };
     try {
-      director = await reviewEditorialDraft({ title, summary, body, portal: trend.portal, imageUrl, sources });
+      if(canRun())director = await reviewEditorialDraft({ title, summary, body, portal: trend.portal, imageUrl, sources });
+      else director.notes='A pausa geral preservou o texto para revisão posterior.';
     } catch (error) {
       director.notes = `Falha na revisão da Diretoria: ${String(error.message || error).slice(0, 500)}`;
     }
@@ -310,7 +313,7 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
         `Risco: ${director.risk}. ${director.notes}`,
       ],
     ];
-    const approved = reviews.every(([, ok]) => ok);
+    const approved = canRun()&&reviews.every(([, ok]) => ok);
     db.prepare(
       `INSERT INTO editorial_articles(id,trend_id,slug,portal,title,summary,body,image_url,sources_json,status,published_at) VALUES(?,?,?,?,?,?,?,?,?,?,CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END)`,
     ).run(
@@ -338,7 +341,7 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
   }
   async function runEditorialAutomation() {
     if (
-      automationRunning || !automationAllowed() ||
+      automationRunning || !canRun() || !automationAllowed() ||
       process.env.EDITORIAL_AUTOMATION_ENABLED === "false"
     )
       return;
@@ -351,7 +354,7 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
     try {
       await syncTrendFeed();
       for (const portal of editorialPortals) {
-        if (!automationAllowed()) break;
+        if (!canRun() || !automationAllowed()) break;
         const today = Number(
           db
             .prepare(
@@ -472,6 +475,7 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
     requireAdmin,
     sameOriginOnly,
     async (req, res) => {
+      if(!canRun())return res.status(409).json({error:'As gerações estão pausadas na Central do dia.'});
       const trend = db
         .prepare("SELECT * FROM trend_topics WHERE id=?")
         .get(req.params.id);
@@ -601,6 +605,7 @@ Comece com poucas espécies e aprenda o ritmo de cada uma. O objetivo não é se
     sameOriginOnly,
     (req, res) => {
       const article=db.prepare("SELECT portal,sources_json,image_url FROM editorial_articles WHERE id=?").get(req.params.id);
+      if(!canRun())return res.status(409).json({error:'As publicações estão pausadas na Central do dia.'});
       if(!article)return res.status(404).json({error:'Artigo não encontrado.'});
       if(!editorialImage(article.image_url,{siteUrl}).url)return res.status(409).json({error:'Escolha uma capa relacionada ao assunto antes de publicar. Imagens genéricas da cidade não servem como capa editorial.'});
       let sources=[];try{sources=JSON.parse(article.sources_json||'[]')}catch{}

@@ -13,7 +13,7 @@ const safeSummary=value=>typeof value==='string'?value.replace(/[\x00-\x1f]/g,' 
 /** Durable local scheduler. processSource must obey signal and check synchronous
  * isCurrent() immediately before its publication transaction. Publication itself
  * must also be idempotent by source key, including recovery after a process crash. */
-export function createStoryAutomation({db,getCandidates,processSource,isConfigured=()=>true,now=Date.now,schedule=false}){
+export function createStoryAutomation({db,getCandidates,processSource,isConfigured=()=>true,canRun=()=>true,autoRunAllowed=()=>true,now=Date.now,schedule=false}){
   if(typeof getCandidates!=='function'||typeof processSource!=='function')throw TypeError('Candidate and source processors are required.');
   db.exec(`CREATE TABLE IF NOT EXISTS web_story_automation_settings(
     id INTEGER PRIMARY KEY CHECK(id=1),enabled INTEGER NOT NULL DEFAULT 0,daily_limit INTEGER NOT NULL DEFAULT 6,
@@ -51,7 +51,7 @@ export function createStoryAutomation({db,getCandidates,processSource,isConfigur
       history:db.prepare('SELECT id,source_key sourceKey,group_name sourceGroup,day,status,reason,story_id storyId,summary,started_at startedAt,finished_at finishedAt FROM web_story_automation_jobs ORDER BY id DESC LIMIT 30').all()};
   }
   function isCurrent(context){
-    if(closed||context.controller.signal.aborted||!configured())return false;
+    if(closed||context.controller.signal.aborted||!configured()||!canRun())return false;
     const s=settings(),time=now();return !!s.enabled&&s.revision===context.revision&&s.lease_owner===context.owner&&s.lease_until>time&&local(time).day===context.day;
   }
   function updateSettings(input={},actor='admin'){
@@ -171,7 +171,7 @@ export function createStoryAutomation({db,getCandidates,processSource,isConfigur
     const context=db.transaction(()=>{
       const s=settings(),time=now(),p=local(time);let reason='';
       if(s.lease_until<=time)db.prepare("UPDATE web_story_automation_jobs SET status='interrupted',reason='lease_expired',finished_at=? WHERE status='running'").run(time);
-      if(!s.enabled)reason='disabled';else if(!configured())reason='not_configured';else if(p.day<s.max_day)reason='clock_behind';
+      if(!s.enabled)reason='disabled';else if(!canRun())reason='global_paused';else if(!manual&&!autoRunAllowed())reason='centrally_coordinated';else if(!configured())reason='not_configured';else if(p.day<s.max_day)reason='clock_behind';
       else if(s.lease_owner&&s.lease_until>time)reason='running';else if(quota(p.day).attempted>=s.daily_limit)reason='daily_limit';
       else if(!manual&&p.hour<s.hour)reason='before_schedule';else if(!manual&&s.last_auto_day>=p.day)reason='already_scheduled';
       if(reason){if(reason!=='running')db.prepare('UPDATE web_story_automation_settings SET last_reason=? WHERE id=1').run(reason);return null;}

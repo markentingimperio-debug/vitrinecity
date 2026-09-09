@@ -82,8 +82,8 @@
     function node(tag,className,text){const item=document.createElement(tag);if(className)item.className=className;if(text!==undefined)item.textContent=text;return item}
     function renderChannels(items){networkGrid.replaceChildren();for(const id of ['meta','whatsapp','tiktok','youtube','kwai']){
       const config=channelInfo[id],source=items.find(item=>item.id===id)||{},ready=Boolean(source.ready),card=node('article','network');
-      const top=node('div','network-top'),title=node('h3','',config.title),badge=node('span','badge'+(ready?' ready':''),ready?'CONECTADA':'PENDENTE');top.append(title,badge);
-      const detail=node('div','network-detail',ready?'Canal pronto para uso no ecossistema.':(source.missing||[]).join(' · ')||config.description);
+      const top=node('div','network-top'),title=node('h3','',config.title),badge=node('span','badge'+(ready?' ready':''),ready?'CONFIGURADA':'PENDENTE');top.append(title,badge);
+      const detail=node('div','network-detail',ready?(id==='whatsapp'?'Sessão disponível para consulta; acompanhe as confirmações de cada envio.':id==='meta'?'Contas cadastradas. Cada ação depende das permissões e da liberação da Meta.':'Integração de consulta cadastrada. Publicar vídeos exige autorização e integração próprias.'):(source.missing||[]).join(' · ')||config.description);
       const action=node('a','btn',ready?'Gerenciar':'Conectar / configurar');action.href=config.action||source.action||'/admin-integracoes.html';if(id==='whatsapp'){action.textContent=ready?'Sessão conectada':'Conectar por QR';action.addEventListener('click',event=>{event.preventDefault();openWhatsAppQr()})}
       if(action.href.startsWith('https://')){action.target='_blank';action.rel='noopener'}card.append(top,detail,action);networkGrid.append(card);
     }}
