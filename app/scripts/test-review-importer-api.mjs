@@ -28,13 +28,13 @@ try {
   const product = db.prepare(`SELECT p.id,p.name FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0 AND s.review_status='published' LIMIT 1`).get();
   assert.ok(product, 'Published seed product available');
   const adminPage = await request('/admin-avaliacoes', { headers: { cookie } }); assert.equal(adminPage.status, 200); assert.match(await adminPage.text(), /Preparar importação/);
-  const preview = await request('/api/admin/review-imports/preview', { method: 'POST', headers: { cookie }, body: JSON.stringify({ productId: product.id, sourceUrl: 'https://shopee.com.br/product/390179975/23698375162/', content: JSON.stringify([{ author: '<img src=x onerror=alert(1)>', rating: 2, date: '2026-08-01', body: 'Embalagem aberta. <script>alert(1)</script>', variation: '3 kg' }]) }) });
+  const preview = await request('/api/admin/review-imports/preview', { method: 'POST', headers: { cookie }, body: JSON.stringify({ productId: product.id, sourceUrl: 'https://shopee.com.br/product/390179975/23698375162/', content: JSON.stringify([{ author: '<img src=x onerror=alert(1)>', rating: 2, date: '2026-05-07 23:01', body: 'Embalagem aberta. <script>alert(1)</script>', variation: '3 kg' }]) }) });
   assert.equal(preview.status, 200); const batch = await preview.json();
   assert.equal(db.prepare('SELECT COUNT(*) n FROM marketplace_review_sources').get().n, 0);
   const publish = await request(`/api/admin/review-imports/${batch.id}/publish`, { method: 'POST', headers: { cookie }, body: JSON.stringify({ confirmed: true }) }); assert.equal(publish.status, 200);
   const publicPage = await request(`/produto/${product.id}`); assert.equal(publicPage.status, 200); const html = await publicPage.text();
   assert.match(html, /Avaliação importada da Shopee/); assert.match(html, /Embalagem aberta\. &lt;script&gt;/); assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
-  assert.match(html, /Inclui 1 avaliação importada da Shopee/); assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/); assert.doesNotMatch(html, /✓ Compra verificada/);
+  assert.match(html, /Inclui 1 avaliação importada da Shopee/); assert.match(html, /07\/05\/2026/); assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/); assert.doesNotMatch(html, /✓ Compra verificada/);
   const hide = await request(`/api/admin/review-imports/${batch.id}/visibility`, { method: 'POST', headers: { cookie }, body: JSON.stringify({ action: 'hide' }) }); assert.equal(hide.status, 200);
   const hiddenHtml = await (await request(`/produto/${product.id}`)).text(); assert.doesNotMatch(hiddenHtml, /Avaliação importada da Shopee/);
   db.pragma('foreign_keys = ON');

@@ -22,7 +22,7 @@ function renderPage() {
   $('rows').replaceChildren();
   rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).forEach(row => {
     const tr = element('tr'), product = element('td', row.productName); product.append(element('small', `${row.storeName} · #${row.productId}`));
-    const author = element('td', row.author); author.append(element('small', row.createdAt.slice(0, 10).split('-').reverse().join('/')));
+    const author = element('td', row.author); author.append(element('small', new Date(`${row.createdAt.replace(' ', 'T')}Z`).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })));
     const comment = element('td', [row.title, row.body || 'Avaliação somente com estrelas.', row.variation ? `Variação: ${row.variation}` : ''].filter(Boolean).join('\n'), 'comment');
     const status = element('td'); status.append(element('span', row.duplicate ? 'Duplicada' : 'Nova', `tag${row.duplicate ? ' duplicate' : ''}`));
     tr.append(product, author, element('td', `${row.rating} / 5 ★`, 'rating'), comment, status); $('rows').append(tr);
