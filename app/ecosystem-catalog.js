@@ -1,6 +1,10 @@
 import { marketplaceSlug, publicStorePath } from './marketplace-public.js';
 import { CITY_GUIDE_ITEMS } from './public/vitriny-city-guide-core.js';
 import { AFFILIATE_CENTERS } from './public/vitriny-affiliate-centers-core.js';
+import { affiliateArticles } from './affiliate-articles.js';
+import { SPATIAL_CITIES } from './vitriny-spatial/city-registry.js';
+import { DISTRICT_INTEGRATIONS } from './public/vitriny-district-integrations.js';
+import { toCleanPublicHref } from './public/vitriny-public-routes.js';
 import { acquisitionReport } from './organic-acquisition.js';
 import { createHash } from 'node:crypto';
 
@@ -8,15 +12,37 @@ const TYPES = {products:['Produtos','/admin-vendas-afiliadas.html'],stores:['Loj
 const text = value => String(value ?? '').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
 const fold = value => text(value).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('pt-BR');
 const integer = (value,min,max,fallback) => Number.isSafeInteger(Number(value)) ? Math.max(min,Math.min(max,Number(value))) : fallback;
+// These are public collection/policy routes, not evidence that every contained
+// offer, article or external player is available. Items keep their own gates.
+const PUBLIC_HUBS = [
+  ['/cidade','Cidade Premium'],['/cidade/bairro-premium','Bairro Premium'],['/cidade/praca-central','Praça Central'],['/cidade/avenida-premium','Avenida Premium'],
+  ['/grupos-whatsapp.html','Grupos da VitrineCity'],['/conteudo','Conteúdos da VitrineCity'],['/noticias','Notícias'],['/esportes','Esportes'],['/receitas','Receitas'],
+  ['/plantas-e-jardinagem','Plantas e jardinagem'],['/tecnologia','Tecnologia'],['/inteligencia-artificial','Inteligência artificial'],['/entretenimento','Entretenimento'],['/livros','Editora Digital'],
+  ['/musicas','Catálogo da Pulse Arena'],['/cinema','Catálogo do Cinema VitrineCity'],['/servicos-digitais.html','Serviços digitais'],
+  ['/termos-marketplace.html','Termos do marketplace'],['/politica-vendedor-marketplace.html','Política do vendedor'],['/politica-comprador-marketplace.html','Política do comprador'],
+  ['/politica-devolucao-marketplace.html','Política de devolução'],['/politica-cancelamento-marketplace.html','Política de cancelamento'],['/politica-disputas-marketplace.html','Política de disputas'],['/politica-fiscal-marketplace.html','Política fiscal']
+];
 
 /** Admin-only registry: credentials and personal contact details never enter the DTO. */
-export function createEcosystemCatalog({db,siteUrl,sourceCatalog,now=()=>new Date()}) {
+export function createEcosystemCatalog({db,siteUrl,sourceCatalog,services=()=>[],now=()=>new Date()}) {
   const origin = new URL(siteUrl).origin;
   db.function('ecosystem_fold',{deterministic:true},fold);
   const cols = table => new Set(db.prepare(`PRAGMA table_info("${table}")`).all().map(c=>c.name));
   const exists = table => cols(table).size>0;
   const field = (table,name,alias='') => cols(table).has(name) ? `${alias}"${name}"` : "''";
   function safeUrl(value,{internal=false}={}) { if(typeof value!=='string'||!value.trim())return '';try {const u=new URL(value,origin);return ['http:','https:'].includes(u.protocol)&&!u.username&&!u.password&&(!internal||u.origin===origin)?(u.origin===origin?u.pathname+u.search+u.hash:u.href):'';}catch{return '';}}
+  function routeKey(value) {
+    const safe=safeUrl(value,{internal:true});if(!safe)return '';
+    const u=new URL(toCleanPublicHref(safe),origin);
+    u.pathname=({'/loja.html':'/loja','/social.html':'/social','/entregas.html':'/entregas'})[u.pathname]||u.pathname;
+    for(const key of [...u.searchParams.keys()])if(/^utm_/i.test(key))u.searchParams.delete(key);
+    u.searchParams.sort();return u.pathname+u.search+u.hash;
+  }
+  function uniqueDestinations(items) {
+    const found=new Map();
+    for(const item of items){const key=routeKey(item.url)||item.id,previous=found.get(key);if(previous){previous.meta=[...new Set([...previous.meta,item.title,...item.meta])];continue;}found.set(key,{...item,meta:[...item.meta]});}
+    return [...found.values()];
+  }
   function item(row,kind) {
     let published=row.status==='published',status=row.status;
     const source=published&&row.sourceKey?sourceCatalog?.get(row.sourceKey):null;
@@ -29,7 +55,7 @@ export function createEcosystemCatalog({db,siteUrl,sourceCatalog,now=()=>new Dat
     let url=row.url||source?.sourcePath||'';
     if(row.type==='product')url=published?`/produto/${row.rawId}/${marketplaceSlug(row.title,'produto')}`:'';
     if(row.type==='store')url=published?publicStorePath({order_reference:row.rawId,business_name:row.title}):'';
-    const adminUrl=row.adminUrl||(row.type==='product'||row.type==='store'?'/admin-lojas.html':row.type==='affiliate'?'/admin-vendas-afiliadas.html?plataforma='+encodeURIComponent(row.extra||'mercadolivre'):row.type==='story'?'/admin-web-stories?story='+encodeURIComponent(row.rawId):row.type==='course'?'/admin-cursos.html':TYPES[kind][1]);
+    const adminUrl=row.adminUrl||(row.type==='product'||row.type==='store'?'/admin-lojas.html':row.type==='affiliate'?'/admin-vendas-afiliadas.html?plataforma='+encodeURIComponent(row.extra||'mercadolivre'):row.type==='story'?'/admin-web-stories?story='+encodeURIComponent(row.rawId):row.type==='course'?'/admin-cursos.html':row.type==='book'?'/admin-editora.html':row.type==='media'?'/admin-midia.html':TYPES[kind][1]);
     return {id:row.id,kind,title:text(row.title),summary:text(row.summary).slice(0,500),status,image:safeUrl(row.image||''),url:published?safeUrl(url,{internal:true}):'',adminUrl,meta:[row.typeLabel,row.extra].filter(Boolean).map(text)};
   }
   // SQL pagination keeps a growing product catalog out of process memory.
@@ -42,22 +68,36 @@ export function createEcosystemCatalog({db,siteUrl,sourceCatalog,now=()=>new Dat
         const stock=cols('store_products').has('stock_quantity')?' AND p.stock_quantity>0':'';
         add('store_products',`SELECT 'product:'||p.id id,p.id rawId,'product' type,'Produto da loja' typeLabel,p.name title,${field('store_products','description','p.')} summary,${field('store_products','image_url','p.')} image,CASE WHEN p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0${available}${stock} AND s.review_status='published' THEN 'published' ELSE 'pending' END status,'' url,'' sourceKey,s.business_name extra FROM store_products p LEFT JOIN store_profiles s ON s.order_reference=p.store_reference`);
       }
-      add('affiliate_catalog',`SELECT 'affiliate:'||slug id,slug rawId,'affiliate' type,'Produto afiliado' typeLabel,title,description summary,image,CASE WHEN status='published' AND availability='available' AND health='reachable' THEN 'published' ELSE 'pending' END status,'/ofertas/'||slug url,'affiliate:'||slug sourceKey,platform extra FROM affiliate_catalog`);
+      // The public landing page remains published even while its outbound offer
+      // needs review. AI generation eligibility is a separate, stricter catalog.
+      add('affiliate_catalog',`SELECT 'affiliate:'||slug id,slug rawId,'affiliate' type,CASE WHEN availability='unavailable' OR health='broken' THEN 'Produto afiliado · Oferta em revisão' ELSE 'Produto afiliado · Condições na página' END typeLabel,title,description summary,image,CASE WHEN status='published' THEN 'published' ELSE 'pending' END status,'/ofertas/'||slug url,'' sourceKey,platform extra FROM affiliate_catalog`);
     }
     if(kind==='stores'||kind==='buildings') add('store_profiles',`SELECT 'store:'||order_reference id,order_reference rawId,'store' type,'Prédio de loja' typeLabel,business_name title,${field('store_profiles','description')} summary,${field('store_profiles','facade_url')} image,CASE WHEN review_status='published' THEN 'published' ELSE 'pending' END status,'' url,'' sourceKey,${field('store_profiles','city')} extra FROM store_profiles`);
     if(kind==='pages') {
       add('editorial_articles',`SELECT 'article:'||id id,id rawId,'article' type,'Artigo' typeLabel,title,summary,image_url image,status,'/artigo/'||slug url,'' sourceKey,portal extra FROM editorial_articles`);
       add('editorial_web_stories',`SELECT 'story:'||id id,id rawId,'story' type,'Web Story' typeLabel,slug title,'' summary,'' image,CASE WHEN published_json IS NOT NULL AND published_json!='' THEN 'published' ELSE 'pending' END status,'/stories/'||slug url,article_id sourceKey,'' extra FROM editorial_web_stories`);
       add('managed_courses',`SELECT 'course:'||slug id,slug rawId,'course' type,'Curso' typeLabel,title,description summary,cover_url image,CASE WHEN status='active' THEN 'published' ELSE 'pending' END status,'/centro-educacional#'||slug url,'course:'||slug sourceKey,'' extra FROM managed_courses`);
+      if(['slug','title','status'].every(name=>cols('digital_books').has(name)))add('digital_books',`SELECT 'book:'||slug id,slug rawId,'book' type,'Livro digital' typeLabel,title,${field('digital_books','summary')} summary,${field('digital_books','cover_url')} image,status,'/livro/'||slug url,'' sourceKey,${field('digital_books','category')} extra FROM digital_books`);
+      if(['scope','slug','title','status'].every(name=>cols('vitriny_media_catalog').has(name)))add('vitriny_media_catalog',`SELECT 'media:'||scope||':'||slug id,slug rawId,'media' type,CASE WHEN scope='music' THEN 'Seleção musical' ELSE 'Sessão de cinema' END typeLabel,title,${field('vitriny_media_catalog','description')} summary,'' image,status,CASE WHEN scope='music' THEN '/musicas/' ELSE '/cinema/' END||slug url,'' sourceKey,${field('vitriny_media_catalog','genre')} extra FROM vitriny_media_catalog WHERE scope IN ('music','cinema')`);
     }
     return result;
   }
   function staticItems(kind) {
-    if(kind==='pages')return CITY_GUIDE_ITEMS.map(i=>({id:'page:'+i.id,title:i.title,summary:i.description,status:'published',url:i.href,meta:[i.landmark].filter(Boolean),kind,image:'',adminUrl:TYPES.pages[1]}));
+    const cities=()=>SPATIAL_CITIES.map(city=>({id:'city:'+city.id,title:city.name,summary:city.identity?.tagline||'',url:'/multiverso?city='+encodeURIComponent(city.id),status:city.status==='active'?'published':'preview',kind,image:'',adminUrl:TYPES.buildings[1],meta:[city.status==='active'?'Cidade ativa':'Prévia procedural; comércio local não ativo',city.identity?.landmark?.label].filter(Boolean)}));
+    const districts=()=>SPATIAL_CITIES.filter(city=>city.status==='active').flatMap(city=>city.districts.flatMap(district=>{const entry=DISTRICT_INTEGRATIONS.find(item=>item.id===district.id&&item.enabled);return entry?[{id:'district:'+city.id+':'+district.id,title:entry.label,summary:entry.description,url:entry.href,status:'published',kind,image:'',adminUrl:TYPES.buildings[1],meta:['Distrito de '+city.name]}]:[];}));
+    if(kind==='pages') {
+      const guide=CITY_GUIDE_ITEMS.map(i=>({id:'page:'+i.id,title:i.title,summary:i.description,status:'published',url:i.href||'',meta:[i.landmark].filter(Boolean),kind,image:'',adminUrl:TYPES.pages[1]}));
+      const hubs=PUBLIC_HUBS.map(([url,title])=>({id:'hub:'+url,title,summary:'Página pública da VitrineCity.',url,status:'published',meta:['Página pública'],kind,image:'',adminUrl:TYPES.pages[1]}));
+      const articles=affiliateArticles.map(i=>({id:'guide:'+i.url,title:i.title,summary:i.description,url:i.url,status:'published',kind,image:'',meta:['Guia com indicações afiliadas'],adminUrl:'/admin-vendas-afiliadas.html'}));
+      const centers=AFFILIATE_CENTERS.map(i=>({id:'center:'+i.id,title:i.title,summary:i.description,url:i.href,status:'published',kind,image:i.logo,meta:['Centro de compras afiliadas'],adminUrl:'/admin-afiliados.html'}));
+      const supplied=services(),serviceRows=Array.isArray(supplied)?supplied:[];
+      const offers=serviceRows.filter(i=>i&&/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(i.slug)&&text(i.title)).map(i=>{const available=![i.active,i.available,i.ready,i.published].some(value=>[false,0,'0','false'].includes(value))&&(!i.status||['active','published'].includes(i.status));return {id:'service:'+i.slug,title:text(i.title),summary:text(i.description),url:available?'/servicos-digitais.html?servico='+encodeURIComponent(i.slug):'',status:available?'published':'pending',kind,image:safeUrl(i.imageUrl||i.image_url||''),meta:['Serviço digital'],adminUrl:'/admin-servicos.html'};});
+      return uniqueDestinations([...guide,...hubs,...articles,...centers,...offers,...cities(),...districts()]);
+    }
     if(kind==='buildings') {
       const seen=new Set();
       const landmarks=CITY_GUIDE_ITEMS.filter(i=>i.place&&!seen.has(i.place)&&seen.add(i.place)).map(i=>({id:'place:'+i.place,title:i.landmark,summary:i.description,url:i.href,meta:['Destino no guia da cidade'],kind,image:'',status:'published',adminUrl:TYPES.buildings[1]}));
-      return [...landmarks,...AFFILIATE_CENTERS.map(i=>({id:'center:'+i.id,title:i.title,summary:i.description,url:i.href,image:i.logo,meta:['Centro de compras afiliadas'],kind,status:'published',adminUrl:'/admin-afiliados.html'}))];
+      return uniqueDestinations([...landmarks,...AFFILIATE_CENTERS.map(i=>({id:'center:'+i.id,title:i.title,summary:i.description,url:i.href,image:i.logo,meta:['Centro de compras afiliadas'],kind,status:'published',adminUrl:'/admin-afiliados.html'})),...cities(),...districts()]);
     }
     if(kind==='networks')return connections().map(c=>({id:c.id,title:c.label,summary:c.reason,status:c.status,kind,image:'',url:'',adminUrl:c.adminUrl,meta:[`${c.connectedCount} conexão(ões) cadastrada(s)`,c.canPublish?'Publicação interna disponível':'Publicação externa ainda não confirmada']}));
     return [];
@@ -107,7 +147,7 @@ export function createEcosystemCatalog({db,siteUrl,sourceCatalog,now=()=>new Dat
     return {periodDays:days,items,updatedAt:stamp.toISOString()};
   }
   function snapshot({days=7}={}) {
-    const inventory=Object.entries(TYPES).map(([kind,[label,adminUrl]])=>{const sql=queries(kind).join(' UNION ALL '),staticCount=staticItems(kind).length;const aggregate=sql?db.prepare(`SELECT COUNT(*) total,SUM(CASE WHEN status='published' THEN 1 ELSE 0 END) published FROM (${sql})`).get():{total:0,published:0};return {kind,label,total:aggregate.total+staticCount,published:['pages','networks'].includes(kind)?null:Number(aggregate.published||0)+staticCount,pending:['pages','networks'].includes(kind)?null:aggregate.total-Number(aggregate.published||0),available:true,adminUrl};});
+    const inventory=Object.entries(TYPES).map(([kind,[label,adminUrl]])=>{const sql=queries(kind).join(' UNION ALL '),statics=staticItems(kind),staticCount=statics.length,staticPublished=statics.filter(i=>i.status==='published').length;const aggregate=sql?db.prepare(`SELECT COUNT(*) total,SUM(CASE WHEN status='published' THEN 1 ELSE 0 END) published FROM (${sql})`).get():{total:0,published:0};return {kind,label,total:aggregate.total+staticCount,published:['pages','networks'].includes(kind)?null:Number(aggregate.published||0)+staticPublished,pending:['pages','networks'].includes(kind)?null:aggregate.total-Number(aggregate.published||0)+staticCount-staticPublished,available:true,adminUrl};});
     return {inventory,connections:connections(),metrics:metrics([7,30].includes(Number(days))?Number(days):7)};
   }
   return {snapshot,list};
