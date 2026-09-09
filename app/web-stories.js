@@ -98,7 +98,7 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     const result=await generateStory(initial,{signal,isCurrent:eligible,buttons:storyButtons(initial,previous)});
     const publicationAllowed=()=>eligible()&&(typeof result?.publicationAllowed!=='function'||result.publicationAllowed()===true);
     if(!publicationAllowed())throw fail('Rodada pausada ou conteúdo atualizado. Nenhuma publicação foi feita.',409);
-    if(!result?.draft)return {storyId:existing?.id||null,status:'review',summary:String(result?.notes||'Faltam informações verificadas para criar uma história completa.').slice(0,500),diagnostics:result?.diagnostics};
+    if(!result?.draft)return {storyId:existing?.id||null,status:result?.failureStatus==='failed'?'failed':'review',summary:String(result?.notes||'Faltam informações verificadas para criar uma história completa.').slice(0,500),diagnostics:result?.diagnostics};
     const companionId=initial.kind==='trend'?'story-companion:'+key:null;
     const previousCompanion=companionId?db.prepare('SELECT * FROM editorial_articles WHERE id=?').get(companionId):null;
     const companionSlug=companionId?(previousCompanion?.slug||result.draft.title.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,80)+'-'+createHash('sha256').update(key).digest('hex').slice(0,8)):null;
@@ -146,14 +146,16 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
   app.get('/api/admin/web-stories/sources',requireAdmin,route((req,res)=>{
     const q=typeof req.query.q==='string'?req.query.q.trim().slice(0,80):'';
     const group=typeof req.query.group==='string'?req.query.group:'all',offset=Math.max(0,parseInt(req.query.offset,10)||0);
-    const items=sourceCatalog.list({q,group,limit:50,offset}).map(source=>({id:source.key||source.id,title:source.title,slug:source.slug,portal:source.portal,kind:source.kind,image_url:source.image_url,updated_at:source.updated_at,story_id:db.prepare('SELECT id FROM editorial_web_stories WHERE article_id=?').get(source.key||source.id)?.id}));
-    res.json({items,generator:'editorial-template',supportedSources:['article','product','service','course','affiliate','trend'],nextOffset:items.length===50?offset+50:null});
+    const exact=req.query.sourceKey;if(exact!==undefined&&(typeof exact!=='string'||!exact||exact.length>300))throw fail('Fonte inválida.');
+    const selected=exact!==undefined?[article(exact)].filter(Boolean):sourceCatalog.list({q,group,limit:50,offset});
+    const items=selected.map(source=>({id:source.key||source.id,title:source.title,slug:source.slug,portal:source.portal,kind:source.kind,image_url:source.image_url,updated_at:source.updated_at,sourceUrl:source.sourcePath,story_id:db.prepare('SELECT id FROM editorial_web_stories WHERE article_id=?').get(source.key||source.id)?.id}));
+    res.json({items,generator:'editorial-template',supportedSources:['article','product','service','course','affiliate','trend'],nextOffset:exact===undefined&&items.length===50?offset+50:null});
   }));
-  app.get('/api/admin/web-stories/images',requireAdmin,route(async(req,res)=>res.json(await imageLibrary(typeof req.query.q==='string'?req.query.q.trim().slice(0,80):'',typeof req.query.articleId==='string'?req.query.articleId.slice(0,150):'',Math.max(1,parseInt(req.query.p,10)||1)))));
+  app.get('/api/admin/web-stories/images',requireAdmin,route(async(req,res)=>res.json(await imageLibrary(typeof req.query.q==='string'?req.query.q.trim().slice(0,80):'',typeof req.query.articleId==='string'?req.query.articleId.slice(0,300):'',Math.max(1,parseInt(req.query.p,10)||1)))));
   app.get('/api/admin/web-stories',requireAdmin,route((_req,res)=>res.json({items:db.prepare('SELECT * FROM editorial_web_stories ORDER BY updated_at DESC LIMIT 200').all().map(dto)})));
   app.get('/api/admin/web-stories/:id',requireAdmin,route((req,res)=>res.json(dto(get(req.params.id)))));
   app.post('/api/admin/web-stories',requireAdmin,sameOriginOnly,route(async(req,res)=>{
-    const id=text(req.body?.articleId,150,'Artigo'),existing=db.prepare('SELECT * FROM editorial_web_stories WHERE article_id=?').get(id);
+    const id=text(req.body?.articleId,300,'Artigo'),existing=db.prepare('SELECT * FROM editorial_web_stories WHERE article_id=?').get(id);
     if(existing)return res.json(dto(existing));
     if(creating.size||db.prepare('SELECT COUNT(*) n FROM editorial_web_stories').get().n>=10000)throw fail('Aguarde a criação atual ou use uma das histórias existentes (limite de 10 mil).',409);
     const source=article(id);if(!source)throw fail('Escolha um artigo publicado.',404);
@@ -224,5 +226,14 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
   });
   app.get('/sitemap-stories.xml',(_req,res)=>res.type('application/xml').set('Cache-Control','public,max-age=60').send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${published().map(item=>`<url><loc>${esc(origin+'/stories/'+item.slug)}</loc><lastmod>${esc(item.published_updated_at)}</lastmod></url>`).join('')}</urlset>`));
   app.get('/sitemap-index.xml',(_req,res)=>res.type('application/xml').set('Cache-Control','public,max-age=300').send(`<?xml version="1.0" encoding="UTF-8"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>${esc(origin)}/sitemap.xml</loc></sitemap><sitemap><loc>${esc(origin)}/sitemap-stories.xml</loc></sitemap></sitemapindex>`));
-  return {sitemapPaths:()=>['/stories',...published().map(item=>'/stories/'+item.slug)],generateAndPublish};
+  function recoveryForSource(key){
+    const source=article(key),item=db.prepare('SELECT * FROM editorial_web_stories WHERE article_id=?').get(key);
+    const currentPublished=!!(source&&item?.published_json&&item.published_source_hash===hashArticle(source)&&isVisible(item));
+    return {sourceKey:key,title:source?.title||null,sourceAvailable:!!source,storyId:item?.id||null,sourceUrl:source?.sourcePath||null,editorUrl:source?'/admin-web-stories.html?'+(item?'story='+encodeURIComponent(item.id):'source='+encodeURIComponent(key)):null,action:source?'open_editor':'source_unavailable',published:currentPublished,publishedUrl:currentPublished?'/stories/'+item.slug:null,publishedRevision:currentPublished?item.published_revision:null};
+  }
+  function publicationCounts(){
+    const day=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}),today=day.format(new Date()),items=published();
+    return {date:today,timeZone:'America/Sao_Paulo',total:items.length,today:items.filter(item=>day.format(new Date(item.published_at))===today).length};
+  }
+  return {sitemapPaths:()=>['/stories',...published().map(item=>'/stories/'+item.slug)],generateAndPublish,recoveryForSource,publicationCounts};
 }

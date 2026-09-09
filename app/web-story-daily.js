@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {createStoryAssets} from './web-story-assets.js';
 import {createWebStorySources} from './web-story-sources.js';
 import {createWebStoryResearch} from './web-story-research.js';
-import {createWebStoryAI} from './web-story-ai.js';
+import {createWebStoryAI,storySourcePreflight} from './web-story-ai.js';
 import {createStoryAutomation} from './web-story-automation.js';
 import {setupWebStories} from './web-stories.js';
 import {createLocalEditorialStories} from './web-story-local.js';
@@ -11,12 +11,15 @@ import {storyDiagnostics} from './web-story-diagnostics.js';
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const notes={quality_checks_passed:'História criada, revisada pela IA e publicada.',source_needs_verified_evidence:'Faltam fontes verificadas para sustentar esta história.',source_insufficient_for_ten_pages:'O conteúdo não sustenta dez páginas úteis. Complete a página de origem.',catalog_photo_missing:'O catálogo precisa de uma foto original.',catalog_photo_quality:'A foto original precisa de mais resolução.',catalog_photo_unavailable:'A foto original não está disponível para a história.',source_asset_unavailable:'Revise a imagem original do conteúdo.',ai_copy_limits:'A redação precisa de ajuste no título ou na descrição.',ai_ten_pages_required:'A redação não atingiu dez páginas completas.',ai_page_invalid:'Uma página precisa de ajuste no texto.',ai_repetitive_or_thin:'O texto ficou repetitivo ou curto demais.',ai_unbacked_numbers:'A revisão encontrou números ausentes na fonte.',ai_pressure_or_promise:'A revisão encontrou uma promessa ou chamada inadequada.',ai_review_held:'A revisão automática pediu ajustes no conteúdo.',ai_text_unavailable:'A IA de texto não concluiu esta história.',ai_invalid_json:'A IA devolveu um formato de texto inválido.',ai_image_unavailable:'A IA de imagem não concluiu esta história.',story_image_invalid:'O provedor não entregou uma imagem válida.',story_image_quality:'A imagem gerada não atingiu a qualidade necessária.',source_destination_invalid:'A página de destino precisa ser corrigida.'};
 Object.assign(notes,{local_editorial_preserved:'Texto integral e imagem da fonte própria aprovada foram diagramados e publicados.',local_source_needs_editing:'A fonte precisa de ajuste para caber integralmente em dez a vinte páginas.',local_source_needs_review:'A fonte precisa de revisão editorial antes da diagramação automática.',local_source_image_invalid:'A imagem original precisa ser corrigida antes de publicar.'});
+notes.ai_provider_blocked='O provedor exige revisão da conta, da configuração ou da política de dados antes de outra geração.';
 const explain=value=>Object.hasOwn(notes,String(value))?notes[value]:'Esta história precisa de revisão antes de publicar.';
 
 export function setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publicDir,dataDir,services,courses,requestText,requestImage,isConfigured,canRun=()=>true,autoRunAllowed=()=>true,schedule=true,assets=createStoryAssets({publicDir,dataDir,siteUrl}),research=createWebStoryResearch({db})}) {
   const sources=createWebStorySources({db,services,courses,publicDir});
   const enrichCached=source=>source&&research.getEnriched?research.getEnriched(source):source;
-  const automaticEligible=source=>source.kind!=='trend'&&!(source.kind==='article'&&['news','sports','noticias','esportes'].includes(source.group||source.portal))||research.automaticEligible?.(source)===true;
+  const automaticEligible=source=>source.kind==='trend'||(source.kind==='article'&&['news','sports','noticias','esportes'].includes(source.group||source.portal))
+    ?research.automaticEligible?.(source)===true
+    :storySourcePreflight(source,{siteUrl}).eligible;
   function trendRows(options) {
     const result=[];
     // The research adapter itself pages at 200. Count all eligible trend rows
@@ -30,7 +33,7 @@ export function setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl
     throw Error('story_candidates_limit');
   }
   function ownRows({q,group,limit,offset,automatic}){
-    if(!automatic||!['all','news','sports','trends'].includes(group))return sources.list({q,group,limit,offset}).map(enrichCached);
+    if(!automatic)return sources.list({q,group,limit,offset}).map(enrichCached);
     // Offsets count feasible candidates, not rejected rows. Walk raw pages until
     // enough candidates are found; sparse early pages must not hide later ones.
     const result=[];let skipped=0;
@@ -58,9 +61,13 @@ export function setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl
     // rejection can never fall through to local automatic approval.
     const result=await local.generate(...args)||await ai.generate(...args);
     const diagnostics=storyDiagnostics(result),detail=diagnostics.review.notes;
-    return {...result,diagnostics,notes:[explain(result.notes),result.approved!==true&&detail?detail:''].filter(Boolean).join(' ').slice(0,500)};
+    // A provider/JSON failure is not an editorial rejection. Only explicit
+    // technical codes with no prior failed criterion can use the cost cooldown.
+    const technical=['ai_text_unavailable','ai_image_unavailable','ai_invalid_json'].includes(result.notes)&&!result.qualityFailures?.length&&![false].includes(result.review?.grounded)&&!['medium','high'].includes(result.review?.risk);
+    return {...result,diagnostics,failureStatus:technical?'failed':'review',notes:[explain(result.notes),result.approved!==true&&detail?detail:''].filter(Boolean).join(' ').slice(0,500)};
   }});
-  const automation=createStoryAutomation({db,isConfigured,canRun,autoRunAllowed,schedule,getCandidates:options=>catalog.list({...options,automatic:true}).map(source=>({...source,
+  const recoveryForSource=key=>webStories.recoveryForSource(key);
+  const automation=createStoryAutomation({db,isConfigured,canRun,autoRunAllowed,schedule,recoveryForSource,publicationCounts:()=>webStories.publicationCounts(),getCandidates:options=>catalog.list({...options,automatic:true}).map(source=>({...source,
     // Evidence refresh timestamps are not editorial changes. A changed public
     // source or new dated topic can be considered again, without daily duplicates.
     fingerprint:digest(source.kind==='trend'?[source.key,source.title]:sources.get(source.key)||[source.key,'unavailable'])

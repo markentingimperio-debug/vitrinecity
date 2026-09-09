@@ -1,14 +1,16 @@
+import {storyHistoryLink,storyPublicHref,storyOutcomeSummary,storyDiagnosticLines} from './admin-web-story-recovery.js';
+export {storyHistoryLink} from './admin-web-story-recovery.js';
 const ENDPOINT='/api/admin/web-story-automation';
 const GROUPS={products:'Produtos e ofertas',services:'Lojas, serviços e cursos',news:'Notícias e celebridades',recipes:'Receitas',sports:'Esportes',trends:'Cidade e tendências'};
-const JOBS={running:'Em preparação',published:'Publicada',review:'Precisa de atenção',failed:'Não concluída',interrupted:'Interrompida'};
+const JOBS={running:'Em preparação',published:'Publicada nesta tentativa',review:'Tentativa ficou em revisão',failed:'Tentativa não concluída',interrupted:'Tentativa interrompida'};
 const REASONS={disabled:'A rotina está pausada.',not_configured:'A preparação automática ainda não está disponível. Confira a configuração da IA Gestora.',running:'Uma rodada está em preparação. Você pode acompanhar o andamento abaixo.',daily_limit:'O limite de hoje foi utilizado. A próxima rodada respeitará o próximo dia.',before_schedule:'Aguardando o horário programado.',already_scheduled:'A rodada programada de hoje já foi executada.',completed:'Rodada concluída.',no_candidates:'Não há novos conteúdos elegíveis para as categorias escolhidas.',candidate_error:'Não foi possível consultar os conteúdos. Atualize o status e tente novamente.',worker_error:'A rodada não foi concluída. Confira o histórico e tente novamente mais tarde.',interrupted:'A rodada foi interrompida. Confira o histórico antes de continuar.',clock_behind:'A rotina aguarda a regularização do horário do servidor.',closed:'A rotina está temporariamente indisponível.',settings_changed:'Configuração salva. A rotina seguirá o horário e o limite escolhidos.'};
 
 export function validAutomationStatus(value){
   if(!value||typeof value.enabled!=='boolean'||typeof value.configured!=='boolean'||typeof value.running!=='boolean'||!Number.isInteger(value.revision)||!Number.isInteger(value.dailyLimit)||value.dailyLimit<1||value.dailyLimit>24||!Number.isInteger(value.hour)||value.hour<0||value.hour>23||!Array.isArray(value.groups)||!value.groups.every(group=>Object.hasOwn(GROUPS,group))||!value.quota||!Number.isInteger(value.quota.attempted)||!Number.isInteger(value.quota.remaining))throw Error('Não foi possível ler a configuração completa. Atualize o status para tentar novamente.');
   return value;
 }
-export const canRunAutomation=status=>!!status&&status.enabled&&status.configured&&!status.closed&&!status.running&&status.quota.remaining>0;
-export function storyHistoryLink(item){return typeof item.storyId==='string'&&item.storyId.length>0&&item.storyId.length<=200?'/admin-web-stories?story='+encodeURIComponent(item.storyId)+'#editor':null;}
+Object.assign(REASONS,{global_paused:'As publicações estão pausadas na Central de Operações.',centrally_coordinated:'A agenda é coordenada pela Central de Operações.',candidate_retry_wait:'A consulta de fontes falhou. Aguarde a próxima consulta indicada; nenhuma preparação foi iniciada nessa consulta.',candidate_retry_limit:'O limite de consultas com falha foi atingido hoje. Confira o catálogo antes do próximo ciclo.'});
+export const canRunAutomation=status=>!!status&&status.enabled&&status.configured&&!status.closed&&!status.running&&status.reason!=='global_paused'&&status.quota.remaining>0&&!status.catalogRetry?.pending;
 const formattedDate=value=>{if(value===null||value===undefined||value==='')return 'Horário ainda não definido';const date=new Date(value);return Number.isNaN(date.valueOf())?'Horário ainda não definido':new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'}).format(date);};
 
 export function mountStoryAutomation(root,{fetcher=globalThis.fetch,document=root.ownerDocument,window=globalThis.window,setTimer=globalThis.setTimeout,clearTimer=globalThis.clearTimeout,pollMs=5000}={}) {
@@ -30,27 +32,39 @@ export function mountStoryAutomation(root,{fetcher=globalThis.fetch,document=roo
   function render(data,{reset=false}={}){
     state=validAutomationStatus(data);readFailed=false;
     if(reset||!dirty){$('automation-enabled').checked=state.enabled;$('automation-limit').value=String(state.dailyLimit);$('automation-hour').value=String(state.hour);for(const input of form.querySelectorAll('input[name=groups]'))input.checked=state.groups.includes(input.value);editRevision=state.revision;dirty=false;}
-    $('automation-state').textContent=state.closed?'Indisponível':!state.enabled?'Pausada':!state.configured?'Aguardando IA':state.running?'Em preparação':state.quota.remaining<=0?'Limite de hoje atingido':'Ativa';
-    $('automation-state').dataset.active=String(state.enabled&&state.configured&&!state.closed);
-    $('automation-next').textContent=state.running?'Rodada em andamento':!state.enabled?'Rotina pausada':!state.configured?'Aguardando configuração':formattedDate(state.nextAt);
+    $('automation-state').textContent=state.closed?'Indisponível':state.reason==='global_paused'?'Pausa global ativa':!state.enabled?'Pausada':!state.configured?'Aguardando IA':state.running?'Em preparação':state.catalogRetry?.pending?'Consulta de fontes pendente':state.quota.remaining<=0?'Limite de hoje atingido':'Programada';
+    $('automation-state').dataset.active=String(state.running&&!state.closed);
+    $('automation-next').textContent=state.reason==='global_paused'?'Aguardando retomada na Central':state.running?'Rodada em andamento':!state.enabled?'Rotina pausada':!state.configured?'Aguardando configuração':formattedDate(state.nextAt);
     $('automation-quota').textContent=`${state.quota.attempted} de ${state.dailyLimit} tentativas`;
-    $('automation-results').textContent=`${state.quota.published||0} publicadas · ${state.quota.review||0} com pendências · ${state.quota.remaining} restantes`;
+    $('automation-results').textContent=storyOutcomeSummary(state);
+    if($('automation-published'))$('automation-published').textContent=Number.isInteger(state.publications?.today)?String(state.publications.today):'Não informado';
+    if($('automation-publication-note'))$('automation-publication-note').textContent='Primeiras publicações ainda disponíveis hoje, incluindo revisão manual. Tentativas antigas não são apagadas.';
     $('automation-provider').textContent=state.configured?'Disponível':'Precisa de configuração';
     const history=$('automation-history');history.replaceChildren();
-    for(const item of (Array.isArray(state.history)?state.history:[]).slice(0,10)){
+    for(const item of (Array.isArray(state.history)?state.history:[]).slice(0,30)){
       const li=node('li'),copy=node('div'),heading=node('strong',JOBS[item.status]||'Não concluída'),context=node('span',GROUPS[item.sourceGroup]||'Conteúdo'),time=node('time',formattedDate(item.finishedAt??item.startedAt));
       copy.append(heading,context,time);if(typeof item.summary==='string'&&item.summary.trim())copy.append(node('p',item.summary));
-      else if(item.status==='review')copy.append(node('p','Há informações ou imagens que precisam de atenção antes da publicação.'));
+      else if(item.status==='review')copy.append(node('p','Esta tentativa não registrou um motivo detalhado. Confira a fonte e o rascunho antes de publicar.'));
       else if(item.status==='failed')copy.append(node('p','A preparação não foi concluída. Nenhuma publicação foi confirmada nesta tentativa.'));
-      li.append(copy);const href=storyHistoryLink(item);if(href)li.append(node('a',item.status==='published'?'Abrir história →':'Ver pendência →',{href}));history.append(li);
+      const recovery=item.recovery||{};
+      if(typeof recovery.title==='string'&&recovery.title.trim())copy.append(node('p',recovery.title,{className:'history-source-title'}));
+      for(const detail of storyDiagnosticLines(item.diagnostics))copy.append(node('p',detail));
+      if(recovery.published===true&&item.status!=='published')copy.append(node('p','Uma versão atual desta fonte já está publicada. O resultado desta tentativa foi preservado.',{className:'history-recovered'}));
+      else if(recovery.sourceAvailable===false)copy.append(node('p','A origem não está disponível no catálogo publicado. Confira o cadastro original antes de continuar.'));
+      li.append(copy);const actions=node('div',undefined,{className:'history-actions'}),href=storyHistoryLink(item);
+      if(href)actions.append(node('a',recovery.storyId||item.storyId?'Abrir editor →':'Revisar esta fonte →',{href}));
+      const sourceUrl=storyPublicHref(recovery.sourceUrl);if(sourceUrl)actions.append(node('a','Ver página de origem ↗',{href:sourceUrl,target:'_blank',rel:'noopener'}));
+      const publishedUrl=recovery.published===true&&storyPublicHref(recovery.publishedUrl);if(publishedUrl)actions.append(node('a','Ver publicação ↗',{href:publishedUrl,target:'_blank',rel:'noopener'}));
+      if(actions.children.length)li.append(actions);history.append(li);
     }
     if(!history.children.length)history.append(node('li','Nenhuma preparação registrada ainda.'));
-    message.textContent=dirty?'Há alterações não salvas. Salve a rotina para aplicá-las.':REASONS[state.reason]||(state.enabled?'Rotina ativa.':'A rotina está pausada.');controls();
+    message.textContent=dirty?'Há alterações não salvas. Salve a rotina para aplicá-las.':REASONS[state.reason]||(state.enabled?'Rotina configurada. Confira abaixo os resultados confirmados.':'A rotina está pausada.');
+    if(!dirty&&state.catalogRetry?.pending)message.textContent+=' '+(state.catalogRetry.nextAt?'Próxima consulta: '+formattedDate(state.catalogRetry.nextAt)+'.':'Sem nova consulta prevista hoje.');controls();
   }
   async function responseData(response){
     const data=await response.json().catch(()=>({}));
     if(response.status===401){window?.location?.assign?.('/admin-login.html?returnTo=%2Fadmin-web-stories');throw Error('Entre novamente no painel para continuar.');}
-    if(!response.ok){const error=Error(response.status===409?'A configuração mudou em outra sessão. Atualize o status e confira os valores antes de salvar.':typeof data.error==='string'?data.error:'Não foi possível concluir. Atualize o status e tente novamente.');error.status=response.status;throw error;}
+    if(!response.ok){const error=Error(typeof data.error==='string'&&data.error.trim()?data.error:response.status===409?'A configuração mudou em outra sessão. Atualize o status e confira os valores antes de salvar.':'Não foi possível concluir. Atualize o status e tente novamente.');error.status=response.status;throw error;}
     return validAutomationStatus(data);
   }
   function poll(){stop();if(visible()&&state?.running&&!writing&&!readFailed)timer=setTimer(()=>{timer=null;refresh();},pollMs);}
