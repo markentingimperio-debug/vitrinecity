@@ -69,7 +69,7 @@ export function createEcosystemOrchestrator({db,getStories,catalog,runInternalSo
       }
       modules.videos.issues=[...grouped.values()].sort((a,b)=>b.count-a.count||a.code.localeCompare(b.code));
       const primary=modules.videos.issues[0]||ecosystemProviderIssue('');modules.videos.issue={code:primary.code,detail:primary.detail};
-      exceptions.push({id:'video-production',title:`${modules.videos.scenes.failed} cenas de vídeo não concluídas`,detail:modules.videos.issues.map(item=>`${item.count} cenas: ${item.detail}`).join(' '),actionLabel:'Abrir vídeos',actionUrl:'/admin-quizzes.html'});
+      exceptions.push({id:'video-production',title:`${modules.videos.scenes.failed} cenas de vídeo não concluídas`,detail:modules.videos.issues.map(item=>`${item.count} cena${item.count===1?'':'s'}: ${item.detail}`).join(' '),actionLabel:'Abrir vídeos',actionUrl:'/admin-quizzes.html'});
     }
     if(modules.whatsapp?.failed||modules.whatsapp?.unknown)exceptions.push({id:'whatsapp-failed',title:`${(modules.whatsapp.failed||0)+(modules.whatsapp.unknown||0)} envios de WhatsApp precisam de revisão`,detail:`${modules.whatsapp.unknown||0} sem confirmação; ${modules.whatsapp.failed||0} falhas. Confira as conversas antes de qualquer novo envio; não haverá repetição automática.`,actionLabel:'Abrir campanhas',actionUrl:'/admin-chatbotx.html'});
     const plannedDay=row().last_day>=day(now())?nextDay(day(now())):day(now());

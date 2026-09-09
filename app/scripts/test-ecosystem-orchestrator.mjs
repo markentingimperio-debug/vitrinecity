@@ -97,7 +97,7 @@ test('central separates account blocks from data policy and never replaces recor
   assert.deepEqual(state.modules.videos.issues.map(({code,count})=>({code,count})),[{code:'provider_account_block',count:2},{code:'provider_data_policy',count:1}]);
   assert.equal(state.modules.videos.issue.code,'provider_account_block');
   const detail=state.exceptions.find(x=>x.id==='video-production').detail;
-  assert.match(detail,/2 cenas:.*conta/);assert.match(detail,/1 cenas:.*política de dados/);
+  assert.match(detail,/2 cenas:.*conta/);assert.match(detail,/1 cena:.*política de dados/);
   assert(!/PRIVATE_KEY|OTHER_SECRET|Bearer/.test(JSON.stringify(state)));
   assert.deepEqual(f.db.prepare('SELECT * FROM viral_quiz_scenes').all(),before);assert.equal(f.state.calls.length,0);
 });
