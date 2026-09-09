@@ -15,6 +15,7 @@ const text=(value,max,label,minimum=1)=>{
 };
 const button=(value,fallback,label)=>{const chosen=value??fallback;return chosen===false||chosen===''?'':text(chosen,30,label);};
 const storyButtons=(source,previous={})=>({cta:button(previous.cta,storySourceCta(source),'Texto do botão'),homeCta:button(previous.homeCta,'','Convite final')});
+const storySources=source=>Array.isArray(source.sources)?source.sources.slice(0,5).map(s=>({title:String(s.title||'Fonte').slice(0,120),url:String(s.url||''),...(s.checkedAt?{checkedAt:s.checkedAt}:{})})):[];
 export function splitStoryText(body,max=130) {
   max=Math.min(max,Math.max(25,Math.ceil(String(body||'').trim().length/9)));
   const words=String(body||'').trim().split(/\s+/),pages=[];
@@ -63,7 +64,7 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     if(source.body.trim().length<400)throw fail('O artigo deve conter pelo menos 400 caracteres de conteúdo completo.');
     const chunks=splitStoryText(source.body),image=await assets.image(source.image_url),logo=await assets.image('/assets/pwa-icon-192.png',{logo:true});
     const poster=await assets.poster(image),title=source.title.trim().slice(0,90),description=(source.summary||source.title).trim().slice(0,160);
-    return {title,description,category:source.portal.replace(/-/g,' ').slice(0,26),logo:logo.url,poster,sourcePath:source.sourcePath||'/artigo/'+encodeURIComponent(source.slug),sourceKind:source.kind||'article',commercial:!!source.commercial,...storyButtons(source,previous),pages:[description.slice(0,130),...chunks].map(content=>({text:content,image:image.url,width:image.width,height:image.height,alt:source.title.slice(0,150)}))};
+    return {title,description,category:source.portal.replace(/-/g,' ').slice(0,26),logo:logo.url,poster,sourcePath:source.sourcePath||'/artigo/'+encodeURIComponent(source.slug),sourceKind:source.kind||'article',commercial:!!source.commercial,sources:storySources(source),...storyButtons(source,previous),pages:[description.slice(0,130),...chunks].map(content=>({text:content,image:image.url,width:image.width,height:image.height,alt:source.title.slice(0,150)}))};
   }
   async function validateDraft(input,original) {
     const draft={...original,title:text(input.title,90,'Título'),description:text(input.description,160,'Descrição',30),cta:button(input.cta,original.cta??storySourceCta(original),'Texto do botão'),homeCta:button(input.homeCta,original.homeCta??'','Convite final')};
@@ -105,7 +106,7 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     const sourcePath=companionId?'/artigo/'+companionSlug:initial.sourcePath||'/artigo/'+encodeURIComponent(initial.slug);
     if(!sourcePath.startsWith('/')||sourcePath.startsWith('//')||/[\\\u0000-\u0020]/.test(sourcePath))throw fail('O destino da história não é uma página válida da plataforma.');
     const logo=await assets.image('/assets/pwa-icon-192.png',{logo:true});
-    const original={title:initial.title,description:initial.summary,category:String(initial.portal||'VitrineCity').replace(/-/g,' ').slice(0,26),logo:logo.url,sourcePath,sourceKind:initial.kind||'article',commercial:!!initial.commercial,...storyButtons(initial,previous),generation:'gestora',affiliateDisclosure:initial.kind==='affiliate'?'Link de afiliado: podemos receber comissão.':'',sources:Array.isArray(initial.sources)?initial.sources.slice(0,5).map(s=>({title:String(s.title||'Fonte').slice(0,120),url:String(s.url||''),...(s.checkedAt?{checkedAt:s.checkedAt}:{})})):[]};
+    const original={title:initial.title,description:initial.summary,category:String(initial.portal||'VitrineCity').replace(/-/g,' ').slice(0,26),logo:logo.url,sourcePath,sourceKind:initial.kind||'article',commercial:!!initial.commercial,...storyButtons(initial,previous),generation:'gestora',affiliateDisclosure:initial.kind==='affiliate'?'Link de afiliado: podemos receber comissão.':'',sources:storySources(initial)};
     if(result.method==='local_editorial'){original.generation='editorial-local';original.aiGenerated=false;original.editorialMethod='source_preserved';}
     const draft=await validateDraft({...result.draft,...(Object.hasOwn(previous,'cta')?{cta:previous.cta}:{}),...(Object.hasOwn(previous,'homeCta')?{homeCta:previous.homeCta}:{})},original);
     const companion=companionId?{title:draft.title,summary:draft.description,body:text(result.draft.articleBody,3000,'Artigo relacionado',900),image_url:draft.pages[0].image,sources_json:JSON.stringify(draft.sources)}:null;

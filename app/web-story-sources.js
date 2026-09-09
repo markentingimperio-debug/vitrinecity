@@ -70,7 +70,8 @@ export function createWebStorySources({db,services=()=>[],courses=()=>[],publicD
   function serviceItems(key){
     return rowsFrom(services).filter(row=>publicInjected(row)&&slugValid(row.slug)&&named(row.title)&&(key===undefined||row.slug===key)).map(row=>{
       const sourcePath='/servicos-digitais.html?servico='+encodeURIComponent(row.slug),key='service:'+row.slug,priceCents=finiteNumber(row.amountCents??row.priceCents);
-      return {id:key,key,kind:'service',group:'services',slug:row.slug,title:row.title,summary:plain(row.description),body:basicBody(row.description,priceText(priceCents)),image_url:plain(row.imageUrl??row.image_url),portal:'servicos',updated_at:plain(row.updated_at??row.updatedAt),sourcePath,sources:citations(row.title,sourcePath),facts:compact({priceCents}),commercial:true};
+      const body=named(row.editorialBody)?row.editorialBody:row.description,image=named(row.editorialImageUrl)?row.editorialImageUrl:row.imageUrl??row.image_url;
+      return {id:key,key,kind:'service',group:'services',slug:row.slug,title:row.title,summary:plain(row.description),body:basicBody(body,priceText(priceCents)),image_url:plain(image),portal:'servicos',updated_at:plain(row.updated_at??row.updatedAt),sourcePath,sources:citations(row.title,sourcePath),facts:compact({priceCents}),commercial:true};
     });
   }
   function courseItems(key){

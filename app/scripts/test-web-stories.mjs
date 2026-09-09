@@ -56,6 +56,18 @@ test('template preserves all source words; draft and preview stay out of public 
   assert.equal((await f.call('/api/admin/web-stories',{method:'POST',data:{articleId:'fixture'}})).json().id,story.id);
 });
 
+test('manual sources survive save and publication; regeneration uses current references without trusting injected draft URLs',async t=>{
+  const f=await fixture(t);f.db.exec("ALTER TABLE editorial_articles ADD COLUMN sources_json TEXT NOT NULL DEFAULT '[]'");
+  const references=[{title:'Origem oficial de contexto',url:'https://www.nist.gov/ai/context'},{title:'Segunda referência',url:'https://www.unesco.org/ai/reference'}];
+  f.db.prepare('UPDATE editorial_articles SET sources_json=?').run(JSON.stringify(references));
+  const story=await f.create();assert.deepEqual(story.draft.sources.slice(1),references);assert.equal(story.draft.sources[0].url,'/artigo/guia-de-teste');assert.ok(story.draft.pages.every(page=>!page.imageCredit));
+  const response=await f.call('/api/admin/web-stories/'+story.id,{method:'PUT',data:{revision:1,draft:{...story.draft,sources:[{title:'Injected',url:'https://evil.test'}],pages:story.draft.pages.map((page,i)=>({...page,imageCredit:i===0?'Imagem do artigo':'Ilustração IA',layout:'editorial'}))}}});assert.equal(response.status,200,response.raw);const saved=response.json();assert.deepEqual(saved.draft.sources,story.draft.sources);assert.equal(saved.draft.pages[0].imageCredit,'Imagem do artigo');assert.ok(saved.draft.pages.every(page=>page.layout==='editorial'));
+  assert.equal((await f.publish(saved)).status,409);const preview=await f.preview(saved);assert.match(preview.json().html,/>Fontes<\/a>/);assert.match(preview.json().html,/Imagem do artigo/);assert.equal((await f.publish(saved)).status,200);
+  const publicSources=await f.call(saved.url+'/fontes',{admin:false});assert.equal(publicSources.status,200);assert.match(publicSources.raw,/www.nist.gov\/ai\/context/);assert.ok(!publicSources.raw.includes('evil.test'));
+  const updated=[{title:'Nova referência oficial',url:'https://www.nist.gov/ai/new'}];f.db.prepare('UPDATE editorial_articles SET sources_json=?,updated_at=?').run(JSON.stringify(updated),'2026-09-09');
+  const regenerated=await f.call('/api/admin/web-stories/'+story.id+'/regenerate',{method:'POST',data:{revision:saved.revision,confirmed:true}});assert.equal(regenerated.status,200);assert.deepEqual(regenerated.json().draft.sources.slice(1),updated);assert.equal(regenerated.json().previewed_revision,0);assert.ok((await f.call(saved.url+'/fontes',{admin:false})).raw.includes('www.nist.gov/ai/context'));
+});
+
 test('editing and regenerating preserve explicit legacy buttons and explicit opt-out',async t=>{
   const f=await fixture(t),story=await f.create();
   const put=(item,draft)=>f.call('/api/admin/web-stories/'+item.id,{method:'PUT',data:{revision:item.revision,draft}});

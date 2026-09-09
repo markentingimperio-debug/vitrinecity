@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {SERVICE_EDITORIAL_GUIDES} from '../service-editorial-guides.js';
 import {createWebStorySources} from '../web-story-sources.js';
 
 function fixture(t,{stock=true,availability=true}={}) {
@@ -51,6 +52,38 @@ test('public services are read from the injected registry with only real descrip
   assert.equal(item.kind,'service');assert.equal(item.group,'services');assert.equal(item.sourcePath,'/servicos-digitais.html?servico=seo-local');assert.equal(item.facts.priceCents,35000);assert.equal(item.updated_at,'');assert.ok(item.body.startsWith('Auditoria das páginas públicas.'));assert.ok(!JSON.stringify(item).includes('PRIVATE_'));
   catalog=[];assert.equal(sources.get('service:seo-local'),null);
   catalog=[{slug:'paused',title:'Pausado',description:'Texto',status:'paused'},{slug:'inactive',title:'Inativo',active:false},{slug:'unavailable',title:'Indisponível',available:'false'}];assert.deepEqual(sources.list({group:'services'}),[]);
+});
+
+test('reviewed service guidance enriches the source without replacing the commercial summary or price',t=>{
+  const f=fixture(t),registry={
+    'ads-banner-outdoor-15-dias':{title:'VitrineCity Ads — Banner + Outdoor por 15 dias',amountCents:7500,imageUrl:'/assets/services/ads-15-dias.jpg',description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 15 dias, após aprovação do material.',...SERVICE_EDITORIAL_GUIDES['ads-banner-outdoor-15-dias']},
+    '10-videos-loja':{title:'Pacote de 10 vídeos curtos',amountCents:20000,imageUrl:'/assets/services/videos-curtos.jpg',description:'Roteiro, criação e entrega de dez vídeos verticais para divulgar produtos, serviços e ofertas',...SERVICE_EDITORIAL_GUIDES['10-videos-loja']},
+    'ads-banner-outdoor-7-dias':{title:'VitrineCity Ads — Banner + Outdoor por 7 dias',amountCents:5000,imageUrl:'/assets/services/ads-7-dias.jpg',description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 7 dias, após aprovação do material.'}
+  };
+  const sources=createWebStorySources({db:f.db,services:()=>registry});
+  const selected=['ads-banner-outdoor-15-dias','10-videos-loja'];
+  assert.deepEqual(Object.keys(SERVICE_EDITORIAL_GUIDES),selected);assert.ok(Object.isFrozen(SERVICE_EDITORIAL_GUIDES));
+  for(const guide of Object.values(SERVICE_EDITORIAL_GUIDES)){assert.ok(Object.isFrozen(guide));assert.deepEqual(Object.keys(guide).sort((a,b)=>a.localeCompare(b)),['editorialBody','editorialImageUrl']);}
+  assert.deepEqual(Object.keys(registry).filter(key=>registry[key].editorialBody),selected);
+  for(const [slug,price] of [[selected[0],7500],[selected[1],20000]]){
+    const source=sources.get('service:'+slug),row=registry[slug];
+    assert.equal(source.summary,row.description);assert.equal(source.facts.priceCents,price);
+    assert.ok(source.body.startsWith(row.editorialBody));assert.ok(source.body.includes('Guia editorial de preparação: '));
+    assert.ok(source.body.length>=650);assert.ok(source.body.includes('não acrescentam entregas ao pacote'));
+    assert.equal(source.image_url,row.editorialImageUrl);assert.notEqual(source.image_url,row.imageUrl);assert.ok(row.imageUrl.startsWith('/assets/services/'));
+    assert.equal(source.sourcePath,'/servicos-digitais.html?servico='+slug);assert.equal(source.sources[0].url,source.sourcePath);
+  }
+  const legacy=sources.get('service:ads-banner-outdoor-7-dias');
+  assert.ok(!legacy.body.includes('Guia editorial'));assert.ok(legacy.body.length<400);assert.equal(legacy.facts.priceCents,5000);
+});
+
+test('guidance changes affect the source body while malformed or withdrawn guidance cannot create a public service',t=>{
+  const f=fixture(t),row={slug:'guide',title:'Serviço',description:'Escopo contratado.',amountCents:1234,editorialBody:'Guia editorial revisado.',imageUrl:'/assets/original.jpg',editorialImageUrl:'/uploads/generated-videos/editorial.png'};
+  const sources=createWebStorySources({db:f.db,services:()=>[row]}),first=sources.get('service:guide');
+  row.editorialBody='Guia editorial atualizado.';
+  assert.notEqual(sources.get('service:guide').body,first.body);assert.equal(sources.get('service:guide').summary,first.summary);
+  row.editorialBody={private:'PRIVATE_NOT_TEXT'};row.editorialImageUrl='';assert.ok(!sources.get('service:guide').body.includes('Guia editorial'));assert.ok(!JSON.stringify(sources.get('service:guide')).includes('PRIVATE_'));assert.equal(sources.get('service:guide').image_url,row.imageUrl);
+  row.editorialBody='Dica';row.active=false;assert.equal(sources.get('service:guide'),null);
 });
 test('courses use the ready public injection and current database metadata; no paid material is returned',t=>{
   const f=fixture(t);f.course();let catalog=[{slug:'curso-publico',title:'Título antigo da injeção',description:'Antigo',status:'active',available:true,materialUrl:'PRIVATE_PROVIDER_MATERIAL',videoUrl:'PRIVATE_PROVIDER_VIDEO'}];
