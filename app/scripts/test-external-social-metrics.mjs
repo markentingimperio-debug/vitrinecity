@@ -39,7 +39,7 @@ const mockFetch = async input => {
   if (path === 'channels') return {
     ok: true,
     status: 200,
-    json: async () => ({ items: [{ snippet: { title: 'Vitrine City' },
+    json: async () => ({ items: [{ id: 'UCAAAAAAAAAAAAAAAAAAAAAA', snippet: { title: 'Vitrine City' },
       contentDetails: { relatedPlaylists: { uploads: 'UU_TEST' } } }] })
   };
   if (path === 'playlistItems' && !url.searchParams.get('pageToken')) return {
@@ -59,8 +59,8 @@ const mockFetch = async input => {
     ok: true,
     status: 200,
     json: async () => ({ items: [
-      { id: 'video-1', statistics: { viewCount: '120', likeCount: '15', commentCount: '3' } },
-      { id: 'video-2', statistics: { viewCount: '80', likeCount: '7' } }
+      { id: 'video-1', snippet: {channelId:'UCAAAAAAAAAAAAAAAAAAAAAA'}, statistics: { viewCount: '120', likeCount: '15', commentCount: '3' } },
+      { id: 'video-2', snippet: {channelId:'UCAAAAAAAAAAAAAAAAAAAAAA'}, statistics: { viewCount: '80', likeCount: '7' } }
     ] })
   };
   throw new Error('unexpected_request');
@@ -68,26 +68,26 @@ const mockFetch = async input => {
 
 const result = await fetchYouTubeAggregatedInsights({
   apiKey: 'secret-api-key',
-  channelId: 'UC_TEST',
+  channelId: 'UCAAAAAAAAAAAAAAAAAAAAAA',
   fetchImpl: mockFetch,
   measuredAt: '2026-08-23T12:00:00.000Z'
 });
 assert.equal(result.provider, 'youtube');
 assert.equal(result.channelTitle, 'Vitrine City');
-assert.equal(result.items.length, 3);
+assert.equal(result.items.length, 2);
 assert.deepEqual(result.items[0], {
   contentKey: 'video-1', category: 'geral', views: 120, watchMs: 0, completions: 0,
   likes: 15, comments: 3, shares: 0, clicks: 0, conversions: 0,
   measuredAt: '2026-08-23T12:00:00.000Z'
 });
-assert.equal(result.items[2].views, 0);
+assert.equal(result.items.some(item=>item.contentKey==='video-3'),false);
 assert.equal(requests.filter(url => url.pathname.endsWith('/playlistItems')).length, 2);
 assert.equal(requests.filter(url => url.pathname.endsWith('/videos')).length, 1);
 assert(requests.every(url => url.searchParams.get('key') === 'secret-api-key'));
 
 const config = youtubeMetricsConfig({
   YOUTUBE_API_KEY: 'key',
-  YOUTUBE_CHANNEL_ID: 'channel',
+  YOUTUBE_CHANNEL_ID: 'UCAAAAAAAAAAAAAAAAAAAAAA',
   SOCIAL_METRICS_AUTO_SYNC: 'true',
   SOCIAL_METRICS_SYNC_INTERVAL_HOURS: '1',
   YOUTUBE_METRICS_MAX_VIDEOS: '999'
@@ -96,7 +96,7 @@ assert.equal(config.configured, true);
 assert.equal(config.autoSync, true);
 assert.equal(config.intervalHours, 6);
 assert.equal(config.maxVideos, 500);
-const statuses = externalMetricsProviderStatus({ YOUTUBE_API_KEY: 'key', YOUTUBE_CHANNEL_ID: 'channel' });
+const statuses = externalMetricsProviderStatus({ YOUTUBE_API_KEY: 'key', YOUTUBE_CHANNEL_ID: 'UCAAAAAAAAAAAAAAAAAAAAAA' });
 assert.equal(statuses.find(provider => provider.id === 'youtube').configured, true);
 assert.equal(statuses.find(provider => provider.id === 'instagram').implemented, true);
 assert.equal(externalMetricsProviderStatus({}, { facebook:true }).find(provider => provider.id === 'facebook').configured, true);
@@ -183,7 +183,7 @@ await assert.rejects(fetchMetaAggregatedInsights({accounts:[{pageId:'p',accessTo
 await assert.rejects(
   fetchYouTubeAggregatedInsights({
     apiKey: 'do-not-leak',
-    channelId: 'UC_TEST',
+    channelId: 'UCAAAAAAAAAAAAAAAAAAAAAA',
     fetchImpl: async () => ({ ok: false, status: 403, json: async () => ({ error: 'do-not-leak' }) })
   }),
   error => error.message === 'youtube_api_403' && !error.message.includes('do-not-leak')
