@@ -23,6 +23,12 @@ function cleanText(value,{name='texto',min=0,max=4000,optional=false}={}){
   if(SENSITIVE_PATTERNS.some(pattern=>pattern.test(text)))fail(`${name} contém credencial ou dado pessoal e não pode entrar no dataset.`);
   return text;
 }
+function identifier(value,{name='Identificador',min=1,max=160,optional=false}={}){
+  const text=String(value??'').trim();
+  if(optional&&!text)return'';
+  if(text.length<min||text.length>max||!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(text))fail(`${name} inválido.`);
+  return text;
+}
 function stamp(now){return new Date(Number(now())).toISOString();}
 function digest(value){return createHash('sha256').update(String(value)).digest('hex');}
 function parseRow(row){return row?{
@@ -77,10 +83,10 @@ export function createNeuralDatasetBuilder({db,now=Date.now,nodeId='service',pil
     const instruction=cleanText(input.instruction,{name:'Instrução',min:10,max:4000});
     const context=cleanText(input.input,{name:'Contexto',max:8000,optional:true});
     const expectedOutput=cleanText(input.expectedOutput,{name:'Resposta esperada',min:2,max:12000});
-    const sourceId=cleanText(input.sourceId,{name:'Identificador da origem',max:160,optional:true});
-    const actor=cleanText(input.actor||'admin',{name:'Responsável',min:2,max:120});
+    const sourceId=identifier(input.sourceId,{name:'Identificador da origem',max:160,optional:true});
+    const actor=identifier(input.actor||'admin',{name:'Responsável',min:2,max:120});
     const contentHash=digest(JSON.stringify({domain,instruction,input:context,expectedOutput,source,sourceId}));
-    const at=stamp(now),id=input.id?cleanText(input.id,{name:'ID',min:8,max:120}):randomUUID();
+    const at=stamp(now),id=input.id?identifier(input.id,{name:'ID',min:8,max:120}):randomUUID();
     const result=db.prepare(`INSERT OR IGNORE INTO neural_training_examples
       (id,domain,instruction,input_text,expected_output,source,source_id,status,content_hash,created_at,updated_at,node_id)
       VALUES(?,?,?,?,?,?,?,'candidate',?,?,?,?)`)
@@ -96,10 +102,10 @@ export function createNeuralDatasetBuilder({db,now=Date.now,nodeId='service',pil
     const target=String(status||'');
     if(!['approved','rejected'].includes(target))fail('Revisão de treinamento inválida.');
     if(target==='approved'&&confirmed!==true)fail('Aprovação explícita do exemplo é obrigatória.',409);
-    const safeActor=cleanText(actor,{name:'Responsável',min:2,max:120});
+    const safeActor=identifier(actor,{name:'Responsável',min:2,max:120});
     const safeReason=cleanText(reason||'',{name:'Motivo',max:500,optional:target==='approved'});
     if(target==='rejected'&&!safeReason)fail('Informe o motivo da rejeição.');
-    const safeId=cleanText(id,{name:'ID',min:8,max:120}),at=stamp(now);
+    const safeId=identifier(id,{name:'ID',min:8,max:120}),at=stamp(now);
     const result=db.prepare(`UPDATE neural_training_examples SET status=?,review_actor=?,review_reason=?,updated_at=?
       WHERE id=? AND status='candidate'`).run(target,safeActor,safeReason,at,safeId);
     if(!result.changes){
