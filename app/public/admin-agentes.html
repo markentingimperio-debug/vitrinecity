@@ -863,6 +863,46 @@
       .factory-progress { height:7px; background:#e5edf6; border-radius:9px; overflow:hidden; margin:9px 0; }
       .factory-progress i { display:block; height:100%; background:linear-gradient(90deg,#367cff,#35d7b0); }
       .factory-error { color:#b42318; font-size:11px; margin:6px 0; }
+      /* Keep factory controls usable by touch without changing action eligibility. */
+      #fabrica-neural-media .factory-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      #fabrica-neural-media .field,
+      #fabrica-neural-media .factory-job {
+        min-width: 0;
+      }
+      #fabrica-neural-media .field > span {
+        font-size: 12px;
+      }
+      #fabrica-neural-media button,
+      #fabrica-neural-media input,
+      #fabrica-neural-media select,
+      #fabrica-neural-media textarea {
+        min-height: 44px;
+        min-width: 44px;
+        max-width: 100%;
+      }
+      #fabrica-neural-media .activity-actions {
+        gap: 8px;
+      }
+      #fabrica-neural-media button {
+        padding: 10px 12px;
+        font-size: 14px;
+        line-height: 1.4;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      #fabrica-neural-media button:focus-visible,
+      #fabrica-neural-media input:focus-visible,
+      #fabrica-neural-media select:focus-visible,
+      #fabrica-neural-media textarea:focus-visible {
+        outline: 2px solid var(--blue);
+        outline-offset: 3px;
+      }
+      #fabrica-neural-media .factory-job {
+        color: #17365d;
+        overflow-wrap: anywhere;
+      }
       .viral-card { border:1px solid #315676; border-radius:14px; padding:12px; background:#07182b; }
       .viral-card + .viral-card { margin-top:10px; }
       .viral-card summary { cursor:pointer; color:#eef8ff; font-weight:800; }
@@ -1043,6 +1083,14 @@
         }
         .row {
           grid-template-columns: 1fr;
+        }
+        #fabrica-neural-media .factory-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        #fabrica-neural-media input,
+        #fabrica-neural-media select,
+        #fabrica-neural-media textarea {
+          font-size: 16px;
         }
       }
     </style>
@@ -1292,14 +1340,14 @@
               <div class="budget-box" id="factoryBudget">Consultando limite do OpenRouter…</div>
               <form id="factoryForm">
                 <div class="factory-grid">
-                  <label class="field"><span>Formato</span><select id="factoryFormat"><option value="image">Imagem</option><option value="short_video">Vídeo curto</option></select></label>
-                  <label class="field"><span>Proporção</span><select id="factoryRatio"><option value="9:16">Vertical 9:16</option><option value="16:9">Horizontal 16:9</option><option value="1:1">Quadrado 1:1</option></select></label>
-                  <label class="field wide"><span>Modelo integrado</span><select id="factoryModel"></select></label>
-                  <label class="field wide"><span>Nome da criação</span><input id="factoryTitle" maxlength="180" placeholder="Ex.: campanha de lançamento" required></label>
-                  <label class="field wide"><span>Prompt detalhado</span><textarea id="factoryPrompt" maxlength="5000" placeholder="Descreva cena, estilo, iluminação, texto e objetivo…" required></textarea></label>
-                  <label class="field"><span>Duração do vídeo</span><select id="factoryDuration"><option value="4">4 segundos</option><option value="6">6 segundos</option><option value="8">8 segundos</option></select></label>
-                  <label class="field"><span>Canais planejados</span><input id="factoryChannels" value="VitrineCity, Instagram, TikTok, Kwai"></label>
-                  <label class="field wide"><span>Legenda para publicação</span><textarea id="factoryCaption" maxlength="500" placeholder="Legenda opcional"></textarea></label>
+                  <label class="field" for="factoryFormat"><span>Formato</span><select id="factoryFormat"><option value="image">Imagem</option><option value="short_video">Vídeo curto</option></select></label>
+                  <label class="field" for="factoryRatio"><span>Proporção</span><select id="factoryRatio"><option value="9:16">Vertical 9:16</option><option value="16:9">Horizontal 16:9</option><option value="1:1">Quadrado 1:1</option></select></label>
+                  <label class="field wide" for="factoryModel"><span>Modelo integrado</span><select id="factoryModel"></select></label>
+                  <label class="field wide" for="factoryTitle"><span>Nome da criação</span><input id="factoryTitle" maxlength="180" placeholder="Ex.: campanha de lançamento" required></label>
+                  <label class="field wide" for="factoryPrompt"><span>Prompt detalhado</span><textarea id="factoryPrompt" maxlength="5000" placeholder="Descreva cena, estilo, iluminação, texto e objetivo…" required></textarea></label>
+                  <label class="field" for="factoryDuration"><span>Duração do vídeo</span><select id="factoryDuration"><option value="4">4 segundos</option><option value="6">6 segundos</option><option value="8">8 segundos</option></select></label>
+                  <label class="field" for="factoryChannels"><span>Canais planejados</span><input id="factoryChannels" value="VitrineCity, Instagram, TikTok, Kwai"></label>
+                  <label class="field wide" for="factoryCaption"><span>Legenda para publicação</span><textarea id="factoryCaption" maxlength="500" placeholder="Legenda opcional"></textarea></label>
                 </div>
                 <button class="btn" type="submit" style="width:100%;margin-top:12px">Criar projeto supervisionado</button>
               </form>
