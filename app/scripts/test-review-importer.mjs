@@ -122,7 +122,7 @@ test('falha na gravação desfaz todo o lote atomicamente', async t => {
 });
 test('atribuição pública usa link seguro e escapa variações', () => {
   const html = renderImportedReviewSource({ source: 'shopee', source_url: sourceUrl, variation: '<img src=x onerror=alert(1)>' }, escape);
-  assert.match(html, /Avaliação importada da Shopee/); assert.match(html, /&lt;img/); assert.doesNotMatch(html, /<img/);
+  assert.match(html, />Avaliação<\/a>/); assert.match(html, /&lt;img/); assert.doesNotMatch(html, /<img/);
   assert.equal(renderImportedReviewSource({ source: 'shopee', source_url: 'javascript:alert(1)' }, escape), '');
   assert.equal(renderImportedReviewSource({ source: null }, escape), '');
 });

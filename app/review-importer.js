@@ -230,5 +230,5 @@ export function renderImportedReviewSource(review, escapeHtml) {
   if (review.source !== 'shopee') return '';
   let source;
   try { source = shopeeProduct(review.source_url); } catch { return ''; }
-  return `<div class="review-source"><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer nofollow">Avaliação importada da Shopee ↗</a>${review.variation ? `<div>Variação: ${escapeHtml(review.variation)}</div>` : ''}</div>`;
+  return `<div class="review-source"><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer nofollow">Avaliação</a>${review.variation ? `<div>Variação: ${escapeHtml(review.variation)}</div>` : ''}</div>`;
 }

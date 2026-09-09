@@ -33,10 +33,10 @@ try {
   assert.equal(db.prepare('SELECT COUNT(*) n FROM marketplace_review_sources').get().n, 0);
   const publish = await request(`/api/admin/review-imports/${batch.id}/publish`, { method: 'POST', headers: { cookie }, body: JSON.stringify({ confirmed: true }) }); assert.equal(publish.status, 200);
   const publicPage = await request(`/produto/${product.id}`); assert.equal(publicPage.status, 200); const html = await publicPage.text();
-  assert.match(html, /Avaliação importada da Shopee/); assert.match(html, /Embalagem aberta\. &lt;script&gt;/); assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
-  assert.match(html, /Inclui 1 avaliação importada da Shopee/); assert.match(html, /07\/05\/2026/); assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/); assert.doesNotMatch(html, /✓ Compra verificada/);
+  assert.match(html, />Avaliação<\/a>/); assert.match(html, /Embalagem aberta\. &lt;script&gt;/); assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.doesNotMatch(html, /importada da Shopee/); assert.match(html, /07\/05\/2026/); assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/); assert.doesNotMatch(html, /✓ Compra verificada/);
   const hide = await request(`/api/admin/review-imports/${batch.id}/visibility`, { method: 'POST', headers: { cookie }, body: JSON.stringify({ action: 'hide' }) }); assert.equal(hide.status, 200);
-  const hiddenHtml = await (await request(`/produto/${product.id}`)).text(); assert.doesNotMatch(hiddenHtml, /Avaliação importada da Shopee/);
+  const hiddenHtml = await (await request(`/produto/${product.id}`)).text(); assert.doesNotMatch(hiddenHtml, />Avaliação<\/a>/);
   const paginationPreview = await request('/api/admin/review-imports/preview', { method: 'POST', headers: { cookie }, body: JSON.stringify({ productId: product.id, sourceUrl: 'https://shopee.com.br/product/390179975/23698375162/', content: JSON.stringify(Array.from({ length: 13 }, (_, index) => ({ author: `Cliente ${index + 1}`, rating: 1 + index % 5, date: '2026-05-01', body: `Comentário de paginação número ${index + 1}.` }))) }) });
   assert.equal(paginationPreview.status, 200); const paginationBatch = await paginationPreview.json();
   assert.equal((await request(`/api/admin/review-imports/${paginationBatch.id}/publish`, { method: 'POST', headers: { cookie }, body: JSON.stringify({ confirmed: true }) })).status, 200);
