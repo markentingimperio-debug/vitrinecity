@@ -91,14 +91,18 @@ export function createEditorialChannelSources({db,canRun=()=>true,fetchImpl,now=
           db.prepare("UPDATE editorial_channel_sync SET status=?,error_code='',items_count=?,last_success_at=?,lease_until=0 WHERE id=? AND last_checked_at=?").run(rows.length?'ready':'empty',rows.length,stamp,channel.id,stamp);
         }).immediate();
         if(channel.topic==='news')for(const item of rows.slice(0,3)){checkpoint();research?.addDiscoveredTopic?.({id:'channel-'+item.videoId,title:item.title,publishedAt:new Date(item.publishedAt).toISOString(),group:'news',refs:item.sourceLinks.map(url=>({url,title:item.title}))},{isCurrent:current});}
-        if(channel.topic!=='news')for(const item of rows.filter(item=>item.sourceLinks.length||channel.topic==='gardening').slice(0,1)){
-          const stored=db.prepare('SELECT evidence_checked_at,source_links_json FROM editorial_channel_items WHERE video_id=?').get(item.videoId);if(stored.evidence_checked_at>now()-24*HOUR)continue;
+        if(channel.topic!=='news')for(const item of rows.filter(item=>{
+          if(!item.sourceLinks.length&&channel.topic!=='gardening')return false;
+          const checked=db.prepare('SELECT evidence_checked_at FROM editorial_channel_items WHERE video_id=?').get(item.videoId)?.evidence_checked_at;
+          return !checked||checked<=now()-24*HOUR;
+        }).slice(0,1)){
+          const stored=db.prepare('SELECT source_links_json FROM editorial_channel_items WHERE video_id=?').get(item.videoId);
           let url=item.sourceLinks[0];try{checkpoint();let content;
             try{if(!url)throw fail('research_no_article');const html=await fetchStoryResearchText(url,{signal,fetchImpl});checkpoint();if(channel.topic==='recipes')content=extractStoryRecipe(html,url);else{const article=extractStoryResearchArticle(html);content={kind:'article',title:article.title,text:article.excerpt,publishedAt:article.publishedAt,excerptOnly:true};}}catch{checkpoint();if(channel.topic!=='gardening')throw fail('research_no_article');content=await research?.findGardeningSource?.(item.title,{signal,isCurrent:current});checkpoint();if(!content)throw fail('research_no_article');url=content.sourceUrl;}
             if(!matchesContent(item.title,content))throw fail('research_topic_mismatch');
             const evidence={...content,sourceUrl:url,checkedAt:new Date(now()).toISOString(),contentHash:contentHash(content)};
             db.transaction(()=>{checkpoint();db.prepare('UPDATE editorial_channel_items SET evidence_json=?,evidence_checked_at=? WHERE video_id=? AND title=? AND source_links_json=?').run(JSON.stringify(evidence),now(),item.videoId,item.title,stored.source_links_json);}).immediate();
-          }catch{checkpoint();}
+          }catch{checkpoint();db.prepare('UPDATE editorial_channel_items SET evidence_checked_at=? WHERE video_id=? AND title=? AND source_links_json=?').run(now(),item.videoId,item.title,stored.source_links_json);}
         }
       }catch(error){const codes=['feed_invalid','feed_identity_mismatch','feed_too_large','feed_timeout','feed_aborted'];db.prepare("UPDATE editorial_channel_sync SET status='error',error_code=?,lease_until=0 WHERE id=? AND last_checked_at=?").run(codes.includes(error.code)?error.code:'feed_unavailable',channel.id,stamp);if(!current())break;}
     }

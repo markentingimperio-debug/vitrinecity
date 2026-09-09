@@ -64,6 +64,22 @@ test('unrelated recipe or changed video title cannot retain a ready association'
   changed=true;x.advance(3600001);await x.channels.sync();assert.equal(x.channels.snapshot().items[0].sourceStatus,'discovery_only');assert.equal(x.channels.snapshot().items[0].evidence,null);
   x.db.prepare("UPDATE editorial_channel_items SET evidence_json=? WHERE video_id=?").run(JSON.stringify({sourceUrl:recipeUrl,title:'Bolo de cenoura',ingredients:['cenoura'],steps:['preparo'],contentHash:'a'.repeat(64)}),video(2));assert.equal(x.channels.snapshot().items[0].sourceStatus,'discovery_only');x.close();
 });
+test('failed and successful recipe attempts rotate before the limit, at most one article per hourly cycle',async()=>{
+  let reads=0;const x=fixture({respond:(_url,c)=>{if(c)return response(feed(c,c.id==='panelinha'?[entry(c,{index:1,title:'Salada de frango e legumes',description:recipeUrl}),entry(c,{index:2,description:recipeUrl}),entry(c,{index:3,description:recipeUrl})]:[]));reads++;return response(recipe(),'text/html');}});
+  for(let index=1;index<=3;index++){
+    await x.channels.sync();assert.equal(reads,index);const attempted=x.db.prepare('SELECT video_id FROM editorial_channel_items WHERE evidence_checked_at>0 ORDER BY video_id').all().map(row=>row.video_id);assert.deepEqual(attempted,Array.from({length:index},(_,i)=>video(i+1)));
+    assert.equal(x.channels.snapshot().items.find(item=>item.key==='youtube:'+video(1)).sourceStatus,'discovery_only');if(index>1)assert.equal(x.channels.snapshot().items.find(item=>item.key==='youtube:'+video(index)).sourceStatus,'text_ready');x.advance(3600001);
+  }
+  await x.channels.sync();assert.equal(reads,3,'all three retain a 24 hour source cooldown');x.advance(24*3600000);await x.channels.sync();assert.equal(reads,4,'an unsuccessful source can be checked again after the bounded cooldown');x.close();
+});
+test('gardening rotates failed fallback discovery without repeatedly selecting the same video',async()=>{
+  const searched=[];const research={findGardeningSource:async title=>{searched.push(title);return null;}};
+  const x=fixture({research,respond:(_url,c)=>response(feed(c,c.id==='minhas-plantas'?[entry(c,{index:1,title:'Cuidados com orquídeas'}),entry(c,{index:2,title:'Cultivo de suculentas'})]:[]))});
+  await x.channels.sync();assert.deepEqual(searched,['Cuidados com orquídeas']);x.advance(3600001);await x.channels.sync();assert.deepEqual(searched,['Cuidados com orquídeas','Cultivo de suculentas']);x.advance(3600001);await x.channels.sync();assert.equal(searched.length,2);assert.equal(x.calls.length,12,'only four feed requests in each cycle; fallback is injected and bounded');x.close();
+});
+test('failed source attempt cannot mark a changed or paused source as checked',async()=>{
+  for(const mode of ['changed','paused']){let x;x=fixture({respond:(_url,c)=>{if(c)return response(feed(c,c.id==='panelinha'?[entry(c,{index:2,description:recipeUrl})]:[]));if(mode==='paused')x.pause();else x.db.prepare("UPDATE editorial_channel_items SET title='Outra receita corrigida' WHERE video_id=?").run(video(2));return response('<html>Fonte incompleta</html>','text/html');}});await x.channels.sync();const row=x.db.prepare('SELECT evidence_checked_at,evidence_json FROM editorial_channel_items WHERE video_id=?').get(video(2));assert.equal(row.evidence_checked_at,0);assert.equal(row.evidence_json,'{}');x.close();}
+});
 test('news metadata becomes a pending topic, not fetched evidence; query, sorting and bounded pagination are literal',async()=>{
   const db=new Database(':memory:');const research=createWebStoryResearch({db,now:()=>clock,requirePreparedEvidence:true,fetchImpl:async()=>{throw Error('no source read in metadata collection');}});
   const channels=createEditorialChannelSources({db,research,now:()=>clock,fetchImpl:async url=>{const c=EDITORIAL_CHANNELS.find(c=>c.feedUrl===url);return response(feed(c,c.id==='tv-brasil'?[entry(c,{index:1,title:'Banco Central e juros',views:'10'}),entry(c,{index:2,title:'Inflação e Banco Central',views:'200'})]:[]));}});await channels.sync();
