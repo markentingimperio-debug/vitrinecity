@@ -49,6 +49,37 @@ $('preview-story').addEventListener('click',()=>run(async()=>{await save();const
 for(const id of ['reviewed','rights'])$(id).addEventListener('change',controls);
 $('publish').addEventListener('click',()=>run(async()=>{if(!previewLoaded||dirty||previewRevision!==selected.revision)throw Error('Abra a prévia da versão salva primeiro.');const item=await request('/'+selected.id+'/publish','POST',{revision:selected.revision,reviewed:$('reviewed').checked,rightsConfirmed:$('rights').checked});edit(item);await list();status.textContent='História publicada e incluída no sitemap. A exibição no Google depende do buscador.';}));
 $('unpublish').addEventListener('click',()=>run(async()=>{if(!confirm('Retirar esta história do site e do sitemap? O rascunho será mantido.'))return;edit(await request('/'+selected.id+'/unpublish','POST',{revision:selected.revision}));await list();status.textContent='Publicação retirada. O rascunho foi mantido.';}));
-$('regenerate').addEventListener('click',()=>run(async()=>{if(!confirm('Substituir as edições deste rascunho pelo texto atual da origem? A publicação atual permanece.'))return;edit(await request('/'+selected.id+'/regenerate','POST',{revision:selected.revision,confirmed:true}));await list();status.textContent='Rascunho recriado. Faça uma nova revisão antes de publicar.';}));
+const regenerationDialog=$('regenerate-confirm');
+let resolveRegeneration=null;
+function finishRegenerationConfirmation(confirmed=false){
+  const resolve=resolveRegeneration;if(!resolve)return;
+  resolveRegeneration=null;
+  if(regenerationDialog.open)regenerationDialog.close();
+  resolve(confirmed);
+}
+function confirmRegeneration(){
+  $('regenerate-confirm-story').textContent='História: '+selected.draft.title;
+  status.textContent='Confirme se deseja substituir as edições deste rascunho.';
+  return new Promise((resolve,reject)=>{
+    resolveRegeneration=resolve;
+    try{regenerationDialog.showModal();$('regenerate-cancel').focus();}
+    catch(error){resolveRegeneration=null;reject(error);}
+  });
+}
+$('regenerate-cancel').addEventListener('click',()=>finishRegenerationConfirmation(false));
+$('regenerate-accept').addEventListener('click',()=>finishRegenerationConfirmation(true));
+regenerationDialog.addEventListener('cancel',event=>{event.preventDefault();finishRegenerationConfirmation(false);});
+regenerationDialog.addEventListener('close',()=>{if(!regenerationDialog.open)finishRegenerationConfirmation(false);});
+$('regenerate').addEventListener('click',async()=>{
+  if(busy||!selected)return;
+  const target={id:selected.id,revision:selected.revision,generation:requestGeneration};
+  await run(async()=>{
+    if(!await confirmRegeneration()){status.textContent='Recriação cancelada. Suas edições foram mantidas.';return;}
+    if(target.generation!==requestGeneration||target.id!==selected.id||target.revision!==selected.revision)throw Error('A história mudou. Abra a versão atual antes de recriar o rascunho.');
+    edit(await request('/'+target.id+'/regenerate','POST',{revision:target.revision,confirmed:true}));
+    await list();status.textContent='Rascunho recriado. Faça uma nova revisão antes de publicar.';
+  });
+  if($('regenerate').isConnected)$('regenerate').focus();
+});
 window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
 run(async()=>{await Promise.all([sources(),list()]);const entry=await readStoryEntry(location.search,api);if(entry?.source)showRecoverySource(entry.source);if(entry?.story){edit(entry.story);$('editor').scrollIntoView({block:'start'});status.textContent='Rascunho existente aberto. Confira as informações, as imagens e a prévia antes de publicar.';}else if(entry?.source)status.textContent='Fonte selecionada. Para continuar, use “Montar rascunho”. Abrir este link não gerou nem publicou conteúdo.';else status.textContent='';});

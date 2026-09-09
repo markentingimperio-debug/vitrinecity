@@ -2802,7 +2802,7 @@ app.get('/sitemap.xml', (_req, res) => {
     '/', '/cidade', '/cidade/bairro-premium', '/cidade/praca-central', '/cidade/avenida-premium',
     '/social', '/descobrir', '/loja', '/centro-educacional.html', '/afiliados.html', '/grupos-whatsapp.html',
     '/emissora', '/conteudo', '/noticias', '/esportes', '/receitas', '/plantas-e-jardinagem', '/tecnologia', '/inteligencia-artificial', '/entretenimento', '/livros',
-    '/para-empresas.html', '/solucoes.html', '/como-funciona.html', '/comprar-lote.html', '/sobre.html',
+    '/para-empresas.html', '/portfolio', '/solucoes.html', '/como-funciona.html', '/comprar-lote.html', '/sobre.html',
     '/contato.html', '/privacy.html', '/termos-predio-digital.html', '/termos-marketplace.html',
     '/politica-vendedor-marketplace.html', '/politica-comprador-marketplace.html',
     '/politica-devolucao-marketplace.html', '/politica-cancelamento-marketplace.html',

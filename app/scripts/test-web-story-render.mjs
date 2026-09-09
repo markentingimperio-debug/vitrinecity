@@ -11,7 +11,7 @@ test('home invitation closes the story and source, affiliate notice and sources 
   assert.equal(items.length,10);assert.match(items[8],/href="https:\/\/vitrinecity.test\/ofertas\/oferta-teste"/);assert.match(items[8],/href="https:\/\/vitrinecity.test\/stories\/guia-visual\/fontes"/);assert.match(items[8],/Link de afiliado: podemos receber comissão/);
   assert.match(items[9],/<a href="https:\/\/vitrinecity.test\/">Explorar a VitrineCity<\/a>/);assert.ok(!items[9].includes('Link de afiliado'));assert.ok(!items[9].includes('/fontes'));
   assert.match(items[1],/Foto do catálogo/);assert.ok(!items[1].includes('Ilustração IA'));assert.match(items[0],/Ilustração IA/);
-  assert.match(items[1],/class="catalog-photo" layout="fill"/);assert.ok(!items[0].includes('class="catalog-photo"'));assert.match(html,/\.catalog-photo img\{object-fit:contain\}/);
+  assert.match(items[1],/class="catalog-photo" layout="fill"/);assert.ok(!items[0].includes('class="catalog-photo"'));assert.match(html,/amp-story-page amp-img\.catalog-photo img\{object-fit:contain\}/);
   for(let i=0;i<10;i++)assert.equal(visible(items[i]),storyPageVisibleText(story,i));
   assert.ok(storyPageVisibleText(story,8).length<=180);
 });

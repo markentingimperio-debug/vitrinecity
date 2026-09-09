@@ -86,4 +86,14 @@
     <section id="preview-area" hidden><h2>3. Confira a prévia</h2><p>Percorra todas as páginas. Confira texto, imagem, enquadramento e os convites finais antes de publicar.</p><iframe id="preview" title="Prévia da Web Story" sandbox="allow-scripts allow-same-origin allow-popups" referrerpolicy="strict-origin-when-cross-origin"></iframe><div class="review-box"><label class="check"><input type="checkbox" id="reviewed"> Revisei todas as páginas. A história está completa, correta e não é apenas uma propaganda ou chamada para outro site.</label><label class="check"><input type="checkbox" id="rights"> Confirmei que temos os direitos de publicar todos os textos e imagens.</label><button type="button" id="publish" disabled>Publicar esta versão</button></div></section>
     <div class="actions end-actions"><button type="button" id="unpublish" class="secondary" hidden>Retirar publicação</button></div>
   </section>
-</main></body></html>
+</main>
+<dialog id="regenerate-confirm" class="story-confirm" aria-labelledby="regenerate-confirm-title" aria-describedby="regenerate-confirm-description">
+  <h2 id="regenerate-confirm-title">Recriar este rascunho?</h2>
+  <p id="regenerate-confirm-story" class="muted"></p>
+  <p id="regenerate-confirm-description">Substituir as edições deste rascunho pelo texto atual da origem? A publicação atual permanece. Você precisará conferir a nova prévia antes de publicar novamente.</p>
+  <div class="actions">
+    <button id="regenerate-cancel" type="button" class="secondary">Cancelar</button>
+    <button id="regenerate-accept" type="button">Recriar</button>
+  </div>
+</dialog>
+</body></html>
