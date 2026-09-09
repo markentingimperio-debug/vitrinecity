@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import Database from 'better-sqlite3';
 import express from 'express';
-import { normalizeReviewInput, parseReviewCsv, shopeeProduct, setupReviewImporter, renderImportedReviewSource } from '../review-importer.js';
+import { normalizeReviewInput, parseReviewCsv, shopeeProduct, setupReviewImporter, renderImportedReviewSource, normalizeReviewPhotos, renderReviewPhotos } from '../review-importer.js';
 
 const sourceUrl = 'https://shopee.com.br/product/390179975/23698375162/';
 const review = { author: 'cliente_publico', rating: 4, date: '2026-08-01 13:20', body: 'Chegou bem. Ainda vou experimentar.', review_id: 'original-1', variation: '3 kg' };
-const input = (rows = [review], more = {}) => ({ productId: 12, sourceUrl, content: JSON.stringify(rows), ...more });
+const input = (rows = [review], more = {}) => ({ productId: 12, sourceUrl, minimumRating: 1, content: JSON.stringify(rows), ...more });
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 async function fixture(t) {
   const db = new Database(':memory:'); db.pragma('foreign_keys = ON');
@@ -80,7 +80,7 @@ test('prévia não publica; confirmação publica uma vez com autoria e origem',
 test('duplicatas no lote, entre lotes e após retry são ignoradas', async t => {
   const { call, db } = await fixture(t);
   const first = (await call('/preview', input([review, review, { ...review, review_id: '' }]))).data;
-  assert.deepEqual(first.summary, { total: 3, new: 1, duplicates: 2, invalid: 0 });
+  assert.deepEqual(first.summary, { total: 3, new: 1, updated: 0, photos: 0, duplicates: 2, invalid: 0, filtered: 0 });
   const concurrent = (await call('/preview', input())).data;
   await call(`/${first.id}/publish`, { confirmed: true });
   const second = await call(`/${concurrent.id}/publish`, { confirmed: true }); assert.equal(second.data.summary.new, 0);
@@ -125,4 +125,62 @@ test('atribuição pública usa link seguro e escapa variações', () => {
   assert.match(html, />Avaliação<\/a>/); assert.match(html, /&lt;img/); assert.doesNotMatch(html, /<img/);
   assert.equal(renderImportedReviewSource({ source: 'shopee', source_url: 'javascript:alert(1)' }, escape), '');
   assert.equal(renderImportedReviewSource({ source: null }, escape), '');
+});
+
+test('filtro padrão aceita somente quatro e cinco estrelas e informa descartadas', async t => {
+  const rows = [1, 2, 3, 4, 5].map(rating => ({ ...review, author: `cliente${rating}`, review_id: `nota-${rating}`, rating }));
+  const parsed = normalizeReviewInput(input(rows, { minimumRating: undefined }));
+  assert.deepEqual(parsed.rows.map(row => row.rating), [4, 5]); assert.equal(parsed.filtered, 3);
+  const { call, db } = await fixture(t);
+  const preview = (await call('/preview', input(rows, { minimumRating: undefined }))).data;
+  assert.equal(preview.summary.filtered, 3); assert.equal(preview.summary.new, 2);
+  const result = await call(`/${preview.id}/publish`, { confirmed: true });
+  assert.equal(result.data.summary.filtered, 3); assert.equal(result.data.summary.total, 5);
+  assert.deepEqual(db.prepare('SELECT rating FROM marketplace_product_reviews WHERE user_id IS NULL ORDER BY rating').all().map(row => row.rating), [4, 5]);
+});
+
+test('fotos aceitam URLs originais e recusam esquemas, hosts e formatos indevidos', () => {
+  const url = 'https://cf.shopee.com.br/file/review-photo';
+  assert.deepEqual(normalizeReviewPhotos(`${url}|${url}`), [url]);
+  assert.deepEqual(normalizeReviewPhotos(JSON.stringify(['https://down-br.img.susercontent.com/file/review-photo'])), ['https://down-br.img.susercontent.com/file/review-photo']);
+  for (const invalid of ['http://cf.shopee.com.br/file/image', 'https://cf.shopee.com.br.evil.test/file/image', 'https://user:pass@cf.shopee.com.br/file/image', 'https://127.0.0.1/file/image', 'https://cf.shopee.com.br:444/file/image', 'https://cf.shopee.com.br/file/image.svg', 'https://cf.shopee.com.br/file/image?redirect=https://evil.test', 'javascript:alert(1)', 'data:image/png;base64,AAAA']) assert.throws(() => normalizeReviewPhotos([invalid]));
+  assert.throws(() => normalizeReviewPhotos(Array.from({ length: 6 }, (_, i) => `${url}-${i}`)), /até 5/);
+  const html = renderReviewPhotos({ photos_json: JSON.stringify([url]) }, escape);
+  assert.match(html, /loading="lazy"/); assert.match(html, /Foto 1 da avaliação/);
+  assert.equal(renderReviewPhotos({ photos_json: '["javascript:alert(1)"]' }, escape), '');
+});
+
+test('acrescentar fotos preserva avaliações; repetição, concorrência e visibilidade são independentes', async t => {
+  const { call, db } = await fixture(t);
+  const original = (await call('/preview', input())).data; await call(`/${original.id}/publish`, { confirmed: true });
+  const withPhoto = { ...review, photos: ['https://cf.shopee.com.br/file/photo-one'] };
+  const first = (await call('/preview', input([withPhoto]))).data;
+  const concurrent = (await call('/preview', input([withPhoto]))).data;
+  assert.equal(first.summary.new, 0); assert.equal(first.summary.updated, 1); assert.equal(first.summary.photos, 1);
+  assert.equal((await call(`/${first.id}/publish`, { confirmed: true })).status, 200);
+  const repeated = await call(`/${concurrent.id}/publish`, { confirmed: true });
+  assert.equal(repeated.data.summary.updated, 0); assert.equal(repeated.data.summary.photos, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM marketplace_product_reviews').get().n, 2);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM marketplace_review_photos').get().n, 1);
+  assert.equal((await call('')).data.batches.find(batch => batch.id === first.id).photo_count, 1);
+  await call(`/${first.id}/visibility`, { action: 'hide' });
+  assert.equal(db.prepare('SELECT status FROM marketplace_review_photos').get().status, 'hidden');
+  assert.equal(db.prepare('SELECT status FROM marketplace_product_reviews WHERE user_id IS NULL').get().status, 'published');
+  await call(`/${first.id}/visibility`, { action: 'restore' });
+  assert.equal(db.prepare('SELECT status FROM marketplace_review_photos').get().status, 'published');
+  assert.equal((await call('/preview', input([{ ...withPhoto, body: 'Texto de outra avaliação' }]))).status, 422);
+  const fourMore = Array.from({ length: 4 }, (_, i) => `https://cf.shopee.com.br/file/extra-${i}`);
+  const full = (await call('/preview', input([{ ...review, photos: fourMore }]))).data;
+  await call(`/${full.id}/publish`, { confirmed: true });
+  assert.equal((await call('/preview', input([{ ...review, photos: ['https://cf.shopee.com.br/file/too-many'] }]))).status, 422);
+});
+
+test('falha nas fotos desfaz avaliação e fotos do lote', async t => {
+  const { call, db } = await fixture(t);
+  const preview = (await call('/preview', input([{ ...review, photos: ['https://cf.shopee.com.br/file/first', 'https://cf.shopee.com.br/file/reject'] }]))).data;
+  db.exec("CREATE TRIGGER reject_photo BEFORE INSERT ON marketplace_review_photos WHEN NEW.url LIKE '%/reject' BEGIN SELECT RAISE(ABORT,'photo rollback'); END;");
+  assert.equal((await call(`/${preview.id}/publish`, { confirmed: true })).status, 500);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM marketplace_review_sources').get().n, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM marketplace_review_photos').get().n, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM marketplace_product_reviews WHERE user_id IS NULL').get().n, 0);
 });

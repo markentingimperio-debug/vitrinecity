@@ -14,6 +14,24 @@ const text = (value, max, label) => {
 const header = value => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/[\s-]+/g, '_');
 const pick = (row, ...keys) => keys.map(key => row[key]).find(value => value != null && value !== '');
 
+export function normalizeReviewPhotos(value) {
+  if (value == null || value === '') return [];
+  let photos = value;
+  if (typeof photos === 'string') {
+    if (photos.trim().startsWith('[')) {
+      try { photos = JSON.parse(photos); } catch { fail('Fotos: lista JSON inválida.'); }
+    } else photos = photos.split('|').map(url => url.trim()).filter(Boolean);
+  }
+  if (!Array.isArray(photos) || photos.length > 5) fail('Use até 5 fotos por avaliação.');
+  return [...new Set(photos.map(value => {
+    if (typeof value !== 'string' || value.length > 1000) fail('Fotos: informe URLs completas.');
+    let url;
+    try { url = new URL(value.trim()); } catch { fail('Foto com URL inválida.'); }
+    if (url.protocol !== 'https:' || !['cf.shopee.com.br', 'down-br.img.susercontent.com'].includes(url.hostname) || url.username || url.password || url.port || url.search || url.hash || !/^\/file\/[A-Za-z0-9_-]+(?:\.(?:jpg|jpeg|png|webp))?$/.test(url.pathname)) fail('Use URLs originais das fotos da Shopee (cf.shopee.com.br ou down-br.img.susercontent.com, em /file/).');
+    return url.href;
+  }))];
+}
+
 export function shopeeProduct(value) {
   let url;
   try { url = new URL(String(value ?? '').trim()); } catch { fail('Informe o link completo do produto na Shopee.'); }
@@ -81,10 +99,11 @@ function dateValue(value) {
   return parsed.toISOString().slice(0, 19).replace('T', ' ');
 }
 
-export function normalizeReviewInput({ content, productId, sourceUrl, format = 'auto' } = {}) {
+export function normalizeReviewInput({ content, productId, sourceUrl, format = 'auto', minimumRating = 4 } = {}) {
   if (typeof content !== 'string' || !content.trim()) fail('Selecione um arquivo ou cole as avaliações.');
   if (Buffer.byteLength(content) > MAX_BYTES) fail('O arquivo deve ter até 2 MB.');
   if (!['auto', 'json', 'csv'].includes(format)) fail('Formato inválido.');
+  if (![1, 4].includes(minimumRating)) fail('Filtro de notas inválido.');
   let rows;
   if (format === 'json' || (format === 'auto' && /^[\s\uFEFF]*[\[{]/.test(content))) {
     let data;
@@ -97,7 +116,7 @@ export function normalizeReviewInput({ content, productId, sourceUrl, format = '
     } else rows = Array.isArray(data) ? data : data?.reviews ?? data?.data?.ratings ?? data?.ratings;
   } else rows = parseReviewCsv(content);
   if (!Array.isArray(rows) || !rows.length || rows.length > MAX_ROWS) fail(`Informe de 1 a ${MAX_ROWS} avaliações por arquivo.`);
-  const normalized = [], errors = [];
+  const normalized = [], errors = []; let filtered = 0;
   rows.forEach((raw, index) => {
     try {
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) fail('Avaliação inválida.');
@@ -110,6 +129,7 @@ export function normalizeReviewInput({ content, productId, sourceUrl, format = '
       }
       const rating = Number(pick(row, 'rating', 'nota', 'rating_star'));
       if (!Number.isInteger(rating) || rating < 1 || rating > 5) fail('A nota deve ser um número inteiro de 1 a 5.');
+      if (rating < minimumRating) { filtered++; return; }
       const author = text(pick(row, 'author', 'autor', 'nome', 'author_name', 'author_username'), 100, 'Nome público');
       if (!author) fail('Informe o nome público ou apelido original do cliente.');
       const createdAt = dateValue(pick(row, 'date', 'data', 'created_at', 'ctime'));
@@ -117,11 +137,12 @@ export function normalizeReviewInput({ content, productId, sourceUrl, format = '
       const title = text(pick(row, 'title', 'titulo'), 200, 'Título');
       const variation = text(pick(row, 'variation', 'variacao', 'model_name'), 200, 'Variação');
       const externalId = text(pick(row, 'review_id', 'id_avaliacao', 'cmtid'), 100, 'ID original');
+      const photos = normalizeReviewPhotos(pick(row, 'photos', 'images', 'image_urls', 'fotos'));
       const fingerprint = digest(JSON.stringify([source.key, author.toLowerCase(), rating, createdAt, body, title]));
-      normalized.push({ line: index + 1, productId: id, source, rating, author, createdAt, body, title, variation, externalId: externalId || null, fingerprint });
+      normalized.push({ line: index + 1, productId: id, source, rating, author, createdAt, body, title, variation, photos, externalId: externalId || null, fingerprint });
     } catch (error) { errors.push({ line: index + 1, message: error.message }); }
   });
-  return { rows: normalized, errors, total: rows.length };
+  return { rows: normalized, errors, total: rows.length, filtered };
 }
 
 export function setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, publicDir }) {
@@ -141,6 +162,13 @@ export function setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, pub
     UNIQUE(source,source_product_key,external_id)
   );
   CREATE INDEX IF NOT EXISTS idx_marketplace_review_sources_batch ON marketplace_review_sources(batch_id);
+  CREATE TABLE IF NOT EXISTS marketplace_review_photos (
+    id INTEGER PRIMARY KEY, review_id INTEGER NOT NULL REFERENCES marketplace_product_reviews(id) ON DELETE CASCADE,
+    batch_id TEXT NOT NULL REFERENCES marketplace_review_imports(id), url TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'published' CHECK(status IN ('published','hidden')),
+    UNIQUE(review_id,url)
+  );
+  CREATE INDEX IF NOT EXISTS idx_marketplace_review_photos_batch ON marketplace_review_photos(batch_id);
   CREATE TABLE IF NOT EXISTS marketplace_review_import_audit (
     id INTEGER PRIMARY KEY, batch_id TEXT NOT NULL REFERENCES marketplace_review_imports(id),
     admin_user_id INTEGER NOT NULL REFERENCES users(id), action TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -149,7 +177,8 @@ export function setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, pub
   app.use('/api/admin/review-imports', requireAdmin, (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   const product = db.prepare('SELECT p.id,p.name,p.store_reference,s.business_name store_name FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference WHERE p.id=?');
   const linked = db.prepare('SELECT product_id FROM marketplace_review_product_links WHERE source_product_key=?');
-  const duplicate = db.prepare(`SELECT review_id FROM marketplace_review_sources WHERE fingerprint=? OR (source='shopee' AND source_product_key=? AND external_id=?)`);
+  const duplicate = db.prepare(`SELECT review_id,fingerprint FROM marketplace_review_sources WHERE fingerprint=? OR (source='shopee' AND source_product_key=? AND external_id=?)`);
+  const existingPhotos = db.prepare('SELECT url FROM marketplace_review_photos WHERE review_id=?');
   const audit = (batch, user, action) => db.prepare('INSERT INTO marketplace_review_import_audit(batch_id,admin_user_id,action) VALUES (?,?,?)').run(batch, user, action);
   const inspect = rows => {
     const seen = new Set(), links = new Map(), checked = [], errors = [];
@@ -160,13 +189,20 @@ export function setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, pub
       if (previous != null && previous !== row.productId) { errors.push({ line: row.line, message: 'Este anúncio da Shopee já está associado a outro produto. Confira a correspondência.' }); continue; }
       links.set(row.source.key, row.productId);
       const key = row.externalId ? `${row.source.key}:${row.externalId}` : row.fingerprint;
-      const isDuplicate = seen.has(key) || seen.has(row.fingerprint) || Boolean(duplicate.get(row.fingerprint, row.source.key, row.externalId));
+      const repeated = seen.has(key) || seen.has(row.fingerprint);
+      const existing = duplicate.get(row.fingerprint, row.source.key, row.externalId);
+      const photos = row.photos || [];
+      if (existing && existing.fingerprint !== row.fingerprint && photos.length) { errors.push({ line: row.line, message: 'As fotos têm dados diferentes da avaliação já importada. Preserve autor, data, nota e comentário originais.' }); continue; }
+      const oldPhotos = existing ? existingPhotos.all(existing.review_id).map(photo => photo.url) : [];
+      const photosToAdd = repeated ? [] : photos.filter(url => !oldPhotos.includes(url));
+      if (oldPhotos.length + photosToAdd.length > 5) { errors.push({ line: row.line, message: 'A avaliação já tem fotos; o total não pode ultrapassar 5.' }); continue; }
+      const isDuplicate = repeated || Boolean(existing);
       seen.add(key); seen.add(row.fingerprint);
-      checked.push({ ...row, productName: item.name, storeName: item.store_name, duplicate: isDuplicate });
+      checked.push({ ...row, photos, photosToAdd, existingReviewId: existing?.review_id || null, updated: Boolean(existing && photosToAdd.length), productName: item.name, storeName: item.store_name, duplicate: isDuplicate });
     }
     return { rows: checked, errors };
   };
-  const summaryFor = (rows, errors, total) => ({ total, new: rows.filter(row => !row.duplicate).length, duplicates: rows.filter(row => row.duplicate).length, invalid: errors.length });
+  const summaryFor = (rows, errors, total) => ({ total, new: rows.filter(row => !row.duplicate).length, updated: rows.filter(row => row.updated).length, photos: rows.reduce((sum, row) => sum + row.photosToAdd.length, 0), duplicates: rows.filter(row => row.duplicate && !row.updated).length, invalid: errors.length });
   const safe = handler => (req, res, next) => {
     try { return handler(req, res); } catch (error) { next(error); }
   };
@@ -174,12 +210,13 @@ export function setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, pub
     (SELECT source_url FROM marketplace_review_product_links l WHERE l.product_id=p.id LIMIT 1) source_url
     FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference ORDER BY s.business_name,p.name`).all() })));
   app.get('/api/admin/review-imports', safe((_req, res) => res.json({ batches: db.prepare(`SELECT id,status,summary_json,created_at,published_at,
-    (SELECT COUNT(*) FROM marketplace_review_sources s WHERE s.batch_id=i.id) imported_count
+    (SELECT COUNT(*) FROM marketplace_review_sources s WHERE s.batch_id=i.id) imported_count,
+    (SELECT COUNT(*) FROM marketplace_review_photos p WHERE p.batch_id=i.id) photo_count
     FROM marketplace_review_imports i WHERE status!='preview' ORDER BY created_at DESC,id DESC LIMIT 100`).all().map(row => ({ ...row, summary: JSON.parse(row.summary_json), summary_json: undefined })) })));
   app.post('/api/admin/review-imports/preview', sameOriginOnly, safe((req, res) => {
     let parsed;
     try { parsed = normalizeReviewInput(req.body); } catch (error) { return res.status(400).json({ error: error.message }); }
-    const checked = inspect(parsed.rows), errors = [...parsed.errors, ...checked.errors], summary = summaryFor(checked.rows, errors, parsed.total);
+    const checked = inspect(parsed.rows), errors = [...parsed.errors, ...checked.errors], summary = { ...summaryFor(checked.rows, errors, parsed.total), filtered: parsed.filtered };
     if (errors.length) return res.status(422).json({ error: 'Corrija as avaliações inválidas antes de importar.', summary, errors, rows: checked.rows });
     const id = randomUUID();
     db.transaction(() => {
@@ -199,12 +236,18 @@ export function setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, pub
     const result = db.transaction(() => {
       const checked = inspect(JSON.parse(batch.payload_json));
       if (checked.errors.length) return { errors: checked.errors };
-      for (const row of checked.rows.filter(row => !row.duplicate)) {
-        const review = db.prepare(`INSERT INTO marketplace_product_reviews(product_id,user_id,rating,title,body,status,verified_purchase,created_at) VALUES (?,NULL,?,?,?,'published',0,?)`).run(row.productId, row.rating, row.title, row.body, row.createdAt);
-        db.prepare('INSERT INTO marketplace_review_sources(review_id,batch_id,source_product_key,source_url,external_id,fingerprint,author_name,variation) VALUES (?,?,?,?,?,?,?,?)').run(Number(review.lastInsertRowid), batch.id, row.source.key, row.source.url, row.externalId, row.fingerprint, row.author, row.variation);
-        db.prepare('INSERT OR IGNORE INTO marketplace_review_product_links(source_product_key,product_id,source_url) VALUES (?,?,?)').run(row.source.key, row.productId, row.source.url);
+      for (const row of checked.rows.filter(row => !row.duplicate || row.updated)) {
+        let reviewId = row.existingReviewId;
+        if (!row.duplicate) {
+          const review = db.prepare(`INSERT INTO marketplace_product_reviews(product_id,user_id,rating,title,body,status,verified_purchase,created_at) VALUES (?,NULL,?,?,?,'published',0,?)`).run(row.productId, row.rating, row.title, row.body, row.createdAt);
+          reviewId = Number(review.lastInsertRowid);
+          db.prepare('INSERT INTO marketplace_review_sources(review_id,batch_id,source_product_key,source_url,external_id,fingerprint,author_name,variation) VALUES (?,?,?,?,?,?,?,?)').run(reviewId, batch.id, row.source.key, row.source.url, row.externalId, row.fingerprint, row.author, row.variation);
+          db.prepare('INSERT OR IGNORE INTO marketplace_review_product_links(source_product_key,product_id,source_url) VALUES (?,?,?)').run(row.source.key, row.productId, row.source.url);
+        }
+        for (const url of row.photosToAdd) db.prepare('INSERT INTO marketplace_review_photos(review_id,batch_id,url) VALUES (?,?,?)').run(reviewId, batch.id, url);
       }
-      const summary = summaryFor(checked.rows, [], checked.rows.length);
+      const originalSummary = JSON.parse(batch.summary_json);
+      const summary = { ...summaryFor(checked.rows, [], originalSummary.total), filtered: originalSummary.filtered || 0 };
       db.prepare("UPDATE marketplace_review_imports SET status='published',summary_json=?,payload_json='[]',published_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(JSON.stringify(summary), batch.id);
       audit(batch.id, req.user.id, 'publish');
       return { summary };
@@ -219,6 +262,7 @@ export function setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, pub
     if (!batch) return res.status(404).json({ error: 'Lote publicado não encontrado.' });
     db.transaction(() => {
       db.prepare('UPDATE marketplace_product_reviews SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id IN (SELECT review_id FROM marketplace_review_sources WHERE batch_id=?)').run(next === 'published' ? 'published' : 'pending', batch.id);
+      db.prepare('UPDATE marketplace_review_photos SET status=? WHERE batch_id=?').run(next, batch.id);
       db.prepare('UPDATE marketplace_review_imports SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(next, batch.id);
       audit(batch.id, req.user.id, req.body.action);
     })();
@@ -231,4 +275,11 @@ export function renderImportedReviewSource(review, escapeHtml) {
   let source;
   try { source = shopeeProduct(review.source_url); } catch { return ''; }
   return `<div class="review-source"><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer nofollow">Avaliação</a>${review.variation ? `<div>Variação: ${escapeHtml(review.variation)}</div>` : ''}</div>`;
+}
+
+export function renderReviewPhotos(review, escapeHtml) {
+  let photos;
+  try { photos = normalizeReviewPhotos(review.photos_json || []); } catch { return ''; }
+  if (!photos.length) return '';
+  return `<div class="review-photos">${photos.map((url, index) => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer nofollow" aria-label="Abrir foto ${index + 1} desta avaliação"><img src="${escapeHtml(url)}" alt="Foto ${index + 1} da avaliação" width="80" height="80" loading="lazy" decoding="async" referrerpolicy="no-referrer"></a>`).join('')}</div>`;
 }
