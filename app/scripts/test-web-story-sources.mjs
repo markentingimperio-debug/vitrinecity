@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {runInNewContext} from 'node:vm';
+import {SERVICE_EDITORIAL_GUIDES} from '../service-editorial-guides.js';
 import {createWebStorySources} from '../web-story-sources.js';
 
 function fixture(t,{stock=true,availability=true}={}) {
@@ -55,12 +55,15 @@ test('public services are read from the injected registry with only real descrip
 });
 
 test('reviewed service guidance enriches the source without replacing the commercial summary or price',t=>{
-  const f=fixture(t),server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
-  const start=server.indexOf('const DIGITAL_SERVICE_PACKAGES = Object.freeze({'),end=server.indexOf('\nconst REFERRAL_RATE_BPS',start);
-  assert.ok(start>=0&&end>start);
-  const registry=runInNewContext(server.slice(start,end)+'\nDIGITAL_SERVICE_PACKAGES;');
+  const f=fixture(t),registry={
+    'ads-banner-outdoor-15-dias':{title:'VitrineCity Ads — Banner + Outdoor por 15 dias',amountCents:7500,imageUrl:'/assets/services/ads-15-dias.jpg',description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 15 dias, após aprovação do material.',...SERVICE_EDITORIAL_GUIDES['ads-banner-outdoor-15-dias']},
+    '10-videos-loja':{title:'Pacote de 10 vídeos curtos',amountCents:20000,imageUrl:'/assets/services/videos-curtos.jpg',description:'Roteiro, criação e entrega de dez vídeos verticais para divulgar produtos, serviços e ofertas',...SERVICE_EDITORIAL_GUIDES['10-videos-loja']},
+    'ads-banner-outdoor-7-dias':{title:'VitrineCity Ads — Banner + Outdoor por 7 dias',amountCents:5000,imageUrl:'/assets/services/ads-7-dias.jpg',description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 7 dias, após aprovação do material.'}
+  };
   const sources=createWebStorySources({db:f.db,services:()=>registry});
   const selected=['ads-banner-outdoor-15-dias','10-videos-loja'];
+  assert.deepEqual(Object.keys(SERVICE_EDITORIAL_GUIDES),selected);assert.ok(Object.isFrozen(SERVICE_EDITORIAL_GUIDES));
+  for(const guide of Object.values(SERVICE_EDITORIAL_GUIDES)){assert.ok(Object.isFrozen(guide));assert.deepEqual(Object.keys(guide).sort(),['editorialBody','editorialImageUrl']);}
   assert.deepEqual(Object.keys(registry).filter(key=>registry[key].editorialBody),selected);
   for(const [slug,price] of [[selected[0],7500],[selected[1],20000]]){
     const source=sources.get('service:'+slug),row=registry[slug];

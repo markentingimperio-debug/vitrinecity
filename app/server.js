@@ -22,6 +22,7 @@ import { createMediaPublicationLifecycle, captureQuizMontage, commitQuizMontage 
 import { createMetaCommentApi } from './meta-comment-api.js';
 import {socialOauthRequest,socialOauthScopes,socialOauthConfigId,signSocialOauthState,verifySocialOauthState,socialOauthDestination} from './social-oauth-intent.js';
 import { createWebStorySources } from './web-story-sources.js';
+import { SERVICE_EDITORIAL_GUIDES } from './service-editorial-guides.js';
 import {ADS_TERMS_VERSION,ADS_VALIDITY_DAYS,creditExpiryForOrder} from './credits-policy.js';
 import {setupCityChat} from './city-chat.js';
 import {setupCityRewards} from './city-rewards.js';
@@ -1801,8 +1802,7 @@ const DIGITAL_SERVICE_PACKAGES = Object.freeze({
   'ads-banner-outdoor-7-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 7 dias', amountCents:5000, imageUrl:'/assets/services/ads-7-dias.jpg', description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 7 dias, após aprovação do material.' }),
   'ads-banner-outdoor-15-dias': Object.freeze({
     title:'VitrineCity Ads — Banner + Outdoor por 15 dias', amountCents:7500, imageUrl:'/assets/services/ads-15-dias.jpg', description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 15 dias, após aprovação do material.',
-    editorialImageUrl:'/uploads/generated-videos/service-ads-editorial-20260909.png',
-    editorialBody:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 15 dias, após aprovação do material.\n\nGuia editorial de preparação: escolha uma mensagem principal para o anúncio e separe uma foto nítida, própria ou autorizada, do produto ou serviço. Apresente características comprováveis, mantenha o nome da loja legível e destaque apenas as informações essenciais da oferta. Indique um próximo passo claro, como consultar o catálogo ou conhecer o serviço. Confira preço, contato e página de destino antes de enviar o material para aprovação. Revise a leitura no celular e reduza o texto se as informações ficarem pequenas. Antes de contratar, confirme as especificações das peças e quando começa o período de veiculação. Leia os termos e a autorização de uso dos dados para atendimento do pedido. Estas são orientações editoriais de preparação; não acrescentam entregas ao pacote contratado e não representam garantia de alcance, buscas ou vendas.'
+    ...SERVICE_EDITORIAL_GUIDES['ads-banner-outdoor-15-dias']
   }),
   'ads-banner-outdoor-30-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 30 dias', amountCents:10000, imageUrl:'/assets/services/ads-30-dias.jpg', description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 30 dias, após aprovação do material.' }),
   'ads-banner-outdoor-60-dias': Object.freeze({ title:'VitrineCity Ads — Banner + Outdoor por 60 dias', amountCents:17500, imageUrl:'/assets/services/ads-60-dias.jpg', description:'Divulgação rotativa no banner e nos outdoors digitais da Cidade Premium durante 60 dias, após aprovação do material.' }),
@@ -1810,8 +1810,7 @@ const DIGITAL_SERVICE_PACKAGES = Object.freeze({
   'pagina-empresa': Object.freeze({ title:'Página profissional da empresa', amountCents:50000, imageUrl:'/assets/services/pagina-empresa.jpg', description:'Criação de página empresarial responsiva com apresentação, contatos, localização e chamada para ação' }),
   '10-videos-loja': Object.freeze({
     title:'Pacote de 10 vídeos curtos', amountCents:20000, imageUrl:'/assets/services/videos-curtos.jpg', description:'Roteiro, criação e entrega de dez vídeos verticais para divulgar produtos, serviços e ofertas',
-    editorialImageUrl:'/uploads/generated-videos/service-videos-editorial-20260909.png',
-    editorialBody:'Roteiro, criação e entrega de dez vídeos verticais para divulgar produtos, serviços e ofertas.\n\nGuia editorial de preparação: liste os produtos ou serviços que deseja apresentar e escolha um assunto para cada vídeo. Parta de uma dúvida real do cliente e reúna imagens próprias ou autorizadas, características verificadas e informações atuais sobre a oferta. Um esboço pode ter apresentação do assunto, informação útil e próximo passo do visitante. Informe o nome da loja, o contato e a página correta da divulgação. Evite prometer vendas ou resultados garantidos. Antes de contratar, confirme duração de cada vídeo, prazo, formato da entrega e condições de ajustes: esses detalhes não constam da descrição resumida do pacote. Leia os termos e a autorização de uso dos dados para atendimento do pedido. Estas dicas são orientações editoriais para organizar a ideia; não acrescentam entregas ao pacote e não significam que publicação nas redes ou tráfego pago estejam incluídos.'
+    ...SERVICE_EDITORIAL_GUIDES['10-videos-loja']
   }),
   'identidade-social': Object.freeze({ title:'Kit de identidade para redes sociais', amountCents:29900, imageUrl:'/assets/services/identidade-social.jpg', description:'Foto de perfil, capa, paleta visual e dez artes editáveis para redes sociais' }),
   'seo-local': Object.freeze({ title:'SEO local e presença digital', amountCents:35000, imageUrl:'/assets/services/seo-local.jpg', description:'Auditoria de buscas locais, palavras-chave, páginas e plano de conteúdo para atrair clientes da região' }),
