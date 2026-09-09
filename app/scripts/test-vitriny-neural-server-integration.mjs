@@ -49,5 +49,20 @@ try{
   const stored=JSON.parse(db.prepare('SELECT payload_json FROM neural_events WHERE id=?').get(event.json.id).payload_json);
   assert.equal(stored.watchSeconds,10);assert.equal('message' in stored,false);assert.equal(typeof stored.actorHash,'string');
 
-  console.log(JSON.stringify({ok:true,service:status.json.service,readiness:qualified.json.readiness,actionBudget:actions.json.usage}));
+  const candidate=await request('/api/admin/vitriny-neural/training/examples',{method:'POST',body:{
+    domain:'support',source:'manual',instruction:'Explique como confirmar o estado de uma entrega.',
+    expectedOutput:'Consulte o pedido autorizado e informe apenas o status confirmado ao cliente.'
+  }});
+  assert.equal(candidate.status,201);assert.equal(candidate.json.item.status,'candidate');
+  const unconfirmed=await request(`/api/admin/vitriny-neural/training/examples/${candidate.json.item.id}/review`,{method:'POST',body:{status:'approved'}});
+  assert.equal(unconfirmed.status,409);
+  const approved=await request(`/api/admin/vitriny-neural/training/examples/${candidate.json.item.id}/review`,{method:'POST',body:{status:'approved',confirmed:true}});
+  assert.equal(approved.status,200);assert.equal(approved.json.item.status,'approved');
+  const trainingStatus=await request('/api/admin/vitriny-neural/training/status');
+  assert.equal(trainingStatus.json.counts.approved,1);assert.equal(trainingStatus.json.humanApprovalRequired,true);
+  const exported=await fetch(base+'/api/admin/vitriny-neural/training/export?split=all');
+  assert.equal(exported.status,200);assert.match(exported.headers.get('content-type'),/application\/x-ndjson/);
+  const exportedLine=JSON.parse((await exported.text()).trim());assert.equal(exportedLine.messages[2].role,'assistant');
+
+  console.log(JSON.stringify({ok:true,service:status.json.service,readiness:qualified.json.readiness,actionBudget:actions.json.usage,training:trainingStatus.json.counts}));
 }finally{await new Promise(resolve=>server.close(resolve));db.close();}

@@ -123,8 +123,37 @@
     <div id="web-research-candidates" class="stack"><p class="muted">Carregando candidatos…</p></div>
   </section>
 
+  <section class="panel" aria-labelledby="training-title">
+    <div class="section-head"><div><p class="eyebrow">07 / DATASET</p><h2 id="training-title">Ensinar com exemplos aprovados</h2></div><span id="training-state" class="tag">CARREGANDO</span></div>
+    <p class="muted">Crie respostas-modelo para a Vitriny Neural. Cada exemplo fica como candidato e só entra no arquivo de treinamento depois de aprovação humana explícita.</p>
+    <div class="shadow-grid">
+      <article><span>CANDIDATOS</span><strong id="training-candidates-count">—</strong><small>aguardando revisão</small></article>
+      <article><span>APROVADOS</span><strong id="training-approved-count">—</strong><small>elegíveis para exportação</small></article>
+      <article><span>REJEITADOS</span><strong id="training-rejected-count">—</strong><small>fora do dataset</small></article>
+      <article><span>MÍNIMO DO PILOTO</span><strong id="training-minimum">—</strong><small id="training-progress">exemplos diversos</small></article>
+    </div>
+    <form id="training-form">
+      <label for="training-domain">Área</label>
+      <select id="training-domain">
+        <option value="support">Atendimento</option><option value="commerce">Comércio</option><option value="growth">Marketing / Growth</option>
+        <option value="search">Busca</option><option value="ranking">Ranking</option><option value="content">Conteúdo</option>
+        <option value="code">Programação</option><option value="operations">Operações</option><option value="platform">Plataforma</option><option value="ads">Anúncios</option>
+      </select>
+      <label for="training-instruction">Pergunta ou tarefa</label>
+      <textarea id="training-instruction" rows="3" minlength="10" maxlength="4000" required placeholder="Ex.: Como responder quando não temos confirmação do status da entrega?"></textarea>
+      <label for="training-context">Contexto aprovado (opcional)</label>
+      <textarea id="training-context" rows="3" maxlength="8000" placeholder="Inclua somente fatos revisados, sem nome, telefone, e-mail ou dados de clientes."></textarea>
+      <label for="training-output">Resposta ideal</label>
+      <textarea id="training-output" rows="5" minlength="2" maxlength="12000" required placeholder="Escreva a resposta exata que a IA deveria aprender a produzir."></textarea>
+      <div class="form-foot"><small>Credenciais e dados pessoais são bloqueados. Salvar não significa aprovar.</small><button class="primary" id="training-save" type="submit">Salvar candidato ↗</button></div>
+    </form>
+    <div class="dataset-actions"><button id="training-export-all" type="button">Baixar dataset completo</button><button id="training-export-train" type="button">Baixar treino</button><button id="training-export-validation" type="button">Baixar validação</button></div>
+    <h3>Exemplos aguardando revisão</h3>
+    <div id="training-candidates" class="stack"><p class="muted">Carregando candidatos…</p></div>
+  </section>
+
   <section class="panel" aria-labelledby="precision-title">
-    <div class="section-head"><div><p class="eyebrow">07 / PRECISÃO</p><h2 id="precision-title">Histórico de qualificação</h2></div><span class="tag">POR CAPACIDADE</span></div>
+    <div class="section-head"><div><p class="eyebrow">08 / PRECISÃO</p><h2 id="precision-title">Histórico de qualificação</h2></div><span class="tag">POR CAPACIDADE</span></div>
     <p class="muted">Um modelo pode ser aprovado para uma área e bloqueado em outra. Segurança tem limiar próprio.</p>
     <div id="qualifications"><p class="muted">Nenhuma qualificação carregada.</p></div>
   </section>
