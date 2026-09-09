@@ -18,6 +18,7 @@ import { createMetaPhotoApi } from './meta-photo-api.js';
 import { createExternalMetricsStore, createYouTubeMetricsSync, ACTIVE_EXTERNAL_METRICS_SQL } from './external-metrics-store.js';
 import { serviceReplyFromResponse, validateServiceReply } from './service-reply-format.js';
 import { createTikTokTokenRefresh } from './tiktok-token-refresh.js';
+import { createMediaPublicationLifecycle, captureQuizMontage, commitQuizMontage } from './media-publication-lifecycle.js';
 import { createMetaCommentApi } from './meta-comment-api.js';
 import {socialOauthRequest,socialOauthScopes,socialOauthConfigId,signSocialOauthState,verifySocialOauthState,socialOauthDestination} from './social-oauth-intent.js';
 import { createWebStorySources } from './web-story-sources.js';
@@ -2672,6 +2673,10 @@ const publicPage = file => (req, res) => {
 let dailyStories,ecosystem;
 const ecosystemCanRun=()=>ecosystem?.canRun()!==false;
 const requireEcosystemRunning=(_req,res,next)=>ecosystemCanRun()?next():res.status(409).json({error:'A pausa geral está ativa. Retome as rotinas na Central do dia.'});
+const mediaPublications = createMediaPublicationLifecycle({ db, siteUrl:SITE_URL, canRun:ecosystemCanRun,
+  getConfig:()=>({accountId:String(process.env.CLOUDFLARE_ACCOUNT_ID||'').trim(),token:String(process.env.CLOUDFLARE_STREAM_API_TOKEN||'').trim()}),
+  onReady:post=>notifyFollowers(post.user_id,'new_post',post.media_type==='image'?'publicou uma nova foto':'publicou um novo vídeo',post.id),
+  onError:post=>refundSocialLink(post.id,'falha no processamento do vídeo') });
 setupTrendRadar({ app, db, siteUrl:SITE_URL, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft, reviewEditorialDraft, canRun:ecosystemCanRun, automationAllowed:()=>!dailyStories?.automation.status().enabled });
 setupEmissora({app,db,siteUrl:SITE_URL});
 const storyOpenAIRequest=createOpenAIStoryRequest({apiKey:()=>process.env.OPENAI_API_KEY});
@@ -4863,8 +4868,13 @@ function viralQuizRow(id) {
   if (!row) return null;
   const scenes=db.prepare('SELECT id,scene_number,duration_seconds,status,output_url,error_message FROM viral_quiz_scenes WHERE quiz_id=? ORDER BY scene_number').all(id);
   const distribution=db.prepare('SELECT provider,status,publication_id,error_message,updated_at FROM viral_distribution_jobs WHERE quiz_id=? ORDER BY provider').all(id);
-  const media=row.media_project_id?db.prepare('SELECT output_url,production_status,progress,duration_seconds FROM admin_media_projects WHERE id=?').get(row.media_project_id):null;
-  return { ...row, questions: JSON.parse(row.questions_json || '[]'), scenes, distribution, media };
+  const media=row.media_project_id?mediaFactoryProject(row.media_project_id):null;
+  const publication=media?.publication||null;
+  for(const job of distribution)if(job.provider==='vitrine_social'&&publication&&publication.status!=='not_started'){
+    job.publication=publication;job.status=publication.status==='published'?'published':'pending';job.error_message=publication.status==='published'?'':publication.message;
+  }
+  return { ...row, status:media?.production_status==='cancelled'||media?.task_status==='cancelled'?'cancelled':row.status==='published'&&publication?.status!=='published'?'approved':row.status,
+    questions: JSON.parse(row.questions_json || '[]'), scenes, distribution, media, publication };
 }
 app.get('/api/admin/viral-quizzes', requireAdmin, (_req,res) => {
   const quizzes = db.prepare('SELECT * FROM admin_viral_quizzes ORDER BY id DESC LIMIT 40').all()
@@ -4978,21 +4988,28 @@ async function runViralFactory({force=false,userId=null}={}) {
 function runFfmpeg(args){return new Promise((resolve,reject)=>{const child=spawn('ffmpeg',args,{stdio:['ignore','ignore','pipe']});let error='';child.stderr.on('data',chunk=>error+=chunk);child.once('error',reject);child.once('close',code=>code===0?resolve():reject(new Error(`FFmpeg encerrou com código ${code}: ${error.slice(-500)}`)));});}
 async function finishViralQuizVideo(quizId){
   if(!ecosystemCanRun())return false;
-  const quiz=viralQuizRow(quizId),scenes=db.prepare("SELECT * FROM viral_quiz_scenes WHERE quiz_id=? AND status='downloaded' ORDER BY scene_number").all(quizId);
-  if(!quiz||scenes.length!==9)return false;
+  const capture=captureQuizMontage(db,quizId);
+  if(!capture)return false;
+  const {scenes}=capture;
   const listPath=path.join(generatedMediaDir,`viral-${quizId}-concat.txt`),outputName=`viral-quiz-${quizId}-${Date.now()}.mp4`,outputPath=path.join(generatedMediaDir,outputName);
   fs.writeFileSync(listPath,scenes.map(scene=>`file '${scene.local_path.replaceAll("'","'\\''")}'`).join('\n'));
   try{
     await runFfmpeg(['-y','-f','concat','-safe','0','-i',listPath,'-t','65','-vf','scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p','-c:v','libx264','-preset','veryfast','-c:a','aac','-ar','48000','-movflags','+faststart',outputPath]);
     if(!ecosystemCanRun())return false;
     const url=`/uploads/generated-videos/${outputName}`;
-    db.transaction(()=>{db.prepare("UPDATE admin_viral_quizzes SET status='approved',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(quizId);db.prepare("UPDATE admin_media_projects SET output_url=?,production_status='approved',progress=100,duration_seconds=65,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(url,quiz.media_project_id);db.prepare("UPDATE admin_agent_tasks SET status='completed',result_summary=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").run('Vídeo final de 65 segundos montado com 9 cenas e aprovado pelo time.',quiz.task_id);
-      const add=db.prepare('INSERT OR IGNORE INTO viral_distribution_jobs(quiz_id,provider,status) VALUES (?,?,?)');for(const provider of ['vitrine_social','instagram','facebook','tiktok','youtube','kwai','bilibili'])add.run(quizId,provider,provider==='vitrine_social'?'pending':'awaiting_connection');})();
+    if(!commitQuizMontage({db,capture,outputUrl:url,canRun:ecosystemCanRun}))return false;
     await publishViralToVitrine(quizId).catch(error=>db.prepare("UPDATE viral_distribution_jobs SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE quiz_id=? AND provider='vitrine_social'").run(String(error?.message||'publish_failed').slice(0,500),quizId));return true;
   }finally{try{fs.unlinkSync(listPath)}catch{}}
 }
-async function publishViralToVitrine(quizId){if(!ecosystemCanRun())throw Object.assign(new Error('ecosystem_paused'),{ecosystemPaused:true});const quiz=viralQuizRow(quizId),project=mediaFactoryProject(quiz?.media_project_id);if(!quiz||!project?.output_url)throw new Error('Vídeo final ainda não está disponível.');const administrativeUser=db.prepare('SELECT id,email,is_admin FROM users ORDER BY id').all().find(isAdministrativeUser);const userId=quiz.created_by_user_id||administrativeUser?.id;if(!userId)throw new Error('Nenhum administrador disponível para assinar a publicação.');
-  const accountId=String(process.env.CLOUDFLARE_ACCOUNT_ID||'').trim(),token=String(process.env.CLOUDFLARE_STREAM_API_TOKEN||'').trim();if(!accountId||!token)throw new Error('Cloudflare Stream não está configurado.');const copy=await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/copy`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({url:new URL(project.output_url,SITE_URL).toString(),meta:{name:project.title}}),signal:AbortSignal.timeout(30000)});const payload=await copy.json().catch(()=>({}));if(!copy.ok||!payload?.result?.uid)throw new Error(payload?.errors?.[0]?.message||'Cloudflare Stream recusou o vídeo.');const postId=randomUUID();db.transaction(()=>{db.prepare(`INSERT INTO social_posts (id,user_id,video_uid,caption,category,status,moderation_status,moderated_by,moderated_at) VALUES (?,?,?,?,?,'uploading','approved',?,CURRENT_TIMESTAMP)`).run(postId,userId,payload.result.uid,project.caption||project.title,'quiz',userId);db.prepare("UPDATE viral_distribution_jobs SET status='published',publication_id=?,updated_at=CURRENT_TIMESTAMP WHERE quiz_id=? AND provider='vitrine_social'").run(postId,quizId);db.prepare("UPDATE admin_viral_quizzes SET status='published',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(quizId);db.prepare("UPDATE admin_media_projects SET production_status='published',published_post_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(postId,project.id);})();return postId;}
+async function publishViralToVitrine(quizId){
+  if(!ecosystemCanRun())throw Object.assign(new Error('ecosystem_paused'),{ecosystemPaused:true});
+  const quiz=viralQuizRow(quizId),project=mediaFactoryProject(quiz?.media_project_id);
+  if(!quiz||quiz.status==='cancelled'||!project?.output_url)throw new Error('Vídeo final ainda não está disponível.');
+  const administrativeUser=db.prepare('SELECT id,email,is_admin FROM users ORDER BY id').all().find(isAdministrativeUser);
+  const userId=quiz.created_by_user_id||administrativeUser?.id;
+  if(!userId)throw new Error('Nenhum administrador disponível para assinar a publicação.');
+  return mediaPublications.publish(project.id,userId,'quiz');
+}
 let viralVideoFactoryRunning=false;
 async function processViralVideoFactory(){
   if(!ecosystemCanRun()||viralVideoFactoryRunning||!aiConfigured()||AI_PROVIDER!=='openrouter')return;viralVideoFactoryRunning=true;
@@ -5785,9 +5802,10 @@ app.get('/api/admin/agents', requireAdmin, (_req, res) => {
 });
 
 function mediaFactoryProject(id) {
-  return db.prepare(`SELECT m.*,t.title,t.instructions,t.priority,t.status AS task_status,a.name AS agent_name
+  const project=db.prepare(`SELECT m.*,t.title,t.instructions,t.priority,t.status AS task_status,a.name AS agent_name
     FROM admin_media_projects m JOIN admin_agent_tasks t ON t.id=m.task_id
     JOIN admin_specialist_agents a ON a.id=t.agent_id WHERE m.id=?`).get(id);
+  return project?{...project,publication:mediaPublications.snapshot(project)}:null;
 }
 
 app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
@@ -5805,7 +5823,8 @@ app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
   }
   return res.json({ configured: AI_PROVIDER === 'openrouter' && Boolean(AI_API_KEY),
     models: { image: OPENROUTER_IMAGE_MODEL, video: OPENROUTER_VIDEO_MODEL,
-      imageOptions: MEDIA_IMAGE_MODELS, videoOptions: MEDIA_VIDEO_MODELS }, budget, projects });
+      imageOptions: MEDIA_IMAGE_MODELS, videoOptions: MEDIA_VIDEO_MODELS }, budget,
+    projects:projects.map(project=>({...project,publication:mediaPublications.snapshot(project)})) });
 });
 
 app.post('/api/admin/media-factory', requireAdmin, (req, res) => {
@@ -5916,26 +5935,19 @@ app.post('/api/admin/media-projects/:id/approve', requireAdmin, (req,res) => {
   return res.json({project:mediaFactoryProject(id)});
 });
 
-app.post('/api/admin/media-projects/:id/publish-vitriny', requireAdmin, requireEcosystemRunning, async (req,res) => {
-  const id=Number(req.params.id),project=mediaFactoryProject(id);
-  if(!project?.output_url||project.production_status!=='approved')return res.status(409).json({error:'Aprove a criação antes de publicar.'});
+app.post('/api/admin/media-projects/:id/publish-vitriny', requireAdmin, sameOriginOnly, requireEcosystemRunning, async (req,res) => {
+  const id=Number(req.params.id);
   try {
-    const postId=randomUUID(),caption=project.caption||project.title;
-    if(project.format==='image'){
-      db.prepare(`INSERT INTO social_posts (id,user_id,video_uid,media_type,image_url,caption,category,status,moderation_status,moderated_by,moderated_at)
-        VALUES (?,?,?,'image',?,?,'geral','ready','approved',?,CURRENT_TIMESTAMP)`)
-        .run(postId,req.user.id,`factory-image-${id}`,project.output_url,caption,req.user.id);
-    }else{
-      const accountId=String(process.env.CLOUDFLARE_ACCOUNT_ID||'').trim(),token=String(process.env.CLOUDFLARE_STREAM_API_TOKEN||'').trim();
-      if(!accountId||!token)return res.status(503).json({error:'Configure o Cloudflare Stream para publicar vídeos na Vitrine Social.'});
-      const copy=await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/copy`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({url:new URL(project.output_url,SITE_URL).toString(),meta:{name:project.title}}),signal:AbortSignal.timeout(30000)});
-      const payload=await copy.json().catch(()=>({})); if(!copy.ok||!payload?.result?.uid)throw new Error(payload?.errors?.[0]?.message||'Cloudflare Stream não aceitou o vídeo.');
-      db.prepare(`INSERT INTO social_posts (id,user_id,video_uid,caption,category,status,moderation_status,moderated_by,moderated_at)
-        VALUES (?,?,?,?,?,'uploading','approved',?,CURRENT_TIMESTAMP)`).run(postId,req.user.id,payload.result.uid,caption,'geral',req.user.id);
-    }
-    db.prepare("UPDATE admin_media_projects SET production_status='published',published_post_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(postId,id);
-    return res.json({ok:true,postId,project:mediaFactoryProject(id)});
-  }catch(error){return res.status(502).json({error:String(error.message).slice(0,400)});}
+    const publication=await mediaPublications.publish(id,req.user.id);
+    return res.status(publication.status==='published'?200:202).json({ok:true,postId:publication.postId,publication,project:mediaFactoryProject(id)});
+  }catch(error){return res.status(error.status||500).json({error:error.status?error.message:'Não foi possível registrar o envio. Confira o projeto antes de tentar novamente.'});}
+});
+app.post('/api/admin/media-projects/:id/sync-publication', requireAdmin, sameOriginOnly, async (req,res) => {
+  const id=Number(req.params.id);
+  try{
+    const publication=await mediaPublications.reconcile(id);
+    return res.json({ok:true,publication,project:mediaFactoryProject(id)});
+  }catch(error){return res.status(error.status||500).json({error:error.status?error.message:'Não foi possível conferir a publicação agora.'});}
 });
 
 app.post('/api/integrations/binance-local/heartbeat', (req, res) => {
@@ -6096,16 +6108,25 @@ app.patch('/api/admin/agent-tasks/:id', requireAdmin, (req, res) => {
   return res.json({ ok: true, status: next });
 });
 
-app.patch('/api/admin/media-projects/:id', requireAdmin, (req, res) => {
+app.patch('/api/admin/media-projects/:id', requireAdmin, sameOriginOnly, (req, res) => {
   const id = Number(req.params.id);
   const productionStatus = String(req.body?.productionStatus || '');
   const allowed = new Set(['briefing','script','assets','editing','review','approved','published','cancelled']);
   if (!Number.isInteger(id) || !allowed.has(productionStatus)) return res.status(400).json({ error: 'Etapa de produção inválida.' });
   const outputUrl = req.body?.outputUrl == null ? null : String(req.body.outputUrl).trim().slice(0,1000);
   if (outputUrl && !/^https:\/\//i.test(outputUrl)) return res.status(400).json({ error: 'O arquivo final precisa usar uma URL HTTPS.' });
+  const project=mediaFactoryProject(id);
+  if(!project)return res.status(404).json({error:'Projeto de mídia não encontrado.'});
+  if(productionStatus==='published'&&project.publication?.status!=='published')return res.status(409).json({error:'A publicação só é confirmada quando o vídeo está pronto e aprovado.'});
+  if(project.publication?.status!=='not_started'&&((outputUrl!==null&&outputUrl!==project.output_url)||!['approved','published','cancelled'].includes(productionStatus)))
+    return res.status(409).json({error:'Este projeto já tem um envio registrado. Preserve o arquivo e confira a publicação existente.'});
   const result = db.prepare(`UPDATE admin_media_projects SET production_status=?,output_url=COALESCE(?,output_url),updated_at=CURRENT_TIMESTAMP WHERE id=?`)
     .run(productionStatus, outputUrl, id);
   if (!result.changes) return res.status(404).json({ error: 'Projeto de mídia não encontrado.' });
+  if(productionStatus==='cancelled'&&project.published_post_id){
+    db.prepare("UPDATE social_posts SET status='deleted',moderation_status='removed',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(project.published_post_id);
+    mediaPublications.projectChanges(project.published_post_id);
+  }
   return res.json({ ok: true, productionStatus });
 });
 
@@ -9364,7 +9385,7 @@ app.patch('/api/admin/social/posts/:id/moderation', requireAdmin, sameOriginOnly
   }
   db.transaction(() => {
     let status=post.status,moderationStatus=post.moderation_status;
-    if(action==='approve'){status='ready';moderationStatus='approved';notifyFollowers(post.user_id,'new_post',post.media_type==='image'?'publicou uma nova foto':'publicou um novo vídeo',post.id);db.prepare(`UPDATE affiliate_content_submissions SET status='approved',moderation_note=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE social_post_id=? AND status='pending'`).run(note,req.user.id,post.id);}
+    if(action==='approve'){status=mediaPublications.approvalStatus(post);moderationStatus='approved';if(status==='ready'&&post.status!=='ready')notifyFollowers(post.user_id,'new_post',post.media_type==='image'?'publicou uma nova foto':'publicou um novo vídeo',post.id);db.prepare(`UPDATE affiliate_content_submissions SET status='approved',moderation_note=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE social_post_id=? AND status='pending'`).run(note,req.user.id,post.id);}
     if(action==='reject'){status='rejected';moderationStatus='rejected';refundSocialLink(post.id,note);db.prepare(`UPDATE affiliate_content_submissions SET status='rejected',moderation_note=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE social_post_id=? AND status='pending'`).run(note,req.user.id,post.id);}
     if(action==='remove'){status='deleted';moderationStatus='removed';refundSocialLink(post.id,note);}
     if(action==='suspend'){
@@ -9386,6 +9407,8 @@ app.patch('/api/admin/social/posts/:id/moderation', requireAdmin, sameOriginOnly
     }
     db.prepare(`UPDATE social_posts SET status=?,moderation_status=?,moderation_reason=?,moderated_by=?,
       moderated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(status,moderationStatus,note,req.user.id,post.id);
+    mediaPublications.projectChanges(post.id);
+    if(action==='suspend')for(const related of db.prepare('SELECT id FROM social_posts WHERE user_id=?').all(post.user_id))mediaPublications.projectChanges(related.id);
     db.prepare(`INSERT INTO social_moderation_actions(post_id,author_id,admin_id,action,reason_code,note,previous_status,new_status)
       VALUES (?,?,?,?,?,?,?,?)`).run(post.id,post.user_id,req.user.id,action,reasonCode,note,post.status,status);
     db.prepare("UPDATE social_reports SET status=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE post_id=? AND status='open'")
@@ -9405,12 +9428,15 @@ app.patch('/api/admin/social/appeals/:id', requireAdmin, sameOriginOnly, (req, r
     const accepted=action==='accept';
     db.prepare(`UPDATE social_appeals SET status=?,admin_note=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?`)
       .run(accepted?'accepted':'rejected',note,req.user.id,appeal.id);
+    let acceptedStatus=appeal.post_status;
     if(accepted){
-      db.prepare(`UPDATE social_posts SET status='ready',moderation_status='approved',moderation_reason=?,moderated_by=?,moderated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(note,req.user.id,appeal.post_id);
       db.prepare("UPDATE social_account_restrictions SET status='active',updated_at=CURRENT_TIMESTAMP WHERE user_id=?").run(appeal.user_id);
+      acceptedStatus=mediaPublications.approvalStatus(db.prepare('SELECT * FROM social_posts WHERE id=?').get(appeal.post_id));
+      db.prepare(`UPDATE social_posts SET status=?,moderation_status='approved',moderation_reason=?,moderated_by=?,moderated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(acceptedStatus,note,req.user.id,appeal.post_id);
+      mediaPublications.projectChanges(appeal.post_id);
     }
     db.prepare(`INSERT INTO social_moderation_actions(post_id,author_id,admin_id,action,reason_code,note,previous_status,new_status)
-      VALUES (?,?,?,?,?,?,?,?)`).run(appeal.post_id,appeal.user_id,req.user.id,accepted?'appeal_accepted':'appeal_rejected','outro',note,appeal.post_status,accepted?'ready':appeal.post_status);
+      VALUES (?,?,?,?,?,?,?,?)`).run(appeal.post_id,appeal.user_id,req.user.id,accepted?'appeal_accepted':'appeal_rejected','outro',note,appeal.post_status,acceptedStatus);
     createSocialNotification(appeal.user_id,req.user.id,'moderation_decision',accepted?'seu recurso foi aceito':'seu recurso foi recusado',`appeal:${appeal.id}`,appeal.post_id);
   })();
   return res.json({ok:true,status:action==='accept'?'accepted':'rejected'});
@@ -9605,16 +9631,7 @@ app.post('/api/webhooks/cloudflare-stream', (req, res) => {
   if (actual.length !== expectedBuffer.length || !timingSafeEqual(actual, expectedBuffer)) {
     return res.status(401).json({ error: 'Assinatura inválida.' });
   }
-  const video = req.body || {};
-  const state = video.status?.state;
-  const status = video.readyToStream || video.readytoStream || state === 'ready'
-    ? 'pending_review' : state === 'error' ? 'error' : 'processing';
-  const post = db.prepare('SELECT id FROM social_posts WHERE video_uid=?').get(String(video.uid || ''));
-  if (post && status === 'error') refundSocialLink(post.id, 'falha no processamento do vídeo');
-  db.prepare(`UPDATE social_posts SET status=?,moderation_status=CASE WHEN ?='pending_review' THEN
-      CASE WHEN moderation_reason='' THEN 'pending' ELSE 'flagged' END ELSE moderation_status END,
-      duration_seconds=?,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE video_uid=?`).run(status, status,
-      Number(video.duration) || null, String(video.status?.errorReasonText || '').slice(0, 500), String(video.uid || ''));
+  mediaPublications.applyStream(req.body || {});
   return res.json({ ok: true });
 });
 function marketplaceProductSlug(value) {
