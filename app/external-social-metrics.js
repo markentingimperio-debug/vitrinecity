@@ -23,9 +23,11 @@ function metricCount(value) {
   return Math.max(0, Math.min(1e12, number));
 }
 
+export const safeYouTubeChannelId=value=>/^UC[A-Za-z0-9_-]{22}$/.test(String(value||'').trim())?String(value).trim():'';
+
 export function youtubeMetricsConfig(env = process.env) {
   const apiKey = String(env.YOUTUBE_API_KEY || '').trim();
-  const channelId = String(env.YOUTUBE_CHANNEL_ID || '').trim();
+  const channelId = safeYouTubeChannelId(env.YOUTUBE_CHANNEL_ID);
   const intervalHours = boundedInteger(env.SOCIAL_METRICS_SYNC_INTERVAL_HOURS, 24, 6, 168);
   return {
     apiKey,
@@ -346,7 +348,7 @@ export async function fetchYouTubeAggregatedInsights({
   measuredAt = new Date().toISOString()
 }) {
   const safeApiKey = String(apiKey || '').trim();
-  const safeChannelId = String(channelId || '').trim();
+  const safeChannelId = safeYouTubeChannelId(channelId);
   if (!safeApiKey || !safeChannelId) throw new Error('youtube_not_configured');
   const safeMaximum = boundedInteger(maxVideos, 200, 1, 500);
   const requestOptions = { apiKey: safeApiKey, fetchImpl, timeoutMs };
@@ -357,6 +359,7 @@ export async function fetchYouTubeAggregatedInsights({
     maxResults: 1
   }, requestOptions);
   const channel = channelData.items?.[0];
+  if(channel?.id!==safeChannelId)throw new Error('youtube_channel_mismatch');
   const uploadsPlaylist = channel?.contentDetails?.relatedPlaylists?.uploads;
   if (!uploadsPlaylist) throw new Error('youtube_channel_not_found');
 
@@ -385,10 +388,13 @@ export async function fetchYouTubeAggregatedInsights({
   for (let index = 0; index < videos.length; index += 50) {
     const ids = videos.slice(index, index + 50).map(video => video.videoId);
     const data = await youtubeRequest('videos', {
-      part: 'statistics',
+      part: 'snippet,statistics',
       id: ids.join(',')
     }, requestOptions);
-    for (const item of data.items || []) statistics.set(String(item.id), item.statistics || {});
+    for (const item of data.items || []) {
+      if(!ids.includes(String(item.id))||item.snippet?.channelId!==safeChannelId)throw new Error('youtube_video_channel_mismatch');
+      statistics.set(String(item.id), item.statistics || {});
+    }
   }
 
   return {
@@ -396,7 +402,7 @@ export async function fetchYouTubeAggregatedInsights({
     channelId: safeChannelId,
     channelTitle: String(channel?.snippet?.title || ''),
     measuredAt,
-    items: videos.map(video => {
+    items: videos.filter(video=>statistics.has(video.videoId)).map(video => {
       const stats = statistics.get(video.videoId) || {};
       return {
         contentKey: video.videoId,

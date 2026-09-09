@@ -428,7 +428,7 @@
         }
       }
     </style>
-  <script src="/openai-ads.js" defer></script></head>
+  <script src="/openai-ads.js" defer></script><style>.youtube-scope{margin:14px 0;padding:14px;border:1px solid currentColor;border-radius:12px;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:1.5}.youtube-scope p{margin:7px 0}.youtube-scope a{display:inline-flex;align-items:center;min-height:44px;max-width:100%;overflow-wrap:anywhere;word-break:break-word}.youtube-scope strong{font-size:14px}</style></head>
   <body>
     <div class="shell">
       <aside class="side">
@@ -486,6 +486,7 @@
             ><span>receita ÷ mídia medida</span>
           </article>
         </section>
+        <section id="youtubeScope" class="youtube-scope" aria-live="polite"></section>
         <section class="channels" id="channels">
           <article class="channel">Carregando canais…</article>
         </section>
@@ -593,11 +594,39 @@
         $("#report").innerHTML =
           `<div class="report-head"><div><span>PLANO #${p.id}</span><strong>${esc(p.objective)}</strong></div><span>${new Date(p.createdAt).toLocaleString("pt-BR")}</span></div><div class="report-body">${esc(p.analysis)}</div>`;
       }
+
+// BEGIN YOUTUBE SCOPE VIEW
+function renderYouTubeScope(container, scope) {
+  if (!container) return;
+  container.replaceChildren();
+  const add = (tag, text) => { const node = document.createElement(tag); node.textContent = text; container.append(node); return node; };
+  add('strong', 'Canal do YouTube usado nas métricas');
+  if (scope?.scoped !== true) { add('p', 'A identificação do canal está indisponível. Atualize o painel.'); return; }
+  const channelId = typeof scope.channelId === 'string' && /^UC[A-Za-z0-9_-]{22}$/.test(scope.channelId) ? scope.channelId : '';
+  if (!channelId) { add('p', 'Canal ainda não configurado.'); return; }
+  add('p', typeof scope.channelTitle === 'string' && scope.channelTitle.trim() ? scope.channelTitle.slice(0,240) : 'Nome disponível após a primeira sincronização.');
+  const link = add('a', channelId); link.href = 'https://www.youtube.com/channel/' + channelId; link.target = '_blank'; link.rel = 'noopener noreferrer';
+  link.setAttribute('aria-label', 'Abrir o canal do YouTube usado nestas métricas');
+  const run = scope.lastSync;
+  if (!run) add('p', 'Este canal ainda não foi sincronizado.');
+  else if (run.status === 'completed') {
+    const count = Number(run.importedCount);
+    const amount = Number.isFinite(count) && count >= 0 ? new Intl.NumberFormat('pt-BR').format(Math.floor(count)) + ' registros.' : 'Dados atualizados.';
+    add('p', 'Última sincronização concluída: ' + amount);
+  } else if (run.status === 'running') add('p', 'Sincronização deste canal em andamento.');
+  else add('p', 'A última sincronização deste canal não foi concluída. Confira a conexão antes de tentar novamente.');
+  const count = value => Number.isFinite(Number(value)) ? Math.max(0, Math.floor(Number(value))) : 0;
+  const excluded = count(scope.history?.unscopedContents) + count(scope.history?.otherChannelContents);
+  if (excluded) add('p', new Intl.NumberFormat('pt-BR').format(excluded) + ' conteúdos de conexões anteriores ou sem canal identificado ficam fora destes totais.');
+}
+// END YOUTUBE SCOPE VIEW
+
       async function load() {
         const [g, s] = await Promise.all([
           api("/api/admin/social/intelligence/growth"),
           api("/api/admin/social/intelligence/status"),
         ]);
+        renderYouTubeScope($("#youtubeScope"), g.youtubeScope);
         const rows = [g.internal, ...g.external],
           totals = rows.reduce(
             (a, r) => ({
@@ -635,7 +664,7 @@
                 Boolean(
                   connected.get(id)?.configured || connected.get(id)?.ready,
                 );
-            return `<article class="channel" style="--accent:${accents[id]}"><div class="channel-head"><h2>${channelNames[id]}</h2><span class="state ${ready ? "ok" : ""}">${ready ? "DADOS ATIVOS" : "CONECTAR"}</span></div><dl><div><dt>VISUALIZAÇÕES</dt><dd>${nf.format(r.views || 0)}</dd></div><div><dt>CLIQUES</dt><dd>${nf.format(r.clicks || 0)}</dd></div><div><dt>CONVERSÕES</dt><dd>${nf.format(r.conversions || 0)}</dd></div></dl></article>`;
+            return `<article class="channel" style="--accent:${accents[id]}"><div class="channel-head"><h2>${channelNames[id]}</h2><span class="state ${ready ? "ok" : ""}">${ready ? (id === "youtube" && g.youtubeScope?.lastSync?.status !== "completed" ? "AGUARDANDO COLETA" : "DADOS ATIVOS") : "CONECTAR"}</span></div><dl><div><dt>VISUALIZAÇÕES</dt><dd>${nf.format(r.views || 0)}</dd></div><div><dt>CLIQUES</dt><dd>${nf.format(r.clicks || 0)}</dd></div><div><dt>CONVERSÕES</dt><dd>${nf.format(r.conversions || 0)}</dd></div></dl></article>`;
           })
           .join("");
         const versions = s.algorithm?.versions || [];

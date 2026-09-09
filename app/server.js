@@ -14,6 +14,7 @@ import { createEcosystemCatalog } from './ecosystem-catalog.js';
 import { createEcosystemInternalSocial } from './ecosystem-internal-social.js';
 import { registerFacebookPhotoPublisher, createApprovedFacebookPosterReader } from './facebook-photo-publisher.js';
 import { createMetaPhotoApi } from './meta-photo-api.js';
+import { createExternalMetricsStore, createYouTubeMetricsSync, ACTIVE_EXTERNAL_METRICS_SQL } from './external-metrics-store.js';
 import { serviceReplyFromResponse, validateServiceReply } from './service-reply-format.js';
 import { createTikTokTokenRefresh } from './tiktok-token-refresh.js';
 import { createMetaCommentApi } from './meta-comment-api.js';
@@ -3843,7 +3844,7 @@ app.get('/api/admin/social/intelligence/credentials',requireAdmin,(_req,res)=>{
     {id:'youtube',name:'YouTube',configured:youtubeMetricsConfig(env).configured,fields:['API Key','Channel ID'],savedAt:saved.get('youtube')||null},
     {id:'tiktok',name:'TikTok',configured:tiktokMetricsConfig(env).configured,fields:['Content Access Token'],savedAt:saved.get('tiktok')||null},
     {id:'kwai',name:'Kwai',configured:kwaiMetricsConfig(env).configured,fields:['App ID','Access Token'],savedAt:saved.get('kwai')||null}
-  ]});
+  ],youtubeScope:externalMetricsStore.youtubeScope()});
 });
 
 app.put('/api/admin/social/intelligence/credentials/:provider',requireAdmin,sameOriginOnly,(req,res)=>{
@@ -4927,7 +4928,7 @@ async function viralTrendTopics() {
     }}
   } catch {}
   const internal=db.prepare(`SELECT category topic,ROUND(SUM(views+clicks*5+conversions*20),2) score
-    FROM social_external_insights GROUP BY category HAVING score>0 ORDER BY score DESC LIMIT 12`).all();
+    FROM social_external_insights WHERE ${ACTIVE_EXTERNAL_METRICS_SQL} GROUP BY category HAVING score>0 ORDER BY score DESC LIMIT 12`).all(externalMetricsStore.activeChannelId());
   for(const item of internal)collected.push({source:'vitrine_social',topic:String(item.topic||'').slice(0,160),category:'plants',score:Number(item.score||0)});
   const defaults=['adubação correta para plantas em vasos','sinais de falta de nutrientes nas folhas','como cuidar de plantas no calor','curiosidades sobre plantas brasileiras'];
   for(const topic of defaults)collected.push({source:'editorial',topic,category:topic.startsWith('curiosidades')?'curiosities':'plants',score:1});
@@ -8213,7 +8214,7 @@ app.get('/api/social/feed', (req, res) => {
   const externalPriors=new Map(db.prepare(`SELECT category,AVG(
     MIN(1.0,completions*1.0/MAX(1,views))*25 + MIN(1.0,shares*1.0/MAX(1,views))*20 +
     MIN(1.0,clicks*1.0/MAX(1,views))*15 + MIN(1.0,conversions*1.0/MAX(1,clicks))*30) score
-    FROM social_external_insights WHERE views>=10 GROUP BY category`).all().map(row=>[row.category,Number(row.score||0)]));
+    FROM social_external_insights WHERE views>=10 AND ${ACTIVE_EXTERNAL_METRICS_SQL} GROUP BY category`).all(externalMetricsStore.activeChannelId()).map(row=>[row.category,Number(row.score||0)]));
   const rows = db.prepare(`SELECT p.*,u.name author_name,COALESCE(sp.handle,'usuario') handle,
       COALESCE(sp.avatar_url,'') avatar_url,
       (SELECT COUNT(*) FROM social_likes l WHERE l.post_id=p.id) likes_count,
@@ -8772,23 +8773,10 @@ app.post('/api/social/posts/:id/intelligence', sameOriginOnly, (req,res) => {
   const viralVideoTimer=setInterval(()=>processViralVideoFactory().catch(()=>{}),60000);viralVideoTimer.unref();
 
 const EXTERNAL_METRIC_PROVIDERS = new Set(['instagram','facebook','tiktok','youtube','google','kwai']);
-const externalInsightUpsert=db.prepare(`INSERT INTO social_external_insights
-  (provider,content_key,category,views,watch_ms,completions,likes,comments,shares,clicks,conversions,measured_at)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(provider,content_key) DO UPDATE SET
-  category=excluded.category,views=excluded.views,watch_ms=excluded.watch_ms,completions=excluded.completions,
-  likes=excluded.likes,comments=excluded.comments,shares=excluded.shares,clicks=excluded.clicks,
-  conversions=excluded.conversions,measured_at=excluded.measured_at,updated_at=CURRENT_TIMESTAMP`);
+const externalMetricsStore=createExternalMetricsStore({db,getYouTubeChannelId:()=>youtubeMetricsConfig(socialMetricsEnv()).channelId,categories:SOCIAL_CATEGORIES});
 
 function persistExternalInsights(provider,items){
-  if(!EXTERNAL_METRIC_PROVIDERS.has(provider))throw new Error('unsupported_metrics_provider');
-  const number=value=>Math.max(0,Math.min(1e12,Math.round(Number(value)||0)));
-  let imported=0;
-  db.transaction(()=>{for(const item of items.slice(0,500)){const key=String(item?.contentKey||'').trim().slice(0,180);
-    if(!key)continue;const category=SOCIAL_CATEGORIES.has(String(item?.category||''))?String(item.category):'geral';
-    const measuredAt=/^\d{4}-\d{2}-\d{2}/.test(String(item?.measuredAt||''))?String(item.measuredAt).slice(0,30):new Date().toISOString();
-    externalInsightUpsert.run(provider,key,category,number(item.views),number(item.watchMs),number(item.completions),
-      number(item.likes),number(item.comments),number(item.shares),number(item.clicks),number(item.conversions),measuredAt);imported++;}})();
-  return imported;
+  return externalMetricsStore.persist(provider,items);
 }
 
 app.post('/api/admin/social/intelligence/import', requireAdmin, sameOriginOnly, (req,res) => {
@@ -8799,7 +8787,6 @@ app.post('/api/admin/social/intelligence/import', requireAdmin, sameOriginOnly, 
   return res.json({ok:true,provider,imported:persistExternalInsights(provider,items)});
 });
 
-let youtubeMetricsSyncPromise=null;
 let metaMetricsSyncPromise=null;
 let tiktokMetricsSyncPromise=null;
 let googleMetricsSyncPromise=null;
@@ -8833,28 +8820,7 @@ async function syncOfficialMetaMetrics(triggerType='admin'){
   })();
   try{return await metaMetricsSyncPromise;}finally{metaMetricsSyncPromise=null;}
 }
-async function syncOfficialYouTubeMetrics(triggerType='admin'){
-  if(youtubeMetricsSyncPromise)return youtubeMetricsSyncPromise;
-  youtubeMetricsSyncPromise=(async()=>{
-    const runId=db.prepare(`INSERT INTO social_external_sync_runs(provider,trigger_type,status)
-      VALUES ('youtube',?,'running')`).run(String(triggerType).slice(0,30)).lastInsertRowid;
-    try{
-      const config=youtubeMetricsConfig(socialMetricsEnv());
-      if(!config.configured)throw new Error('youtube_not_configured');
-      const result=await fetchYouTubeAggregatedInsights(config);
-      const imported=persistExternalInsights('youtube',result.items);
-      db.prepare(`UPDATE social_external_sync_runs SET status='completed',imported_count=?,
-        finished_at=CURRENT_TIMESTAMP WHERE id=?`).run(imported,runId);
-      return {ok:true,provider:'youtube',channelTitle:result.channelTitle,imported,measuredAt:result.measuredAt};
-    }catch(error){
-      const errorCode=String(error?.message||'youtube_sync_failed').slice(0,80);
-      db.prepare(`UPDATE social_external_sync_runs SET status='failed',error_code=?,
-        finished_at=CURRENT_TIMESTAMP WHERE id=?`).run(errorCode,runId);
-      throw error;
-    }
-  })();
-  try{return await youtubeMetricsSyncPromise;}finally{youtubeMetricsSyncPromise=null;}
-}
+const syncOfficialYouTubeMetrics=createYouTubeMetricsSync({db,store:externalMetricsStore,getConfig:()=>youtubeMetricsConfig(socialMetricsEnv()),fetchInsights:fetchYouTubeAggregatedInsights});
 
 async function syncOfficialTikTokMetrics(triggerType='admin'){
   if(tiktokMetricsSyncPromise)return tiktokMetricsSyncPromise;
@@ -9021,7 +8987,7 @@ app.get('/api/admin/social/intelligence/google/callback',requireAdmin,async(req,
 
 app.get('/api/admin/social/intelligence/providers', requireAdmin, (req,res) => {
   const runs=db.prepare(`SELECT id,provider,trigger_type triggerType,status,imported_count importedCount,
-    error_code errorCode,started_at startedAt,finished_at finishedAt
+    error_code errorCode,started_at startedAt,finished_at finishedAt,NULLIF(channel_id,'') channelId,NULLIF(channel_title,'') channelTitle
     FROM social_external_sync_runs ORDER BY id DESC LIMIT 30`).all();
   const meta=db.prepare(`SELECT COUNT(*) pages,SUM(CASE WHEN instagram_id IS NOT NULL THEN 1 ELSE 0 END) instagram
     FROM social_accounts WHERE status='connected'`).get();
@@ -9029,7 +8995,8 @@ app.get('/api/admin/social/intelligence/providers', requireAdmin, (req,res) => {
   const providers=externalMetricsProviderStatus(socialMetricsEnv(),{facebook:Number(meta.pages)>0,instagram:Number(meta.instagram)>0})
     .map(provider=>provider.id==='google'?{...provider,configured:provider.configured||googleConnected,
       oauthReady:googleSearchOAuthReady(),connectUrl:'/api/admin/social/intelligence/google/connect'}:provider);
-  return res.json({providers,runs});
+  const youtubeScope=externalMetricsStore.youtubeScope();
+  return res.json({providers:providers.map(provider=>provider.id==='youtube'?{...provider,channelId:youtubeScope.channelId,channelTitle:youtubeScope.channelTitle}:provider),runs,youtubeScope});
 });
 
 app.post('/api/admin/social/intelligence/sync/meta', requireAdmin, sameOriginOnly, async (req,res) => {
@@ -9117,7 +9084,7 @@ app.get('/api/admin/social/intelligence/status', requireAdmin, (_req,res) => {
     COALESCE(SUM(replays),0) replays,COALESCE(SUM(profile_clicks),0) profileClicks,
     COALESCE(SUM(cta_clicks),0) commercialClicks FROM social_engagement_events`).get();
   const externalTotals=db.prepare(`SELECT COALESCE(SUM(clicks),0) clicks,COALESCE(SUM(conversions),0) conversions
-    FROM social_external_insights`).get();
+    FROM social_external_insights WHERE ${ACTIVE_EXTERNAL_METRICS_SQL}`).get(externalMetricsStore.activeChannelId());
   const impressions=Math.max(1,Number(internal.impressions||0));
   const overview={...internal,
     avgWatchSeconds:Number((Number(internal.watchMs||0)/impressions/1000).toFixed(2)),
@@ -9150,7 +9117,7 @@ app.get('/api/admin/social/intelligence/status', requireAdmin, (_req,res) => {
     })).sort((a,b)=>b.growthRate-a.growthRate).slice(0,10);
   const providers=db.prepare(`SELECT provider,COUNT(*) contents,COALESCE(SUM(views),0) views,
     COALESCE(SUM(clicks),0) clicks,COALESCE(SUM(conversions),0) conversions,
-    MAX(updated_at) updatedAt FROM social_external_insights GROUP BY provider ORDER BY provider`).all();
+    MAX(updated_at) updatedAt FROM social_external_insights WHERE ${ACTIVE_EXTERNAL_METRICS_SQL} GROUP BY provider ORDER BY provider`).all(externalMetricsStore.activeChannelId());
   const newCreators=db.prepare(`SELECT u.name,p.handle,p.city,p.created_at createdAt,
     COUNT(DISTINCT post.id) contents,COALESCE(SUM(e.impressions),0) impressions,
     (SELECT COUNT(*) FROM social_follows f WHERE f.followed_id=p.user_id) followers
@@ -9190,7 +9157,7 @@ app.get('/api/admin/social/intelligence/status', requireAdmin, (_req,res) => {
       clickRate:Number(row.impressions?Number(row.clicks)/Number(row.impressions):0),
       conversionRate:Number(row.clicks?Number(row.conversions)/Number(row.clicks):0)}));
   return res.json({engine:activeAlgorithm.version,generatedAt:new Date().toISOString(),
-    internal,overview,daily,categories,growing,providers,newCreators,cities,alerts,
+    internal,overview,daily,categories,growing,providers,newCreators,cities,alerts,youtubeScope:externalMetricsStore.youtubeScope(),
     algorithm:{currentVersion:activeAlgorithm.version,description:activeAlgorithm.description,config:activeAlgorithm.config,limits:SOCIAL_ALGORITHM_LIMITS,versions}});
 });
 
@@ -9200,7 +9167,7 @@ function socialGrowthSnapshot(){
     COALESCE(SUM(skips),0) skips FROM social_engagement_events`).get();
   const external=db.prepare(`SELECT provider,COUNT(*) contents,COALESCE(SUM(views),0) views,
     COALESCE(SUM(clicks),0) clicks,COALESCE(SUM(conversions),0) conversions,MAX(updated_at) updatedAt
-    FROM social_external_insights GROUP BY provider ORDER BY provider`).all();
+    FROM social_external_insights WHERE ${ACTIVE_EXTERNAL_METRICS_SQL} GROUP BY provider ORDER BY provider`).all(externalMetricsStore.activeChannelId());
   const categories=db.prepare(`SELECT p.category,COALESCE(SUM(e.impressions),0) views,
     COALESCE(SUM(e.completions),0) completions,COALESCE(SUM(e.cta_clicks),0) clicks
     FROM social_posts p LEFT JOIN social_engagement_events e ON e.post_id=p.id
@@ -9215,7 +9182,7 @@ function socialGrowthSnapshot(){
     facebook:Boolean(db.prepare("SELECT 1 FROM social_accounts WHERE status='connected' LIMIT 1").get()),
     instagram:Boolean(db.prepare("SELECT 1 FROM social_accounts WHERE status='connected' AND instagram_id IS NOT NULL LIMIT 1").get())
   });
-  return {generatedAt:new Date().toISOString(),internal:{provider:'vitrinecity',...internal},external,categories,campaigns,connected};
+  return {generatedAt:new Date().toISOString(),internal:{provider:'vitrinecity',...internal},external,categories,campaigns,connected,youtubeScope:externalMetricsStore.youtubeScope()};
 }
 
 app.get('/api/admin/social/intelligence/growth',requireAdmin,(_req,res)=>{
