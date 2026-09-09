@@ -6,6 +6,8 @@ import {setupCampaignPreferences} from './campaign-preferences.js';
 import { integrationObserver, openRouterOperation } from './integration-health.js';
 import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
+import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.js';
+import { createWhatsAppScheduleProcessor } from './whatsapp-schedule-worker.js';
 import {ADS_TERMS_VERSION,ADS_VALIDITY_DAYS,creditExpiryForOrder} from './credits-policy.js';
 import {setupCityChat} from './city-chat.js';
 import {setupCityRewards} from './city-rewards.js';
@@ -53,6 +55,7 @@ import { normalizeStoreOperations, deliveryEta, canTransitionFoodOrder } from '.
 import { eligibleCouriers } from './courier-dispatch.js';
 import { STORE_AD_PLANS, storeAdQuote, rankSponsored } from './store-ads.js';
 import { sanitizeReviewComment, bayesianRating, reputationScore, basicReviewFraud } from './reputation.js';
+import { setupReviewImporter, renderImportedReviewSource } from './review-importer.js';
 import { checkoutMelhorEnvioShipment,createMelhorEnvioShipment,generateMelhorEnvioShipment,
   melhorEnvioShipmentPayload,printMelhorEnvioShipment } from './melhor-envio-fulfillment.js';
 import {
@@ -2055,6 +2058,8 @@ ADMIN_HTML_PATHS.add('/admin-jarvis-public.html');
 ADMIN_HTML_PATHS.add('/admin-jarvis');
 ADMIN_HTML_PATHS.add('/admin-captacao.html');
 ADMIN_HTML_PATHS.add('/admin-live');
+ADMIN_HTML_PATHS.add('/admin-avaliacoes');
+ADMIN_HTML_PATHS.add('/admin-avaliacoes.html');
 
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
@@ -2622,6 +2627,7 @@ setupCourierAccount({app,db,requireCourier,requireAdmin,sameOriginOnly,hashPassw
 setupCityMembership(app,{db,currentUser,requireUser,sameOriginOnly,isAdministrativeUser,grantGameReward:cityRewards.grantGame});
 const campaignPreferences=setupCampaignPreferences(app,{db,requireUser,sameOriginOnly,recordConsent});
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
+setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, publicDir: path.join(dir, 'public') });
 const cryptoObservability = createCryptoObservability(db);
 cryptoObservability.seedLatest();
 mountCryptoObservability({ app, requireAdmin, observability: cryptoObservability });
@@ -4067,12 +4073,14 @@ app.post('/api/admin/whatsapp-qr/campaigns/sitemap',requireAdmin,sameOriginOnly,
 });
 app.get('/api/admin/whatsapp-qr/campaigns',requireAdmin,(_req,res)=>res.json({campaigns:db.prepare(`SELECT c.id,c.name,c.days,c.interval_hours intervalHours,c.groups_count groupsCount,c.schedules_count schedulesCount,c.status,c.created_at createdAt,SUM(CASE WHEN s.status='pending' THEN 1 ELSE 0 END) pending,SUM(CASE WHEN s.status='sent' THEN 1 ELSE 0 END) sent,SUM(CASE WHEN s.status='failed' THEN 1 ELSE 0 END) failed,SUM(CASE WHEN s.status='cancelled' THEN 1 ELSE 0 END) cancelled FROM whatsapp_qr_campaigns c LEFT JOIN whatsapp_qr_schedules s ON s.campaign_id=c.id GROUP BY c.id ORDER BY c.created_at DESC LIMIT 20`).all()}));
 app.delete('/api/admin/whatsapp-qr/schedules/:id',requireAdmin,sameOriginOnly,(req,res)=>{const result=db.prepare(`UPDATE whatsapp_qr_schedules SET status='cancelled' WHERE id=? AND status='pending'`).run(String(req.params.id||''));if(!result.changes)return res.status(409).json({error:'Somente agendamentos pendentes podem ser cancelados.'});return res.json({ok:true})});
-let whatsappScheduleRunning=false;
-async function processWhatsAppQrSchedules(){
-  if(whatsappScheduleRunning)return;whatsappScheduleRunning=true;
-  try{const due=db.prepare(`SELECT * FROM whatsapp_qr_schedules WHERE status='pending' AND scheduled_at<=? ORDER BY scheduled_at LIMIT 3`).all(new Date().toISOString());for(const item of due){const claimed=db.prepare(`UPDATE whatsapp_qr_schedules SET status='processing',error=NULL WHERE id=? AND status='pending'`).run(item.id);if(!claimed.changes)continue;try{const body=`${item.message}\n\n${item.sitemap_url}`.slice(0,4000),payload=await whatsappQrRequest('/chat/send/text',{method:'POST',body:JSON.stringify({Phone:item.group_jid,Body:body,Id:randomUUID().replaceAll('-','').toUpperCase()})}),data=whatsappQrData(payload);db.prepare(`UPDATE whatsapp_qr_schedules SET status='sent',provider_message_id=?,sent_at=CURRENT_TIMESTAMP WHERE id=?`).run(String(data.Id||data.id||'').slice(0,160),item.id)}catch(error){db.prepare(`UPDATE whatsapp_qr_schedules SET status='failed',error=? WHERE id=?`).run(String(error?.message||'send_failed').slice(0,300),item.id)}}}finally{whatsappScheduleRunning=false}
-}
-
+const whatsappProductCampaigns = registerWhatsAppProductCampaigns({
+  app, db, requireAdmin, sameOriginOnly, siteUrl: SITE_URL, dataDir,
+  whatsappQrRequest, whatsappQrData
+});
+const processWhatsAppQrSchedules = createWhatsAppScheduleProcessor({
+  db, prepareScheduledMessage: item=>whatsappProductCampaigns.prepareScheduledMessage(item),
+  whatsappQrRequest, whatsappQrData
+});
 function enqueueOmnichannelJob(channel,externalId,destination,sourceText,accountId=null,sourceKind='',mediaId=''){
   if(!externalId||!destination||!sourceText)return;
   db.prepare(`INSERT OR IGNORE INTO omnichannel_automation_jobs(id,channel,external_id,destination,source_text,account_id,source_kind,media_id) VALUES (?,?,?,?,?,?,?,?)`).run(randomUUID(),channel,String(externalId).slice(0,200),String(destination).slice(0,200),String(sourceText).slice(0,4000),accountId,String(sourceKind).slice(0,40),String(mediaId).slice(0,100));
@@ -9607,7 +9615,11 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   if (!product) return publicErrorPage(res, 404);
   const isDigital = product.product_type === 'digital';
   const slug = marketplaceProductSlug(product.name);
-  if (req.params.slug !== slug) return res.redirect(301, `/produto/${product.id}/${slug}`);
+  const requestedReviewPage = /^\d{1,8}$/.test(String(req.query.avaliacoes || '')) ? Number(req.query.avaliacoes) : 1;
+  const reviewPageCount = Math.max(1, Math.ceil(product.rating_count / 12));
+  const reviewPage = Math.min(reviewPageCount, Math.max(1, requestedReviewPage));
+  const reviewPath = `/produto/${product.id}/${slug}`;
+  if (req.params.slug !== slug) return res.redirect(301, `${reviewPath}${reviewPage > 1 ? `?avaliacoes=${reviewPage}#avaliacoes` : ''}`);
   const origin = new URL(SITE_URL).origin;
   const canonical = `${origin}/produto/${product.id}/${slug}`;
   const productImagePath = product.image_url || PRODUCT_FALLBACK_PATH;
@@ -9615,9 +9627,9 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   const title = `${product.name} — ${product.store_name} | Vitriny Loja`;
   const description = String(product.description || `Compre ${product.name} na Vitriny Loja.`).slice(0, 155);
   const storePath = publicStorePath({ order_reference: product.store_reference, business_name: product.store_name });
-  const reviews=db.prepare(`SELECT r.rating,r.title,r.body,r.verified_purchase,r.created_at,COALESCE(u.name,'Cliente Vitriny') author_name
-    FROM marketplace_product_reviews r LEFT JOIN users u ON u.id=r.user_id
-    WHERE r.product_id=? AND r.status='published' ORDER BY r.created_at DESC,r.id DESC LIMIT 12`).all(product.id);
+  const reviews=db.prepare(`SELECT r.rating,r.title,r.body,r.verified_purchase,r.created_at,COALESCE(rs.author_name,u.name,'Cliente Vitriny') author_name,rs.source,rs.source_url,rs.variation
+    FROM marketplace_product_reviews r LEFT JOIN users u ON u.id=r.user_id LEFT JOIN marketplace_review_sources rs ON rs.review_id=r.id
+    WHERE r.product_id=? AND r.status='published' ORDER BY r.created_at DESC,r.id DESC LIMIT 12 OFFSET ?`).all(product.id, (reviewPage - 1) * 12);
   const productSchema = {
     '@context': 'https://schema.org', '@type': 'Product', name: product.name,
     description, sku: product.sku || String(product.id), image: [image],
@@ -9650,17 +9662,17 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     <meta property="og:image" content="${escapeHtml(image)}">
     <script type="application/ld+json">${schema}</script>
     <script type="application/ld+json">${breadcrumbSchema}</script>
-    <style>:root{--blue:#1768e6;--yellow:#ffc628;--line:#263b5b}*{box-sizing:border-box}body{margin:0;background:#07101d;color:#f7faff;font-family:Inter,Arial,sans-serif}a{text-decoration:none;color:inherit}header{padding:17px max(18px,5vw);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.brand{font-size:24px;font-weight:950}.brand span{color:var(--yellow)}.back{padding:10px 13px;background:#15243c;border-radius:10px;font-weight:850}main{width:min(1060px,calc(100% - 32px));margin:42px auto;display:grid;grid-template-columns:minmax(280px,1fr) minmax(300px,1fr);gap:38px;align-items:start}.photo{width:100%;aspect-ratio:1;border-radius:24px;object-fit:cover;background:#14213a;border:1px solid var(--line)}.badge{color:var(--yellow);font-weight:900}.seller{color:#aebed3}h1{font-size:clamp(31px,5vw,58px);line-height:1.04;margin:12px 0}.description{color:#cad5e5;line-height:1.6}.price{font-size:35px;font-weight:950;margin:22px 0 5px}.stock{color:#9fe0b1}.purchase-details{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:20px 0}.detail{padding:12px;border:1px solid var(--line);border-radius:12px;background:#0d192b}.detail small{display:block;color:#91a7c4;margin-bottom:5px}.rating{color:#ffd454;font-weight:900;margin-top:12px}.actions{display:flex;gap:10px;margin-top:24px}.button,button{border:0;border-radius:12px;padding:14px 17px;background:var(--blue);color:#fff;font-weight:950;cursor:pointer}.alt{background:#17263e}.status{color:#ffd76c;margin-top:12px}.reviews{grid-column:1/-1;border-top:1px solid var(--line);padding-top:28px}.reviews h2{font-size:28px}.review-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.review{border:1px solid var(--line);background:#0d192b;border-radius:14px;padding:15px}.review p{color:#cad5e5;line-height:1.5}.verified{color:#8ee5a8;font-size:12px}@media(max-width:720px){main{grid-template-columns:1fr;margin-top:22px}.actions,.purchase-details,.review-grid{display:grid;grid-template-columns:1fr}.reviews{grid-column:1}}</style>
+    <style>:root{--blue:#1768e6;--yellow:#ffc628;--line:#263b5b}*{box-sizing:border-box}body{margin:0;background:#07101d;color:#f7faff;font-family:Inter,Arial,sans-serif}a{text-decoration:none;color:inherit}header{padding:17px max(18px,5vw);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.brand{font-size:24px;font-weight:950}.brand span{color:var(--yellow)}.back{padding:10px 13px;background:#15243c;border-radius:10px;font-weight:850}main{width:min(1060px,calc(100% - 32px));margin:42px auto;display:grid;grid-template-columns:minmax(280px,1fr) minmax(300px,1fr);gap:38px;align-items:start}.photo{width:100%;aspect-ratio:1;border-radius:24px;object-fit:cover;background:#14213a;border:1px solid var(--line)}.badge{color:var(--yellow);font-weight:900}.seller{color:#aebed3}h1{font-size:clamp(31px,5vw,58px);line-height:1.04;margin:12px 0}.description{color:#cad5e5;line-height:1.6}.price{font-size:35px;font-weight:950;margin:22px 0 5px}.stock{color:#9fe0b1}.purchase-details{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:20px 0}.detail{padding:12px;border:1px solid var(--line);border-radius:12px;background:#0d192b}.detail small{display:block;color:#91a7c4;margin-bottom:5px}.rating{color:#ffd454;font-weight:900;margin-top:12px}.actions{display:flex;gap:10px;margin-top:24px}.button,button{border:0;border-radius:12px;padding:14px 17px;background:var(--blue);color:#fff;font-weight:950;cursor:pointer}.alt{background:#17263e}.status{color:#ffd76c;margin-top:12px}.reviews{grid-column:1/-1;border-top:1px solid var(--line);padding-top:28px}.reviews h2{font-size:28px}.review-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.review{border:1px solid var(--line);background:#0d192b;border-radius:14px;padding:15px}.review p{color:#cad5e5;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}.review-source{font-size:12px;line-height:1.6;color:#b9d3ff;margin-top:10px}.review-source a{text-decoration:underline}.review-pagination{display:flex;gap:16px;align-items:center;justify-content:center;flex-wrap:wrap;margin-top:24px}.review-pagination span{color:#cad5e5;font-size:14px}.verified{color:#8ee5a8;font-size:12px}@media(max-width:720px){main{grid-template-columns:1fr;margin-top:22px}.actions,.purchase-details,.review-grid{display:grid;grid-template-columns:1fr}.reviews{grid-column:1}}</style>
     <script src="/analytics.js" defer></script></head><body>
     <header><a class="brand" href="/loja">Vitriny <span>Loja</span></a><a class="back" href="/loja">← Voltar à loja</a></header>
     <main><img class="photo" src="${escapeHtml(productImagePath)}" onerror="this.onerror=null;this.src='/assets/store-seed/utilidades.svg'" alt="${escapeHtml(product.name)}">
     <section><div class="badge">${escapeHtml(product.category || 'Produto')}</div><a class="seller" href="${escapeHtml(storePath)}">Vendido por ${escapeHtml(product.store_name)}</a>
     <h1>${escapeHtml(product.name)}</h1><p class="description">${escapeHtml(description)}</p>
     <div class="price">${(product.price_cents / 100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</div>
-    <div class="stock">${isDigital?'Acesso digital disponível':`${product.stock_quantity} unidades disponíveis`}</div><div class="rating">${product.rating_count?`★ ${Number(product.rating_average).toFixed(1)} · ${product.rating_count} avaliação${product.rating_count===1?'':'ões'}`:'☆ Ainda sem avaliações'}</div>
+    <div class="stock">${isDigital?'Acesso digital disponível':`${product.stock_quantity} unidades disponíveis`}</div><div class="rating">${product.rating_count?`★ ${Number(product.rating_average).toFixed(1)} · ${product.rating_count} ${product.rating_count===1?'avaliação':'avaliações'}`:'☆ Ainda sem avaliações'}</div>
     <div class="purchase-details">${isDigital?'<div class="detail"><small>Formato</small><b>Acesso digital individual</b></div><div class="detail"><small>Entrega</small><b>Liberada na área do aluno após o pagamento</b></div>':`<div class="detail"><small>Variação</small><b>${escapeHtml(product.variation_label||'Única')}</b></div><div class="detail"><small>Prazo estimado</small><b>${product.delivery_min_days} a ${product.delivery_max_days} dias úteis</b></div><div class="detail"><small>Frete</small><b>Calculado no checkout</b></div><div class="detail"><small>Devolução</small><b>Até ${product.return_days} dias após o recebimento</b></div>`}</div>
     <div class="actions">${product.product_url?`<a class="button" href="${escapeHtml(product.product_url)}"${isDigital?'':` target="_blank" rel="noopener sponsored"`}>${isDigital?'Comprar acesso':'Comprar'}</a>`:'<button id="add">Adicionar ao carrinho</button>'}<a class="button alt" href="${escapeHtml(storePath)}">Ver a vitrine da loja</a></div><div class="status" id="status"></div></section>
-    <section class="reviews"><h2>Avaliações de clientes</h2>${reviews.length?`<div class="review-grid">${reviews.map(review=>`<article class="review"><div class="rating">${'★'.repeat(review.rating)}${'☆'.repeat(5-review.rating)}</div><h3>${escapeHtml(review.title||'Avaliação do produto')}</h3><p>${escapeHtml(review.body)}</p><small>${escapeHtml(review.author_name)} · ${new Date(`${review.created_at}Z`).toLocaleDateString('pt-BR')}</small>${review.verified_purchase?'<div class="verified">✓ Compra verificada</div>':''}</article>`).join('')}</div>`:'<p class="description">Este produto ainda não recebeu avaliações. As avaliações publicadas aparecerão aqui.</p>'}</section>
+    <section class="reviews" id="avaliacoes"><h2>Avaliações de clientes</h2>${reviews.length?`<div class="review-grid">${reviews.map(review=>`<article class="review"><div class="rating">${'★'.repeat(review.rating)}${'☆'.repeat(5-review.rating)}</div><h3>${escapeHtml(review.title||'Avaliação do produto')}</h3><p>${escapeHtml(review.body)}</p><small>${escapeHtml(review.author_name)} · ${new Date(`${review.created_at.replace(' ', 'T')}Z`).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</small>${renderImportedReviewSource(review,escapeHtml)}${review.verified_purchase&&!review.source?'<div class="verified">✓ Compra verificada</div>':''}</article>`).join('')}</div>`:'<p class="description">Este produto ainda não recebeu avaliações. As avaliações publicadas aparecerão aqui.</p>'}${reviewPageCount > 1 ? `<nav class="review-pagination" aria-label="Páginas de avaliações">${reviewPage > 1 ? `<a class="button alt" rel="prev" href="${reviewPath}?avaliacoes=${reviewPage - 1}#avaliacoes">← Anteriores</a>` : ''}<span>Página ${reviewPage} de ${reviewPageCount} · ${product.rating_count} avaliações</span>${reviewPage < reviewPageCount ? `<a class="button alt" rel="next" href="${reviewPath}?avaliacoes=${reviewPage + 1}#avaliacoes">Próximas →</a>` : ''}</nav>` : ''}</section>
     </main>
     <script>const product=${publicProduct},add=document.getElementById('add');if(add)add.onclick=()=>{let cart=[];try{cart=JSON.parse(localStorage.getItem('vc_shop_cart')||'[]')}catch{}if(cart.length&&cart[0].store_reference!==product.store_reference){document.getElementById('status').textContent='Finalize primeiro os produtos da outra loja.';return}const old=cart.find(item=>item.id===product.id);if(old)old.quantity=Math.min(product.stock_quantity,old.quantity+1);else cart.push({...product,quantity:1});localStorage.setItem('vc_shop_cart',JSON.stringify(cart));location.href='/loja?carrinho=1'};</script>
     </body></html>`);

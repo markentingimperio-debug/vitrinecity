@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Importar avaliações — VitrineCity</title>
+<link rel="stylesheet" href="/admin-avaliacoes.css">
+<script src="/admin-avaliacoes.js" defer></script></head>
+<body>
+<header><a href="/admin">▰ VitrineCity <span>Administração</span></a><nav aria-label="Administração"><a href="/admin-lojas.html">Lojas</a><a href="/admin">Voltar ao painel →</a></nav></header>
+<main>
+<div class="intro"><div><p class="eyebrow">AVALIAÇÕES DE PRODUTOS</p><h1>Traga a experiência<br>dos seus clientes.</h1><p class="lead">Importe avaliações reais da Shopee e associe cada anúncio ao produto correspondente na VitrineCity.</p></div><div class="origin"><span class="star">★</span><strong>Shopee → VitrineCity</strong><span>Origem, nota e data preservadas</span></div></div>
+<div class="steps" aria-label="Etapas"><span><b>1</b> Escolha os produtos</span><span><b>2</b> Confira a prévia</span><span><b>3</b> Publique as avaliações</span></div>
+<form id="importForm" class="panel">
+<div class="section-title"><h2>Preparar importação</h2><button type="button" id="template" class="secondary">Baixar modelo CSV ↓</button></div>
+<div class="fields"><label>Produto na VitrineCity<select id="productId"><option value="">Vários produtos — informados no arquivo</option></select></label><label>Link do anúncio na Shopee<input id="sourceUrl" type="url" placeholder="https://shopee.com.br/product/loja/produto/" maxlength="1000"><small>Para vários produtos, informe source_url em cada linha do arquivo.</small></label></div>
+<label class="upload">Arquivo de avaliações<input id="file" type="file" accept=".csv,.json,.tsv,text/csv,application/json,text/tab-separated-values"><small>CSV, TSV ou JSON · até 2 MB e 2.000 avaliações por lote. Divida arquivos maiores em lotes.</small></label>
+<details><summary>Ou cole os dados CSV / JSON</summary><label class="sr-only" for="content">Dados das avaliações</label><textarea id="content" rows="8" spellcheck="false" placeholder="Cole o conteúdo do arquivo aqui"></textarea></details>
+<details class="guide"><summary>Como preparar os dados</summary><p>Use os nomes e comentários públicos originais. Campos obrigatórios: <code>author</code> (nome público), <code>rating</code> (nota de 1 a 5), <code>date</code> (AAAA-MM-DD). O campo <code>body</code> recebe o comentário; pode ficar vazio para uma avaliação só com estrelas.</p><p>Opcionais: <code>review_id</code>, <code>title</code> e <code>variation</code>. Para vários produtos, inclua <code>product_id</code> e <code>source_url</code> em cada linha. CSV aceita vírgula ou ponto e vírgula. JSON aceita uma lista de avaliações ou grupos em <code>products</code>, cada um com <code>product_id</code>, <code>source_url</code> e <code>reviews</code>.</p><p>O link identifica a origem. Esta importação usa os dados do arquivo; ela não extrai o histórico automaticamente pelo link. A nota e os comentários são publicados com o texto “Avaliação”, que permite consultar o anúncio original. A origem também fica registrada no painel. Fotos e vídeos não fazem parte deste formato.</p></details>
+<div class="form-footer"><span>As avaliações só aparecem na loja após a confirmação da prévia.</span><button id="previewButton" type="submit">Conferir prévia →</button></div>
+</form>
+<p id="message" role="status" aria-live="polite"></p>
+<section id="preview" class="panel" hidden aria-labelledby="previewTitle">
+<div class="section-title"><h2 id="previewTitle" tabindex="-1">Confira antes de publicar</h2><span id="summary" class="counts"></span></div>
+<div id="errors" role="alert"></div><div id="groups" class="groups"></div>
+<div class="table-scroll"><table><caption class="sr-only">Avaliações da prévia</caption><thead><tr><th>Produto</th><th>Cliente e data</th><th>Nota</th><th>Comentário</th><th>Situação</th></tr></thead><tbody id="rows"></tbody></table></div>
+<div class="pagination"><button type="button" id="previous" class="secondary">← Anterior</button><span id="pageLabel"></span><button type="button" id="next" class="secondary">Próxima →</button></div>
+<label class="confirmation"><input id="confirmed" type="checkbox">Conferi que os anúncios correspondem aos produtos escolhidos e que os dados são avaliações reais da Shopee.</label>
+<div class="form-footer"><span>Duplicatas serão ignoradas. A origem ficará registrada na importação.</span><button id="publish" type="button" disabled>Importar e publicar</button></div>
+</section>
+<section class="panel" aria-labelledby="historyTitle"><div class="section-title"><div><p class="eyebrow">CONTROLE DA IMPORTAÇÃO</p><h2 id="historyTitle">Histórico de lotes</h2></div><button id="refresh" type="button" class="secondary">Atualizar</button></div><p class="muted">Você pode ocultar ou restaurar todas as avaliações de um lote. O histórico é preservado.</p><div id="history"><p>Carregando…</p></div></section>
+</main><footer>VitrineCity · Avaliações com origem identificada</footer>
+</body></html>
