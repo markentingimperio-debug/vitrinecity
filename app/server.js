@@ -4,6 +4,7 @@ import { setupCatalogProductImages } from './catalog-product-images.js';
 import {setupCityMembership} from './city-membership.js';
 import {setupCampaignPreferences} from './campaign-preferences.js';
 import { integrationObserver, openRouterOperation } from './integration-health.js';
+import {videoReceipt,videoPollingUrl,videoPollState,videoFailureMessage,videoRetryableFailure,videoProjectUnchanged,downloadVideo} from './video-provider-receipts.js';
 import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.js';
@@ -5000,17 +5001,21 @@ async function processViralVideoFactory(){
     const ready=db.prepare("SELECT q.id FROM admin_viral_quizzes q JOIN viral_quiz_scenes s ON s.quiz_id=q.id WHERE q.status='in_production' AND s.status='downloaded' GROUP BY q.id HAVING count(*)=9 LIMIT 1").get();
     if(ready)await finishViralQuizVideo(ready.id);
     if(!ecosystemCanRun())return;
-    const pending=db.prepare(`SELECT s.* FROM viral_quiz_scenes s JOIN admin_viral_quizzes q ON q.id=s.quiz_id WHERE s.status='pending' AND q.status='in_production' ORDER BY s.quiz_id,s.scene_number LIMIT 1`).get();
-    if(pending){const claimed=db.prepare("UPDATE viral_quiz_scenes SET status='submitting',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").run(pending.id);if(claimed.changes)try{
+    const pending=db.prepare(`SELECT s.* FROM viral_quiz_scenes s JOIN admin_viral_quizzes q ON q.id=s.quiz_id WHERE s.status='pending' AND s.remote_job_id='' AND s.polling_url='' AND q.status='in_production' ORDER BY s.quiz_id,s.scene_number LIMIT 1`).get();
+    if(pending){const claimed=db.prepare("UPDATE viral_quiz_scenes SET status='submitting',attempt_count=attempt_count+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND remote_job_id='' AND polling_url=''").run(pending.id);if(claimed.changes)try{
       const models=[...new Set([OPENROUTER_VIDEO_MODEL,...MEDIA_VIDEO_MODELS])],model=models[Math.min(Number(pending.attempt_count||0),models.length-1)];
-      const result=await openRouterRequest('https://openrouter.ai/api/v1/videos',{method:'POST',body:JSON.stringify({model,prompt:pending.prompt,duration:pending.duration_seconds,aspect_ratio:'9:16',resolution:'720p',generate_audio:true})},60000);
-      const jobId=String(result.data?.id||''),pollingUrl=String(result.data?.polling_url||'');if(!jobId||!/^https:\/\/openrouter\.ai\//i.test(pollingUrl))throw new Error('O provedor não devolveu uma tarefa de vídeo válida.');
-      db.prepare("UPDATE viral_quiz_scenes SET status='generating',remote_job_id=?,polling_url=?,model=?,attempt_count=attempt_count+1,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(jobId,pollingUrl,model,pending.id);
-    }catch(error){const message=String(error?.message||'submit_failed').slice(0,500);db.prepare("UPDATE viral_quiz_scenes SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(message,pending.id);}}
+      const result=await openRouterRequest('https://openrouter.ai/api/v1/videos',{method:'POST',redirect:'error',body:JSON.stringify({model,prompt:pending.prompt,duration:pending.duration_seconds,aspect_ratio:'9:16',resolution:'720p',generate_audio:true})},60000);
+      const {jobId,pollingUrl}=videoReceipt(result.data);
+      // Persist a valid ID even if a malformed URL needs manual investigation.
+      db.prepare("UPDATE viral_quiz_scenes SET remote_job_id=?,polling_url=?,model=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(jobId,pollingUrl,model,pending.id);
+      if(!jobId||!pollingUrl)throw new Error('video_receipt_invalid');
+      db.prepare("UPDATE viral_quiz_scenes SET status='generating',error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(pending.id);
+    }catch(error){db.prepare("UPDATE viral_quiz_scenes SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(videoFailureMessage(error),pending.id);}}
     const generating=db.prepare("SELECT * FROM viral_quiz_scenes WHERE status='generating' ORDER BY id LIMIT 3").all();
-    for(const scene of generating)try{if(!ecosystemCanRun())break;const result=await openRouterRequest(scene.polling_url,{method:'GET'},30000),status=String(result.data?.status||'').toLowerCase();if(['failed','cancelled'].includes(status))throw new Error(String(result.data?.error?.message||result.data?.error||result.data?.message||status));if(!['completed','succeeded'].includes(status))continue;
-      const mediaUrl=String(result.data?.unsigned_urls?.[0]||result.data?.data?.[0]?.url||result.data?.content_url||'');if(!/^https:\/\//i.test(mediaUrl))throw new Error('Cena concluída sem arquivo disponível.');const download=await fetch(mediaUrl,{headers:{Authorization:`Bearer ${AI_API_KEY}`},signal:AbortSignal.timeout(120000)});if(!download.ok)throw new Error(`Download da cena falhou (${download.status}).`);const buffer=Buffer.from(await download.arrayBuffer());if(!buffer.length||buffer.length>250*1024*1024)throw new Error('Cena inválida ou maior que 250 MB.');const name=`viral-${scene.quiz_id}-scene-${scene.scene_number}.mp4`,local=path.join(generatedMediaDir,name);fs.writeFileSync(local,buffer);db.prepare("UPDATE viral_quiz_scenes SET status='downloaded',local_path=?,output_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(local,`/uploads/generated-videos/${name}`,scene.id);await finishViralQuizVideo(scene.quiz_id);
-    }catch(error){const message=String(error?.message||'scene_failed').slice(0,500),retry=Number(scene.attempt_count||0)<3&&!/insufficient credits|key limit exceeded/i.test(message);db.prepare("UPDATE viral_quiz_scenes SET status=?,error_message=?,remote_job_id='',polling_url='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(retry?'pending':'failed',message,scene.id);}
+    for(const scene of generating)try{if(!ecosystemCanRun())break;const pollingUrl=videoPollingUrl(scene.polling_url,scene.remote_job_id);if(!pollingUrl)throw new Error('video_receipt_invalid');
+      const result=await openRouterRequest(pollingUrl,{method:'GET',redirect:'error'},30000);if(videoPollState(result.data,scene.remote_job_id)!=='completed')continue;
+      const buffer=await downloadVideo(result.data,scene.remote_job_id,{apiKey:AI_API_KEY});const name=`viral-${scene.quiz_id}-scene-${scene.scene_number}.mp4`,local=path.join(generatedMediaDir,name);fs.writeFileSync(local,buffer);db.prepare("UPDATE viral_quiz_scenes SET status='downloaded',local_path=?,output_url=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(local,`/uploads/generated-videos/${name}`,scene.id);await finishViralQuizVideo(scene.quiz_id);
+    }catch(error){db.prepare("UPDATE viral_quiz_scenes SET status=?,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='generating'").run(videoRetryableFailure(error)?'generating':'failed',videoFailureMessage(error),scene.id);}
   }finally{viralVideoFactoryRunning=false;}
 }
 app.get('/api/admin/viral-factory/automation',requireAdmin,(_req,res)=>res.json({settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get(),trends:db.prepare('SELECT * FROM viral_factory_trends ORDER BY id DESC LIMIT 20').all(),openrouterConfigured:aiConfigured()}));
@@ -5848,48 +5853,58 @@ app.post('/api/admin/media-projects/:id/generate', requireAdmin, requireEcosyste
       db.prepare("UPDATE admin_agent_tasks SET status='awaiting_approval',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(project.task_id);
       return res.json({ project: mediaFactoryProject(id) });
     }
-    const result = await openRouterRequest('https://openrouter.ai/api/v1/videos', { method: 'POST', body: JSON.stringify({
+    // Claim before any network await. A timeout/crash must never make a second
+    // manual click submit another paid generation for this project.
+    const claim=db.prepare("UPDATE admin_media_projects SET production_status='editing',progress=10,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND production_status IN ('briefing','script','assets') AND remote_job_id='' AND polling_url=''").run(id);
+    if(!claim.changes)return res.status(409).json({error:'Esta geração já foi iniciada e precisa de conferência.'});
+    const result = await openRouterRequest('https://openrouter.ai/api/v1/videos', { method: 'POST', redirect:'error', body: JSON.stringify({
       model: project.model || OPENROUTER_VIDEO_MODEL, prompt: project.prompt, duration: project.duration_seconds,
       aspect_ratio: project.aspect_ratio, resolution: '720p', generate_audio: false
     }) }, 60000);
-    const jobId = String(result.data?.id || ''), pollingUrl = String(result.data?.polling_url || '');
-    if (!jobId || !/^https:\/\/openrouter\.ai\//i.test(pollingUrl)) throw new Error('O provedor não devolveu uma tarefa de vídeo válida.');
-    db.prepare(`UPDATE admin_media_projects SET production_status='editing',progress=20,remote_job_id=?,polling_url=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    const {jobId,pollingUrl}=videoReceipt(result.data);
+    db.prepare(`UPDATE admin_media_projects SET progress=CASE WHEN production_status='editing' THEN 20 ELSE progress END,remote_job_id=?,polling_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND remote_job_id='' AND polling_url=''`)
       .run(jobId, pollingUrl, id);
+    if (!jobId || !pollingUrl) throw new Error('video_receipt_invalid');
+    if(!videoProjectUnchanged(mediaFactoryProject(id),{...project,production_status:'editing',remote_job_id:jobId,polling_url:pollingUrl}))return res.status(409).json({error:'O projeto foi alterado durante a geração. O recibo recebido foi preservado sem reabrir o projeto.'});
     return res.status(202).json({ project: mediaFactoryProject(id) });
   } catch (error) {
-    db.prepare("UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(String(error.message).slice(0,500), id);
-    return res.status(error.status || 502).json({ error: error.message });
+    const message=project.format==='image'?String(error.message).slice(0,500):videoFailureMessage(error);
+    if(project.format==='image')db.prepare("UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(message,id);
+    else db.prepare("UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND production_status='editing'").run(message,id);
+    return res.status(error.status || 502).json({ error: message });
   }
 });
 
 app.post('/api/admin/media-projects/:id/sync', requireAdmin, async (req, res) => {
   const id = Number(req.params.id), project = mediaFactoryProject(id);
-  if (!project?.polling_url || !/^https:\/\/openrouter\.ai\//i.test(project.polling_url)) return res.status(409).json({ error: 'Este projeto não possui vídeo em processamento.' });
+  const pollingUrl=videoPollingUrl(project?.polling_url,project?.remote_job_id);
+  if (!pollingUrl||project.production_status!=='editing') return res.status(409).json({ error: 'Este projeto não possui vídeo em processamento com recibo válido.' });
   try {
-    const result = await openRouterRequest(project.polling_url, { method: 'GET' }, 30000);
-    const status = String(result.data?.status || '').toLowerCase();
-    if (['failed','cancelled'].includes(status)) throw new Error(String(result.data?.error?.message || 'A geração do vídeo falhou.'));
-    if (!['completed','succeeded'].includes(status)) {
+    const result = await openRouterRequest(pollingUrl, { method: 'GET', redirect:'error' }, 30000);
+    const status=videoPollState(result.data,project.remote_job_id);
+    if(!videoProjectUnchanged(mediaFactoryProject(id),project))return res.status(409).json({error:'O projeto foi alterado durante a consulta. Nenhuma conclusão foi aplicada.'});
+    if (status!=='completed') {
       const progress = Math.max(Number(project.progress || 20), status === 'processing' || status === 'in_progress' ? 65 : 35);
       db.prepare('UPDATE admin_media_projects SET progress=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(progress,id);
       return res.status(202).json({ status, project: mediaFactoryProject(id) });
     }
-    const mediaUrl = String(result.data?.unsigned_urls?.[0] || result.data?.data?.[0]?.url || '');
-    if (!/^https:\/\//i.test(mediaUrl)) throw new Error('O vídeo terminou, mas o arquivo não foi disponibilizado.');
-    const download = await fetch(mediaUrl, { headers: { Authorization: `Bearer ${AI_API_KEY}` }, signal: AbortSignal.timeout(120000) });
-    if (!download.ok) throw new Error(`Não foi possível baixar o vídeo (${download.status}).`);
-    const buffer = Buffer.from(await download.arrayBuffer());
-    if (!buffer.length || buffer.length > 250 * 1024 * 1024) throw new Error('O vídeo é inválido ou excede 250 MB.');
-    const file = `factory-${id}-${Date.now()}.mp4`; fs.writeFileSync(path.join(generatedMediaDir,file),buffer,{flag:'wx'});
+    const buffer=await downloadVideo(result.data,project.remote_job_id,{apiKey:AI_API_KEY});
+    const file = `factory-${id}-${Date.now()}.mp4`;
     const cost = Number(result.data?.usage?.cost || result.data?.usage?.total_cost || 0);
-    db.prepare(`UPDATE admin_media_projects SET production_status='review',progress=100,output_url=?,usage_cost_usd=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-      .run(`/uploads/generated-videos/${file}`,cost,id);
-    db.prepare("UPDATE admin_agent_tasks SET status='awaiting_approval',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(project.task_id);
+    const saved=db.transaction(()=>{
+      if(!videoProjectUnchanged(mediaFactoryProject(id),project))return false;
+      fs.writeFileSync(path.join(generatedMediaDir,file),buffer,{flag:'wx'});
+      db.prepare(`UPDATE admin_media_projects SET production_status='review',progress=100,output_url=?,usage_cost_usd=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND production_status='editing' AND remote_job_id=? AND polling_url=?`)
+        .run(`/uploads/generated-videos/${file}`,cost,id,project.remote_job_id,project.polling_url);
+      db.prepare("UPDATE admin_agent_tasks SET status='awaiting_approval',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(project.task_id);
+      return true;
+    })();
+    if(!saved)return res.status(409).json({error:'O projeto foi alterado durante o download. O arquivo e a etapa atuais foram preservados.'});
     return res.json({ project: mediaFactoryProject(id) });
   } catch (error) {
-    db.prepare('UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(String(error.message).slice(0,500),id);
-    return res.status(error.status || 502).json({ error: error.message });
+    const message=videoFailureMessage(error);
+    db.prepare("UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND production_status='editing' AND remote_job_id=? AND polling_url=?").run(message,id,project.remote_job_id,project.polling_url);
+    return res.status(error.status || 502).json({ error: message });
   }
 });
 
