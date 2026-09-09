@@ -6,6 +6,8 @@ import {setupCampaignPreferences} from './campaign-preferences.js';
 import { integrationObserver, openRouterOperation } from './integration-health.js';
 import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
+import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.js';
+import { createWhatsAppScheduleProcessor } from './whatsapp-schedule-worker.js';
 import {ADS_TERMS_VERSION,ADS_VALIDITY_DAYS,creditExpiryForOrder} from './credits-policy.js';
 import {setupCityChat} from './city-chat.js';
 import {setupCityRewards} from './city-rewards.js';
@@ -4071,12 +4073,14 @@ app.post('/api/admin/whatsapp-qr/campaigns/sitemap',requireAdmin,sameOriginOnly,
 });
 app.get('/api/admin/whatsapp-qr/campaigns',requireAdmin,(_req,res)=>res.json({campaigns:db.prepare(`SELECT c.id,c.name,c.days,c.interval_hours intervalHours,c.groups_count groupsCount,c.schedules_count schedulesCount,c.status,c.created_at createdAt,SUM(CASE WHEN s.status='pending' THEN 1 ELSE 0 END) pending,SUM(CASE WHEN s.status='sent' THEN 1 ELSE 0 END) sent,SUM(CASE WHEN s.status='failed' THEN 1 ELSE 0 END) failed,SUM(CASE WHEN s.status='cancelled' THEN 1 ELSE 0 END) cancelled FROM whatsapp_qr_campaigns c LEFT JOIN whatsapp_qr_schedules s ON s.campaign_id=c.id GROUP BY c.id ORDER BY c.created_at DESC LIMIT 20`).all()}));
 app.delete('/api/admin/whatsapp-qr/schedules/:id',requireAdmin,sameOriginOnly,(req,res)=>{const result=db.prepare(`UPDATE whatsapp_qr_schedules SET status='cancelled' WHERE id=? AND status='pending'`).run(String(req.params.id||''));if(!result.changes)return res.status(409).json({error:'Somente agendamentos pendentes podem ser cancelados.'});return res.json({ok:true})});
-let whatsappScheduleRunning=false;
-async function processWhatsAppQrSchedules(){
-  if(whatsappScheduleRunning)return;whatsappScheduleRunning=true;
-  try{const due=db.prepare(`SELECT * FROM whatsapp_qr_schedules WHERE status='pending' AND scheduled_at<=? ORDER BY scheduled_at LIMIT 3`).all(new Date().toISOString());for(const item of due){const claimed=db.prepare(`UPDATE whatsapp_qr_schedules SET status='processing',error=NULL WHERE id=? AND status='pending'`).run(item.id);if(!claimed.changes)continue;try{const body=`${item.message}\n\n${item.sitemap_url}`.slice(0,4000),payload=await whatsappQrRequest('/chat/send/text',{method:'POST',body:JSON.stringify({Phone:item.group_jid,Body:body,Id:randomUUID().replaceAll('-','').toUpperCase()})}),data=whatsappQrData(payload);db.prepare(`UPDATE whatsapp_qr_schedules SET status='sent',provider_message_id=?,sent_at=CURRENT_TIMESTAMP WHERE id=?`).run(String(data.Id||data.id||'').slice(0,160),item.id)}catch(error){db.prepare(`UPDATE whatsapp_qr_schedules SET status='failed',error=? WHERE id=?`).run(String(error?.message||'send_failed').slice(0,300),item.id)}}}finally{whatsappScheduleRunning=false}
-}
-
+const whatsappProductCampaigns = registerWhatsAppProductCampaigns({
+  app, db, requireAdmin, sameOriginOnly, siteUrl: SITE_URL, dataDir,
+  whatsappQrRequest, whatsappQrData
+});
+const processWhatsAppQrSchedules = createWhatsAppScheduleProcessor({
+  db, prepareScheduledMessage: item=>whatsappProductCampaigns.prepareScheduledMessage(item),
+  whatsappQrRequest, whatsappQrData
+});
 function enqueueOmnichannelJob(channel,externalId,destination,sourceText,accountId=null,sourceKind='',mediaId=''){
   if(!externalId||!destination||!sourceText)return;
   db.prepare(`INSERT OR IGNORE INTO omnichannel_automation_jobs(id,channel,external_id,destination,source_text,account_id,source_kind,media_id) VALUES (?,?,?,?,?,?,?,?)`).run(randomUUID(),channel,String(externalId).slice(0,200),String(destination).slice(0,200),String(sourceText).slice(0,4000),accountId,String(sourceKind).slice(0,40),String(mediaId).slice(0,100));
