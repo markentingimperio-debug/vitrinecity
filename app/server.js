@@ -8,6 +8,10 @@ import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.js';
 import { createWhatsAppScheduleProcessor } from './whatsapp-schedule-worker.js';
+import { registerSocialCommentCampaigns } from './social-comment-campaigns.js';
+import { createMetaCommentApi } from './meta-comment-api.js';
+import {socialOauthRequest,socialOauthScopes,signSocialOauthState,verifySocialOauthState,socialOauthDestination} from './social-oauth-intent.js';
+import { createWebStorySources } from './web-story-sources.js';
 import {ADS_TERMS_VERSION,ADS_VALIDITY_DAYS,creditExpiryForOrder} from './credits-policy.js';
 import {setupCityChat} from './city-chat.js';
 import {setupCityRewards} from './city-rewards.js';
@@ -55,7 +59,7 @@ import { normalizeStoreOperations, deliveryEta, canTransitionFoodOrder } from '.
 import { eligibleCouriers } from './courier-dispatch.js';
 import { STORE_AD_PLANS, storeAdQuote, rankSponsored } from './store-ads.js';
 import { sanitizeReviewComment, bayesianRating, reputationScore, basicReviewFraud } from './reputation.js';
-import { setupReviewImporter, renderImportedReviewSource } from './review-importer.js';
+import { setupReviewImporter, renderImportedReviewSource, renderReviewPhotos } from './review-importer.js';
 import { checkoutMelhorEnvioShipment,createMelhorEnvioShipment,generateMelhorEnvioShipment,
   melhorEnvioShipmentPayload,printMelhorEnvioShipment } from './melhor-envio-fulfillment.js';
 import {
@@ -2665,6 +2669,15 @@ const webStories = dailyStories = setupDailyWebStories({app,db,requireAdmin,same
   services:()=>DIGITAL_SERVICE_PACKAGES,courses:()=>managedCourses(true).filter(course=>courseReady(course.slug)),
   requestText:requestEditorialText,requestImage:createStoryImageProvider({provider:()=>process.env.OPENAI_API_KEY?'openai':'openrouter',request:(url,...args)=>url==='https://api.openai.com/v1/images/generations'?storyOpenAIRequest(url,...args):openRouterRequest(url,...args),model:()=>process.env.OPENAI_API_KEY?'gpt-image-2':OPENROUTER_IMAGE_MODEL,outputDir:generatedMediaDir}),
   isConfigured:()=>aiConfigured()});
+const socialCommentSources = createWebStorySources({
+  db, publicDir:path.join(dir,'public'), services:()=>DIGITAL_SERVICE_PACKAGES,
+  courses:()=>managedCourses(true).filter(course=>courseReady(course.slug))
+});
+const socialCommentCampaigns = registerSocialCommentCampaigns({
+  app, db, requireAdmin, sameOriginOnly, siteUrl:SITE_URL,
+  sourceCatalog:socialCommentSources,
+  metaAdapter:createMetaCommentApi({db,decryptToken:decryptSocialToken})
+});
 setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover,generateBookIllustration});
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
@@ -3972,16 +3985,20 @@ app.post('/api/admin/whatsapp-qr/sync',requireAdmin,sameOriginOnly,async(_req,re
 
 app.get('/api/admin/whatsapp-qr/conversations',requireAdmin,async(_req,res)=>{
   try{
-    const [historyPayload,contactsPayload]=await Promise.all([
-      whatsappQrRequest('/chat/history?chat_jid=index'),whatsappQrRequest('/user/contacts').catch(()=>({data:{}}))
+    const [historyPayload,contactsPayload,groupsPayload]=await Promise.all([
+      whatsappQrRequest('/chat/history?chat_jid=index'),whatsappQrRequest('/user/contacts').catch(()=>({data:{}})),
+      whatsappQrRequest('/group/list').catch(()=>({data:{Groups:[]}}))
     ]);
     const history=whatsappQrData(historyPayload),contacts=whatsappQrData(contactsPayload);
+    const groupData=whatsappQrData(groupsPayload);
+    const groups=Array.isArray(groupData)?groupData:Array.isArray(groupData?.Groups)?groupData.Groups:Array.isArray(groupData?.groups)?groupData.groups:[];
+    const groupNames=new Map(groups.map(group=>[String(group.JID||group.jid||''),String(group.Name||group.name||group.GroupName?.Name||'').trim()]));
     const contactMap=contacts?.Contacts||contacts;
     const chats=[];
     for(const values of Object.values(history))for(const item of Array.isArray(values)?values:[]){
       const jid=String(item.chat_jid||item.ChatJID||'').slice(0,160);if(!jid)continue;
       const contact=contactMap?.[jid]||{};
-      const name=String(contact.FullName||contact.BusinessName||contact.PushName||contact.FirstName||jid.split('@')[0]).slice(0,160);
+      const name=String((jid.endsWith('@g.us')&&groupNames.get(jid))||contact.FullName||contact.BusinessName||contact.PushName||contact.FirstName||item.group_name||item.name||jid.split('@')[0]).slice(0,160);
       chats.push({jid,name,lastUpdated:String(item.last_updated||item.LastUpdated||'').slice(0,80),isGroup:jid.endsWith('@g.us')});
     }
     chats.sort((a,b)=>String(b.lastUpdated).localeCompare(String(a.lastUpdated)));
@@ -4598,6 +4615,9 @@ app.post('/api/webhooks/social', (req, res) => {
   if (!expected || signatureBuffer.length !== expectedBuffer.length ||
       !timingSafeEqual(signatureBuffer, expectedBuffer)) return res.sendStatus(401);
   try {
+    // Mapped publications are exclusive to their explicit-request campaign,
+    // including paused drafts and ignored edits, so legacy AI cannot reply too.
+    const mappedCommentIds = socialCommentCampaigns.ingestWebhook(req.body);
     const objectType = String(req.body?.object || 'unknown').slice(0, 80);
     const insert = db.prepare(`INSERT INTO social_webhook_events
       (object_type,object_id,field_name,payload_json) VALUES (?,?,?,?)`);
@@ -4613,7 +4633,7 @@ app.post('/api/webhooks/social', (req, res) => {
           const isComment=isInstagram?Boolean(['comments','live_comments'].includes(field)&&value.id&&value.text&&String(value.from?.id||'')!==objectId):Boolean(value.item==='comment'&&(value.comment_id||value.post_id));
           const commentId=String(value.comment_id||value.id||''),commentText=String(value.message||value.text||'').trim();
           const setting=db.prepare(`SELECT enabled FROM omnichannel_automation_settings WHERE channel=?`).get(channel);
-          if(isComment&&commentId&&commentText&&setting?.enabled){
+          if(isComment&&commentId&&commentText&&setting?.enabled&&!mappedCommentIds.has(commentId)){
             const account=isInstagram?db.prepare(`SELECT id FROM social_accounts WHERE instagram_id=? AND status='connected' LIMIT 1`).get(objectId):db.prepare(`SELECT id FROM social_accounts WHERE page_id=? AND status='connected' LIMIT 1`).get(objectId);
             if(account)enqueueOmnichannelJob(channel,`${channel}:${commentId}`,commentId,commentText,account.id,field,String(value.media?.id||''));
           }
@@ -4626,23 +4646,6 @@ app.post('/api/webhooks/social', (req, res) => {
   return res.sendStatus(200);
 });
 
-function socialOauthState(userId, returnTo) {
-  const payload = Buffer.from(JSON.stringify({ userId, returnTo, issuedAt: Date.now(), nonce: randomBytes(12).toString('hex') })).toString('base64url');
-  const signature = createHmac('sha256', String(process.env.META_SOCIAL_APP_SECRET || '')).update(payload).digest('base64url');
-  return payload + '.' + signature;
-}
-function verifySocialOauthState(value, userId) {
-  const [payload, signature] = String(value || '').split('.');
-  if (!payload || !signature) return null;
-  const expected = createHmac('sha256', String(process.env.META_SOCIAL_APP_SECRET || '')).update(payload).digest('base64url');
-  const actualBuffer = Buffer.from(signature), expectedBuffer = Buffer.from(expected);
-  if (actualBuffer.length !== expectedBuffer.length || !timingSafeEqual(actualBuffer, expectedBuffer)) return null;
-  try {
-    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    if (Number(data.userId) !== Number(userId) || Date.now() - Number(data.issuedAt) > 10 * 60 * 1000) return null;
-    return data;
-  } catch { return null; }
-}
 function saveSocialPages(userId, pages, fallbackToken) {
   const save = db.prepare(`INSERT INTO social_accounts
     (user_id,page_id,page_name,instagram_id,instagram_username,token_encrypted,status,updated_at)
@@ -4667,38 +4670,33 @@ async function socialPagesFromToken(accessToken) {
   return Array.isArray(data.data) ? data.data : [];
 }
 
-app.get('/api/social/login', requireUser, (req, res) => {
+app.get('/api/social/login', requireUser, (req,res,next)=>req.query.intent==='comment_replies'?requireAdmin(req,res,next):next(), (req, res) => {
+  const isAdmin = Boolean(req.user.is_admin || adminEmails.has(String(req.user.email).toLowerCase()));
+  let connection;
+  try { connection=socialOauthRequest(req.query,isAdmin); }
+  catch(error) { return res.status(error.status||400).send(error.message); }
   if (!process.env.META_SOCIAL_APP_ID || !process.env.META_SOCIAL_APP_SECRET ||
       !process.env.META_SOCIAL_LOGIN_CONFIG_ID) {
     return res.status(503).send('Integração da Meta ainda não configurada.');
   }
-  const isAdmin = Boolean(req.user.is_admin || adminEmails.has(String(req.user.email).toLowerCase()));
-  const returnTo = req.query.returnTo === 'admin' && isAdmin ? 'admin' : 'carteira';
   const redirectUri = SITE_URL + '/api/social/callback';
   const login = new URL(`https://www.facebook.com/${socialApiVersion()}/dialog/oauth`);
   login.searchParams.set('client_id',String(process.env.META_SOCIAL_APP_ID));
   login.searchParams.set('redirect_uri',redirectUri);
-  login.searchParams.set('state',socialOauthState(req.user.id,returnTo));
+  login.searchParams.set('state',signSocialOauthState({userId:req.user.id,...connection},{secret:String(process.env.META_SOCIAL_APP_SECRET)}));
   login.searchParams.set('response_type','code');
   login.searchParams.set('config_id',String(process.env.META_SOCIAL_LOGIN_CONFIG_ID));
-  login.searchParams.set('scope',[
-    'pages_show_list',
-    'pages_read_engagement',
-    'pages_read_user_content',
-    'read_insights',
-    'instagram_basic',
-    'instagram_manage_insights'
-  ].join(','));
+  login.searchParams.set('scope',socialOauthScopes(connection.intent).join(','));
   login.searchParams.set('auth_type','rerequest');
   return res.redirect(302,login.toString());
 });
 
 app.get('/api/social/callback', requireUser, async (req, res) => {
-  const state = verifySocialOauthState(req.query.state,req.user.id);
-  const destinationBase = state?.returnTo === 'admin' ? '/admin' : '/carteira.html';
-  const destinationHash = state?.returnTo === 'admin' ? '#admin-social' : '#socialConnectArea';
-  const destination = status => destinationBase + '?social=' + encodeURIComponent(status) + destinationHash;
+  const isAdmin = Boolean(req.user.is_admin || adminEmails.has(String(req.user.email).toLowerCase()));
+  const state = verifySocialOauthState(req.query.state,req.user.id,{secret:String(process.env.META_SOCIAL_APP_SECRET||''),isAdmin});
+  const destination = status => socialOauthDestination(state,status);
   if (!state) return res.redirect(302,destination('invalid_state'));
+  if (state.intent==='comment_replies'&&req.user.totp_enabled&&!privilegedSession(req,'admin')) return res.redirect(302,destination('reauth_required'));
   if (req.query.error) return res.redirect(302,destination('cancelled'));
   const code = String(req.query.code || '');
   if (!code) return res.redirect(302,destination('missing_code'));
@@ -9627,7 +9625,8 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   const title = `${product.name} — ${product.store_name} | Vitriny Loja`;
   const description = String(product.description || `Compre ${product.name} na Vitriny Loja.`).slice(0, 155);
   const storePath = publicStorePath({ order_reference: product.store_reference, business_name: product.store_name });
-  const reviews=db.prepare(`SELECT r.rating,r.title,r.body,r.verified_purchase,r.created_at,COALESCE(rs.author_name,u.name,'Cliente Vitriny') author_name,rs.source,rs.source_url,rs.variation
+  const reviews=db.prepare(`SELECT r.rating,r.title,r.body,r.verified_purchase,r.created_at,COALESCE(rs.author_name,u.name,'Cliente Vitriny') author_name,rs.source,rs.source_url,rs.variation,
+    (SELECT json_group_array(url) FROM (SELECT p.url FROM marketplace_review_photos p WHERE p.review_id=r.id AND p.status='published' ORDER BY p.id LIMIT 5)) photos_json
     FROM marketplace_product_reviews r LEFT JOIN users u ON u.id=r.user_id LEFT JOIN marketplace_review_sources rs ON rs.review_id=r.id
     WHERE r.product_id=? AND r.status='published' ORDER BY r.created_at DESC,r.id DESC LIMIT 12 OFFSET ?`).all(product.id, (reviewPage - 1) * 12);
   const productSchema = {
@@ -9662,7 +9661,7 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     <meta property="og:image" content="${escapeHtml(image)}">
     <script type="application/ld+json">${schema}</script>
     <script type="application/ld+json">${breadcrumbSchema}</script>
-    <style>:root{--blue:#1768e6;--yellow:#ffc628;--line:#263b5b}*{box-sizing:border-box}body{margin:0;background:#07101d;color:#f7faff;font-family:Inter,Arial,sans-serif}a{text-decoration:none;color:inherit}header{padding:17px max(18px,5vw);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.brand{font-size:24px;font-weight:950}.brand span{color:var(--yellow)}.back{padding:10px 13px;background:#15243c;border-radius:10px;font-weight:850}main{width:min(1060px,calc(100% - 32px));margin:42px auto;display:grid;grid-template-columns:minmax(280px,1fr) minmax(300px,1fr);gap:38px;align-items:start}.photo{width:100%;aspect-ratio:1;border-radius:24px;object-fit:cover;background:#14213a;border:1px solid var(--line)}.badge{color:var(--yellow);font-weight:900}.seller{color:#aebed3}h1{font-size:clamp(31px,5vw,58px);line-height:1.04;margin:12px 0}.description{color:#cad5e5;line-height:1.6}.price{font-size:35px;font-weight:950;margin:22px 0 5px}.stock{color:#9fe0b1}.purchase-details{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:20px 0}.detail{padding:12px;border:1px solid var(--line);border-radius:12px;background:#0d192b}.detail small{display:block;color:#91a7c4;margin-bottom:5px}.rating{color:#ffd454;font-weight:900;margin-top:12px}.actions{display:flex;gap:10px;margin-top:24px}.button,button{border:0;border-radius:12px;padding:14px 17px;background:var(--blue);color:#fff;font-weight:950;cursor:pointer}.alt{background:#17263e}.status{color:#ffd76c;margin-top:12px}.reviews{grid-column:1/-1;border-top:1px solid var(--line);padding-top:28px}.reviews h2{font-size:28px}.review-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.review{border:1px solid var(--line);background:#0d192b;border-radius:14px;padding:15px}.review p{color:#cad5e5;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}.review-source{font-size:12px;line-height:1.6;color:#b9d3ff;margin-top:10px}.review-source a{text-decoration:underline}.review-pagination{display:flex;gap:16px;align-items:center;justify-content:center;flex-wrap:wrap;margin-top:24px}.review-pagination span{color:#cad5e5;font-size:14px}.verified{color:#8ee5a8;font-size:12px}@media(max-width:720px){main{grid-template-columns:1fr;margin-top:22px}.actions,.purchase-details,.review-grid{display:grid;grid-template-columns:1fr}.reviews{grid-column:1}}</style>
+    <style>:root{--blue:#1768e6;--yellow:#ffc628;--line:#263b5b}*{box-sizing:border-box}body{margin:0;background:#07101d;color:#f7faff;font-family:Inter,Arial,sans-serif}a{text-decoration:none;color:inherit}header{padding:17px max(18px,5vw);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.brand{font-size:24px;font-weight:950}.brand span{color:var(--yellow)}.back{padding:10px 13px;background:#15243c;border-radius:10px;font-weight:850}main{width:min(1060px,calc(100% - 32px));margin:42px auto;display:grid;grid-template-columns:minmax(280px,1fr) minmax(300px,1fr);gap:38px;align-items:start}.photo{width:100%;aspect-ratio:1;border-radius:24px;object-fit:cover;background:#14213a;border:1px solid var(--line)}.badge{color:var(--yellow);font-weight:900}.seller{color:#aebed3}h1{font-size:clamp(31px,5vw,58px);line-height:1.04;margin:12px 0}.description{color:#cad5e5;line-height:1.6}.price{font-size:35px;font-weight:950;margin:22px 0 5px}.stock{color:#9fe0b1}.purchase-details{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:20px 0}.detail{padding:12px;border:1px solid var(--line);border-radius:12px;background:#0d192b}.detail small{display:block;color:#91a7c4;margin-bottom:5px}.rating{color:#ffd454;font-weight:900;margin-top:12px}.actions{display:flex;gap:10px;margin-top:24px}.button,button{border:0;border-radius:12px;padding:14px 17px;background:var(--blue);color:#fff;font-weight:950;cursor:pointer}.alt{background:#17263e}.status{color:#ffd76c;margin-top:12px}.reviews{grid-column:1/-1;border-top:1px solid var(--line);padding-top:28px}.reviews h2{font-size:28px}.review-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.review{border:1px solid var(--line);background:#0d192b;border-radius:14px;padding:15px}.review p{color:#cad5e5;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}.review-source{font-size:12px;line-height:1.6;color:#b9d3ff;margin-top:10px}.review-source a{text-decoration:underline}.review-photos{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.review-photos a{display:block;border-radius:8px;overflow:hidden;border:1px solid var(--line)}.review-photos img{display:block;width:80px;height:80px;object-fit:cover;background:#17263e}.review-photos a:focus-visible{outline:3px solid var(--yellow);outline-offset:3px}.review-pagination{display:flex;gap:16px;align-items:center;justify-content:center;flex-wrap:wrap;margin-top:24px}.review-pagination span{color:#cad5e5;font-size:14px}.verified{color:#8ee5a8;font-size:12px}@media(max-width:720px){main{grid-template-columns:1fr;margin-top:22px}.actions,.purchase-details,.review-grid{display:grid;grid-template-columns:1fr}.reviews{grid-column:1}}</style>
     <script src="/analytics.js" defer></script></head><body>
     <header><a class="brand" href="/loja">Vitriny <span>Loja</span></a><a class="back" href="/loja">← Voltar à loja</a></header>
     <main><img class="photo" src="${escapeHtml(productImagePath)}" onerror="this.onerror=null;this.src='/assets/store-seed/utilidades.svg'" alt="${escapeHtml(product.name)}">
@@ -9672,7 +9671,7 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     <div class="stock">${isDigital?'Acesso digital disponível':`${product.stock_quantity} unidades disponíveis`}</div><div class="rating">${product.rating_count?`★ ${Number(product.rating_average).toFixed(1)} · ${product.rating_count} ${product.rating_count===1?'avaliação':'avaliações'}`:'☆ Ainda sem avaliações'}</div>
     <div class="purchase-details">${isDigital?'<div class="detail"><small>Formato</small><b>Acesso digital individual</b></div><div class="detail"><small>Entrega</small><b>Liberada na área do aluno após o pagamento</b></div>':`<div class="detail"><small>Variação</small><b>${escapeHtml(product.variation_label||'Única')}</b></div><div class="detail"><small>Prazo estimado</small><b>${product.delivery_min_days} a ${product.delivery_max_days} dias úteis</b></div><div class="detail"><small>Frete</small><b>Calculado no checkout</b></div><div class="detail"><small>Devolução</small><b>Até ${product.return_days} dias após o recebimento</b></div>`}</div>
     <div class="actions">${product.product_url?`<a class="button" href="${escapeHtml(product.product_url)}"${isDigital?'':` target="_blank" rel="noopener sponsored"`}>${isDigital?'Comprar acesso':'Comprar'}</a>`:'<button id="add">Adicionar ao carrinho</button>'}<a class="button alt" href="${escapeHtml(storePath)}">Ver a vitrine da loja</a></div><div class="status" id="status"></div></section>
-    <section class="reviews" id="avaliacoes"><h2>Avaliações de clientes</h2>${reviews.length?`<div class="review-grid">${reviews.map(review=>`<article class="review"><div class="rating">${'★'.repeat(review.rating)}${'☆'.repeat(5-review.rating)}</div><h3>${escapeHtml(review.title||'Avaliação do produto')}</h3><p>${escapeHtml(review.body)}</p><small>${escapeHtml(review.author_name)} · ${new Date(`${review.created_at.replace(' ', 'T')}Z`).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</small>${renderImportedReviewSource(review,escapeHtml)}${review.verified_purchase&&!review.source?'<div class="verified">✓ Compra verificada</div>':''}</article>`).join('')}</div>`:'<p class="description">Este produto ainda não recebeu avaliações. As avaliações publicadas aparecerão aqui.</p>'}${reviewPageCount > 1 ? `<nav class="review-pagination" aria-label="Páginas de avaliações">${reviewPage > 1 ? `<a class="button alt" rel="prev" href="${reviewPath}?avaliacoes=${reviewPage - 1}#avaliacoes">← Anteriores</a>` : ''}<span>Página ${reviewPage} de ${reviewPageCount} · ${product.rating_count} avaliações</span>${reviewPage < reviewPageCount ? `<a class="button alt" rel="next" href="${reviewPath}?avaliacoes=${reviewPage + 1}#avaliacoes">Próximas →</a>` : ''}</nav>` : ''}</section>
+    <section class="reviews" id="avaliacoes"><h2>Avaliações de clientes</h2>${reviews.length?`<div class="review-grid">${reviews.map(review=>`<article class="review"><div class="rating">${'★'.repeat(review.rating)}${'☆'.repeat(5-review.rating)}</div><h3>${escapeHtml(review.title||'Avaliação do produto')}</h3><p>${escapeHtml(review.body)}</p><small>${escapeHtml(review.author_name)} · ${new Date(`${review.created_at.replace(' ', 'T')}Z`).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</small>${renderReviewPhotos(review,escapeHtml)}${renderImportedReviewSource(review,escapeHtml)}${review.verified_purchase&&!review.source?'<div class="verified">✓ Compra verificada</div>':''}</article>`).join('')}</div>`:'<p class="description">Este produto ainda não recebeu avaliações. As avaliações publicadas aparecerão aqui.</p>'}${reviewPageCount > 1 ? `<nav class="review-pagination" aria-label="Páginas de avaliações">${reviewPage > 1 ? `<a class="button alt" rel="prev" href="${reviewPath}?avaliacoes=${reviewPage - 1}#avaliacoes">← Anteriores</a>` : ''}<span>Página ${reviewPage} de ${reviewPageCount} · ${product.rating_count} avaliações</span>${reviewPage < reviewPageCount ? `<a class="button alt" rel="next" href="${reviewPath}?avaliacoes=${reviewPage + 1}#avaliacoes">Próximas →</a>` : ''}</nav>` : ''}</section>
     </main>
     <script>const product=${publicProduct},add=document.getElementById('add');if(add)add.onclick=()=>{let cart=[];try{cart=JSON.parse(localStorage.getItem('vc_shop_cart')||'[]')}catch{}if(cart.length&&cart[0].store_reference!==product.store_reference){document.getElementById('status').textContent='Finalize primeiro os produtos da outra loja.';return}const old=cart.find(item=>item.id===product.id);if(old)old.quantity=Math.min(product.stock_quantity,old.quantity+1);else cart.push({...product,quantity:1});localStorage.setItem('vc_shop_cart',JSON.stringify(cart));location.href='/loja?carrinho=1'};</script>
     </body></html>`);
@@ -9772,4 +9771,8 @@ app.listen(process.env.PORT || 3000, () => {
   const whatsappScheduleTimer=setInterval(()=>processWhatsAppQrSchedules().catch(()=>{}),30000);whatsappScheduleTimer.unref();
   const automationInitial=setTimeout(()=>processOmnichannelAutomation().catch(()=>{}),20000);automationInitial.unref();
   const automationTimer=setInterval(()=>processOmnichannelAutomation().catch(()=>{}),60000);automationTimer.unref();
+  const runSocialCommentCampaigns=()=>socialCommentCampaigns.processPending().catch(()=>
+    console.error('Social comment campaign processing failed.'));
+  const socialCommentInitial=setTimeout(runSocialCommentCampaigns,20000);socialCommentInitial.unref();
+  const socialCommentTimer=setInterval(runSocialCommentCampaigns,60000);socialCommentTimer.unref();
 });
