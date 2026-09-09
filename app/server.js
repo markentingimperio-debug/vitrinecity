@@ -32,6 +32,7 @@ import {editorialImage} from './editorial-image-policy.js';
 import { setupDailyWebStories } from './web-story-daily.js';
 import { createStoryImageProvider, createOpenAIStoryRequest } from './web-story-provider.js';
 import {createEditorialCoverGenerator} from './editorial-cover-generation.js';
+import {createEditorialSourceSearch} from './editorial-source-search.js';
 import { createCryptoObservability, mountCryptoObservability } from './crypto-observability.js';
 import { mountJarvis } from './jarvis-core.js';
 import { mountJarvisPublic } from './jarvis-public.js';
@@ -2682,6 +2683,7 @@ setupEmissora({app,db,siteUrl:SITE_URL});
 const storyOpenAIRequest=createOpenAIStoryRequest({apiKey:()=>process.env.OPENAI_API_KEY});
 const generateEditorialCover=createEditorialCoverGenerator({outputDir:generatedMediaDir,openAIRequest:storyOpenAIRequest,openRouterRequest,openRouterModel:()=>OPENROUTER_IMAGE_MODEL,onFailure:details=>console.error('Editorial cover pending',details)});
 const webStories = dailyStories = setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl:SITE_URL,publicDir:path.join(dir,'public'),dataDir,
+  searchSources:createEditorialSourceSearch(),
   services:()=>DIGITAL_SERVICE_PACKAGES,courses:()=>managedCourses(true).filter(course=>courseReady(course.slug)),
   requestText:requestEditorialText,requestImage:createStoryImageProvider({provider:()=>process.env.OPENAI_API_KEY?'openai':'openrouter',request:(url,...args)=>url==='https://api.openai.com/v1/images/generations'?storyOpenAIRequest(url,...args):openRouterRequest(url,...args),model:()=>process.env.OPENAI_API_KEY?'gpt-image-2':OPENROUTER_IMAGE_MODEL,outputDir:generatedMediaDir}),
   isConfigured:()=>aiConfigured(),canRun:ecosystemCanRun,autoRunAllowed:()=>!ecosystem?.policy().enabled});

@@ -5,6 +5,7 @@
   <title>Estúdio de Web Stories · VitrineCity</title>
   <link rel="stylesheet" href="/vitriny-web-stories.css">
   <script src="/admin-web-stories.js" type="module"></script><script src="/admin-web-story-automation.js" type="module"></script>
+  <script src="/admin-editorial-sources.js" type="module"></script>
 </head>
 <body>
 <header><a href="/admin.html">VITRINECITY / ADMIN</a><nav><a href="/admin-conteudos.html">Conteúdos</a><a href="/stories">Histórias publicadas</a></nav></header>
@@ -20,6 +21,16 @@
     <p>No Search Console, use a Inspeção de URL para conferir uma história. O filtro Web Stories em Desempenho → Aparência na pesquisa depende de haver impressões registradas; ele pode ainda não aparecer. <a href="https://support.google.com/webmasters/answer/17011259?hl=en" target="_blank" rel="noopener">Entenda o relatório</a> · <a href="https://support.google.com/webmasters/answer/9012289?hl=en" target="_blank" rel="noopener">Inspeção de URL</a>.</p>
     <p><a href="https://developers.google.com/search/docs/appearance/enable-web-stories" target="_blank" rel="noopener">Orientações oficiais do Google</a> · <a href="https://search.google.com/test/amp" target="_blank" rel="noopener">Testar um endereço público</a></p>
   </details>
+  <section id="editorial-sources" class="panel editorial-sources" aria-labelledby="editorial-sources-heading" aria-busy="true">
+    <div class="section-head"><div><p class="eyebrow">ENCONTRE O PRÓXIMO ASSUNTO</p><h2 id="editorial-sources-heading">Fontes de conteúdo</h2></div><a href="/admin-operacao">Abrir Central →</a></div>
+    <p>Canais brasileiros ajudam a encontrar pautas de notícias, receitas e jardinagem. A consulta lê dados públicos e pesquisa fontes de apoio; não copia vídeos, não gera uma história e não publica conteúdo.</p>
+    <div class="editorial-source-toolbar"><div><p id="esMessage" role="status" aria-live="polite">Consultando o estado das fontes…</p><small id="esChecked">Aguardando a primeira leitura do painel</small><small id="esNextCheck"></small></div><div class="actions"><button id="esSync" type="button" disabled>Atualizar fontes</button><button id="esRefresh" type="button" class="secondary" disabled>Atualizar status</button></div></div>
+    <div id="esChannels" class="editorial-channels"><p class="muted">Consultando os canais cadastrados…</p></div>
+    <form id="esForm" class="editorial-source-filters" role="search"><label for="esQuery">Buscar nas pautas coletadas<input id="esQuery" type="search" maxlength="120" placeholder="Ex.: temperos, bolo, horta…"></label><label for="esTopic">Assunto<select id="esTopic"><option value="all">Todos os assuntos</option><option value="news">Notícias</option><option value="recipes">Receitas</option><option value="gardening">Jardinagem</option></select></label><label for="esSort">Ordenar por<select id="esSort"><option value="recent">Mais recentes</option><option value="views">Mais visualizados</option></select></label><button id="esSearch" type="submit">Buscar pautas</button></form>
+    <p class="muted">“Mais visualizados” compara somente os itens coletados e os números disponíveis na última consulta. Dados ausentes aparecem como não informados; nenhuma ordem garante alcance ou viralização. A data é a publicação no canal.</p>
+    <div id="esItems" class="editorial-items"><p class="editorial-empty">Aguardando os resultados armazenados…</p></div>
+    <nav class="actions editorial-pagination" aria-label="Páginas de pautas"><button id="esPrevious" type="button" class="secondary" disabled>← Anteriores</button><span id="esPage">Consultando…</span><button id="esNext" type="button" class="secondary" disabled>Próximas →</button></nav>
+  </section>
   <section id="story-automation" class="panel automation-panel" aria-labelledby="automation-heading" aria-busy="true">
     <div class="section-head"><div><p class="eyebrow">SEU CALENDÁRIO EDITORIAL</p><h2 id="automation-heading">Publicação diária</h2></div><span id="automation-state" class="automation-state">Carregando…</span></div>
     <p>Defina o ritmo da publicação e os assuntos que podem entrar nas próximas histórias.</p>

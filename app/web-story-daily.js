@@ -7,6 +7,7 @@ import {createStoryAutomation} from './web-story-automation.js';
 import {setupWebStories} from './web-stories.js';
 import {createLocalEditorialStories} from './web-story-local.js';
 import {storyDiagnostics} from './web-story-diagnostics.js';
+import {createEditorialChannelSources} from './editorial-channel-sources.js';
 
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const notes={quality_checks_passed:'História criada, revisada pela IA e publicada.',source_needs_verified_evidence:'Faltam fontes verificadas para sustentar esta história.',source_insufficient_for_ten_pages:'O conteúdo não sustenta dez páginas úteis. Complete a página de origem.',catalog_photo_missing:'O catálogo precisa de uma foto original.',catalog_photo_quality:'A foto original precisa de mais resolução.',catalog_photo_unavailable:'A foto original não está disponível para a história.',source_asset_unavailable:'Revise a imagem original do conteúdo.',ai_copy_limits:'A redação precisa de ajuste no título ou na descrição.',ai_ten_pages_required:'A redação não atingiu dez páginas completas.',ai_page_invalid:'Uma página precisa de ajuste no texto.',ai_repetitive_or_thin:'O texto ficou repetitivo ou curto demais.',ai_unbacked_numbers:'A revisão encontrou números ausentes na fonte.',ai_pressure_or_promise:'A revisão encontrou uma promessa ou chamada inadequada.',ai_review_held:'A revisão automática pediu ajustes no conteúdo.',ai_text_unavailable:'A IA de texto não concluiu esta história.',ai_invalid_json:'A IA devolveu um formato de texto inválido.',ai_image_unavailable:'A IA de imagem não concluiu esta história.',story_image_invalid:'O provedor não entregou uma imagem válida.',story_image_quality:'A imagem gerada não atingiu a qualidade necessária.',source_destination_invalid:'A página de destino precisa ser corrigida.'};
@@ -14,7 +15,9 @@ Object.assign(notes,{local_editorial_preserved:'Texto integral e imagem da fonte
 notes.ai_provider_blocked='O provedor exige revisão da conta, da configuração ou da política de dados antes de outra geração.';
 const explain=value=>Object.hasOwn(notes,String(value))?notes[value]:'Esta história precisa de revisão antes de publicar.';
 
-export function setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publicDir,dataDir,services,courses,requestText,requestImage,isConfigured,canRun=()=>true,autoRunAllowed=()=>true,schedule=true,assets=createStoryAssets({publicDir,dataDir,siteUrl}),research=createWebStoryResearch({db})}) {
+export function setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publicDir,dataDir,services,courses,requestText,requestImage,isConfigured,canRun=()=>true,autoRunAllowed=()=>true,schedule=true,searchSources=null,sourceFetchImpl,assets=createStoryAssets({publicDir,dataDir,siteUrl}),research=null}) {
+  research??=createWebStoryResearch({db,searchSources,canRun,requirePreparedEvidence:true,fetchImpl:sourceFetchImpl});
+  const channelSources=createEditorialChannelSources({db,canRun,research,fetchImpl:sourceFetchImpl});
   const sources=createWebStorySources({db,services,courses,publicDir});
   const enrichCached=source=>source&&research.getEnriched?research.getEnriched(source):source;
   const automaticEligible=source=>source.kind==='trend'||(source.kind==='article'&&['news','sports','noticias','esportes'].includes(source.group||source.portal))
@@ -78,11 +81,22 @@ export function setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl
   }});
   const actor=req=>String(req.user?.id||req.user?.email||'admin').slice(0,160);
   const route=fn=>async(req,res)=>{res.set('Cache-Control','no-store');try{await fn(req,res);}catch(error){res.status([400,409,503].includes(error.status)?error.status:400).json({error:error.status?error.message:'Não foi possível concluir esta ação. Atualize o painel e tente novamente.'});}};
-  let syncing=null,lastSync=0;
+  let syncing=null,lastSync=channelSources.lastCheckedAt(),closed=false,syncController=null;
+  const sourceSnapshot=options=>{const state=channelSources.snapshot(options),enabled=automation.status().enabled,reason=closed?'closed':!canRun()?'global_paused':syncing?'busy':!enabled?'disabled':Math.max(lastSync,channelSources.lastCheckedAt())+3600000>Date.now()?'cooldown':'ready';return {...state,busy:!!syncing||state.busy,controls:{canSync:reason==='ready',reason,nextAt:lastSync?new Date(lastSync+3600000).toISOString():state.nextAt},nextAt:lastSync?new Date(lastSync+3600000).toISOString():state.nextAt};};
   const sync=()=>{
-    if(!canRun()||!automation.status().enabled||syncing||Date.now()-lastSync<3600000)return syncing||Promise.resolve();
-    lastSync=Date.now();syncing=research.syncTrends().catch(()=>{}).finally(()=>{syncing=null;});return syncing;
+    if(closed||!canRun()||!automation.status().enabled||syncing||Date.now()-lastSync<3600000)return syncing||Promise.resolve();
+    lastSync=Date.now();syncController=new AbortController();const signal=syncController.signal,isCurrent=()=>!closed&&canRun()&&automation.status().enabled&&!signal.aborted;
+    syncing=Promise.resolve().then(async()=>{await channelSources.sync({signal,isCurrent});if(!isCurrent())return;try{await research.syncTrends({signal,isCurrent});}catch{}if(!isCurrent())return;await research.prepareCandidates?.({signal,isCurrent});}).catch(()=>{}).finally(()=>{syncing=null;syncController=null;});return syncing;
   };
+  app.get('/api/admin/editorial-sources',requireAdmin,route((req,res)=>{
+    const {q='',topic='all',sort='recent',offset='0',limit='60'}=req.query;
+    if(typeof q!=='string'||q.length>120||!['all','news','recipes','gardening'].includes(topic)||!['recent','views','popular'].includes(sort)||!Number.isSafeInteger(Number(offset))||Number(offset)<0||!Number.isSafeInteger(Number(limit))||Number(limit)<1||Number(limit)>200)return res.status(400).json({error:'Filtro de fontes inválido.'});
+    res.json(sourceSnapshot({q,topic,sort,offset:Number(offset),limit:Number(limit)}));
+  }));
+  app.post('/api/admin/editorial-sources/sync',requireAdmin,sameOriginOnly,route((_req,res)=>{
+    const state=sourceSnapshot();if(!state.controls.canSync)return res.status(409).json({...state,error:state.controls.reason==='global_paused'?'As rotinas estão pausadas na Central do dia.':'Aguarde a janela de consulta ou confira se a rotina diária está habilitada.'});
+    void sync();res.status(202).json(sourceSnapshot());
+  }));
   app.get('/api/admin/web-story-automation',requireAdmin,route((_req,res)=>res.json(automation.status())));
   app.put('/api/admin/web-story-automation',requireAdmin,sameOriginOnly,route((req,res)=>{
     if(req.body?.enabled&&!isConfigured())return res.status(503).json({error:'Configure a IA gestora de texto e imagem antes de ativar a publicação diária.'});
@@ -95,5 +109,5 @@ export function setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl
   const syncTimer=schedule?setInterval(()=>void sync(),3600000):null;
   syncTimer?.unref();
   const firstSync=schedule?setTimeout(()=>void sync(),1000):null;firstSync?.unref();
-  return {...webStories,automation,catalog,research,sync,close(){clearInterval(syncTimer);clearTimeout(firstSync);automation.close();}};
+  return {...webStories,automation,catalog,research,channelSources,sync,sourceSnapshot,close(){closed=true;syncController?.abort();channelSources.close();clearInterval(syncTimer);clearTimeout(firstSync);automation.close();}};
 }
