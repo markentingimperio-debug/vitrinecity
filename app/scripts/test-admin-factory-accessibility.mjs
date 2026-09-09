@@ -43,7 +43,10 @@ const rules = cssRules(css);
 const scope = '#fabrica-neural-media';
 function declarations(selector, mobile = false) {
   const matched = rules.filter(rule => rule.selector === `${scope} ${selector}` &&
-    (mobile ? rule.media.some(query => /max-width\s*:\s*\d+(?:\.\d+)?px/.test(query)) : !rule.media.length));
+    (mobile ? rule.media.some(query => {
+      const maxWidth = Number(query.match(/max-width\s*:\s*(\d+(?:\.\d+)?)px/)?.[1]);
+      return maxWidth >= 390 && maxWidth <= 700;
+    }) : !rule.media.length));
   assert.ok(matched.length, `Missing ${mobile ? 'mobile ' : ''}factory rule for ${selector}`);
   return Object.assign({}, ...matched.map(rule => rule.declarations));
 }
@@ -136,6 +139,20 @@ test('long factory metadata and action labels can wrap inside the card', () => {
   assert.equal(declarations('button')['white-space'], 'normal');
   for (const tag of ['button', 'input', 'select', 'textarea']) {
     assert.equal(declarations(tag)['max-width'], '100%');
+  }
+});
+
+test('factory card titles contrast with the white card and mobile input text stays legible', () => {
+  const color = declarations('.factory-job').color;
+  assert.match(color || '', /^#[\da-f]{6}$/i);
+  const channels = color.slice(1).match(/../g).map(value => parseInt(value, 16) / 255)
+    .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  assert.ok(1.05 / (luminance + 0.05) >= 4.5, 'Title contrast on white must reach 4.5:1');
+  for (const tag of ['input', 'select', 'textarea']) {
+    const fontSize = declarations(tag, true)['font-size'];
+    assert.match(fontSize || '', /^\d+(?:\.\d+)?px$/);
+    assert.ok(parseFloat(fontSize) >= 16, `${tag} mobile text must be at least 16px`);
   }
 });
 
