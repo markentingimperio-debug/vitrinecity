@@ -8,6 +8,10 @@ import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.js';
 import { createWhatsAppScheduleProcessor } from './whatsapp-schedule-worker.js';
+import { registerSocialCommentCampaigns } from './social-comment-campaigns.js';
+import { createMetaCommentApi } from './meta-comment-api.js';
+import {socialOauthRequest,socialOauthScopes,signSocialOauthState,verifySocialOauthState,socialOauthDestination} from './social-oauth-intent.js';
+import { createWebStorySources } from './web-story-sources.js';
 import {ADS_TERMS_VERSION,ADS_VALIDITY_DAYS,creditExpiryForOrder} from './credits-policy.js';
 import {setupCityChat} from './city-chat.js';
 import {setupCityRewards} from './city-rewards.js';
@@ -2665,6 +2669,15 @@ const webStories = dailyStories = setupDailyWebStories({app,db,requireAdmin,same
   services:()=>DIGITAL_SERVICE_PACKAGES,courses:()=>managedCourses(true).filter(course=>courseReady(course.slug)),
   requestText:requestEditorialText,requestImage:createStoryImageProvider({provider:()=>process.env.OPENAI_API_KEY?'openai':'openrouter',request:(url,...args)=>url==='https://api.openai.com/v1/images/generations'?storyOpenAIRequest(url,...args):openRouterRequest(url,...args),model:()=>process.env.OPENAI_API_KEY?'gpt-image-2':OPENROUTER_IMAGE_MODEL,outputDir:generatedMediaDir}),
   isConfigured:()=>aiConfigured()});
+const socialCommentSources = createWebStorySources({
+  db, publicDir:path.join(dir,'public'), services:()=>DIGITAL_SERVICE_PACKAGES,
+  courses:()=>managedCourses(true).filter(course=>courseReady(course.slug))
+});
+const socialCommentCampaigns = registerSocialCommentCampaigns({
+  app, db, requireAdmin, sameOriginOnly, siteUrl:SITE_URL,
+  sourceCatalog:socialCommentSources,
+  metaAdapter:createMetaCommentApi({db,decryptToken:decryptSocialToken})
+});
 setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover,generateBookIllustration});
 const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', file), 'utf8');
@@ -3972,16 +3985,20 @@ app.post('/api/admin/whatsapp-qr/sync',requireAdmin,sameOriginOnly,async(_req,re
 
 app.get('/api/admin/whatsapp-qr/conversations',requireAdmin,async(_req,res)=>{
   try{
-    const [historyPayload,contactsPayload]=await Promise.all([
-      whatsappQrRequest('/chat/history?chat_jid=index'),whatsappQrRequest('/user/contacts').catch(()=>({data:{}}))
+    const [historyPayload,contactsPayload,groupsPayload]=await Promise.all([
+      whatsappQrRequest('/chat/history?chat_jid=index'),whatsappQrRequest('/user/contacts').catch(()=>({data:{}})),
+      whatsappQrRequest('/group/list').catch(()=>({data:{Groups:[]}}))
     ]);
     const history=whatsappQrData(historyPayload),contacts=whatsappQrData(contactsPayload);
+    const groupData=whatsappQrData(groupsPayload);
+    const groups=Array.isArray(groupData)?groupData:Array.isArray(groupData?.Groups)?groupData.Groups:Array.isArray(groupData?.groups)?groupData.groups:[];
+    const groupNames=new Map(groups.map(group=>[String(group.JID||group.jid||''),String(group.Name||group.name||group.GroupName?.Name||'').trim()]));
     const contactMap=contacts?.Contacts||contacts;
     const chats=[];
     for(const values of Object.values(history))for(const item of Array.isArray(values)?values:[]){
       const jid=String(item.chat_jid||item.ChatJID||'').slice(0,160);if(!jid)continue;
       const contact=contactMap?.[jid]||{};
-      const name=String(contact.FullName||contact.BusinessName||contact.PushName||contact.FirstName||jid.split('@')[0]).slice(0,160);
+      const name=String((jid.endsWith('@g.us')&&groupNames.get(jid))||contact.FullName||contact.BusinessName||contact.PushName||contact.FirstName||item.group_name||item.name||jid.split('@')[0]).slice(0,160);
       chats.push({jid,name,lastUpdated:String(item.last_updated||item.LastUpdated||'').slice(0,80),isGroup:jid.endsWith('@g.us')});
     }
     chats.sort((a,b)=>String(b.lastUpdated).localeCompare(String(a.lastUpdated)));
@@ -4598,6 +4615,9 @@ app.post('/api/webhooks/social', (req, res) => {
   if (!expected || signatureBuffer.length !== expectedBuffer.length ||
       !timingSafeEqual(signatureBuffer, expectedBuffer)) return res.sendStatus(401);
   try {
+    // Mapped publications are exclusive to their explicit-request campaign,
+    // including paused drafts and ignored edits, so legacy AI cannot reply too.
+    const mappedCommentIds = socialCommentCampaigns.ingestWebhook(req.body);
     const objectType = String(req.body?.object || 'unknown').slice(0, 80);
     const insert = db.prepare(`INSERT INTO social_webhook_events
       (object_type,object_id,field_name,payload_json) VALUES (?,?,?,?)`);
@@ -4613,7 +4633,7 @@ app.post('/api/webhooks/social', (req, res) => {
           const isComment=isInstagram?Boolean(['comments','live_comments'].includes(field)&&value.id&&value.text&&String(value.from?.id||'')!==objectId):Boolean(value.item==='comment'&&(value.comment_id||value.post_id));
           const commentId=String(value.comment_id||value.id||''),commentText=String(value.message||value.text||'').trim();
           const setting=db.prepare(`SELECT enabled FROM omnichannel_automation_settings WHERE channel=?`).get(channel);
-          if(isComment&&commentId&&commentText&&setting?.enabled){
+          if(isComment&&commentId&&commentText&&setting?.enabled&&!mappedCommentIds.has(commentId)){
             const account=isInstagram?db.prepare(`SELECT id FROM social_accounts WHERE instagram_id=? AND status='connected' LIMIT 1`).get(objectId):db.prepare(`SELECT id FROM social_accounts WHERE page_id=? AND status='connected' LIMIT 1`).get(objectId);
             if(account)enqueueOmnichannelJob(channel,`${channel}:${commentId}`,commentId,commentText,account.id,field,String(value.media?.id||''));
           }
@@ -4626,23 +4646,6 @@ app.post('/api/webhooks/social', (req, res) => {
   return res.sendStatus(200);
 });
 
-function socialOauthState(userId, returnTo) {
-  const payload = Buffer.from(JSON.stringify({ userId, returnTo, issuedAt: Date.now(), nonce: randomBytes(12).toString('hex') })).toString('base64url');
-  const signature = createHmac('sha256', String(process.env.META_SOCIAL_APP_SECRET || '')).update(payload).digest('base64url');
-  return payload + '.' + signature;
-}
-function verifySocialOauthState(value, userId) {
-  const [payload, signature] = String(value || '').split('.');
-  if (!payload || !signature) return null;
-  const expected = createHmac('sha256', String(process.env.META_SOCIAL_APP_SECRET || '')).update(payload).digest('base64url');
-  const actualBuffer = Buffer.from(signature), expectedBuffer = Buffer.from(expected);
-  if (actualBuffer.length !== expectedBuffer.length || !timingSafeEqual(actualBuffer, expectedBuffer)) return null;
-  try {
-    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    if (Number(data.userId) !== Number(userId) || Date.now() - Number(data.issuedAt) > 10 * 60 * 1000) return null;
-    return data;
-  } catch { return null; }
-}
 function saveSocialPages(userId, pages, fallbackToken) {
   const save = db.prepare(`INSERT INTO social_accounts
     (user_id,page_id,page_name,instagram_id,instagram_username,token_encrypted,status,updated_at)
@@ -4667,38 +4670,33 @@ async function socialPagesFromToken(accessToken) {
   return Array.isArray(data.data) ? data.data : [];
 }
 
-app.get('/api/social/login', requireUser, (req, res) => {
+app.get('/api/social/login', requireUser, (req,res,next)=>req.query.intent==='comment_replies'?requireAdmin(req,res,next):next(), (req, res) => {
+  const isAdmin = Boolean(req.user.is_admin || adminEmails.has(String(req.user.email).toLowerCase()));
+  let connection;
+  try { connection=socialOauthRequest(req.query,isAdmin); }
+  catch(error) { return res.status(error.status||400).send(error.message); }
   if (!process.env.META_SOCIAL_APP_ID || !process.env.META_SOCIAL_APP_SECRET ||
       !process.env.META_SOCIAL_LOGIN_CONFIG_ID) {
     return res.status(503).send('Integração da Meta ainda não configurada.');
   }
-  const isAdmin = Boolean(req.user.is_admin || adminEmails.has(String(req.user.email).toLowerCase()));
-  const returnTo = req.query.returnTo === 'admin' && isAdmin ? 'admin' : 'carteira';
   const redirectUri = SITE_URL + '/api/social/callback';
   const login = new URL(`https://www.facebook.com/${socialApiVersion()}/dialog/oauth`);
   login.searchParams.set('client_id',String(process.env.META_SOCIAL_APP_ID));
   login.searchParams.set('redirect_uri',redirectUri);
-  login.searchParams.set('state',socialOauthState(req.user.id,returnTo));
+  login.searchParams.set('state',signSocialOauthState({userId:req.user.id,...connection},{secret:String(process.env.META_SOCIAL_APP_SECRET)}));
   login.searchParams.set('response_type','code');
   login.searchParams.set('config_id',String(process.env.META_SOCIAL_LOGIN_CONFIG_ID));
-  login.searchParams.set('scope',[
-    'pages_show_list',
-    'pages_read_engagement',
-    'pages_read_user_content',
-    'read_insights',
-    'instagram_basic',
-    'instagram_manage_insights'
-  ].join(','));
+  login.searchParams.set('scope',socialOauthScopes(connection.intent).join(','));
   login.searchParams.set('auth_type','rerequest');
   return res.redirect(302,login.toString());
 });
 
 app.get('/api/social/callback', requireUser, async (req, res) => {
-  const state = verifySocialOauthState(req.query.state,req.user.id);
-  const destinationBase = state?.returnTo === 'admin' ? '/admin' : '/carteira.html';
-  const destinationHash = state?.returnTo === 'admin' ? '#admin-social' : '#socialConnectArea';
-  const destination = status => destinationBase + '?social=' + encodeURIComponent(status) + destinationHash;
+  const isAdmin = Boolean(req.user.is_admin || adminEmails.has(String(req.user.email).toLowerCase()));
+  const state = verifySocialOauthState(req.query.state,req.user.id,{secret:String(process.env.META_SOCIAL_APP_SECRET||''),isAdmin});
+  const destination = status => socialOauthDestination(state,status);
   if (!state) return res.redirect(302,destination('invalid_state'));
+  if (state.intent==='comment_replies'&&req.user.totp_enabled&&!privilegedSession(req,'admin')) return res.redirect(302,destination('reauth_required'));
   if (req.query.error) return res.redirect(302,destination('cancelled'));
   const code = String(req.query.code || '');
   if (!code) return res.redirect(302,destination('missing_code'));
@@ -9773,4 +9771,8 @@ app.listen(process.env.PORT || 3000, () => {
   const whatsappScheduleTimer=setInterval(()=>processWhatsAppQrSchedules().catch(()=>{}),30000);whatsappScheduleTimer.unref();
   const automationInitial=setTimeout(()=>processOmnichannelAutomation().catch(()=>{}),20000);automationInitial.unref();
   const automationTimer=setInterval(()=>processOmnichannelAutomation().catch(()=>{}),60000);automationTimer.unref();
+  const runSocialCommentCampaigns=()=>socialCommentCampaigns.processPending().catch(()=>
+    console.error('Social comment campaign processing failed.'));
+  const socialCommentInitial=setTimeout(runSocialCommentCampaigns,20000);socialCommentInitial.unref();
+  const socialCommentTimer=setInterval(runSocialCommentCampaigns,60000);socialCommentTimer.unref();
 });
