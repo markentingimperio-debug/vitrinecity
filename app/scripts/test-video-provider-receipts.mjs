@@ -6,6 +6,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import Database from 'better-sqlite3';
 import * as receipts from '../video-provider-receipts.js';
+import {googleVideoReceipt,googleVideoPollingUrl} from '../google-video-provider.js';
 import {mediaJobPolicy, requireMediaJob} from '../media-job-policy.js';
 const {videoReceipt,videoPollingUrl,videoPollState,videoFailureMessage,videoDownloadTarget,downloadVideo}=receipts;
 const job='job-abc123',poll=`https://openrouter.ai/api/v1/videos/${job}`,mp4=Buffer.from([0,0,0,20,102,116,121,112,105,115,111,109,0,0,0,0]);
@@ -62,13 +63,22 @@ function fixture(request,download=async()=>mp4,{mediaConfig={provider:'openroute
     CREATE TABLE viral_quiz_scenes(id INTEGER PRIMARY KEY,quiz_id INTEGER DEFAULT 1,scene_number INTEGER DEFAULT 1,status TEXT DEFAULT 'pending',video_provider TEXT DEFAULT 'openrouter',prompt TEXT DEFAULT 'safe',duration_seconds INTEGER DEFAULT 8,attempt_count INTEGER DEFAULT 0,remote_job_id TEXT DEFAULT '',polling_url TEXT DEFAULT '',model TEXT DEFAULT '',error_message TEXT DEFAULT '',local_path TEXT DEFAULT '',output_url TEXT DEFAULT '',updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE admin_media_projects(id INTEGER PRIMARY KEY,task_id INTEGER DEFAULT 1,format TEXT DEFAULT 'short_video',production_status TEXT DEFAULT 'script',image_provider TEXT DEFAULT 'openrouter',video_provider TEXT DEFAULT 'openrouter',progress INTEGER DEFAULT 0,remote_job_id TEXT DEFAULT '',polling_url TEXT DEFAULT '',error_message TEXT DEFAULT '',updated_at TEXT DEFAULT CURRENT_TIMESTAMP,model TEXT DEFAULT 'test',prompt TEXT DEFAULT 'safe',duration_seconds INTEGER DEFAULT 8,aspect_ratio TEXT DEFAULT '9:16',output_url TEXT DEFAULT '',usage_cost_usd REAL DEFAULT 0);
     CREATE TABLE admin_agent_tasks(id INTEGER PRIMARY KEY,status TEXT,updated_at TEXT);INSERT INTO admin_agent_tasks VALUES(1,'running','before');`);
-  const routes=new Map(),calls=[],writes=[];
-  const context=vm.createContext({...receipts,mediaJobPolicy,requireMediaJob,AI_MEDIA_CONFIG:mediaConfig,db,ecosystemCanRun:()=>true,aiConfigured:()=>true,AI_PROVIDER:'openrouter',AI_API_KEY:'test-key',OPENROUTER_VIDEO_MODEL:'test-model',MEDIA_VIDEO_MODELS:[],finishViralQuizVideo:async()=>{},openRouterRequest:async(url,options)=>{calls.push({url,options});return request(url,options);},aiMediaClient:{requestImage:async input=>{calls.push({image:input});return request('image',{method:'POST',body:JSON.stringify(input)});}},downloadVideo:download,generatedMediaDir:'/tmp',fs:{writeFileSync:(...args)=>writes.push(args)},path:{join:(...parts)=>parts.join('/')},Buffer,requireAdmin(){},requireEcosystemRunning(){},app:{post:(route,...handlers)=>routes.set(route,handlers.at(-1))},mediaFactoryProject:id=>db.prepare('SELECT * FROM admin_media_projects WHERE id=?').get(id)});
+  const routes=new Map(),calls=[],writes=[],downloads=[],config={videoModel:'test-model',...mediaConfig},provider=config.videoProvider||config.provider;
+  const client={
+    requestImage:async input=>{calls.push({image:input});return request('image',{method:'POST',body:JSON.stringify(input)});},
+    createVideo:async input=>{const url=provider==='google'?'https://generativelanguage.googleapis.com/v1beta/models/'+input.model+':predictLongRunning':'https://openrouter.ai/api/v1/videos';const options={method:'POST',redirect:'error',body:JSON.stringify(input)};calls.push({url,options});return request(url,options);},
+    getVideo:async job=>{assert.equal(job.provider,provider);const options={method:'GET',redirect:'error'};calls.push({url:job.pollingUrl,options,job});return request(job.pollingUrl,options);},
+    downloadVideo:async(data,job)=>{assert.equal(job.provider,provider);downloads.push(job);return download(data,job);},
+    videoReceipt:provider==='google'?googleVideoReceipt:videoReceipt,
+    videoPollingUrl:provider==='google'?googleVideoPollingUrl:videoPollingUrl
+  };
+  const context=vm.createContext({...receipts,mediaJobPolicy,requireMediaJob,AI_MEDIA_CONFIG:config,db,ecosystemCanRun:()=>true,aiConfigured:()=>true,finishViralQuizVideo:async()=>{},openRouterRequest:()=>{throw Error('legacy server routing forbidden');},aiMediaClient:client,generatedMediaDir:'/tmp',fs:{writeFileSync:(...args)=>writes.push(args)},path:{join:(...parts)=>parts.join('/')},Buffer,requireAdmin(){},requireEcosystemRunning(){},app:{post:(route,...handlers)=>routes.set(route,handlers.at(-1))},mediaFactoryProject:id=>db.prepare('SELECT * FROM admin_media_projects WHERE id=?').get(id)});
+  vm.runInContext(server.slice(server.indexOf('function videoGenerationIssue('),server.indexOf("app.get('/api/admin/media-factory'")),context);
   vm.runInContext(server.slice(server.indexOf('let viralVideoFactoryRunning=false;'),server.indexOf("app.get('/api/admin/viral-factory/automation'")),context);
   vm.runInContext(server.slice(server.indexOf("app.post('/api/admin/media-projects/:id/generate'"),server.indexOf("app.post('/api/admin/media-projects/:id/approve'")),context);
   const run=()=>vm.runInContext('processViralVideoFactory()',context),scene=()=>db.prepare('SELECT * FROM viral_quiz_scenes WHERE id=1').get();
   const route=async action=>{const res={code:200,status(n){this.code=n;return this;},json(body){this.body=body;return this;}};await routes.get('/api/admin/media-projects/:id/'+action)({params:{id:'1'}},res);return res;};
-  return {db,calls,writes,run,scene,route};
+  return {db,calls,writes,downloads,run,scene,route};
 }
 test('worker consumes relative receipt once and never resubmits after successful completion',async()=>{
   const f=fixture((_u,o)=>({data:o.method==='POST'?{id:job,polling_url:'/api/v1/videos/'+job}:{id:job,status:'completed'}}));f.db.exec('INSERT INTO viral_quiz_scenes(id) VALUES(1)');
@@ -166,4 +176,63 @@ test('provider change during manual status GET prevents download and finalizatio
   assert.equal((await syncing).code,409);assert.equal(downloads,0);assert.deepEqual(f.writes,[]);
   assert.deepEqual(f.db.prepare('SELECT * FROM admin_media_projects').get(),before);
   assert.equal(f.db.prepare('SELECT status FROM admin_agent_tasks').get().status,'running');f.db.close();
+});
+
+const googleModel='veo-3.1-lite-generate-preview',googleJob='models/'+googleModel+'/operations/job-google',googlePoll='https://generativelanguage.googleapis.com/v1beta/'+googleJob;
+const googleConfig={provider:'openai',videoProvider:'google',configured:true,imageConfigured:true,videoEnabled:true,videoModel:googleModel,videoOptions:[googleModel],videoDurationOptions:[4,6,8],videoAspectRatioOptions:['9:16','16:9'],videoAudioAlwaysOn:true};
+const googleResponse=(_url,options)=>({provider:'google',data:options.method==='POST'?{id:googleJob,polling_url:googlePoll,status:'queued'}:{id:googleJob,status:'completed',content_url:'https://generativelanguage.googleapis.com/v1beta/files/video-test:download?alt=media'}});
+test('Google manual generation persists the full original operation and uses audio for all supported durations',async()=>{
+  for(const duration of [4,6,8]){
+    const f=fixture(googleResponse,async()=>mp4,{mediaConfig:googleConfig});
+    f.db.prepare("INSERT INTO admin_media_projects(id,video_provider,model,duration_seconds) VALUES(1,'google',?,?)").run(googleModel,duration);
+    assert.equal((await f.route('generate')).code,202);assert.equal((await f.route('generate')).code,409);
+    assert.equal((await f.route('sync')).code,200);
+    const row=f.db.prepare('SELECT * FROM admin_media_projects').get();assert.equal(row.video_provider,'google');assert.equal(row.image_provider,'openrouter');assert.equal(row.remote_job_id,googleJob);assert.equal(row.polling_url,googlePoll);assert.equal(row.production_status,'review');
+    const input=JSON.parse(f.calls[0].options.body);assert.equal(input.durationSeconds,duration);assert.equal(input.generateAudio,true);assert.equal(input.model,googleModel);
+    assert.deepEqual(f.calls.map(call=>call.options.method),['POST','GET']);assert(f.calls.every(call=>call.url.startsWith('https://generativelanguage.googleapis.com/')));assert.equal(f.downloads[0].jobId,googleJob);assert.equal(f.downloads[0].provider,'google');f.db.close();
+  }
+});
+
+test('unsupported Google duration, ratio or model is rejected before claim, network and changes',async()=>{
+  for(const update of ["duration_seconds=5","duration_seconds=65","aspect_ratio='1:1'","model='google/veo-3.1-lite'"]){
+    const f=fixture(googleResponse,async()=>mp4,{mediaConfig:googleConfig});
+    f.db.prepare("INSERT INTO admin_media_projects(id,video_provider,model) VALUES(1,'google',?)").run(googleModel);f.db.exec('UPDATE admin_media_projects SET '+update);
+    const before=f.db.prepare('SELECT * FROM admin_media_projects').get(),result=await f.route('generate');assert.equal(result.code,400);assert.equal(result.body.code,'ai_media_video_options_invalid');assert.deepEqual(f.db.prepare('SELECT * FROM admin_media_projects').get(),before);assert.deepEqual(f.calls,[]);assert.deepEqual(f.writes,[]);f.db.close();
+  }
+});
+
+test('Google queued scene behind an old OpenRouter scene runs once without touching the old queue',async()=>{
+  const f=fixture(googleResponse,async()=>mp4,{mediaConfig:googleConfig});
+  f.db.exec("INSERT INTO viral_quiz_scenes(id,status,video_provider) VALUES(1,'pending','openrouter'),(2,'pending','google'),(3,'generating','openrouter')");
+  const before=f.db.prepare("SELECT * FROM viral_quiz_scenes WHERE video_provider='openrouter'").all();
+  await f.run();await f.run();assert.deepEqual(f.db.prepare("SELECT * FROM viral_quiz_scenes WHERE video_provider='openrouter'").all(),before);
+  const current=f.db.prepare('SELECT * FROM viral_quiz_scenes WHERE id=2').get();assert.equal(current.status,'downloaded');assert.equal(current.video_provider,'google');assert.equal(current.attempt_count,1);assert.equal(current.remote_job_id,googleJob);assert.deepEqual(f.calls.map(call=>call.options.method),['POST','GET']);assert.equal(JSON.parse(f.calls[0].options.body).generateAudio,true);f.db.close();
+});
+
+test('Google timeout preserves an uncertain claim and never resubmits it',async()=>{
+  const f=fixture(()=>{throw Object.assign(Error('google_video_timeout'),{status:504});},async()=>mp4,{mediaConfig:googleConfig});
+  f.db.prepare("INSERT INTO admin_media_projects(id,video_provider,model) VALUES(1,'google',?)").run(googleModel);
+  assert.equal((await f.route('generate')).code,504);assert.equal((await f.route('generate')).code,409);assert.equal(f.calls.length,1);assert.equal(f.db.prepare('SELECT production_status FROM admin_media_projects').get().production_status,'editing');f.db.close();
+});
+
+test('a provider change during Google scene polling preserves the scene without download or finalization',async()=>{
+  let release;const pending=new Promise(resolve=>{release=resolve;});const f=fixture(()=>pending,async()=>mp4,{mediaConfig:googleConfig});
+  f.db.prepare("INSERT INTO viral_quiz_scenes(id,status,video_provider,remote_job_id,polling_url) VALUES(1,'generating','google',?,?)").run(googleJob,googlePoll);
+  const running=f.run();f.db.exec("UPDATE viral_quiz_scenes SET video_provider='openrouter'");const before=f.scene();release(googleResponse('',{method:'GET'}));await running;
+  assert.deepEqual(f.scene(),before);assert.deepEqual(f.downloads,[]);assert.deepEqual(f.writes,[]);f.db.close();
+});
+
+test('quiz approval creates nine Google scenes with supported durations without generating or duplicating jobs',()=>{
+  const db=new Database(':memory:');
+  db.exec(`CREATE TABLE admin_viral_quizzes(id INTEGER PRIMARY KEY,status TEXT,task_id INTEGER,media_project_id INTEGER,updated_at TEXT);INSERT INTO admin_viral_quizzes(id,status) VALUES(1,'awaiting_approval');
+    CREATE TABLE admin_specialist_agents(id INTEGER PRIMARY KEY,code TEXT,status TEXT);INSERT INTO admin_specialist_agents VALUES(1,'midia','active');
+    CREATE TABLE admin_agent_tasks(id INTEGER PRIMARY KEY,agent_id INTEGER,created_by_user_id TEXT,title TEXT,instructions TEXT,priority TEXT,status TEXT);
+    CREATE TABLE admin_media_projects(id INTEGER PRIMARY KEY,task_id INTEGER,format TEXT,channels TEXT,source_notes TEXT,prompt TEXT,aspect_ratio TEXT,duration_seconds INTEGER,caption TEXT,production_status TEXT,progress INTEGER,script TEXT,video_provider TEXT,model TEXT);
+    CREATE TABLE viral_quiz_scenes(id INTEGER PRIMARY KEY,quiz_id INTEGER,scene_number INTEGER,duration_seconds INTEGER,prompt TEXT,video_provider TEXT,model TEXT);`);
+  const quiz={id:1,theme:'Plantas',script:'Roteiro existente',voice:'br-feminina-energica',channels:'VitrineCity',destination_label:'Agrotecnica',destination_url:'https://vitrinecity.com/oracao-do-dia.html',questions:[]};
+  const context=vm.createContext({db,AI_MEDIA_CONFIG:googleConfig,requireMediaJob,viralQuizRow:()=>({...quiz,...db.prepare('SELECT * FROM admin_viral_quizzes WHERE id=1').get()})});
+  vm.runInContext(server.slice(server.indexOf('function approveViralQuiz('),server.indexOf("app.post('/api/admin/viral-quizzes/:id/approve'")),context);
+  vm.runInContext("approveViralQuiz(1,'local-admin')",context);
+  const project=db.prepare('SELECT * FROM admin_media_projects').get(),scenes=db.prepare('SELECT * FROM viral_quiz_scenes ORDER BY scene_number').all();assert.equal(project.video_provider,'google');assert.equal(project.model,googleModel);assert.equal(project.duration_seconds,65);assert.equal(scenes.length,9);assert(scenes.every(scene=>scene.video_provider==='google'&&scene.model===googleModel));assert.deepEqual(scenes.map(scene=>scene.duration_seconds),[8,8,8,8,8,8,8,8,4]);
+  assert.throws(()=>vm.runInContext("approveViralQuiz(1,'local-admin')",context),/não está aguardando aprovação/);assert.equal(db.prepare('SELECT count(*) n FROM viral_quiz_scenes').get().n,9);db.close();
 });

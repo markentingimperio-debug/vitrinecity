@@ -46,3 +46,15 @@ test('missing image configuration cannot approve image generation despite matchi
   const config=resolveMediaConfig({AI_MEDIA_PROVIDER:'openai',OPENROUTER_API_KEY:'synthetic-unused'});
   assert.throws(()=>requireMediaJob({format:'image',image_provider:'openai'},config),{status:503,code:'ai_image_unavailable'});
 });
+
+test('Google video selection is independent of OpenAI images and never claims historical receipts',()=>{
+  const config=resolveMediaConfig({AI_MEDIA_PROVIDER:'openai',AI_VIDEO_PROVIDER:'google',OPENAI_API_KEY:'image-test',GEMINI_API_KEY:'video-test'});
+  assert.equal(requireMediaJob({format:'image',image_provider:'openai'},config).generationAvailable,true);
+  assert.equal(requireMediaJob({format:'short_video',video_provider:'google'},config).syncAvailable,true);
+  for(const video_provider of ['openrouter','openai']){
+    assert.throws(()=>requireMediaJob({format:'short_video',video_provider},config),{status:409,code:'ai_media_job_provider_mismatch'});
+  }
+  const noVideoKey=resolveMediaConfig({AI_MEDIA_PROVIDER:'openai',AI_VIDEO_PROVIDER:'google',OPENAI_API_KEY:'image-test'});
+  assert.equal(requireMediaJob({format:'image',image_provider:'openai'},noVideoKey).generationAvailable,true);
+  assert.throws(()=>requireMediaJob({format:'short_video',video_provider:'google'},noVideoKey),{status:503,code:'ai_video_unavailable'});
+});

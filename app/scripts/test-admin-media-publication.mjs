@@ -30,6 +30,18 @@ test('all embedded scripts compile and action notifications use response state',
   for(const match of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g))if(match[1].trim())new Function(match[1]);
   assert.match(html,/notify\(result\.publication\?\.message/);assert.match(html,/if\(!b\|\|b\.disabled\)return/);
 });
+
+test('Google video controls offer only supported formats while OpenAI images retain square format',()=>{
+  const modelScript=html.slice(html.indexOf('function updateFactoryModels('),html.indexOf('function renderFactory('));
+  const option=value=>({value,disabled:false});
+  const nodes={'#factoryFormat':{value:'short_video'},'#factoryModel':{},'#factoryRatio':{value:'1:1',options:['9:16','16:9','1:1'].map(option)},'#factoryDuration':{value:'5',options:['4','6','8'].map(option)},'#factoryVideoInfo':{}};
+  const context=vm.createContext({window:{factoryConfig:{videoProvider:'google',videoDurationOptions:[4,6,8],videoAspectRatioOptions:['9:16','16:9'],videoAudioAlwaysOn:true,videoResolution:'720p'}},$:id=>nodes[id],esc:String,aiProviderLabel:value=>value==='google'?'Google Veo':'OpenAI'});
+  vm.runInContext(modelScript+`;updateFactoryModels({image:'gpt-image-2',imageOptions:['gpt-image-2'],video:'veo-3.1-lite-generate-preview',videoOptions:['veo-3.1-lite-generate-preview']});`,context);
+  assert.equal(nodes['#factoryRatio'].value,'9:16');assert.equal(nodes['#factoryRatio'].options[2].disabled,true);assert.equal(nodes['#factoryDuration'].value,'4');assert.equal(nodes['#factoryDuration'].disabled,false);assert.match(nodes['#factoryVideoInfo'].textContent,/Google Veo.*720p.*áudio incluído/);assert.match(nodes['#factoryModel'].innerHTML,/veo-3.1-lite/);assert.doesNotMatch(nodes['#factoryModel'].innerHTML,/gpt-image/);
+  nodes['#factoryFormat'].value='image';vm.runInContext(`updateFactoryModels({image:'gpt-image-2',imageOptions:['gpt-image-2']});`,context);
+  assert.equal(nodes['#factoryRatio'].options[2].disabled,false);assert.equal(nodes['#factoryDuration'].disabled,true);assert.equal(nodes['#factoryVideoInfo'].textContent,'');assert.match(nodes['#factoryModel'].innerHTML,/gpt-image-2/);
+  context.window.factoryConfig={videoProvider:'openrouter',videoDurationOptions:[],videoAspectRatioOptions:['1:1','9:16','16:9']};nodes['#factoryFormat'].value='short_video';vm.runInContext('updateFactoryModels({})',context);assert(nodes['#factoryDuration'].options.every(item=>item.disabled===false));
+});
 const quizHtml=readFileSync(new URL('../public/admin-quizzes.html',import.meta.url),'utf8');
 const quizScript=quizHtml.match(/<script>([\s\S]*?)<\/script>/)[1];
 function quizUi(publication,status='approved',filter=''){

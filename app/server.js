@@ -9,7 +9,7 @@ import { integrationObserver, openRouterOperation } from './integration-health.j
 import { createAiTextClient } from './ai-text-provider.js';
 import { createMediaProvider } from './ai-media-provider.js';
 import { mediaJobPolicy, requireMediaJob } from './media-job-policy.js';
-import {videoReceipt,videoPollingUrl,videoPollState,videoFailureMessage,videoRetryableFailure,videoProjectUnchanged,downloadVideo} from './video-provider-receipts.js';
+import {videoPollState,videoFailureMessage,videoRetryableFailure,videoProjectUnchanged} from './video-provider-receipts.js';
 import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.js';
@@ -4924,7 +4924,7 @@ function viralQuizRow(id) {
   }
   return { ...row, status:media?.production_status==='cancelled'||media?.task_status==='cancelled'?'cancelled':row.status==='published'&&publication?.status!=='published'?'approved':row.status,
     questions: JSON.parse(row.questions_json || '[]'), scenes, distribution, media, publication,
-    videoAvailable:AI_MEDIA_CONFIG.videoEnabled,videoUnavailableReason:AI_MEDIA_CONFIG.videoReason||null };
+    videoAvailable:AI_MEDIA_CONFIG.videoEnabled&&(!media||media.syncAvailable||media.generationBlockCode!=='ai_media_job_provider_mismatch'),videoUnavailableReason:media?.generationBlockCode==='ai_media_job_provider_mismatch'?media.generationBlockReason:AI_MEDIA_CONFIG.videoReason||null };
 }
 app.get('/api/admin/viral-quizzes', requireAdmin, (_req,res) => {
   const quizzes = db.prepare('SELECT * FROM admin_viral_quizzes ORDER BY id DESC LIMIT 40').all()
@@ -4950,7 +4950,8 @@ app.post('/api/admin/viral-quizzes', requireAdmin, (req,res) => {
   return res.status(201).json({quiz:viralQuizRow(Number(result.lastInsertRowid)),message:'Pacote criado e enviado para aprovação da Gestora.'});
 });
 function approveViralQuiz(id,userId){
-  requireMediaJob({video_provider:AI_MEDIA_CONFIG.provider},AI_MEDIA_CONFIG);
+  const videoProvider=AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider;
+  requireMediaJob({video_provider:videoProvider},AI_MEDIA_CONFIG);
   const quiz=viralQuizRow(id);if(!quiz)throw Object.assign(new Error('Quiz não encontrado.'),{status:404});
   if(quiz.status!=='awaiting_approval')throw Object.assign(new Error('Este quiz não está aguardando aprovação.'),{status:409});
   const media=db.prepare("SELECT id,status FROM admin_specialist_agents WHERE code='midia'").get();
@@ -4959,17 +4960,17 @@ function approveViralQuiz(id,userId){
     const task=db.prepare(`INSERT INTO admin_agent_tasks (agent_id,created_by_user_id,title,instructions,priority,status)
       VALUES (?,?,?,?,?,'queued')`).run(media.id,userId,`Quiz viral: ${quiz.theme}`,quiz.script,'high');
     const project=db.prepare(`INSERT INTO admin_media_projects
-      (task_id,format,channels,source_notes,prompt,aspect_ratio,duration_seconds,caption,production_status,progress,script)
-      VALUES (?,'short_video',?,?,?,?,65,?,'script',15,?)`).run(Number(task.lastInsertRowid),quiz.channels,quiz.script,
+      (task_id,format,channels,source_notes,prompt,aspect_ratio,duration_seconds,caption,production_status,progress,script,video_provider,model)
+      VALUES (?,'short_video',?,?,?,?,65,?,'script',15,?,?,?)`).run(Number(task.lastInsertRowid),quiz.channels,quiz.script,
         `Vídeo vertical de quiz, ritmo rápido, imagens próprias ou geradas, narração ${quiz.voice}, legendas grandes e CTA final. ${quiz.script}`,
-        '9:16',`Quiz: ${quiz.theme}. ${quiz.destination_label}: ${quiz.destination_url}`,quiz.script);
+        '9:16',`Quiz: ${quiz.theme}. ${quiz.destination_label}: ${quiz.destination_url}`,quiz.script,videoProvider,AI_MEDIA_CONFIG.videoModel);
     const questions=quiz.questions||[],sceneTexts=[`Gancho visual: desafio sobre ${quiz.theme}`,
       `Pergunta 1: ${questions[0]?.question||quiz.theme}`,`Revelação 1: resposta ${'ABC'[questions[0]?.answer||0]} — ${questions[0]?.options?.[questions[0]?.answer||0]||''}`,
       `Pergunta 2: ${questions[1]?.question||quiz.theme}`,`Revelação 2: resposta ${'ABC'[questions[1]?.answer||0]} — ${questions[1]?.options?.[questions[1]?.answer||0]||''}`,
       `Pergunta 3: ${questions[2]?.question||quiz.theme}`,`Revelação 3: resposta ${'ABC'[questions[2]?.answer||0]} — ${questions[2]?.options?.[questions[2]?.answer||0]||''}`,
       'Tela de resultado: especialista, mandou bem ou tente novamente',`Chamada final para ${quiz.destination_label}: ${quiz.destination_url}`];
-    const insertScene=db.prepare(`INSERT INTO viral_quiz_scenes(quiz_id,scene_number,duration_seconds,prompt) VALUES (?,?,?,?)`);
-    sceneTexts.forEach((text,index)=>insertScene.run(id,index+1,index===8?4:8,`Vídeo vertical 9:16, cena ${index+1} de 9 de um quiz brasileiro, ritmo rápido, visual consistente, sem marcas de terceiros. ${text}. Narração ${quiz.voice}, texto grande em português e transição limpa para a próxima cena.`));
+    const insertScene=db.prepare(`INSERT INTO viral_quiz_scenes(quiz_id,scene_number,duration_seconds,prompt,video_provider,model) VALUES (?,?,?,?,?,?)`);
+    sceneTexts.forEach((text,index)=>insertScene.run(id,index+1,index===8?4:8,`Vídeo vertical 9:16, cena ${index+1} de 9 de um quiz brasileiro, ritmo rápido, visual consistente, sem marcas de terceiros. ${text}. Narração ${quiz.voice}, texto grande em português e transição limpa para a próxima cena.`,videoProvider,AI_MEDIA_CONFIG.videoModel));
     db.prepare("UPDATE admin_viral_quizzes SET status='in_production',task_id=?,media_project_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
       .run(Number(task.lastInsertRowid),Number(project.lastInsertRowid),id);
   }); tx();
@@ -5065,28 +5066,35 @@ let viralVideoFactoryRunning=false;
 async function processViralVideoFactory(){
   if(!ecosystemCanRun()||viralVideoFactoryRunning||!AI_MEDIA_CONFIG.videoEnabled)return;viralVideoFactoryRunning=true;
   try{
+    const videoProvider=AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider;
+    const sceneCurrent=scene=>{
+      const current=db.prepare("SELECT s.* FROM viral_quiz_scenes s JOIN admin_viral_quizzes q ON q.id=s.quiz_id WHERE s.id=? AND q.status='in_production'").get(scene.id);
+      return current&&['status','video_provider','remote_job_id','polling_url','prompt','duration_seconds','model'].every(key=>current[key]===scene[key]);
+    };
     // Resume a montage held by pause without generating its scenes again.
-    const ready=db.prepare("SELECT q.id FROM admin_viral_quizzes q JOIN viral_quiz_scenes s ON s.quiz_id=q.id WHERE q.status='in_production' AND s.status='downloaded' GROUP BY q.id HAVING count(*)=9 LIMIT 1").get();
+    const ready=db.prepare("SELECT q.id FROM admin_viral_quizzes q JOIN viral_quiz_scenes s ON s.quiz_id=q.id WHERE q.status='in_production' AND s.status='downloaded' AND s.video_provider=? GROUP BY q.id HAVING count(*)=9 LIMIT 1").get(videoProvider);
     if(ready)await finishViralQuizVideo(ready.id);
     if(!ecosystemCanRun())return;
-    const pending=db.prepare(`SELECT s.* FROM viral_quiz_scenes s JOIN admin_viral_quizzes q ON q.id=s.quiz_id WHERE s.status='pending' AND s.remote_job_id='' AND s.polling_url='' AND q.status='in_production' ORDER BY s.quiz_id,s.scene_number LIMIT 1`).get();
-    if(pending&&mediaJobPolicy(pending,AI_MEDIA_CONFIG).generationAvailable){const claimed=db.prepare("UPDATE viral_quiz_scenes SET status='submitting',video_provider=?,attempt_count=attempt_count+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND remote_job_id='' AND polling_url=''").run(AI_MEDIA_CONFIG.provider,pending.id);if(claimed.changes)try{
-      const models=[...new Set([OPENROUTER_VIDEO_MODEL,...MEDIA_VIDEO_MODELS])],model=models[Math.min(Number(pending.attempt_count||0),models.length-1)];
-      const result=await openRouterRequest('https://openrouter.ai/api/v1/videos',{method:'POST',redirect:'error',body:JSON.stringify({model,prompt:pending.prompt,duration:pending.duration_seconds,aspect_ratio:'9:16',resolution:'720p',generate_audio:true})},60000);
-      const {jobId,pollingUrl}=videoReceipt(result.data);
+    const pending=db.prepare(`SELECT s.* FROM viral_quiz_scenes s JOIN admin_viral_quizzes q ON q.id=s.quiz_id WHERE s.status='pending' AND s.video_provider=? AND s.remote_job_id='' AND s.polling_url='' AND q.status='in_production' ORDER BY s.quiz_id,s.scene_number LIMIT 1`).get(videoProvider);
+    if(pending&&mediaJobPolicy(pending,AI_MEDIA_CONFIG).generationAvailable){const claimed=db.prepare("UPDATE viral_quiz_scenes SET status='submitting',attempt_count=attempt_count+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND video_provider=? AND status='pending' AND remote_job_id='' AND polling_url=''").run(pending.id,videoProvider);if(claimed.changes)try{
+      const model=pending.model||AI_MEDIA_CONFIG.videoModel;
+      const result=await aiMediaClient.createVideo({model,prompt:pending.prompt,durationSeconds:pending.duration_seconds,aspectRatio:'9:16',generateAudio:true});
+      const {jobId,pollingUrl}=aiMediaClient.videoReceipt(result.data);
       // Persist a valid ID even if a malformed URL needs manual investigation.
-      db.prepare("UPDATE viral_quiz_scenes SET remote_job_id=?,polling_url=?,model=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(jobId,pollingUrl,model,pending.id);
+      db.prepare("UPDATE viral_quiz_scenes SET remote_job_id=?,polling_url=?,model=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND video_provider=? AND remote_job_id='' AND polling_url=''").run(jobId,pollingUrl,model,pending.id,videoProvider);
       if(!jobId||!pollingUrl)throw new Error('video_receipt_invalid');
-      db.prepare("UPDATE viral_quiz_scenes SET status='generating',error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(pending.id);
-    }catch(error){db.prepare("UPDATE viral_quiz_scenes SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(videoFailureMessage(error),pending.id);}}
-    const generating=db.prepare("SELECT * FROM viral_quiz_scenes WHERE status='generating' ORDER BY id LIMIT 3").all();
-    for(const scene of generating)try{if(!ecosystemCanRun())break;if(!mediaJobPolicy(scene,AI_MEDIA_CONFIG).syncAvailable)continue;const pollingUrl=videoPollingUrl(scene.polling_url,scene.remote_job_id);if(!pollingUrl)throw new Error('video_receipt_invalid');
-      const result=await openRouterRequest(pollingUrl,{method:'GET',redirect:'error'},30000);if(videoPollState(result.data,scene.remote_job_id)!=='completed')continue;
-      const buffer=await downloadVideo(result.data,scene.remote_job_id,{apiKey:AI_API_KEY});const name=`viral-${scene.quiz_id}-scene-${scene.scene_number}.mp4`,local=path.join(generatedMediaDir,name);fs.writeFileSync(local,buffer);db.prepare("UPDATE viral_quiz_scenes SET status='downloaded',local_path=?,output_url=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(local,`/uploads/generated-videos/${name}`,scene.id);await finishViralQuizVideo(scene.quiz_id);
-    }catch(error){db.prepare("UPDATE viral_quiz_scenes SET status=?,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='generating'").run(videoRetryableFailure(error)?'generating':'failed',videoFailureMessage(error),scene.id);}
+      db.prepare("UPDATE viral_quiz_scenes SET status='generating',error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='submitting' AND video_provider=? AND EXISTS(SELECT 1 FROM admin_viral_quizzes q WHERE q.id=viral_quiz_scenes.quiz_id AND q.status='in_production')").run(pending.id,videoProvider);
+    }catch(error){db.prepare("UPDATE viral_quiz_scenes SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='submitting' AND video_provider=?").run(videoFailureMessage(error),pending.id,videoProvider);}}
+    const generating=db.prepare("SELECT s.* FROM viral_quiz_scenes s JOIN admin_viral_quizzes q ON q.id=s.quiz_id WHERE s.status='generating' AND s.video_provider=? AND q.status='in_production' ORDER BY s.id LIMIT 3").all(videoProvider);
+    for(const scene of generating)try{if(!ecosystemCanRun())break;if(!mediaJobPolicy(scene,AI_MEDIA_CONFIG).syncAvailable)continue;const pollingUrl=aiMediaClient.videoPollingUrl(scene.polling_url,scene.remote_job_id);if(!pollingUrl)throw new Error('video_receipt_invalid');
+      const job={provider:scene.video_provider,jobId:scene.remote_job_id,pollingUrl};
+      const result=await aiMediaClient.getVideo(job);if(videoPollState(result.data,scene.remote_job_id)!=='completed'||!sceneCurrent(scene)||!ecosystemCanRun())continue;
+      const buffer=await aiMediaClient.downloadVideo(result.data,job);if(!sceneCurrent(scene)||!ecosystemCanRun())continue;
+      const name=`viral-${scene.quiz_id}-scene-${scene.scene_number}.mp4`,local=path.join(generatedMediaDir,name);fs.writeFileSync(local,buffer);db.prepare("UPDATE viral_quiz_scenes SET status='downloaded',local_path=?,output_url=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(local,`/uploads/generated-videos/${name}`,scene.id);await finishViralQuizVideo(scene.quiz_id);
+    }catch(error){if(sceneCurrent(scene))db.prepare("UPDATE viral_quiz_scenes SET status=?,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='generating'").run(videoRetryableFailure(error)?'generating':'failed',videoFailureMessage(error),scene.id);}
   }finally{viralVideoFactoryRunning=false;}
 }
-app.get('/api/admin/viral-factory/automation',requireAdmin,(_req,res)=>res.json({settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get(),trends:db.prepare('SELECT * FROM viral_factory_trends ORDER BY id DESC LIMIT 20').all(),openrouterConfigured:AI_MEDIA_CONFIG.provider==='openrouter'&&AI_MEDIA_CONFIG.configured,textProvider:AI_TEXT_CONFIG.provider,textConfigured:AI_TEXT_CONFIG.configured,mediaProvider:AI_MEDIA_CONFIG.provider,videoEnabled:AI_MEDIA_CONFIG.videoEnabled,videoReason:AI_MEDIA_CONFIG.videoReason}));
+app.get('/api/admin/viral-factory/automation',requireAdmin,(_req,res)=>res.json({settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get(),trends:db.prepare('SELECT * FROM viral_factory_trends ORDER BY id DESC LIMIT 20').all(),openrouterConfigured:(AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider)==='openrouter'&&AI_MEDIA_CONFIG.videoEnabled,textProvider:AI_TEXT_CONFIG.provider,textConfigured:AI_TEXT_CONFIG.configured,mediaProvider:AI_MEDIA_CONFIG.provider,videoProvider:AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider,videoEnabled:AI_MEDIA_CONFIG.videoEnabled,videoReason:AI_MEDIA_CONFIG.videoReason}));
 app.put('/api/admin/viral-factory/automation',requireAdmin,(req,res)=>{const enabled=Boolean(req.body?.enabled),approvalRequired=req.body?.approvalRequired!==false;
   const destinationUrl=String(req.body?.destinationUrl||'').trim();let parsed;try{parsed=new URL(destinationUrl)}catch{return res.status(400).json({error:'Informe um destino válido.'})}if(parsed.protocol!=='https:')return res.status(400).json({error:'O destino precisa usar HTTPS.'});
   db.prepare(`UPDATE viral_factory_settings SET enabled=?,approval_required=?,destination_url=?,destination_label=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(enabled?1:0,approvalRequired?1:0,destinationUrl,String(req.body?.destinationLabel||'Vitrine City').trim().slice(0,100));return res.json({ok:true,settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get()});});
@@ -5195,8 +5203,6 @@ const aiTextClient = createAiTextClient({env:{...process.env,SITE_URL},onFailure
 const AI_TEXT_CONFIG = aiTextClient.config;
 const OPENAI_MODEL = AI_TEXT_CONFIG.model;
 const OPENROUTER_IMAGE_MODEL = String(process.env.OPENROUTER_IMAGE_MODEL || 'qwen/qwen-image-3').trim();
-const OPENROUTER_VIDEO_MODEL = String(process.env.OPENROUTER_VIDEO_MODEL || 'google/veo-3.1-lite').trim();
-const MEDIA_VIDEO_MODELS = Object.freeze(['google/veo-3.1-lite','alibaba/wan-3.0','bytedance/seedance-2.0-mini']);
 const aiConfigured = () => AI_TEXT_CONFIG.configured;
 const AI_PUBLIC_ROOT = path.resolve(dir, 'public');
 const AI_BLOCKED_PAGES = new Set([
@@ -5401,7 +5407,7 @@ async function openRouterRequest(url, options = {}, timeout = 60000) {
 }
 
 async function performOpenRouterRequest(url, options = {}, timeout = 60000) {
-  const operation=openRouterOperation(url),selected=operation==='openrouter_text'?AI_TEXT_CONFIG.provider:AI_MEDIA_CONFIG.provider;
+  const operation=openRouterOperation(url),isVideo=/\/videos(?:\/|$)/.test(new URL(url).pathname),selected=operation==='openrouter_text'?AI_TEXT_CONFIG.provider:isVideo?(AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider):AI_MEDIA_CONFIG.provider;
   if(selected!=='openrouter')throw Object.assign(new Error('O OpenRouter está desativado para esta operação.'),{status:503,code:'openrouter_disabled'});
   const config=operation==='openrouter_text'?AI_TEXT_CONFIG:AI_MEDIA_CONFIG;
   if(config.explicit&&!config.configured)throw Object.assign(new Error(config.error),{status:503});
@@ -5839,6 +5845,14 @@ function mediaFactoryProject(id) {
   return project?{...project,...mediaJobPolicy(project,AI_MEDIA_CONFIG),publication:mediaPublications.snapshot(project)}:null;
 }
 
+function videoGenerationIssue(project) {
+  if((AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider)!=='google')return '';
+  if(!AI_MEDIA_CONFIG.videoDurationOptions?.includes(Number(project.duration_seconds)))return 'O Google Veo aceita vídeos de 4, 6 ou 8 segundos. Para um roteiro maior, use cenas separadas.';
+  if(!AI_MEDIA_CONFIG.videoAspectRatioOptions?.includes(project.aspect_ratio))return 'O Google Veo aceita apenas vertical 9:16 ou horizontal 16:9.';
+  if(project.model&&!AI_MEDIA_CONFIG.videoOptions?.includes(project.model))return 'Escolha um modelo de vídeo disponível no provedor selecionado.';
+  return '';
+}
+
 app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
   const projects = db.prepare(`SELECT m.*,t.title,t.instructions,t.priority,t.status AS task_status,a.name AS agent_name
     FROM admin_media_projects m JOIN admin_agent_tasks t ON t.id=m.task_id
@@ -5852,8 +5866,9 @@ app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
         remaining: key.limit_remaining == null ? null : Number(key.limit_remaining), isFreeTier: Boolean(key.is_free_tier) };
     } catch (error) { budget = { unavailable: true, message: error.message }; }
   }
-  return res.json({ configured: AI_MEDIA_CONFIG.configured,provider:AI_MEDIA_CONFIG.provider,
+  return res.json({ configured: AI_MEDIA_CONFIG.configured,provider:AI_MEDIA_CONFIG.provider,videoProvider:AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider,
     imageConfigured:AI_MEDIA_CONFIG.imageConfigured,videoEnabled:AI_MEDIA_CONFIG.videoEnabled,videoReason:AI_MEDIA_CONFIG.videoReason,
+    videoDurationOptions:AI_MEDIA_CONFIG.videoDurationOptions,videoAspectRatioOptions:AI_MEDIA_CONFIG.videoAspectRatioOptions,videoResolution:AI_MEDIA_CONFIG.videoResolution,videoAudioAlwaysOn:AI_MEDIA_CONFIG.videoAudioAlwaysOn,
     models: { image: AI_MEDIA_CONFIG.imageModel, video: AI_MEDIA_CONFIG.videoModel,
       imageOptions: AI_MEDIA_CONFIG.imageOptions, videoOptions: AI_MEDIA_CONFIG.videoOptions }, budget,
     projects:projects.map(project=>({...project,...mediaJobPolicy(project,AI_MEDIA_CONFIG),publication:mediaPublications.snapshot(project)})) });
@@ -5863,17 +5878,21 @@ app.post('/api/admin/media-factory', requireAdmin, (req, res) => {
   const format = String(req.body?.format || 'image');
   const prompt = String(req.body?.prompt || '').trim().slice(0, 5000);
   const title = String(req.body?.title || prompt.slice(0, 90) || 'Criação da Fábrica Neural').trim().slice(0, 180);
-  const aspectRatio = ['9:16','16:9','1:1'].includes(String(req.body?.aspectRatio)) ? String(req.body.aspectRatio) : '9:16';
-  const duration = Math.max(4, Math.min(8, Number(req.body?.durationSeconds) || 4));
+  const requestedRatio=String(req.body?.aspectRatio||'9:16'),requestedDuration=req.body?.durationSeconds===undefined?4:Number(req.body.durationSeconds);
+  const aspectRatio = ['9:16','16:9','1:1'].includes(requestedRatio) ? requestedRatio : '9:16';
+  const duration = Math.max(4, Math.min(8, requestedDuration || 4));
   const channels = String(req.body?.channels || 'VitrineCity').trim().slice(0, 300) || 'VitrineCity';
   const caption = String(req.body?.caption || '').trim().slice(0, 500);
   const requestedModel = String(req.body?.model || '').trim();
   const modelOptions = format === 'image' ? AI_MEDIA_CONFIG.imageOptions : AI_MEDIA_CONFIG.videoOptions;
   const model = modelOptions.includes(requestedModel) ? requestedModel : (format === 'image' ? AI_MEDIA_CONFIG.imageModel : AI_MEDIA_CONFIG.videoModel);
   if (!['image','short_video'].includes(format) || prompt.length < 10) return res.status(400).json({ error: 'Escolha imagem ou vídeo e descreva a criação em pelo menos 10 caracteres.' });
-  const access=mediaJobPolicy({format,image_provider:AI_MEDIA_CONFIG.provider,video_provider:AI_MEDIA_CONFIG.provider},AI_MEDIA_CONFIG);
+  const videoProvider=AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider;
+  const access=mediaJobPolicy({format,image_provider:AI_MEDIA_CONFIG.provider,video_provider:videoProvider},AI_MEDIA_CONFIG);
   if(!access.generationAvailable)return res.status(503).json({error:access.generationBlockReason,code:access.generationBlockCode});
   if(requestedModel&&!modelOptions.includes(requestedModel))return res.status(400).json({error:'Escolha um modelo disponível no provedor selecionado.'});
+  const videoIssue=format==='short_video'?videoGenerationIssue({duration_seconds:requestedDuration,aspect_ratio:requestedRatio,model}):'';
+  if(videoIssue)return res.status(400).json({error:videoIssue,code:'ai_media_video_options_invalid'});
   const agent = db.prepare("SELECT id,status FROM admin_specialist_agents WHERE code='midia'").get();
   if (!agent || agent.status !== 'active') return res.status(409).json({ error: 'Ative o Agente Audiovisual antes de criar.' });
   const task = db.prepare(`INSERT INTO admin_agent_tasks (agent_id,created_by_user_id,title,instructions,priority,status)
@@ -5881,7 +5900,7 @@ app.post('/api/admin/media-factory', requireAdmin, (req, res) => {
   const project = db.prepare(`INSERT INTO admin_media_projects
     (task_id,format,channels,source_notes,prompt,aspect_ratio,duration_seconds,caption,model,image_provider,video_provider,production_status,progress)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,'briefing',5)`).run(Number(task.lastInsertRowid), format, channels, prompt, prompt,
-      aspectRatio, duration, caption, model,AI_MEDIA_CONFIG.provider,AI_MEDIA_CONFIG.provider);
+      aspectRatio, duration, caption, model,AI_MEDIA_CONFIG.provider,videoProvider);
   return res.status(201).json({ project: mediaFactoryProject(Number(project.lastInsertRowid)) });
 });
 
@@ -5891,6 +5910,8 @@ app.post('/api/admin/media-projects/:id/generate', requireAdmin, requireEcosyste
   if (!['briefing','script','assets'].includes(project.production_status)) return res.status(409).json({ error: 'Este projeto já foi enviado para geração.' });
   const access=mediaJobPolicy(project,AI_MEDIA_CONFIG);
   if(!access.generationAvailable)return res.status(access.generationBlockCode==='ai_media_job_provider_mismatch'?409:503).json({error:access.generationBlockReason,code:access.generationBlockCode});
+  const videoIssue=project.format==='image'?'':videoGenerationIssue(project);
+  if(videoIssue)return res.status(400).json({error:videoIssue,code:'ai_media_video_options_invalid'});
   try {
     if (project.format === 'image') {
       db.prepare("UPDATE admin_media_projects SET production_status='assets',progress=25,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
@@ -5909,15 +5930,14 @@ app.post('/api/admin/media-projects/:id/generate', requireAdmin, requireEcosyste
     }
     // Claim before any network await. A timeout/crash must never make a second
     // manual click submit another paid generation for this project.
-    const claim=db.prepare("UPDATE admin_media_projects SET production_status='editing',video_provider=?,progress=10,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND production_status IN ('briefing','script','assets') AND remote_job_id='' AND polling_url=''").run(AI_MEDIA_CONFIG.provider,id);
+    const videoProvider=AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider;
+    const claim=db.prepare("UPDATE admin_media_projects SET production_status='editing',progress=10,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND video_provider=? AND production_status IN ('briefing','script','assets') AND remote_job_id='' AND polling_url=''").run(id,videoProvider);
     if(!claim.changes)return res.status(409).json({error:'Esta geração já foi iniciada e precisa de conferência.'});
-    const result = await openRouterRequest('https://openrouter.ai/api/v1/videos', { method: 'POST', redirect:'error', body: JSON.stringify({
-      model: project.model || OPENROUTER_VIDEO_MODEL, prompt: project.prompt, duration: project.duration_seconds,
-      aspect_ratio: project.aspect_ratio, resolution: '720p', generate_audio: false
-    }) }, 60000);
-    const {jobId,pollingUrl}=videoReceipt(result.data);
-    db.prepare(`UPDATE admin_media_projects SET progress=CASE WHEN production_status='editing' THEN 20 ELSE progress END,remote_job_id=?,polling_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND remote_job_id='' AND polling_url=''`)
-      .run(jobId, pollingUrl, id);
+    const result = await aiMediaClient.createVideo({model:project.model||AI_MEDIA_CONFIG.videoModel,prompt:project.prompt,durationSeconds:project.duration_seconds,
+      aspectRatio:project.aspect_ratio,generateAudio:AI_MEDIA_CONFIG.videoAudioAlwaysOn===true});
+    const {jobId,pollingUrl}=aiMediaClient.videoReceipt(result.data);
+    db.prepare(`UPDATE admin_media_projects SET progress=CASE WHEN production_status='editing' THEN 20 ELSE progress END,remote_job_id=?,polling_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND video_provider=? AND remote_job_id='' AND polling_url=''`)
+      .run(jobId, pollingUrl, id,videoProvider);
     if (!jobId || !pollingUrl) throw new Error('video_receipt_invalid');
     if(!videoProjectUnchanged(mediaFactoryProject(id),{...project,production_status:'editing',remote_job_id:jobId,polling_url:pollingUrl}))return res.status(409).json({error:'O projeto foi alterado durante a geração. O recibo recebido foi preservado sem reabrir o projeto.'});
     return res.status(202).json({ project: mediaFactoryProject(id) });
@@ -5934,10 +5954,11 @@ app.post('/api/admin/media-projects/:id/sync', requireAdmin, async (req, res) =>
   if(!project)return res.status(404).json({error:'Projeto de mídia não encontrado.'});
   const access=mediaJobPolicy(project,AI_MEDIA_CONFIG);
   if(!access.syncAvailable)return res.status(access.generationBlockCode==='ai_media_job_provider_mismatch'?409:503).json({error:access.generationBlockReason||'Este projeto não possui consulta de vídeo disponível.',code:access.generationBlockCode});
-  const pollingUrl=videoPollingUrl(project?.polling_url,project?.remote_job_id);
+  const pollingUrl=aiMediaClient.videoPollingUrl(project?.polling_url,project?.remote_job_id);
   if (!pollingUrl||project.production_status!=='editing') return res.status(409).json({ error: 'Este projeto não possui vídeo em processamento com recibo válido.' });
   try {
-    const result = await openRouterRequest(pollingUrl, { method: 'GET', redirect:'error' }, 30000);
+    const job={provider:project.video_provider,jobId:project.remote_job_id,pollingUrl};
+    const result = await aiMediaClient.getVideo(job);
     const status=videoPollState(result.data,project.remote_job_id);
     if(!videoProjectUnchanged(mediaFactoryProject(id),project))return res.status(409).json({error:'O projeto foi alterado durante a consulta. Nenhuma conclusão foi aplicada.'});
     if (status!=='completed') {
@@ -5945,7 +5966,7 @@ app.post('/api/admin/media-projects/:id/sync', requireAdmin, async (req, res) =>
       db.prepare('UPDATE admin_media_projects SET progress=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(progress,id);
       return res.status(202).json({ status, project: mediaFactoryProject(id) });
     }
-    const buffer=await downloadVideo(result.data,project.remote_job_id,{apiKey:AI_API_KEY});
+    const buffer=await aiMediaClient.downloadVideo(result.data,job);
     const file = `factory-${id}-${Date.now()}.mp4`;
     const cost = Number(result.data?.usage?.cost || result.data?.usage?.total_cost || 0);
     const saved=db.transaction(()=>{

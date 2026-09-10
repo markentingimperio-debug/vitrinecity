@@ -1,5 +1,6 @@
 import {rasterSize} from './web-story-assets.js';
 import {videoJobId, videoPollingUrl, downloadVideo as downloadProviderVideo} from './video-provider-receipts.js';
+import {resolveGoogleVideoConfig, createGoogleVideoProvider, googleVideoReceipt, googleVideoPollingUrl} from './google-video-provider.js';
 
 const OPENAI_ORIGIN = 'https://api.openai.com';
 const OPENROUTER_ORIGIN = 'https://openrouter.ai';
@@ -27,17 +28,26 @@ export function resolveMediaConfig(env = process.env) {
   const provider = valid ? (requested === 'auto' ? (clean(env.OPENROUTER_API_KEY) ? 'openrouter' : 'openai') : requested) : '';
   const key = clean(provider === 'openai' ? env.OPENAI_API_KEY : provider === 'openrouter' ? env.OPENROUTER_API_KEY : '');
   const imageModel = provider === 'openai' ? clean(env.OPENAI_IMAGE_MODEL) || 'gpt-image-2' : provider === 'openrouter' ? clean(env.OPENROUTER_IMAGE_MODEL) || IMAGE_MODELS.openrouter[0] : '';
-  const videoModel = provider === 'openrouter' ? clean(env.OPENROUTER_VIDEO_MODEL) || ROUTER_VIDEO_MODELS[0] : '';
   const imageModelValid = validModel(imageModel) && (provider !== 'openai' || IMAGE_MODELS.openai.includes(imageModel));
   const error = !valid ? 'ai_media_provider_invalid' : !key ? 'ai_media_key_missing' : !imageModelValid ? 'ai_media_model_invalid' : '';
   const configured = !error;
-  const videoEnabled = configured && provider === 'openrouter' && validModel(videoModel);
+  const videoRequested = clean(env.AI_VIDEO_PROVIDER).toLowerCase() || 'auto';
+  const videoValid = ['auto', 'google', 'openai', 'openrouter', 'disabled'].includes(videoRequested);
+  const videoProvider = videoValid ? (videoRequested === 'auto' ? provider : videoRequested) : '';
+  const google = resolveGoogleVideoConfig(env);
+  const videoModel = videoProvider === 'google' ? google.videoModel : videoProvider === 'openrouter' ? clean(env.OPENROUTER_VIDEO_MODEL) || ROUTER_VIDEO_MODELS[0] : '';
+  const routerVideoConfigured = Boolean(clean(env.OPENROUTER_API_KEY)) && validModel(videoModel);
+  const videoEnabled = videoValid && (videoProvider === 'google' ? google.videoEnabled : videoProvider === 'openrouter' && routerVideoConfigured);
+  const videoError = !videoValid ? 'ai_video_provider_invalid' : videoProvider === 'google' ? google.error : videoEnabled ? '' : 'ai_video_unavailable';
+  const videoReason = !videoValid ? 'O provedor de vídeo precisa de uma configuração válida.' : videoProvider === 'google' ? google.videoReason : videoProvider === 'openai' ? OPENAI_VIDEO_UNAVAILABLE_REASON : videoProvider === 'disabled' ? 'A geração de novos vídeos está desativada.' : videoEnabled ? '' : 'A geração de vídeo ainda não está configurada.';
   return Object.freeze({provider, explicit: requested !== 'auto', configured, imageConfigured: configured,
-    videoConfigured: videoEnabled, videoEnabled,
-    videoReason: provider === 'openai' ? OPENAI_VIDEO_UNAVAILABLE_REASON : videoEnabled ? '' : 'A geração de vídeo ainda não está configurada.',
-    imageModel: imageModelValid ? imageModel : '', videoModel: provider === 'openrouter' && validModel(videoModel) ? videoModel : '',
+    videoProvider, videoConfigured: videoEnabled, videoEnabled, videoError, videoReason,
+    videoDurationOptions: Object.freeze(videoProvider === 'google' ? [4,6,8] : []),
+    videoAspectRatioOptions: Object.freeze(videoProvider === 'google' ? ['9:16','16:9'] : ['1:1','9:16','16:9']),
+    videoResolution: '720p', videoAudioAlwaysOn: videoProvider === 'google',
+    imageModel: imageModelValid ? imageModel : '', videoModel: validModel(videoModel) ? videoModel : '',
     imageOptions: Object.freeze(imageModelValid ? [...new Set([imageModel, ...IMAGE_MODELS[provider]])] : []),
-    videoOptions: Object.freeze(provider === 'openrouter' && validModel(videoModel) ? [...new Set([videoModel, ...ROUTER_VIDEO_MODELS])] : []),
+    videoOptions: Object.freeze(videoProvider === 'google' ? [...google.videoOptions] : videoProvider === 'openrouter' && validModel(videoModel) ? [...new Set([videoModel, ...ROUTER_VIDEO_MODELS])] : []),
     error});
 }
 
@@ -56,16 +66,18 @@ function imageData(data) {
 /** One selected provider and one request. No retries, alternate provider, redirects or polling loops. */
 export function createMediaProvider({env = process.env, fetchImpl = globalThis.fetch, observer = null, downloadImpl = downloadProviderVideo} = {}) {
   const config = resolveMediaConfig(env);
-  const apiKey = clean(config.provider === 'openai' ? env.OPENAI_API_KEY : env.OPENROUTER_API_KEY);
-  const origin = config.provider === 'openai' ? OPENAI_ORIGIN : OPENROUTER_ORIGIN;
-  async function requestJson(url, {method, body}, timeoutMs, validate = data => data) {
-    if (!config.configured) throw fail(config.error);
+  const google = createGoogleVideoProvider({env, fetchImpl, observer});
+  const imageOrigin = config.provider === 'openai' ? OPENAI_ORIGIN : OPENROUTER_ORIGIN;
+  async function requestJson(url, {method, body}, timeoutMs, validate = data => data, requestProvider = config.provider) {
+    const origin = requestProvider === 'openai' ? OPENAI_ORIGIN : OPENROUTER_ORIGIN;
+    const requestKey = clean(requestProvider === 'openai' ? env.OPENAI_API_KEY : env.OPENROUTER_API_KEY);
+    if (!requestKey) throw fail('ai_media_key_missing');
     if (new URL(url).origin !== origin) throw fail('ai_media_origin_mismatch', 400);
     const signal = AbortSignal.timeout(timeoutMs);
     const run = async () => {
       let response;
       try {
-        response = await fetchImpl(url, {method, headers: {Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json'},
+        response = await fetchImpl(url, {method, headers: {Authorization: `Bearer ${requestKey}`, 'Content-Type': 'application/json'},
           ...(body === undefined ? {} : {body: JSON.stringify(body)}), redirect: 'error', signal});
       } catch { throw fail(signal.aborted ? 'ai_media_timeout' : 'ai_media_network_error', signal.aborted ? 504 : 502); }
       if (!response.ok) { await response.body?.cancel?.().catch(() => {}); throw fail('ai_media_http_error', response.status); }
@@ -84,13 +96,13 @@ export function createMediaProvider({env = process.env, fetchImpl = globalThis.f
         let data;
         try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw fail('ai_media_response_invalid', 502); }
         if (!data || typeof data !== 'object' || Array.isArray(data)) throw fail('ai_media_response_invalid', 502);
-        return {data: validate(data), headers: response.headers, provider: config.provider};
+        return {data: validate(data), headers: response.headers, provider: requestProvider};
       } catch (error) {
         if (/^ai_(?:media|video)_/.test(String(error?.code))) throw error;
         throw fail(signal.aborted ? 'ai_media_timeout' : 'ai_media_response_invalid', signal.aborted ? 504 : 502);
       } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
     };
-    return observer ? observer.run(`${config.provider}_media`, run) : run();
+    return observer ? observer.run(`${requestProvider}_media`, run) : run();
   }
   function modelFor(requested, type) {
     const value = clean(requested) || config[type + 'Model'];
@@ -102,7 +114,7 @@ export function createMediaProvider({env = process.env, fetchImpl = globalThis.f
     return value.trim();
   }
   function videoOrigin({provider, jobId, pollingUrl} = {}) {
-    if (provider !== config.provider) throw fail('ai_video_provider_mismatch', 409);
+    if (provider !== config.videoProvider) throw fail('ai_video_provider_mismatch', 409);
     if (!config.videoEnabled) throw fail('ai_video_unavailable');
     if (!videoJobId(jobId) || !videoPollingUrl(pollingUrl, jobId)) throw fail('ai_video_receipt_invalid', 409);
     return videoPollingUrl(pollingUrl, jobId);
@@ -112,25 +124,30 @@ export function createMediaProvider({env = process.env, fetchImpl = globalThis.f
     if (!Object.hasOwn(IMAGE_SIZES, aspectRatio) || n !== 1) throw fail('ai_media_image_options_invalid', 400);
     const body = {model: modelFor(model, 'image'), prompt: promptFor(prompt), n: 1,
       ...(config.provider === 'openai' ? {size: IMAGE_SIZES[aspectRatio], quality: 'medium', output_format: 'png'} : {aspect_ratio: aspectRatio})};
-    return requestJson(origin + (config.provider === 'openai' ? '/v1/images/generations' : '/api/v1/images'), {method: 'POST', body}, 120000, imageData);
+    return requestJson(imageOrigin + (config.provider === 'openai' ? '/v1/images/generations' : '/api/v1/images'), {method: 'POST', body}, 120000, imageData);
   }
   async function createVideo({prompt, model, durationSeconds = 4, aspectRatio = '9:16', generateAudio = false} = {}) {
     if (!config.videoEnabled) throw fail('ai_video_unavailable');
+    if (config.videoProvider === 'google') return google.createVideo({prompt, model, durationSeconds, aspectRatio, generateAudio: true});
     if (!['1:1', '9:16', '16:9'].includes(aspectRatio) || !Number.isInteger(durationSeconds) || durationSeconds < 1 || durationSeconds > 120) throw fail('ai_media_video_options_invalid', 400);
     return requestJson(OPENROUTER_ORIGIN + '/api/v1/videos', {method: 'POST', body: {model: modelFor(model, 'video'), prompt: promptFor(prompt),
-      duration: durationSeconds, aspect_ratio: aspectRatio, resolution: '720p', generate_audio: Boolean(generateAudio)}}, 60000);
+      duration: durationSeconds, aspect_ratio: aspectRatio, resolution: '720p', generate_audio: Boolean(generateAudio)}}, 60000, data => data, 'openrouter');
   }
   async function getVideo(job) {
+    if (config.videoProvider === 'google') return google.getVideo(job);
     const url = videoOrigin(job);
     return requestJson(url, {method: 'GET'}, 30000, data => {
       if (data.id !== job.jobId) throw fail('ai_video_receipt_invalid', 502);
       return data;
-    });
+    }, 'openrouter');
   }
   async function downloadVideo(data, job) {
+    if (config.videoProvider === 'google') return google.downloadVideo(data, job);
     videoOrigin(job);
     if (data?.id !== job.jobId) throw fail('ai_video_receipt_invalid', 502);
-    return downloadImpl(data, job.jobId, {apiKey});
+    return downloadImpl(data, job.jobId, {apiKey: clean(env.OPENROUTER_API_KEY)});
   }
-  return Object.freeze({config, requestImage, createVideo, getVideo, downloadVideo});
+  const receipt = data => config.videoProvider === 'google' ? googleVideoReceipt(data) : {jobId:videoJobId(data?.id),pollingUrl:videoPollingUrl(data?.polling_url,videoJobId(data?.id))};
+  const polling = (url, id) => config.videoProvider === 'google' ? googleVideoPollingUrl(url,id) : videoPollingUrl(url,id);
+  return Object.freeze({config, requestImage, createVideo, getVideo, downloadVideo, videoReceipt:receipt, videoPollingUrl:polling});
 }

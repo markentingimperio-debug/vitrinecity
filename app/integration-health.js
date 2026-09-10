@@ -2,6 +2,7 @@
 const AI_OPERATIONS = {
   openai_text: 'OpenAI · texto',
   openai_media: 'OpenAI · imagens',
+  google_video: 'Google Veo · vídeos',
   openrouter_text: 'OpenRouter · texto',
   openrouter_media: 'OpenRouter · imagens e vídeos',
   openrouter_account: 'OpenRouter · consulta da conta'

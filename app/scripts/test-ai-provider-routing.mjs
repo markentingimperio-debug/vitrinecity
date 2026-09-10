@@ -23,7 +23,7 @@ test('actual editorial and Gestora entry points use direct Responses with select
 
 test('all actual legacy OpenRouter operation types fail before network when explicitly disabled',async()=>{
   let calls=0;
-  const context=vm.createContext({AI_TEXT_CONFIG:{provider:'openai'},AI_MEDIA_CONFIG:resolveMediaConfig(env),AI_API_KEY:env.OPENROUTER_API_KEY,openRouterOperation,fetch:()=>{calls++;throw Error('unexpected');}});
+  const context=vm.createContext({URL,AI_TEXT_CONFIG:{provider:'openai'},AI_MEDIA_CONFIG:resolveMediaConfig(env),AI_API_KEY:env.OPENROUTER_API_KEY,openRouterOperation,fetch:()=>{calls++;throw Error('unexpected');}});
   vm.runInContext(section('async function performOpenRouterRequest(', 'function parseEditorialJson('),context);
   for(const suffix of ['responses','chat/completions','images','videos','videos/original-job','key'])await assert.rejects(vm.runInContext(`performOpenRouterRequest('https://openrouter.ai/api/v1/${suffix}')`,context),error=>error.code==='openrouter_disabled'&&error.status===503);
   assert.equal(calls,0);
@@ -47,6 +47,20 @@ test('actual editorial image setup follows explicit selection and rejects invali
 
 test('manual ad-video script honors media disablement before any fetch or file write',async()=>{
   const script=readFileSync(new URL('./generate-vitrinecity-ad-video.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'');
-  let calls=0;const context=vm.createContext({process:{env},resolveMediaConfig:()=>resolveMediaConfig(env),fetch:()=>{calls++;throw Error('unexpected');},fs:{mkdir(){calls++;},writeFile(){calls++;}},console:{log(){}}});
+  let calls=0;const context=vm.createContext({process:{env},createMediaProvider:()=>({config:resolveMediaConfig(env)}),fetch:()=>{calls++;throw Error('unexpected');},fs:{mkdir(){calls++;},writeFile(){calls++;}},console:{log(){}}});
   await assert.rejects(vm.runInContext('(async()=>{'+script+'})()',context),/vídeos por IA estão indisponíveis/);assert.equal(calls,0);
+});
+
+test('Google video selection blocks legacy video routing even when images still select OpenRouter',async()=>{
+  let calls=0;
+  const context=vm.createContext({URL,AI_TEXT_CONFIG:{provider:'openai'},AI_MEDIA_CONFIG:{provider:'openrouter',videoProvider:'google'},AI_API_KEY:env.OPENROUTER_API_KEY,openRouterOperation,fetch:()=>{calls++;throw Error('unexpected');}});
+  vm.runInContext(section('async function performOpenRouterRequest(', 'function parseEditorialJson('),context);
+  for(const suffix of ['videos','videos/old-job'])await assert.rejects(vm.runInContext(`performOpenRouterRequest('https://openrouter.ai/api/v1/${suffix}')`,context),error=>error.code==='openrouter_disabled');
+  assert.equal(calls,0);
+});
+
+test('manual 30-second ad script rejects Google duration without changing its script or sending a request',async()=>{
+  const script=readFileSync(new URL('./generate-vitrinecity-ad-video.mjs',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'');
+  let calls=0;const context=vm.createContext({createMediaProvider:()=>({config:{videoProvider:'google',videoEnabled:true,videoDurationOptions:[4,6,8]},createVideo(){calls++;}}),fs:{mkdir(){calls++;},writeFile(){calls++;}}});
+  await assert.rejects(vm.runInContext('(async()=>{'+script+'})()',context),/roteiro de anúncio tem 30 segundos/);assert.equal(calls,0);
 });

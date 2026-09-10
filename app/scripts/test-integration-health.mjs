@@ -66,7 +66,8 @@ test('health API remains admin-only, non-cacheable, and performs no provider req
     assert.equal((await fetch(base+'/api/admin/platform-health')).status,401);
     const response=await fetch(base+'/api/admin/platform-health',{headers:{'x-admin':'test'}});
     assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');
-    const data=await response.json();assert.equal(data.integrations.length,11);
+    const data=await response.json();assert.equal(data.integrations.length,12);
+    assert.equal(data.integrations.find(i=>i.id==='google_video').status,'unverified');
     assert.equal(data.integrations.find(i=>i.id==='openai_text').status,'unverified');
     assert.equal(data.integrations.find(i=>i.id==='openai_media').status,'unverified');
     assert.equal(data.integrations.find(i=>i.id==='facebook').status,'unverified');

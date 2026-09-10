@@ -178,3 +178,39 @@ test('a concurrent provider change invalidates the video project snapshot', () =
   assert.equal(videoProjectUnchanged({...project, video_provider: 'openai'}, project), false);
   assert.equal(videoProjectUnchanged({format: 'short_video'}, {format: 'short_video'}), true);
 });
+
+test('Google video uses its independent key and official operation while images stay on OpenAI', async () => {
+  const id='models/veo-3.1-lite-generate-preview/operations/test-operation';
+  const f=fixture({...openai,AI_VIDEO_PROVIDER:'google',GEMINI_API_KEY:'google-test-secret'},(url,options)=>{
+    if(url.startsWith('https://api.openai.com/'))return response(imageResult());
+    return response(options.method==='POST'?{name:id}:{name:id,done:false});
+  });
+  assert.equal(f.client.config.provider,'openai');
+  assert.equal(f.client.config.videoProvider,'google');
+  assert.equal(f.client.config.videoAudioAlwaysOn,true);
+  await f.client.requestImage({prompt:'A quiet library'});
+  const created=await f.client.createVideo({prompt:'A quiet library',durationSeconds:4});
+  const job={provider:created.provider,...f.client.videoReceipt(created.data)};
+  assert.equal(job.provider,'google');assert.equal(job.jobId,id);
+  assert.equal(f.client.videoPollingUrl(job.pollingUrl,id),job.pollingUrl);
+  const polled=await f.client.getVideo(job);
+  assert.equal(polled.data.status,'processing');
+  assert.deepEqual(f.calls.map(c=>new URL(c.url).hostname),['api.openai.com','generativelanguage.googleapis.com','generativelanguage.googleapis.com']);
+  assert.equal(new Headers(f.calls[1].options.headers).get('x-goog-api-key'),'google-test-secret');
+  assert.equal(new Headers(f.calls[1].options.headers).get('authorization'),null);
+  assert.deepEqual(f.observations,['openai_media','google_video','google_video']);
+  const before=f.calls.length;
+  await assert.rejects(f.client.getVideo({provider:'openrouter',jobId:'old-job',pollingUrl:'/api/v1/videos/old-job'}),{status:409});
+  await assert.rejects(f.client.createVideo({prompt:'A quiet library',durationSeconds:30}),{status:400});
+  assert.equal(f.calls.length,before);
+});
+
+test('missing Google credentials or invalid video selector do not disable OpenAI images or invoke OpenRouter',async()=>{
+  for(const videoProvider of ['google','typo','disabled']){
+    const f=fixture({...openai,AI_VIDEO_PROVIDER:videoProvider});
+    assert.equal(f.client.config.imageConfigured,true);assert.equal(f.client.config.videoEnabled,false);
+    await f.client.requestImage({prompt:'A quiet library'});
+    await assert.rejects(f.client.createVideo({prompt:'A quiet library',durationSeconds:4}),{code:'ai_video_unavailable'});
+    assert.equal(f.calls.length,1);assert.equal(new URL(f.calls[0].url).hostname,'api.openai.com');
+  }
+});

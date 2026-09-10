@@ -4,7 +4,7 @@ export function mediaJobPolicy(job, config) {
   const provider = String((image ? job?.image_provider : job?.video_provider) || 'openrouter');
   const enabled = image ? config.imageConfigured : config.videoEnabled;
   let code = '', reason = '';
-  if (provider !== config.provider) {
+  if (provider !== (image ? config.provider : (config.videoProvider || config.provider))) {
     code = 'ai_media_job_provider_mismatch';
     reason = 'Este projeto pertence ao provedor anterior e foi preservado. Crie um novo projeto para usar o provedor atual; nenhuma tentativa anterior será reenviada.';
   } else if (!enabled) {
