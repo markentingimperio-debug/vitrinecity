@@ -147,7 +147,7 @@
     if (/wa\.me|whatsapp/i.test(href)) eventName = 'whatsapp_click';
     else if (/loja-|store|sertaneja|agrotecnica/i.test(href)) eventName = 'store_view';
     send(eventName, { assetType: link.dataset.assetType || '', assetId: link.dataset.assetId || href.slice(0, 120),
-      metadata: { label: (link.textContent || '').trim().slice(0, 120) } });
+      metadata: { label: (link.textContent || '').trim().slice(0, 120), platform: link.dataset.platform || '' } });
   }, { passive: true });
   document.addEventListener('vc:analytics', event => {
     const detail = event.detail || {};
