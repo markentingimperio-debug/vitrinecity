@@ -8,6 +8,7 @@ import {spawnSync} from 'node:child_process';
 import express from 'express';
 import Database from 'better-sqlite3';
 import {registerWhatsAppProductCampaigns} from '../whatsapp-product-campaigns.js';
+import {isWhatsAppCommercialGroupAllowed} from '../whatsapp-commercial-policy.js';
 
 const API = '/api/admin/whatsapp-qr/product-campaigns';
 const origin = 'https://vitrinecity.com';
@@ -59,6 +60,7 @@ async function fixture(t,options={}) {
   async function start() {
     const app = express();app.use(express.json());
     service = registerWhatsAppProductCampaigns({app,db,dataDir,siteUrl:origin,now:() => time,fetchImpl,...(options.realConverter ? {} : {convertImage}),
+      isGroupAllowed:options.isGroupAllowed,
       whatsappQrRequest:requestProvider,whatsappQrData:value => value.data ?? value,
       requireAdmin:(req,res,next) => req.headers['x-test-admin'] === 'yes' ? next() : res.status(401).end(),
       sameOriginOnly:(req,res,next) => req.headers.origin === origin ? next() : res.status(403).end()});
@@ -95,6 +97,32 @@ test('catalog requires admin, retains eligible ML products and only current conn
   assert(result.body.items.every(item => !('affiliate_url' in item) && item.url.startsWith(origin+'/ofertas/')));
   assert.equal(f.state.fetches.length,0,'Listing never downloads photos.');
   f.state.connected=false;assert.equal((await f.req('/catalog')).status,409);
+});
+
+test('reserved groups disappear from commercial choices and cannot create or publish drafts; other groups remain eligible',async t => {
+  const env={WHATSAPP_COMMERCIAL_EXCLUDED_GROUP_JIDS:''};
+  const f=await fixture(t,{isGroupAllowed:jid=>isWhatsAppCommercialGroupAllowed(jid,env)});
+  const draft=await f.req('/preview',f.input());assert.equal(draft.status,201);
+  const snapshot=f.db.prepare('SELECT groups_json FROM whatsapp_product_campaigns WHERE id=?').get(draft.body.id);
+  env.WHATSAPP_COMMERCIAL_EXCLUDED_GROUP_JIDS='111@g.us';
+  const catalog=await f.req('/catalog');assert.deepEqual(catalog.body.groups,[{jid:'222@g.us',name:'Grupo 2'}]);
+  const calls=f.state.providerCalls.length,photos=f.state.fetches.length;
+  assert.equal((await f.req('/preview',f.input({idempotencyKey:'excluded_preview_0002'}))).status,409);
+  assert.equal((await f.req('/'+draft.body.id+'/publish',{})).status,409);
+  assert.equal(f.state.providerCalls.length,calls);assert.equal(f.state.fetches.length,photos);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM whatsapp_qr_schedules').get().n,0);
+  assert.deepEqual(f.db.prepare('SELECT groups_json FROM whatsapp_product_campaigns WHERE id=?').get(draft.body.id),snapshot);
+  const other=await f.req('/preview',f.input({groupJids:['222@g.us'],idempotencyKey:'allowed_preview_0003'}));
+  assert.equal(other.status,201);assert.equal((await f.req('/'+other.body.id+'/publish',{})).status,200);
+  assert.deepEqual(f.db.prepare('SELECT DISTINCT group_jid FROM whatsapp_qr_schedules').all(),[{group_jid:'222@g.us'}]);
+});
+
+test('reservation applied during photo preparation prevents saving a newly excluded preview',async t => {
+  const env={WHATSAPP_COMMERCIAL_EXCLUDED_GROUP_JIDS:''};
+  const f=await fixture(t,{isGroupAllowed:jid=>isWhatsAppCommercialGroupAllowed(jid,env),convertImage:async({outputPath})=>{await fs.writeFile(outputPath,jpeg());env.WHATSAPP_COMMERCIAL_EXCLUDED_GROUP_JIDS='111@g.us';}});
+  assert.equal((await f.req('/preview',f.input())).status,409);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM whatsapp_product_campaigns').get().n,0);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM whatsapp_qr_schedules').get().n,0);
 });
 
 test('preview persists exact photos and recipients, but creates no sends; snapshot photo is admin-only',async t => {

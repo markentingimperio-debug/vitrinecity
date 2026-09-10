@@ -1,4 +1,4 @@
-import {PRAYER_PAGE_CONFIG} from './oracao-do-dia-config.js';
+import {PRAYER_PAGE_CONFIG} from './oracao-do-dia-config.js?v=20260910-prayer-group';
 
 export function buildPrayerShareText({title,edition,verse,paragraphs,url}){
   return [String(title).trim(),`VitrineCity · ${String(edition).trim()}`,...paragraphs.map(text=>String(text).trim()).filter(Boolean),`${String(verse).trim()} — Salmos 23:1 (ARA)`,`Fonte bíblica: https://www.sbb.org.br/biblia/ARA/PSA.23`,String(url).trim()].filter(Boolean).join('\n\n');

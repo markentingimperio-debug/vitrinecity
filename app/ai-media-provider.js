@@ -1,6 +1,7 @@
 import {rasterSize} from './web-story-assets.js';
 import {videoJobId, videoPollingUrl, downloadVideo as downloadProviderVideo} from './video-provider-receipts.js';
 import {resolveGoogleVideoConfig, createGoogleVideoProvider, googleVideoReceipt, googleVideoPollingUrl} from './google-video-provider.js';
+import {resolveKlingStudioConfig, createKlingStudioProvider, klingStudioReceipt, klingStudioPollingUrl} from './kling-studio-provider.js';
 
 const OPENAI_ORIGIN = 'https://api.openai.com';
 const OPENROUTER_ORIGIN = 'https://openrouter.ai';
@@ -32,22 +33,26 @@ export function resolveMediaConfig(env = process.env) {
   const error = !valid ? 'ai_media_provider_invalid' : !key ? 'ai_media_key_missing' : !imageModelValid ? 'ai_media_model_invalid' : '';
   const configured = !error;
   const videoRequested = clean(env.AI_VIDEO_PROVIDER).toLowerCase() || 'auto';
-  const videoValid = ['auto', 'google', 'openai', 'openrouter', 'disabled'].includes(videoRequested);
+  const videoValid = ['auto', 'google', 'kling_studio', 'openai', 'openrouter', 'disabled'].includes(videoRequested);
   const videoProvider = videoValid ? (videoRequested === 'auto' ? provider : videoRequested) : '';
   const google = resolveGoogleVideoConfig(env);
-  const videoModel = videoProvider === 'google' ? google.videoModel : videoProvider === 'openrouter' ? clean(env.OPENROUTER_VIDEO_MODEL) || ROUTER_VIDEO_MODELS[0] : '';
+  const studio = resolveKlingStudioConfig(env);
+  const directVideo = videoProvider === 'google' ? google : videoProvider === 'kling_studio' ? studio : null;
+  const videoModel = directVideo ? directVideo.videoModel : videoProvider === 'openrouter' ? clean(env.OPENROUTER_VIDEO_MODEL) || ROUTER_VIDEO_MODELS[0] : '';
   const routerVideoConfigured = Boolean(clean(env.OPENROUTER_API_KEY)) && validModel(videoModel);
-  const videoEnabled = videoValid && (videoProvider === 'google' ? google.videoEnabled : videoProvider === 'openrouter' && routerVideoConfigured);
-  const videoError = !videoValid ? 'ai_video_provider_invalid' : videoProvider === 'google' ? google.error : videoEnabled ? '' : 'ai_video_unavailable';
-  const videoReason = !videoValid ? 'O provedor de vídeo precisa de uma configuração válida.' : videoProvider === 'google' ? google.videoReason : videoProvider === 'openai' ? OPENAI_VIDEO_UNAVAILABLE_REASON : videoProvider === 'disabled' ? 'A geração de novos vídeos está desativada.' : videoEnabled ? '' : 'A geração de vídeo ainda não está configurada.';
+  const videoEnabled = videoValid && (directVideo ? directVideo.videoEnabled : videoProvider === 'openrouter' && routerVideoConfigured);
+  const videoError = !videoValid ? 'ai_video_provider_invalid' : directVideo ? directVideo.error : videoEnabled ? '' : 'ai_video_unavailable';
+  const videoReason = !videoValid ? 'O provedor de vídeo precisa de uma configuração válida.' : directVideo ? directVideo.videoReason : videoProvider === 'openai' ? OPENAI_VIDEO_UNAVAILABLE_REASON : videoProvider === 'disabled' ? 'A geração de novos vídeos está desativada.' : videoEnabled ? '' : 'A geração de vídeo ainda não está configurada.';
   return Object.freeze({provider, explicit: requested !== 'auto', configured, imageConfigured: configured,
     videoProvider, videoConfigured: videoEnabled, videoEnabled, videoError, videoReason,
-    videoDurationOptions: Object.freeze(videoProvider === 'google' ? [4,6,8] : []),
-    videoAspectRatioOptions: Object.freeze(videoProvider === 'google' ? ['9:16','16:9'] : ['1:1','9:16','16:9']),
-    videoResolution: '720p', videoAudioAlwaysOn: videoProvider === 'google',
+    videoDurationOptions: Object.freeze(directVideo ? [...directVideo.durationOptions] : []),
+    videoAspectRatioOptions: Object.freeze(directVideo ? [...directVideo.aspectRatioOptions] : ['1:1','9:16','16:9']),
+    videoResolution: directVideo?.resolution || '720p', videoAudioAlwaysOn: videoProvider === 'google',
+    videoManualOnly: videoProvider === 'kling_studio', videoDefaultDuration: videoProvider === 'kling_studio' ? 5 : 4,
+    videoCreditsPerSecond: videoProvider === 'kling_studio' ? 8 : null,
     imageModel: imageModelValid ? imageModel : '', videoModel: validModel(videoModel) ? videoModel : '',
     imageOptions: Object.freeze(imageModelValid ? [...new Set([imageModel, ...IMAGE_MODELS[provider]])] : []),
-    videoOptions: Object.freeze(videoProvider === 'google' ? [...google.videoOptions] : videoProvider === 'openrouter' && validModel(videoModel) ? [...new Set([videoModel, ...ROUTER_VIDEO_MODELS])] : []),
+    videoOptions: Object.freeze(directVideo ? [...directVideo.videoOptions] : videoProvider === 'openrouter' && validModel(videoModel) ? [...new Set([videoModel, ...ROUTER_VIDEO_MODELS])] : []),
     error});
 }
 
@@ -64,9 +69,10 @@ function imageData(data) {
 }
 
 /** One selected provider and one request. No retries, alternate provider, redirects or polling loops. */
-export function createMediaProvider({env = process.env, fetchImpl = globalThis.fetch, observer = null, downloadImpl = downloadProviderVideo} = {}) {
+export function createMediaProvider({env = process.env, fetchImpl = globalThis.fetch, observer = null, downloadImpl = downloadProviderVideo, studioProviderFactory = createKlingStudioProvider} = {}) {
   const config = resolveMediaConfig(env);
   const google = createGoogleVideoProvider({env, fetchImpl, observer});
+  const studio = studioProviderFactory({env, observer});
   const imageOrigin = config.provider === 'openai' ? OPENAI_ORIGIN : OPENROUTER_ORIGIN;
   async function requestJson(url, {method, body}, timeoutMs, validate = data => data, requestProvider = config.provider) {
     const origin = requestProvider === 'openai' ? OPENAI_ORIGIN : OPENROUTER_ORIGIN;
@@ -126,14 +132,17 @@ export function createMediaProvider({env = process.env, fetchImpl = globalThis.f
       ...(config.provider === 'openai' ? {size: IMAGE_SIZES[aspectRatio], quality: 'medium', output_format: 'png'} : {aspect_ratio: aspectRatio})};
     return requestJson(imageOrigin + (config.provider === 'openai' ? '/v1/images/generations' : '/api/v1/images'), {method: 'POST', body}, 120000, imageData);
   }
-  async function createVideo({prompt, model, durationSeconds = 4, aspectRatio = '9:16', generateAudio = false} = {}) {
+  async function createVideo({prompt, model, durationSeconds = config.videoDefaultDuration, aspectRatio = '9:16', generateAudio = false, manual = false} = {}) {
     if (!config.videoEnabled) throw fail('ai_video_unavailable');
+    if (config.videoManualOnly && manual !== true) throw fail('ai_video_manual_only', 409);
+    if (config.videoProvider === 'kling_studio') return studio.createVideo({prompt, model, durationSeconds, aspectRatio, generateAudio, manual:true});
     if (config.videoProvider === 'google') return google.createVideo({prompt, model, durationSeconds, aspectRatio, generateAudio: true});
     if (!['1:1', '9:16', '16:9'].includes(aspectRatio) || !Number.isInteger(durationSeconds) || durationSeconds < 1 || durationSeconds > 120) throw fail('ai_media_video_options_invalid', 400);
     return requestJson(OPENROUTER_ORIGIN + '/api/v1/videos', {method: 'POST', body: {model: modelFor(model, 'video'), prompt: promptFor(prompt),
       duration: durationSeconds, aspect_ratio: aspectRatio, resolution: '720p', generate_audio: Boolean(generateAudio)}}, 60000, data => data, 'openrouter');
   }
   async function getVideo(job) {
+    if (config.videoProvider === 'kling_studio') return studio.getVideo(job);
     if (config.videoProvider === 'google') return google.getVideo(job);
     const url = videoOrigin(job);
     return requestJson(url, {method: 'GET'}, 30000, data => {
@@ -142,12 +151,14 @@ export function createMediaProvider({env = process.env, fetchImpl = globalThis.f
     }, 'openrouter');
   }
   async function downloadVideo(data, job) {
+    if (config.videoProvider === 'kling_studio') return studio.downloadVideo(data, job);
     if (config.videoProvider === 'google') return google.downloadVideo(data, job);
     videoOrigin(job);
     if (data?.id !== job.jobId) throw fail('ai_video_receipt_invalid', 502);
     return downloadImpl(data, job.jobId, {apiKey: clean(env.OPENROUTER_API_KEY)});
   }
-  const receipt = data => config.videoProvider === 'google' ? googleVideoReceipt(data) : {jobId:videoJobId(data?.id),pollingUrl:videoPollingUrl(data?.polling_url,videoJobId(data?.id))};
-  const polling = (url, id) => config.videoProvider === 'google' ? googleVideoPollingUrl(url,id) : videoPollingUrl(url,id);
-  return Object.freeze({config, requestImage, createVideo, getVideo, downloadVideo, videoReceipt:receipt, videoPollingUrl:polling});
+  const receipt = data => config.videoProvider === 'kling_studio' ? klingStudioReceipt(data) : config.videoProvider === 'google' ? googleVideoReceipt(data) : {jobId:videoJobId(data?.id),pollingUrl:videoPollingUrl(data?.polling_url,videoJobId(data?.id))};
+  const polling = (url, id) => config.videoProvider === 'kling_studio' ? klingStudioPollingUrl(url,id) : config.videoProvider === 'google' ? googleVideoPollingUrl(url,id) : videoPollingUrl(url,id);
+  const getVideoAccountCapabilities = () => config.videoProvider === 'kling_studio' ? studio.getAccountCapabilities() : Promise.resolve(null);
+  return Object.freeze({config, requestImage, createVideo, getVideo, downloadVideo, videoReceipt:receipt, videoPollingUrl:polling, getVideoAccountCapabilities});
 }

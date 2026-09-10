@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFileSync} from 'node:fs';
-import {buildPrayerShareText,prayerShareUrl,writePrayerClipboard,validatedWhatsAppGroupUrl} from '../public/oracao-do-dia.js';
+import {buildPrayerShareText,prayerShareUrl,writePrayerClipboard,validatedWhatsAppGroupUrl,installPrayerPage} from '../public/oracao-do-dia.js';
 import {PRAYER_PAGE_CONFIG} from '../public/oracao-do-dia-config.js';
 import {installPrayerSupport,validatedSupportCheckoutUrl,validSupportConfiguration,supportStatusMessage,supportAmountLabel} from '../public/oracao-do-dia-apoio.js';
 const availableSupport={enabled:true,amountsCents:[50,100,200,300,500],defaultAmountCents:500,currency:'BRL',oneTime:true,beneficiary:'Recebedor de teste'};
@@ -18,10 +18,20 @@ test('clipboard acknowledges only a completed copy and supports manual fallback'
   assert.equal(await writePrayerClipboard('oração',null),false);assert.equal(await writePrayerClipboard('oração',{writeText:async()=>{throw new Error('denied');}}),false);
 });
 
-test('the WhatsApp call to action stays unconfigured and only accepts group invitations',()=>{
-  assert.equal(PRAYER_PAGE_CONFIG.groupInviteUrl,null);
+test('the WhatsApp call to action uses the confirmed prayer invitation and only accepts group invitations',()=>{
+  assert.equal(PRAYER_PAGE_CONFIG.groupInviteUrl,'https://chat.whatsapp.com/HiSHfNtx67Y7JuKTqsyfcq');
   assert.equal(validatedWhatsAppGroupUrl('https://chat.whatsapp.com/ValidInvitation12345'),'https://chat.whatsapp.com/ValidInvitation12345');
   for(const url of [null,'','javascript:alert(1)','https://chat.whatsapp.com.evil.test/ValidInvitation12345','https://evil.test/?next=chat.whatsapp.com','http://chat.whatsapp.com/ValidInvitation12345','https://user@chat.whatsapp.com/ValidInvitation12345','https://wa.me/5511999999999'])assert.equal(validatedWhatsAppGroupUrl(url),null);
+});
+
+test('the confirmed prayer invitation becomes an accessible link without joining or sending automatically',()=>{
+  const nodes=new Map();
+  const document={getElementById:id=>{if(!nodes.has(id))nodes.set(id,{attributes:{'aria-disabled':'true',tabindex:'-1'},addEventListener(){},setAttribute(key,value){this.attributes[key]=value;},removeAttribute(key){delete this.attributes[key];}});return nodes.get(id);}};
+  installPrayerPage({document,navigator:{},location:{href:'https://vitrinecity.com/oracao-do-dia.html'}});
+  const link=nodes.get('joinPrayerGroup');
+  assert.equal(link.href,PRAYER_PAGE_CONFIG.groupInviteUrl);assert.equal(link.target,'_blank');assert.equal(link.rel,'noopener noreferrer');
+  assert.equal(link.attributes['aria-disabled'],'false');assert.equal(link.attributes.tabindex,undefined);
+  assert.ok(nodes.get('signupStatus').textContent.includes('Você escolhe'));
 });
 
 test('support accepts only the five permitted values and official checkout destinations',()=>{

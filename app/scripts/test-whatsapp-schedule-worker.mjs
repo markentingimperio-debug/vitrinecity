@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import {createWhatsAppScheduleProcessor,whatsappScheduleState,countWhatsAppSchedules} from '../whatsapp-schedule-worker.js';
+import {isWhatsAppCommercialGroupAllowed} from '../whatsapp-commercial-policy.js';
 
 function fixture() {
   const db=new Database(':memory:');
@@ -11,6 +12,53 @@ function fixture() {
   const options={db,now:()=>new Date('2026-09-09T10:00:00.000Z'),prepareScheduledMessage:async item=>item.product_slug?image(item):null,whatsappQrData:p=>p.data};
   return {db,add,options};
 }
+
+test('private exclusion list is exact and malformed configuration fails closed',()=>{
+  const env={WHATSAPP_COMMERCIAL_EXCLUDED_GROUP_JIDS:' 123@g.us, 456@g.us,123@g.us '};
+  assert.equal(isWhatsAppCommercialGroupAllowed('123@g.us',env),false);
+  assert.equal(isWhatsAppCommercialGroupAllowed('1234@g.us',env),true);
+  assert.equal(isWhatsAppCommercialGroupAllowed('456@g.us',env),false);
+  assert.equal(isWhatsAppCommercialGroupAllowed('123@s.whatsapp.net',{}),false);
+  assert.equal(isWhatsAppCommercialGroupAllowed('123@g.us',{}),true);
+  assert.throws(()=>isWhatsAppCommercialGroupAllowed('123@g.us',{WHATSAPP_COMMERCIAL_EXCLUDED_GROUP_JIDS:'bad-value'}),error=>error.code==='whatsapp_commercial_policy_invalid'&&error.status===503);
+});
+
+test('invalid exclusion configuration cannot send or cancel unrelated pending schedules',async()=>{
+  const {db,add,options}=fixture();
+  try {
+    const run=createWhatsAppScheduleProcessor({...options,isGroupAllowed:jid=>isWhatsAppCommercialGroupAllowed(jid,{WHATSAPP_COMMERCIAL_EXCLUDED_GROUP_JIDS:'typo'}),whatsappQrRequest:async()=>assert.fail('No sends under invalid policy')});
+    add('pending');const before=db.prepare('SELECT * FROM whatsapp_qr_schedules').get();
+    await assert.rejects(run(),error=>error.code==='whatsapp_commercial_policy_invalid');
+    assert.deepEqual(db.prepare('SELECT * FROM whatsapp_qr_schedules').get(),before);
+  } finally {db.close();}
+});
+
+test('excluded text and product schedules are cancelled before claim without starving other groups or changing historical receipts',async()=>{
+  const {db,add,options}=fixture(),sent=[],prepared=[];
+  try {
+    const run=createWhatsAppScheduleProcessor({...options,isGroupAllowed:jid=>jid!=='123@g.us',prepareScheduledMessage:async item=>{prepared.push(item.id);return options.prepareScheduledMessage(item);},whatsappQrRequest:async(_path,request)=>{sent.push(JSON.parse(request.body).Phone);return {data:{Id:'ALLOWED_ACK'}};}});
+    for(let i=0;i<5;i++)add('blocked-'+i,i%2===0);
+    add('blocked-future',true,'2027-01-01T10:00:00.000Z');add('historic');add('other');
+    db.prepare("UPDATE whatsapp_qr_schedules SET status='sent',provider_message_id='HISTORICAL_ACK',sent_at='2026-09-08',confirmation_state='confirmed' WHERE id='historic'").run();
+    db.prepare("UPDATE whatsapp_qr_schedules SET group_jid='222@g.us' WHERE id='other'").run();
+    const before=db.prepare("SELECT * FROM whatsapp_qr_schedules WHERE id='historic'").get();
+    await run();await run();
+    assert.deepEqual(sent,['222@g.us']);assert.deepEqual(prepared,['other']);
+    for(const row of db.prepare("SELECT * FROM whatsapp_qr_schedules WHERE id LIKE 'blocked-%'").all()) {assert.equal(row.status,'cancelled');assert.equal(row.claimed_at,null);assert.equal(row.provider_message_id,null);assert.ok(row.error);}
+    assert.deepEqual(db.prepare("SELECT * FROM whatsapp_qr_schedules WHERE id='historic'").get(),before);
+  } finally {db.close();}
+});
+
+test('an exclusion arriving during preparation stops a claimed message before provider submission',async()=>{
+  const {db,add,options}=fixture();let allowed=true,calls=0;
+  try {
+    add('reserved-during-read',true);
+    const run=createWhatsAppScheduleProcessor({...options,isGroupAllowed:()=>allowed,prepareScheduledMessage:async item=>{allowed=false;return options.prepareScheduledMessage(item);},whatsappQrRequest:async()=>{calls++;return {data:{Id:'UNEXPECTED'}};}});
+    await run();await run();
+    const row=db.prepare('SELECT * FROM whatsapp_qr_schedules').get();
+    assert.equal(calls,0);assert.equal(row.status,'cancelled');assert.equal(row.confirmation_state,'not_submitted');assert.equal(row.provider_message_id,null);
+  } finally {db.close();}
+});
 
 test('sends image plus caption and preserves text schedules without sending future or cancelled rows',async()=>{
   const {db,add,options}=fixture(),sent=[];

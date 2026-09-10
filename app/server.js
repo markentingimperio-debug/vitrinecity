@@ -14,6 +14,7 @@ import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.js';
 import { createWhatsAppScheduleProcessor, whatsappScheduleState, countWhatsAppSchedules } from './whatsapp-schedule-worker.js';
+import { isWhatsAppCommercialGroupAllowed, WHATSAPP_COMMERCIAL_EXCLUDED_REASON } from './whatsapp-commercial-policy.js';
 import { registerSocialCommentCampaigns } from './social-comment-campaigns.js';
 import { createEcosystemOrchestrator, registerEcosystemRoutes, ecosystemLocalWindow } from './ecosystem-orchestrator.js';
 import { createEcosystemCatalog } from './ecosystem-catalog.js';
@@ -4141,6 +4142,7 @@ app.post('/api/admin/omnichannel-automation/jobs/:id/approve',requireAdmin,sameO
 app.post('/api/admin/whatsapp-qr/schedules',requireAdmin,sameOriginOnly,async(req,res)=>{
   const groupJid=String(req.body?.groupJid||''),groupName=String(req.body?.groupName||'Grupo do WhatsApp').trim().slice(0,160),sitemapUrl=String(req.body?.sitemapUrl||'').trim(),message=String(req.body?.message||'').trim().slice(0,3500),scheduledAt=new Date(String(req.body?.scheduledAt||''));
   if(!/^[0-9A-Za-z._:-]+@g\.us$/.test(groupJid))return res.status(400).json({error:'Selecione um grupo válido do WhatsApp.'});
+  if(!isWhatsAppCommercialGroupAllowed(groupJid))return res.status(409).json({error:WHATSAPP_COMMERCIAL_EXCLUDED_REASON});
   let allowedLinks;try{allowedLinks=await whatsappQrSitemapLinks()}catch{return res.status(502).json({error:'O sitemap não pôde ser consultado.'})}
   if(!allowedLinks.includes(sitemapUrl))return res.status(400).json({error:'Selecione um link publicado no sitemap da VitrineCity.'});
   if(!message)return res.status(400).json({error:'Escreva a mensagem que acompanhará o link.'});
@@ -4155,7 +4157,7 @@ app.post('/api/admin/whatsapp-qr/campaigns/sitemap',requireAdmin,sameOriginOnly,
   const marketingLinks=preferred.map(path=>links.find(link=>new URL(link).pathname===path)).filter(Boolean);
   if(marketingLinks.length<6)return res.status(409).json({error:'O sitemap ainda não possui páginas suficientes para a campanha.'});
   let history;try{history=whatsappQrData(await whatsappQrRequest('/chat/history?chat_jid=index'))}catch{return res.status(502).json({error:'Não foi possível listar os grupos conectados.'})}
-  const groups=[...new Set(Object.values(history).flatMap(value=>Array.isArray(value)?value:[]).map(item=>String(item.chat_jid||'')).filter(jid=>/@g\.us$/.test(jid)))];
+  const groups=[...new Set(Object.values(history).flatMap(value=>Array.isArray(value)?value:[]).map(item=>String(item.chat_jid||'')).filter(jid=>isWhatsAppCommercialGroupAllowed(jid)))];
   if(!groups.length)return res.status(409).json({error:'Nenhum grupo conectado foi encontrado.'});
   const campaignId=randomUUID(),now=Date.now(),slots=[];
   for(let day=0;day<3;day++){const local=new Date(Date.now()-3*60*60*1000+day*86400000),date=local.toISOString().slice(0,10);for(const hour of [9,11,13,15,17,19]){const at=new Date(`${date}T${String(hour).padStart(2,'0')}:00:00-03:00`);if(at.getTime()>now+60000)slots.push(at)}}
@@ -4924,7 +4926,7 @@ function viralQuizRow(id) {
   }
   return { ...row, status:media?.production_status==='cancelled'||media?.task_status==='cancelled'?'cancelled':row.status==='published'&&publication?.status!=='published'?'approved':row.status,
     questions: JSON.parse(row.questions_json || '[]'), scenes, distribution, media, publication,
-    videoAvailable:AI_MEDIA_CONFIG.videoEnabled&&(!media||media.syncAvailable||media.generationBlockCode!=='ai_media_job_provider_mismatch'),videoUnavailableReason:media?.generationBlockCode==='ai_media_job_provider_mismatch'?media.generationBlockReason:AI_MEDIA_CONFIG.videoReason||null };
+    videoAvailable:AI_MEDIA_CONFIG.videoEnabled&&!AI_MEDIA_CONFIG.videoManualOnly&&(!media||media.syncAvailable||media.generationBlockCode!=='ai_media_job_provider_mismatch'),videoUnavailableReason:AI_MEDIA_CONFIG.videoManualOnly?'Kling Studio está disponível apenas para clipes manuais no Estúdio. A produção automática de quizzes está bloqueada.':media?.generationBlockCode==='ai_media_job_provider_mismatch'?media.generationBlockReason:AI_MEDIA_CONFIG.videoReason||null };
 }
 app.get('/api/admin/viral-quizzes', requireAdmin, (_req,res) => {
   const quizzes = db.prepare('SELECT * FROM admin_viral_quizzes ORDER BY id DESC LIMIT 40').all()
@@ -4950,6 +4952,7 @@ app.post('/api/admin/viral-quizzes', requireAdmin, (req,res) => {
   return res.status(201).json({quiz:viralQuizRow(Number(result.lastInsertRowid)),message:'Pacote criado e enviado para aprovação da Gestora.'});
 });
 function approveViralQuiz(id,userId){
+  if(AI_MEDIA_CONFIG.videoManualOnly)throw Object.assign(new Error('Este provedor permite apenas clipes manuais no Estúdio; a geração automática de quizzes está bloqueada.'),{status:409,code:'ai_video_manual_only'});
   const videoProvider=AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider;
   requireMediaJob({video_provider:videoProvider},AI_MEDIA_CONFIG);
   const quiz=viralQuizRow(id);if(!quiz)throw Object.assign(new Error('Quiz não encontrado.'),{status:404});
@@ -5032,7 +5035,7 @@ async function runViralFactory({force=false,userId=null}={}) {
     db.transaction(()=>{for(const item of themes){const pack=viralQuizPackage({theme:item.topic,category:item.category,voice:'br-feminina-energica',destinationUrl:settings.destination_url,destinationLabel:settings.destination_label});
       const result=insert.run(userId,item.topic,item.category,'medium','br-feminina-energica',settings.destination_url,settings.destination_label,JSON.stringify(pack.questions),pack.script,pack.captions,'Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai, Bilibili');created.push(Number(result.lastInsertRowid));}
       db.prepare("UPDATE viral_factory_settings SET last_run_day=?,last_run_at=CURRENT_TIMESTAMP,last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=1").run(day);})();
-    if(!settings.approval_required && AI_MEDIA_CONFIG.videoEnabled)for(const id of created)approveViralQuiz(id,userId);
+    if(!settings.approval_required && AI_MEDIA_CONFIG.videoEnabled&&!AI_MEDIA_CONFIG.videoManualOnly)for(const id of created)approveViralQuiz(id,userId);
     return {ok:true,created:created.map(viralQuizRow),trends:trends.slice(0,10)};
   }catch(error){db.prepare('UPDATE viral_factory_settings SET last_error=?,last_run_at=CURRENT_TIMESTAMP WHERE id=1').run(String(error?.message||'automation_failed').slice(0,500));throw error;}
   finally{viralFactoryRunning=false;}
@@ -5064,7 +5067,7 @@ async function publishViralToVitrine(quizId){
 }
 let viralVideoFactoryRunning=false;
 async function processViralVideoFactory(){
-  if(!ecosystemCanRun()||viralVideoFactoryRunning||!AI_MEDIA_CONFIG.videoEnabled)return;viralVideoFactoryRunning=true;
+  if(!ecosystemCanRun()||viralVideoFactoryRunning||!AI_MEDIA_CONFIG.videoEnabled||AI_MEDIA_CONFIG.videoManualOnly)return;viralVideoFactoryRunning=true;
   try{
     const videoProvider=AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider;
     const sceneCurrent=scene=>{
@@ -5094,7 +5097,7 @@ async function processViralVideoFactory(){
     }catch(error){if(sceneCurrent(scene))db.prepare("UPDATE viral_quiz_scenes SET status=?,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='generating'").run(videoRetryableFailure(error)?'generating':'failed',videoFailureMessage(error),scene.id);}
   }finally{viralVideoFactoryRunning=false;}
 }
-app.get('/api/admin/viral-factory/automation',requireAdmin,(_req,res)=>res.json({settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get(),trends:db.prepare('SELECT * FROM viral_factory_trends ORDER BY id DESC LIMIT 20').all(),openrouterConfigured:(AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider)==='openrouter'&&AI_MEDIA_CONFIG.videoEnabled,textProvider:AI_TEXT_CONFIG.provider,textConfigured:AI_TEXT_CONFIG.configured,mediaProvider:AI_MEDIA_CONFIG.provider,videoProvider:AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider,videoEnabled:AI_MEDIA_CONFIG.videoEnabled,videoReason:AI_MEDIA_CONFIG.videoReason}));
+app.get('/api/admin/viral-factory/automation',requireAdmin,(_req,res)=>res.json({settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get(),trends:db.prepare('SELECT * FROM viral_factory_trends ORDER BY id DESC LIMIT 20').all(),openrouterConfigured:(AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider)==='openrouter'&&AI_MEDIA_CONFIG.videoEnabled,textProvider:AI_TEXT_CONFIG.provider,textConfigured:AI_TEXT_CONFIG.configured,mediaProvider:AI_MEDIA_CONFIG.provider,videoProvider:AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider,videoEnabled:AI_MEDIA_CONFIG.videoEnabled,videoManualOnly:Boolean(AI_MEDIA_CONFIG.videoManualOnly),videoReason:AI_MEDIA_CONFIG.videoReason}));
 app.put('/api/admin/viral-factory/automation',requireAdmin,(req,res)=>{const enabled=Boolean(req.body?.enabled),approvalRequired=req.body?.approvalRequired!==false;
   const destinationUrl=String(req.body?.destinationUrl||'').trim();let parsed;try{parsed=new URL(destinationUrl)}catch{return res.status(400).json({error:'Informe um destino válido.'})}if(parsed.protocol!=='https:')return res.status(400).json({error:'O destino precisa usar HTTPS.'});
   db.prepare(`UPDATE viral_factory_settings SET enabled=?,approval_required=?,destination_url=?,destination_label=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(enabled?1:0,approvalRequired?1:0,destinationUrl,String(req.body?.destinationLabel||'Vitrine City').trim().slice(0,100));return res.json({ok:true,settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get()});});
@@ -5846,9 +5849,10 @@ function mediaFactoryProject(id) {
 }
 
 function videoGenerationIssue(project) {
-  if((AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider)!=='google')return '';
-  if(!AI_MEDIA_CONFIG.videoDurationOptions?.includes(Number(project.duration_seconds)))return 'O Google Veo aceita vídeos de 4, 6 ou 8 segundos. Para um roteiro maior, use cenas separadas.';
-  if(!AI_MEDIA_CONFIG.videoAspectRatioOptions?.includes(project.aspect_ratio))return 'O Google Veo aceita apenas vertical 9:16 ou horizontal 16:9.';
+  const provider=AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider;
+  if(!['google','kling_studio'].includes(provider))return '';
+  if(!AI_MEDIA_CONFIG.videoDurationOptions?.includes(Number(project.duration_seconds)))return provider==='kling_studio'?'O Kling Studio aceita clipes manuais de 3 a 15 segundos.':'O Google Veo aceita vídeos de 4, 6 ou 8 segundos. Para um roteiro maior, use cenas separadas.';
+  if(!AI_MEDIA_CONFIG.videoAspectRatioOptions?.includes(project.aspect_ratio))return 'Escolha uma proporção disponível no provedor de vídeo selecionado.';
   if(project.model&&!AI_MEDIA_CONFIG.videoOptions?.includes(project.model))return 'Escolha um modelo de vídeo disponível no provedor selecionado.';
   return '';
 }
@@ -5858,6 +5862,14 @@ app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
     FROM admin_media_projects m JOIN admin_agent_tasks t ON t.id=m.task_id
     JOIN admin_specialist_agents a ON a.id=t.agent_id ORDER BY m.id DESC LIMIT 40`).all();
   let budget = null;
+  let videoAccount = null;
+  if(AI_MEDIA_CONFIG.videoProvider==='kling_studio'){
+    try{const account=await aiMediaClient.getVideoAccountCapabilities();videoAccount={connected:account?.connected===true,
+      availableCredits:typeof account?.availableCredits==='number'&&Number.isFinite(account.availableCredits)?account.availableCredits:null,
+      usablePaidCredits:typeof account?.usablePaidCredits==='number'&&Number.isFinite(account.usablePaidCredits)?account.usablePaidCredits:null,
+      creditUnit:'credits',membershipTypeDescription:String(account?.membershipTypeDescription||'').slice(0,120)};
+    }catch{videoAccount={connected:false,availableCredits:null,usablePaidCredits:null,creditUnit:'credits'};}
+  }
   if (AI_MEDIA_CONFIG.provider === 'openrouter' && AI_MEDIA_CONFIG.configured) {
     try {
       const result = await openRouterRequest('https://openrouter.ai/api/v1/key', { method: 'GET' }, 12000);
@@ -5869,6 +5881,7 @@ app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
   return res.json({ configured: AI_MEDIA_CONFIG.configured,provider:AI_MEDIA_CONFIG.provider,videoProvider:AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider,
     imageConfigured:AI_MEDIA_CONFIG.imageConfigured,videoEnabled:AI_MEDIA_CONFIG.videoEnabled,videoReason:AI_MEDIA_CONFIG.videoReason,
     videoDurationOptions:AI_MEDIA_CONFIG.videoDurationOptions,videoAspectRatioOptions:AI_MEDIA_CONFIG.videoAspectRatioOptions,videoResolution:AI_MEDIA_CONFIG.videoResolution,videoAudioAlwaysOn:AI_MEDIA_CONFIG.videoAudioAlwaysOn,
+    videoManualOnly:Boolean(AI_MEDIA_CONFIG.videoManualOnly),videoDefaultDuration:AI_MEDIA_CONFIG.videoDefaultDuration,videoCreditsPerSecond:AI_MEDIA_CONFIG.videoCreditsPerSecond,videoAccount,
     models: { image: AI_MEDIA_CONFIG.imageModel, video: AI_MEDIA_CONFIG.videoModel,
       imageOptions: AI_MEDIA_CONFIG.imageOptions, videoOptions: AI_MEDIA_CONFIG.videoOptions }, budget,
     projects:projects.map(project=>({...project,...mediaJobPolicy(project,AI_MEDIA_CONFIG),publication:mediaPublications.snapshot(project)})) });
@@ -5878,9 +5891,9 @@ app.post('/api/admin/media-factory', requireAdmin, (req, res) => {
   const format = String(req.body?.format || 'image');
   const prompt = String(req.body?.prompt || '').trim().slice(0, 5000);
   const title = String(req.body?.title || prompt.slice(0, 90) || 'Criação da Fábrica Neural').trim().slice(0, 180);
-  const requestedRatio=String(req.body?.aspectRatio||'9:16'),requestedDuration=req.body?.durationSeconds===undefined?4:Number(req.body.durationSeconds);
+  const requestedRatio=String(req.body?.aspectRatio||'9:16'),requestedDuration=req.body?.durationSeconds===undefined?(AI_MEDIA_CONFIG.videoDefaultDuration||4):Number(req.body.durationSeconds);
   const aspectRatio = ['9:16','16:9','1:1'].includes(requestedRatio) ? requestedRatio : '9:16';
-  const duration = Math.max(4, Math.min(8, requestedDuration || 4));
+  const duration = AI_MEDIA_CONFIG.videoProvider==='kling_studio'?requestedDuration:Math.max(4, Math.min(8, requestedDuration || 4));
   const channels = String(req.body?.channels || 'VitrineCity').trim().slice(0, 300) || 'VitrineCity';
   const caption = String(req.body?.caption || '').trim().slice(0, 500);
   const requestedModel = String(req.body?.model || '').trim();
@@ -5912,6 +5925,7 @@ app.post('/api/admin/media-projects/:id/generate', requireAdmin, requireEcosyste
   if(!access.generationAvailable)return res.status(access.generationBlockCode==='ai_media_job_provider_mismatch'?409:503).json({error:access.generationBlockReason,code:access.generationBlockCode});
   const videoIssue=project.format==='image'?'':videoGenerationIssue(project);
   if(videoIssue)return res.status(400).json({error:videoIssue,code:'ai_media_video_options_invalid'});
+  if(project.format!=='image'&&AI_MEDIA_CONFIG.videoManualOnly&&db.prepare('SELECT 1 FROM admin_viral_quizzes WHERE media_project_id=? OR task_id=? LIMIT 1').get(id,project.task_id))return res.status(409).json({error:'Esta tarefa pertence à produção automática. Crie um clipe manual no Estúdio.',code:'ai_video_manual_only'});
   try {
     if (project.format === 'image') {
       db.prepare("UPDATE admin_media_projects SET production_status='assets',progress=25,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
@@ -5928,13 +5942,21 @@ app.post('/api/admin/media-projects/:id/generate', requireAdmin, requireEcosyste
       db.prepare("UPDATE admin_agent_tasks SET status='awaiting_approval',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(project.task_id);
       return res.json({ project: mediaFactoryProject(id) });
     }
-    // Claim before any network await. A timeout/crash must never make a second
+    // Claim before paid generation. A timeout/crash must never make a second
     // manual click submit another paid generation for this project.
     const videoProvider=AI_MEDIA_CONFIG.videoProvider||AI_MEDIA_CONFIG.provider;
+    if(AI_MEDIA_CONFIG.videoManualOnly){
+      const account=await aiMediaClient.getVideoAccountCapabilities();
+      if(account?.connected!==true)throw Object.assign(new Error('kling_studio_auth_unavailable'),{status:503});
+      const estimatedCredits=Number(project.duration_seconds)*AI_MEDIA_CONFIG.videoCreditsPerSecond;
+      if(!Number.isFinite(account.availableCredits)||account.availableCredits<estimatedCredits)return res.status(402).json({error:'Os créditos informados pela conta não cobrem a estimativa deste clipe.',code:'kling_studio_insufficient_credits'});
+      if(!ecosystemCanRun()||!videoProjectUnchanged(mediaFactoryProject(id),project))return res.status(409).json({error:'O projeto ou a pausa geral mudou durante a conferência da conta. Nenhuma geração foi enviada.'});
+      if(db.prepare('SELECT 1 FROM admin_viral_quizzes WHERE media_project_id=? OR task_id=? LIMIT 1').get(id,project.task_id))return res.status(409).json({error:'Esta tarefa pertence à produção automática.',code:'ai_video_manual_only'});
+    }
     const claim=db.prepare("UPDATE admin_media_projects SET production_status='editing',progress=10,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND video_provider=? AND production_status IN ('briefing','script','assets') AND remote_job_id='' AND polling_url=''").run(id,videoProvider);
     if(!claim.changes)return res.status(409).json({error:'Esta geração já foi iniciada e precisa de conferência.'});
     const result = await aiMediaClient.createVideo({model:project.model||AI_MEDIA_CONFIG.videoModel,prompt:project.prompt,durationSeconds:project.duration_seconds,
-      aspectRatio:project.aspect_ratio,generateAudio:AI_MEDIA_CONFIG.videoAudioAlwaysOn===true});
+      aspectRatio:project.aspect_ratio,generateAudio:AI_MEDIA_CONFIG.videoAudioAlwaysOn===true,manual:true});
     const {jobId,pollingUrl}=aiMediaClient.videoReceipt(result.data);
     db.prepare(`UPDATE admin_media_projects SET progress=CASE WHEN production_status='editing' THEN 20 ELSE progress END,remote_job_id=?,polling_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND video_provider=? AND remote_job_id='' AND polling_url=''`)
       .run(jobId, pollingUrl, id,videoProvider);

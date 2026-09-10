@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {createMediaProvider, resolveMediaConfig, OPENAI_VIDEO_UNAVAILABLE_REASON} from '../ai-media-provider.js';
 import {videoReceipt, videoProjectUnchanged} from '../video-provider-receipts.js';
 import {createIntegrationObserver} from '../integration-health.js';
+import path from 'node:path';
 
 const both = {OPENAI_API_KEY: 'openai-test-secret', OPENROUTER_API_KEY: 'router-test-secret'};
 const openai = {...both, AI_MEDIA_PROVIDER: 'openai'};
@@ -213,4 +214,22 @@ test('missing Google credentials or invalid video selector do not disable OpenAI
     await assert.rejects(f.client.createVideo({prompt:'A quiet library',durationSeconds:4}),{code:'ai_video_unavailable'});
     assert.equal(f.calls.length,1);assert.equal(new URL(f.calls[0].url).hostname,'api.openai.com');
   }
+});
+
+test('Kling Studio dispatch is manual only, keeps OpenAI images and returns account-bound receipts',async()=>{
+  const env={...openai,AI_VIDEO_PROVIDER:'kling_studio',KLING_HOME:path.resolve('offline-studio-home')},calls=[];
+  const id='studio-generation-1',poll='https://kling.ai/mcp#'+'a'.repeat(64)+'/'+id;
+  const studio={createVideo:async input=>{calls.push({kind:'create',input});return {provider:'kling_studio',data:{id,polling_url:poll,status:'queued'}};},
+    getVideo:async job=>{calls.push({kind:'get',job});return {provider:'kling_studio',data:{id,status:'processing'}};},downloadVideo:async()=>Buffer.from('test'),getAccountCapabilities:async()=>({connected:true,availableCredits:660,usablePaidCredits:null})};
+  const client=createMediaProvider({env,studioProviderFactory:()=>studio,fetchImpl:async(url)=>{calls.push({kind:'image',url});return response(imageResult());}});
+  assert.equal(client.config.provider,'openai');assert.equal(client.config.videoProvider,'kling_studio');assert.equal(client.config.videoManualOnly,true);assert.equal(client.config.videoDefaultDuration,5);assert.equal(client.config.videoModel,'kling-video-v3_0');assert.equal(client.config.videoCreditsPerSecond,8);assert.equal(client.config.videoResolution,'1080p');assert.doesNotMatch(JSON.stringify(client.config),/offline-studio-home|test-secret/);
+  await assert.rejects(client.createVideo({prompt:'Synthetic test'}),{code:'ai_video_manual_only'});assert.deepEqual(calls,[]);
+  await client.requestImage({prompt:'Synthetic image'});const created=await client.createVideo({prompt:'Synthetic test',manual:true});
+  const job={provider:'kling_studio',...client.videoReceipt(created.data)};assert.equal(job.jobId,id);assert.equal(job.pollingUrl,poll);await client.getVideo(job);
+  assert.equal(calls[0].url,'https://api.openai.com/v1/images/generations');assert.equal(calls[1].input.durationSeconds,5);assert.equal(calls[1].input.generateAudio,false);assert.equal(calls[1].input.manual,true);assert.equal(calls[2].job.pollingUrl,poll);
+  assert.equal((await client.getVideoAccountCapabilities()).availableCredits,660);assert.equal(calls.length,3);
+});
+
+test('Kling selection without its private home stays unavailable while OpenAI images remain configured',()=>{
+  const config=resolveMediaConfig({...openai,AI_VIDEO_PROVIDER:'kling_studio'});assert.equal(config.videoEnabled,false);assert.equal(config.imageConfigured,true);assert.equal(config.videoManualOnly,true);assert.equal(config.videoError,'kling_studio_home_missing');
 });

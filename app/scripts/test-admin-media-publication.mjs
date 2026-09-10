@@ -42,6 +42,26 @@ test('Google video controls offer only supported formats while OpenAI images ret
   assert.equal(nodes['#factoryRatio'].options[2].disabled,false);assert.equal(nodes['#factoryDuration'].disabled,true);assert.equal(nodes['#factoryVideoInfo'].textContent,'');assert.match(nodes['#factoryModel'].innerHTML,/gpt-image-2/);
   context.window.factoryConfig={videoProvider:'openrouter',videoDurationOptions:[],videoAspectRatioOptions:['1:1','9:16','16:9']};nodes['#factoryFormat'].value='short_video';vm.runInContext('updateFactoryModels({})',context);assert(nodes['#factoryDuration'].options.every(item=>item.disabled===false));
 });
+
+test('Kling default is a manual silent 5-second clip with an explicit changing credit estimate',()=>{
+  const modelScript=html.slice(html.indexOf('function updateFactoryModels('),html.indexOf('function renderFactory('));
+  const nodes={'#factoryFormat':{value:'short_video'},'#factoryModel':{},'#factoryRatio':{value:'9:16',options:['9:16','16:9','1:1'].map(value=>({value}))},'#factoryDuration':{value:'4',options:['4','5','6','8'].map(value=>({value}))},'#factoryVideoInfo':{}};
+  const context=vm.createContext({window:{factoryConfig:{videoProvider:'kling_studio',videoManualOnly:true,videoDefaultDuration:5,videoDurationOptions:Array.from({length:13},(_,i)=>i+3),videoAspectRatioOptions:['9:16','16:9','1:1'],videoResolution:'1080p',videoCreditsPerSecond:8}},$:id=>nodes[id],esc:String,aiProviderLabel:()=>'Kling Studio'});
+  vm.runInContext(modelScript+`updateFactoryModels({video:'kling-video-v3_0',videoOptions:['kling-video-v3_0']});`,context);
+  assert.equal(nodes['#factoryDuration'].value,'5');assert.match(nodes['#factoryVideoInfo'].textContent,/1080p.*sem áudio.*manual.*40 créditos pagos/);
+  nodes['#factoryDuration'].value='8';nodes['#factoryDuration'].onchange();assert.match(nodes['#factoryVideoInfo'].textContent,/64 créditos pagos/);
+});
+
+test('Kling account balance is not mislabeled paid-only and generation stays hidden without verified connection',()=>{
+  for(const connected of [true,false]){
+    const nodes={'#factoryJobs':{},'#factoryBudget':{},'#factoryFormat':{value:'short_video',querySelector:()=>({})}};
+    const config={provider:'openai',videoProvider:'kling_studio',configured:true,imageConfigured:true,videoEnabled:true,videoManualOnly:true,videoCreditsPerSecond:8,videoDurationOptions:[5,8],videoAccount:{connected,availableCredits:660,usablePaidCredits:null}};
+    const context={window:{},mediaProjects:[{id:1,title:'Clipe manual',format:'short_video',production_status:'script',duration_seconds:5,generationAvailable:true}],$:id=>nodes[id],aiProviderLabel:value=>value==='kling_studio'?'Kling Studio':'OpenAI',updateFactoryModels(){},esc:String,usd:String,config};
+    vm.runInNewContext(render+';renderFactory(config);',context);
+    if(connected){assert.match(nodes['#factoryBudget'].textContent,/660 créditos informados pela conta; o total pago não é discriminado/);assert.match(nodes['#factoryJobs'].innerHTML,/estimativa 40 créditos pagos/);}
+    else {assert.match(nodes['#factoryBudget'].textContent,/conexão da conta pendente/);assert.doesNotMatch(nodes['#factoryJobs'].innerHTML,/data-media-action="generate"/);}
+  }
+});
 const quizHtml=readFileSync(new URL('../public/admin-quizzes.html',import.meta.url),'utf8');
 const quizScript=quizHtml.match(/<script>([\s\S]*?)<\/script>/)[1];
 function quizUi(publication,status='approved',filter=''){

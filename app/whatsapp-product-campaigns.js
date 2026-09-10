@@ -5,6 +5,7 @@ import {spawn} from 'node:child_process';
 import {rasterSize} from './web-story-assets.js';
 import {validAffiliateUrl} from './affiliate-catalog.js';
 import {ensureWhatsAppScheduleConfirmation,countWhatsAppSchedules} from './whatsapp-schedule-worker.js';
+import {isWhatsAppCommercialGroupAllowed,WHATSAPP_COMMERCIAL_EXCLUDED_REASON} from './whatsapp-commercial-policy.js';
 
 const API = '/api/admin/whatsapp-qr/product-campaigns';
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -58,7 +59,7 @@ async function convertJpeg({inputPath, outputPath}) {
 }
 
 export function registerWhatsAppProductCampaigns({app,db,requireAdmin,sameOriginOnly,siteUrl,dataDir,
-  whatsappQrRequest,whatsappQrData,fetchImpl=globalThis.fetch,convertImage=convertJpeg,now=Date.now}) {
+  whatsappQrRequest,whatsappQrData,fetchImpl=globalThis.fetch,convertImage=convertJpeg,now=Date.now,isGroupAllowed=isWhatsAppCommercialGroupAllowed}) {
   const origin = new URL(siteUrl).origin;
   const imageRoot = path.resolve(dataDir,'whatsapp-product-images');
   const previews = new Map();
@@ -107,7 +108,7 @@ export function registerWhatsAppProductCampaigns({app,db,requireAdmin,sameOrigin
     const groups = new Map();
     for(const item of Object.values(history || {}).flatMap(value => Array.isArray(value) ? value : [])) {
       const jid = String(item.chat_jid || item.ChatJID || '');
-      if(GROUP.test(jid))groups.set(jid,{jid,name:safeText(item.group_name || item.name || item.Name).slice(0,160) || jid.split('@')[0]});
+      if(GROUP.test(jid)&&isGroupAllowed(jid))groups.set(jid,{jid,name:safeText(item.group_name || item.name || item.Name).slice(0,160) || jid.split('@')[0]});
     }
     // Names are optional. The history remains the recipient allowlist.
     if(groups.size)try {
@@ -187,6 +188,7 @@ export function registerWhatsAppProductCampaigns({app,db,requireAdmin,sameOrigin
     if(!input || !Array.isArray(input.products) || input.products.length < 1 || input.products.length > 5)throw fail('Selecione de 1 a 5 produtos.');
     if(!Array.isArray(input.groupJids) || input.groupJids.length < 1 || input.groupJids.length > 50 || input.groupJids.some(jid => typeof jid !== 'string' || !GROUP.test(jid)))throw fail('Selecione de 1 a 50 grupos conectados.');
     if(new Set(input.groupJids).size !== input.groupJids.length)throw fail('Há grupos repetidos na seleção.');
+    if(input.groupJids.some(jid => !isGroupAllowed(jid)))throw fail(WHATSAPP_COMMERCIAL_EXCLUDED_REASON,409);
     const products = input.products.map(item => {
       const slug = safeText(item?.slug), message = safeText(item?.message);
       if(!SLUG.test(slug) || slug.length > 100 || !message || message.length > 1200 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(message))throw fail('Cada produto precisa de uma mensagem de até 1.200 caracteres.');
@@ -220,6 +222,7 @@ export function registerWhatsAppProductCampaigns({app,db,requireAdmin,sameOrigin
       products.push({...item,title:row.title,fingerprint,imagePath});
     }
     assertProducts(products);
+    if(input.groupJids.some(jid => !isGroupAllowed(jid)))throw fail(WHATSAPP_COMMERCIAL_EXCLUDED_REASON,409);
     return db.transaction(() => {
       const existing = db.prepare('SELECT * FROM whatsapp_product_campaigns WHERE idempotency_key=?').get(input.idempotencyKey);
       if(existing) {
@@ -276,6 +279,7 @@ export function registerWhatsAppProductCampaigns({app,db,requireAdmin,sameOrigin
     if(!row)throw fail('Campanha não encontrada.',404);
     if(row.status === 'queued')return res.json(campaignDto(row));
     const products = JSON.parse(row.products_json), groups = JSON.parse(row.groups_json);
+    if(groups.some(group => !isGroupAllowed(group.jid)))throw fail(WHATSAPP_COMMERCIAL_EXCLUDED_REASON,409);
     if(Date.parse(row.start_at) < now()-30000)throw fail('O horário da prévia já passou. Prepare outra prévia com um novo horário.',409);
     const connected = new Set((await currentGroups()).map(group => group.jid));
     if(groups.some(group => !connected.has(group.jid)))throw fail('Um grupo da prévia não está mais conectado. Prepare uma nova seleção.',409);
@@ -284,6 +288,7 @@ export function registerWhatsAppProductCampaigns({app,db,requireAdmin,sameOrigin
     db.transaction(() => {
       row = getRow(row.id);
       if(row.status === 'queued')return;
+      if(groups.some(group => !isGroupAllowed(group.jid)))throw fail(WHATSAPP_COMMERCIAL_EXCLUDED_REASON,409);
       assertProducts(products);
       const insert = db.prepare(`INSERT INTO whatsapp_qr_schedules(id,group_jid,group_name,sitemap_url,message,scheduled_at,campaign_id,product_slug,image_path)
         VALUES (?,?,?,?,?,?,?,?,?)`);
@@ -299,6 +304,7 @@ export function registerWhatsAppProductCampaigns({app,db,requireAdmin,sameOrigin
   async function prepareScheduledMessage(item) {
     const schedule = db.prepare('SELECT * FROM whatsapp_qr_schedules WHERE id=?').get(String(item?.id || ''));
     if(!schedule)throw fail('Agendamento não encontrado.',409);
+    if(!isGroupAllowed(schedule.group_jid))throw fail(WHATSAPP_COMMERCIAL_EXCLUDED_REASON,409);
     if(!schedule.product_slug && !schedule.image_path)return null;
     const campaign = getRow(schedule.campaign_id), product = campaign && JSON.parse(campaign.products_json).find(value => value.slug === schedule.product_slug);
     const group = campaign && JSON.parse(campaign.groups_json).find(value => value.jid === schedule.group_jid);

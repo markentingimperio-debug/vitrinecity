@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import Database from 'better-sqlite3';
 import * as receipts from '../video-provider-receipts.js';
 import {googleVideoReceipt,googleVideoPollingUrl} from '../google-video-provider.js';
+import {klingStudioReceipt,klingStudioPollingUrl} from '../kling-studio-provider.js';
 import {mediaJobPolicy, requireMediaJob} from '../media-job-policy.js';
 const {videoReceipt,videoPollingUrl,videoPollState,videoFailureMessage,videoDownloadTarget,downloadVideo}=receipts;
 const job='job-abc123',poll=`https://openrouter.ai/api/v1/videos/${job}`,mp4=Buffer.from([0,0,0,20,102,116,121,112,105,115,111,109,0,0,0,0]);
@@ -56,21 +57,22 @@ test('diagnostics classify account and policy blocks without leaking raw provide
   assert.doesNotMatch(videoFailureMessage(Error('Bearer extremely-private-value https://private.example')),/private|Bearer/);
 });
 const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
-function fixture(request,download=async()=>mp4,{mediaConfig={provider:'openrouter',configured:true,imageConfigured:true,videoEnabled:true}}={}){
+function fixture(request,download=async()=>mp4,{mediaConfig={provider:'openrouter',configured:true,imageConfigured:true,videoEnabled:true},account={connected:true,availableCredits:660}}={}){
   const db=new Database(':memory:');
-  db.exec(`CREATE TABLE admin_viral_quizzes(id INTEGER PRIMARY KEY,status TEXT);
-    INSERT INTO admin_viral_quizzes VALUES(1,'in_production');
+  db.exec(`CREATE TABLE admin_viral_quizzes(id INTEGER PRIMARY KEY,status TEXT,task_id INTEGER,media_project_id INTEGER);
+    INSERT INTO admin_viral_quizzes(id,status) VALUES(1,'in_production');
     CREATE TABLE viral_quiz_scenes(id INTEGER PRIMARY KEY,quiz_id INTEGER DEFAULT 1,scene_number INTEGER DEFAULT 1,status TEXT DEFAULT 'pending',video_provider TEXT DEFAULT 'openrouter',prompt TEXT DEFAULT 'safe',duration_seconds INTEGER DEFAULT 8,attempt_count INTEGER DEFAULT 0,remote_job_id TEXT DEFAULT '',polling_url TEXT DEFAULT '',model TEXT DEFAULT '',error_message TEXT DEFAULT '',local_path TEXT DEFAULT '',output_url TEXT DEFAULT '',updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE admin_media_projects(id INTEGER PRIMARY KEY,task_id INTEGER DEFAULT 1,format TEXT DEFAULT 'short_video',production_status TEXT DEFAULT 'script',image_provider TEXT DEFAULT 'openrouter',video_provider TEXT DEFAULT 'openrouter',progress INTEGER DEFAULT 0,remote_job_id TEXT DEFAULT '',polling_url TEXT DEFAULT '',error_message TEXT DEFAULT '',updated_at TEXT DEFAULT CURRENT_TIMESTAMP,model TEXT DEFAULT 'test',prompt TEXT DEFAULT 'safe',duration_seconds INTEGER DEFAULT 8,aspect_ratio TEXT DEFAULT '9:16',output_url TEXT DEFAULT '',usage_cost_usd REAL DEFAULT 0);
     CREATE TABLE admin_agent_tasks(id INTEGER PRIMARY KEY,status TEXT,updated_at TEXT);INSERT INTO admin_agent_tasks VALUES(1,'running','before');`);
   const routes=new Map(),calls=[],writes=[],downloads=[],config={videoModel:'test-model',...mediaConfig},provider=config.videoProvider||config.provider;
   const client={
     requestImage:async input=>{calls.push({image:input});return request('image',{method:'POST',body:JSON.stringify(input)});},
-    createVideo:async input=>{const url=provider==='google'?'https://generativelanguage.googleapis.com/v1beta/models/'+input.model+':predictLongRunning':'https://openrouter.ai/api/v1/videos';const options={method:'POST',redirect:'error',body:JSON.stringify(input)};calls.push({url,options});return request(url,options);},
+    createVideo:async input=>{const url=provider==='kling_studio'?'kling-studio-cli:generate':provider==='google'?'https://generativelanguage.googleapis.com/v1beta/models/'+input.model+':predictLongRunning':'https://openrouter.ai/api/v1/videos';const options={method:'POST',redirect:'error',body:JSON.stringify(input)};calls.push({url,options});return request(url,options);},
     getVideo:async job=>{assert.equal(job.provider,provider);const options={method:'GET',redirect:'error'};calls.push({url:job.pollingUrl,options,job});return request(job.pollingUrl,options);},
     downloadVideo:async(data,job)=>{assert.equal(job.provider,provider);downloads.push(job);return download(data,job);},
-    videoReceipt:provider==='google'?googleVideoReceipt:videoReceipt,
-    videoPollingUrl:provider==='google'?googleVideoPollingUrl:videoPollingUrl
+    videoReceipt:provider==='kling_studio'?klingStudioReceipt:provider==='google'?googleVideoReceipt:videoReceipt,
+    videoPollingUrl:provider==='kling_studio'?klingStudioPollingUrl:provider==='google'?googleVideoPollingUrl:videoPollingUrl,
+    getVideoAccountCapabilities:async()=>typeof account==='function'?account():account
   };
   const context=vm.createContext({...receipts,mediaJobPolicy,requireMediaJob,AI_MEDIA_CONFIG:config,db,ecosystemCanRun:()=>true,aiConfigured:()=>true,finishViralQuizVideo:async()=>{},openRouterRequest:()=>{throw Error('legacy server routing forbidden');},aiMediaClient:client,generatedMediaDir:'/tmp',fs:{writeFileSync:(...args)=>writes.push(args)},path:{join:(...parts)=>parts.join('/')},Buffer,requireAdmin(){},requireEcosystemRunning(){},app:{post:(route,...handlers)=>routes.set(route,handlers.at(-1))},mediaFactoryProject:id=>db.prepare('SELECT * FROM admin_media_projects WHERE id=?').get(id)});
   vm.runInContext(server.slice(server.indexOf('function videoGenerationIssue('),server.indexOf("app.get('/api/admin/media-factory'")),context);
@@ -235,4 +237,47 @@ test('quiz approval creates nine Google scenes with supported durations without 
   vm.runInContext("approveViralQuiz(1,'local-admin')",context);
   const project=db.prepare('SELECT * FROM admin_media_projects').get(),scenes=db.prepare('SELECT * FROM viral_quiz_scenes ORDER BY scene_number').all();assert.equal(project.video_provider,'google');assert.equal(project.model,googleModel);assert.equal(project.duration_seconds,65);assert.equal(scenes.length,9);assert(scenes.every(scene=>scene.video_provider==='google'&&scene.model===googleModel));assert.deepEqual(scenes.map(scene=>scene.duration_seconds),[8,8,8,8,8,8,8,8,4]);
   assert.throws(()=>vm.runInContext("approveViralQuiz(1,'local-admin')",context),/não está aguardando aprovação/);assert.equal(db.prepare('SELECT count(*) n FROM viral_quiz_scenes').get().n,9);db.close();
+});
+
+const studioModel='kling-video-v3_0',studioJob='studio-generation-1',studioPoll='https://kling.ai/mcp#'+'a'.repeat(64)+'/'+studioJob;
+const studioConfig={provider:'openai',videoProvider:'kling_studio',configured:true,imageConfigured:true,videoEnabled:true,videoManualOnly:true,videoModel:studioModel,videoOptions:[studioModel],videoDurationOptions:Array.from({length:13},(_,i)=>i+3),videoAspectRatioOptions:['9:16','16:9','1:1'],videoAudioAlwaysOn:false,videoCreditsPerSecond:8,videoDefaultDuration:5,videoResolution:'1080p'};
+const studioResponse=(_url,options)=>({provider:'kling_studio',data:{id:studioJob,polling_url:studioPoll,status:options.method==='POST'?'queued':'completed'}});
+test('Kling manual clips accept 3 to 15 seconds, preserve exact receipts and never add audio',async()=>{
+  for(const duration of [3,5,15]){
+    const f=fixture(studioResponse,async()=>mp4,{mediaConfig:studioConfig});
+    f.db.prepare("INSERT INTO admin_media_projects(id,video_provider,model,duration_seconds) VALUES(1,'kling_studio',?,?)").run(studioModel,duration);
+    assert.equal((await f.route('generate')).code,202);assert.equal((await f.route('generate')).code,409);assert.equal((await f.route('sync')).code,200);
+    const input=JSON.parse(f.calls[0].options.body);assert.equal(input.durationSeconds,duration);assert.equal(input.generateAudio,false);assert.equal(input.manual,true);
+    const row=f.db.prepare('SELECT * FROM admin_media_projects').get();assert.equal(row.remote_job_id,studioJob);assert.equal(row.polling_url,studioPoll);assert.equal(row.video_provider,'kling_studio');assert.equal(row.production_status,'review');assert.equal(f.calls.length,2);f.db.close();
+  }
+});
+
+test('Kling automatic scenes and quiz approval are blocked before database claims or requests',async()=>{
+  let accounts=0;const f=fixture(()=>{throw Error('No generation permitted');},async()=>mp4,{mediaConfig:studioConfig,account:()=>{accounts++;return {connected:true,availableCredits:660};}});
+  f.db.exec("INSERT INTO viral_quiz_scenes(id,status,video_provider) VALUES(1,'pending','kling_studio'),(2,'generating','kling_studio'),(3,'pending','google'),(4,'pending','openrouter')");
+  const before=f.db.prepare('SELECT * FROM viral_quiz_scenes').all();await f.run();await f.run();assert.deepEqual(f.db.prepare('SELECT * FROM viral_quiz_scenes').all(),before);assert.deepEqual(f.calls,[]);assert.equal(accounts,0);
+  const context=vm.createContext({AI_MEDIA_CONFIG:studioConfig,db:{prepare(){throw Error('No SQL should be accessed');}}});vm.runInContext(server.slice(server.indexOf('function approveViralQuiz('),server.indexOf("app.post('/api/admin/viral-quizzes/:id/approve'")),context);assert.throws(()=>vm.runInContext("approveViralQuiz(1,'admin')",context),error=>error.code==='ai_video_manual_only');f.db.close();
+});
+
+test('manual endpoint cannot turn a linked viral source into a Kling paid clip',async()=>{
+  let accounts=0;const f=fixture(studioResponse,async()=>mp4,{mediaConfig:studioConfig,account:()=>{accounts++;return {connected:true,availableCredits:660};}});
+  f.db.prepare("INSERT INTO admin_media_projects(id,video_provider,model,duration_seconds) VALUES(1,'kling_studio',?,5)").run(studioModel);f.db.exec('UPDATE admin_viral_quizzes SET media_project_id=1');
+  const before=f.db.prepare('SELECT * FROM admin_media_projects').get(),result=await f.route('generate');assert.equal(result.code,409);assert.equal(result.body.code,'ai_video_manual_only');assert.deepEqual(f.db.prepare('SELECT * FROM admin_media_projects').get(),before);assert.equal(accounts,0);assert.deepEqual(f.calls,[]);f.db.close();
+});
+
+test('insufficient credits, invalid duration and old provider jobs cannot create a Kling claim',async()=>{
+  for(const [provider,duration,credits,status] of [['kling_studio',5,39,402],['kling_studio',2,660,400],['kling_studio',16,660,400],['google',5,660,409],['openrouter',5,660,409]]){
+    const f=fixture(studioResponse,async()=>mp4,{mediaConfig:studioConfig,account:{connected:true,availableCredits:credits}});
+    f.db.prepare('INSERT INTO admin_media_projects(id,video_provider,model,duration_seconds) VALUES(1,?,?,?)').run(provider,studioModel,duration);
+    const before=f.db.prepare('SELECT * FROM admin_media_projects').get();assert.equal((await f.route('generate')).code,status);assert.deepEqual(f.db.prepare('SELECT * FROM admin_media_projects').get(),before);assert.deepEqual(f.calls,[]);f.db.close();
+  }
+});
+
+test('Kling account read never generates and admin config omits private credential fields',async()=>{
+  let reads=0,generated=0,handler;const admin=()=>{};
+  const context=vm.createContext({AI_MEDIA_CONFIG:studioConfig,db:{prepare:()=>({all:()=>[]})},requireAdmin:admin,
+    app:{get:(route,guard,fn)=>{assert.equal(route,'/api/admin/media-factory');assert.equal(guard,admin);handler=fn;}},
+    aiMediaClient:{getVideoAccountCapabilities:async()=>{reads++;return {connected:true,availableCredits:660,usablePaidCredits:null,accessToken:'DO_NOT_EXPOSE',home:'PRIVATE_PATH'};},createVideo(){generated++;}},mediaJobPolicy});
+  vm.runInContext(server.slice(server.indexOf("app.get('/api/admin/media-factory'"),server.indexOf("app.post('/api/admin/media-factory'")),context);
+  let body;await handler({}, {json:value=>{body=value;}});assert.equal(reads,1);assert.equal(generated,0);assert.equal(body.videoAccount.connected,true);assert.equal(body.videoAccount.availableCredits,660);assert.equal(body.videoAccount.usablePaidCredits,null);assert.equal(body.videoManualOnly,true);assert.equal(body.videoCreditsPerSecond,8);assert.doesNotMatch(JSON.stringify(body),/DO_NOT_EXPOSE|PRIVATE_PATH/);
 });
