@@ -34,6 +34,8 @@ import {setupCityChat} from './city-chat.js';
 import {setupCityExploration,decorateExplorationPage} from './city-exploration.js';
 import {setupCityRewards} from './city-rewards.js';
 import {setupPrayerSupport} from './prayer-support.js';
+import {createPrayerDailyHandler} from './prayer-daily.js';
+import {viralQueueCapacity,distinctViralThemes,CURATED_VIDEO_TOPICS,viralThemeKey} from './viral-factory-policy.js';
 import {setupCourierAccount} from './courier-account.js';
 import { setupMediaCatalog } from './media-catalog.js';
 import { setupEmissora } from './emissora.js';
@@ -2925,6 +2927,7 @@ app.get('/feeds/meta-catalog.csv', (_req, res) => {
     .set('Cache-Control', 'public,max-age=300').send(`\uFEFF${csv}\n`);
 });
 app.use((req,res,next)=>{if(req.method!=='GET'||req.path.startsWith('/admin'))return next();const relative=req.path==='/'?'index.html':decodeURIComponent(req.path).replace(/^\//,'');const candidates=relative.endsWith('.html')?[relative]:[`${relative}.html`];for(const candidate of candidates){if(candidate.includes('/')||candidate.includes('..'))continue;const file=path.join(dir,'public',candidate);if(!fs.existsSync(file))continue;const page=fs.readFileSync(file,'utf8');return res.type('html').send(page.replace('</body>','<script src="/global-market-banner.js?v=3" defer></script></body>'))}return next()});
+app.get(['/oracao-do-dia','/oracao-do-dia.html'], createPrayerDailyHandler({readTemplate:()=>fs.readFileSync(path.join(dir,'public','oracao-do-dia.html'),'utf8')}));
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
 
 app.get('/r/:code', (req, res) => {
@@ -4889,6 +4892,8 @@ app.post('/api/social/connect', requireUser, async (req, res) => {
 
 const VIRAL_QUIZ_VOICES = new Set(['br-feminina-energica','br-masculina-amigavel','br-feminina-calma']);
 function viralQuizQuestions(theme, category) {
+  const selected=CURATED_VIDEO_TOPICS.find(item=>viralThemeKey(item.topic)===viralThemeKey(theme));
+  if(selected)return selected.questions;
   const subject = theme.replace(/[?!.,;:]+$/g, '').trim();
   if (category === 'curiosities') return [
     { question: `Qual fato sobre ${subject} surpreende mais gente?`, options: ['O mais conhecido','O menos óbvio','Nenhum deles'], answer: 1 },
@@ -4983,60 +4988,37 @@ app.post('/api/admin/viral-quizzes/:id/approve', requireAdmin, (req,res) => {
   try{return res.json({quiz:approveViralQuiz(Number(req.params.id),req.user.id),message:'Quiz aprovado. Nove cenas foram enviadas à produção automática.'});}
   catch(error){return res.status(error.status||500).json({error:error.message});}
 });
-function decodeXmlText(value='') { return String(value).replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim(); }
-async function viralTrendTopics() {
-  const collected=[];
-  try {
-    const response=await fetch('https://trends.google.com/trending/rss?geo=BR',{headers:{'User-Agent':'VitrineCity/1.0'},signal:AbortSignal.timeout(12000)});
-    if(response.ok){const xml=await response.text();for(const match of xml.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<ht:approx_traffic>([\s\S]*?)<\/ht:approx_traffic>[\s\S]*?<\/item>/gi)){
-      const topic=decodeXmlText(match[1]).slice(0,160),traffic=Number(decodeXmlText(match[2]).replace(/\D/g,''))||0;
-      if(topic)collected.push({source:'google_trends_br',topic,category:'curiosities',score:traffic});
-    }}
-  } catch {}
-  const internal=db.prepare(`SELECT category topic,ROUND(SUM(views+clicks*5+conversions*20),2) score
-    FROM social_external_insights WHERE ${ACTIVE_EXTERNAL_METRICS_SQL} GROUP BY category HAVING score>0 ORDER BY score DESC LIMIT 12`).all(externalMetricsStore.activeChannelId());
-  for(const item of internal)collected.push({source:'vitrine_social',topic:String(item.topic||'').slice(0,160),category:'plants',score:Number(item.score||0)});
-  const defaults=['adubação correta para plantas em vasos','sinais de falta de nutrientes nas folhas','como cuidar de plantas no calor','curiosidades sobre plantas brasileiras'];
-  for(const topic of defaults)collected.push({source:'editorial',topic,category:topic.startsWith('curiosidades')?'curiosities':'plants',score:1});
-  const seen=new Set();return collected.filter(item=>item.topic&&!seen.has(item.topic.toLowerCase())&&seen.add(item.topic.toLowerCase())).slice(0,30);
-}
-async function chooseViralThemes(trends,counts) {
-  const fallback=[...trends.filter(x=>x.category==='plants').slice(0,counts.plants),...trends.filter(x=>x.category==='curiosities').slice(0,counts.curiosities)];
-  if(!aiConfigured())return fallback;
-  try{
-    const data=await requestOpenAI({model:OPENAI_MODEL,store:false,max_output_tokens:700,
-      instructions:'Você seleciona pautas seguras para quizzes verticais da VitrineCity. Responda somente JSON válido, sem markdown: uma lista de objetos com theme e category. category deve ser plants ou curiosities. Evite política, tragédias, saúde, apostas, conteúdo adulto e alegações sem fonte. Priorize jardinagem para plants e curiosidades leves para curiosities.',
-      input:`Escolha exatamente ${counts.plants} pautas plants e ${counts.curiosities} curiosities. Tendências disponíveis: ${JSON.stringify(trends.slice(0,20))}`});
-    const parsed=JSON.parse(responseOutputText(data).trim());
-    if(!Array.isArray(parsed))return fallback;
-    const safe=parsed.filter(x=>x&&['plants','curiosities'].includes(x.category)&&String(x.theme||'').trim().length>=5)
-      .map(x=>({source:AI_TEXT_CONFIG.provider+'_curator',topic:String(x.theme).trim().slice(0,160),category:x.category,score:100}));
-    if(safe.filter(x=>x.category==='plants').length===counts.plants&&safe.filter(x=>x.category==='curiosities').length===counts.curiosities)return safe;
-  }catch(error){console.error('Curadoria viral via IA falhou:',String(error?.message||'ai_failure').slice(0,200));}
-  return fallback;
-}
 let viralFactoryRunning=false;
 async function runViralFactory({force=false,userId=null}={}) {
   if(!ecosystemCanRun())return {skipped:true,reason:'global_paused'};
   if(viralFactoryRunning)return {skipped:true,reason:'running'};viralFactoryRunning=true;
   const settings=db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get();
   const day=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo'}).format(new Date());
-  if(!settings.enabled&&!force){viralFactoryRunning=false;return {skipped:true,reason:'disabled'};}
+  if(!settings.enabled){viralFactoryRunning=false;return {skipped:true,reason:'disabled',message:'A criação de quizzes está pausada. As pautas podem ser revisadas antes de retomar a produção.'};}
   if(settings.last_run_day===day&&!force){viralFactoryRunning=false;return {skipped:true,reason:'already_ran'};}
   try{
-    const trends=await viralTrendTopics(),insertTrend=db.prepare('INSERT INTO viral_factory_trends(source,topic,category,score) VALUES (?,?,?,?)');
+    const pendingCount=db.prepare("SELECT COUNT(*) count FROM admin_viral_quizzes WHERE status IN ('awaiting_approval','approved','in_production')").get().count;
+    const capacity=viralQueueCapacity(pendingCount,settings.plants_per_day+settings.curiosities_per_day);
+    if(!capacity){
+      const message=`Há ${pendingCount} roteiros pendentes. Conclua ou arquive os anteriores antes de criar novos vídeos.`;
+      db.prepare('UPDATE viral_factory_settings SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=1').run(message);
+      return {skipped:true,reason:'pending_backlog',message,pendingCount};
+    }
+    const trends=CURATED_VIDEO_TOPICS,insertTrend=db.prepare('INSERT INTO viral_factory_trends(source,topic,category,score) VALUES (?,?,?,?)');
     if(!ecosystemCanRun())return {skipped:true,reason:'global_paused'};
     db.transaction(()=>trends.slice(0,20).forEach(x=>insertTrend.run(x.source,x.topic,x.category,x.score)))();
-    const themes=await chooseViralThemes(trends,{plants:settings.plants_per_day,curiosities:settings.curiosities_per_day});
+    const existing=db.prepare('SELECT theme FROM admin_viral_quizzes').all().map(row=>row.theme);
+    const candidates=distinctViralThemes(trends,{existing,counts:{plants:30,curiosities:30},capacity:30});
+    const themes=distinctViralThemes(candidates,{existing,counts:{plants:settings.plants_per_day,curiosities:settings.curiosities_per_day},capacity});
     if(!ecosystemCanRun())return {skipped:true,reason:'global_paused'};
     const insert=db.prepare(`INSERT INTO admin_viral_quizzes
       (created_by_user_id,theme,category,difficulty,voice,destination_url,destination_label,questions_json,script,captions,channels,status)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,'awaiting_approval')`),created=[];
-    db.transaction(()=>{for(const item of themes){const pack=viralQuizPackage({theme:item.topic,category:item.category,voice:'br-feminina-energica',destinationUrl:settings.destination_url,destinationLabel:settings.destination_label});
-      const result=insert.run(userId,item.topic,item.category,'medium','br-feminina-energica',settings.destination_url,settings.destination_label,JSON.stringify(pack.questions),pack.script,pack.captions,'Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai, Bilibili');created.push(Number(result.lastInsertRowid));}
+    db.transaction(()=>{for(const item of themes){const destinationUrl=item.destinationUrl||settings.destination_url,destinationLabel=item.destinationLabel||settings.destination_label;
+      const pack=viralQuizPackage({theme:item.topic,category:item.category,voice:'br-feminina-energica',destinationUrl,destinationLabel});
+      const result=insert.run(userId,item.topic,item.category,'medium','br-feminina-energica',destinationUrl,destinationLabel,JSON.stringify(pack.questions),pack.script,pack.captions,'Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai, Bilibili');created.push(Number(result.lastInsertRowid));}
       db.prepare("UPDATE viral_factory_settings SET last_run_day=?,last_run_at=CURRENT_TIMESTAMP,last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=1").run(day);})();
-    if(!settings.approval_required && AI_MEDIA_CONFIG.videoEnabled&&!AI_MEDIA_CONFIG.videoManualOnly)for(const id of created)approveViralQuiz(id,userId);
-    return {ok:true,created:created.map(viralQuizRow),trends:trends.slice(0,10)};
+    return {ok:true,mode:'editorial_selected',created:created.map(viralQuizRow),message:created.length?`${created.length} roteiros de pautas selecionadas preparados para revisão.`:'As pautas selecionadas já estão no histórico. Escolha um novo assunto antes de criar outro roteiro.'};
   }catch(error){db.prepare('UPDATE viral_factory_settings SET last_error=?,last_run_at=CURRENT_TIMESTAMP WHERE id=1').run(String(error?.message||'automation_failed').slice(0,500));throw error;}
   finally{viralFactoryRunning=false;}
 }

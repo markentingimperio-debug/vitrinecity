@@ -8,7 +8,7 @@
   <meta name="description" content="Reserve um momento para a oração, encontre uma palavra de esperança e compartilhe uma mensagem de carinho. Um espaço de fé da VitrineCity.">
   <meta name="robots" content="noindex,follow">
   <link rel="stylesheet" href="/oracao-do-dia.css">
-  <script type="module" src="/oracao-do-dia.js?v=20260910-prayer-group"></script>
+  <script type="module" src="/oracao-do-dia.js?v=20260910-daily-edition"></script>
   <script type="module" src="/oracao-do-dia-apoio.js"></script>
 </head>
 <body>
@@ -34,15 +34,15 @@
     </section>
 
     <section class="prayer-section section-width" id="oracao" aria-labelledby="prayerTitle">
-      <div class="section-intro"><span class="section-number" aria-hidden="true">01</span><p class="eyebrow">ORAÇÃO DO DIA</p><p class="edition">Edição de <time id="prayerEdition" datetime="2026-09-10">10 de setembro de 2026</time></p><p class="reading-time">Cerca de 2 minutos de leitura</p></div>
+      <div class="section-intro"><span class="section-number" aria-hidden="true">01</span><p class="eyebrow">ORAÇÃO DO DIA</p><p class="edition">Edição de <!-- prayer:edition:start --><time id="prayerEdition" datetime="2026-09-10">10 de setembro de 2026</time><!-- prayer:edition:end --></p><p class="reading-time">Cerca de 1 minuto de leitura</p><p class="availability-detail">Uma oração diferente a cada dia, pelo horário de Brasília. Nossa coleção de 31 orações e reflexões se repete em um novo ciclo.</p></div>
       <article class="prayer-text" id="prayerText">
-        <h2 id="prayerTitle">Para seguir com um <br>coração mais tranquilo.</h2>
+        <!-- prayer:text:start --><h2 id="prayerTitle">Para seguir com um <br>coração mais tranquilo.</h2>
         <p class="salutation" data-prayer-paragraph>Senhor, neste momento eu me coloco em tua presença.</p>
         <p data-prayer-paragraph>Acolhe o que eu ainda não consigo dizer. Quando a preocupação ocupar meus pensamentos, ajuda-me a respirar, a reconhecer o que está ao meu alcance e a dar o próximo passo com serenidade.</p>
         <p data-prayer-paragraph>Cuida da minha família e das pessoas que atravessam dias difíceis. Que ninguém precise enfrentar a tristeza sozinho. Dá-nos sensibilidade para escutar, coragem para pedir ajuda e generosidade para oferecer companhia.</p>
         <p data-prayer-paragraph>Ensina-me a enxergar as pequenas dádivas de hoje: uma conversa sincera, o alimento à mesa, a mão estendida, a chance de recomeçar. Que a gratidão não apague as minhas dores, mas abra espaço para a esperança.</p>
         <p data-prayer-paragraph>Guia minhas escolhas. Que minhas palavras sejam cuidadosas e minhas atitudes levem paz. Ao fim deste dia, ajuda-me a descansar, confiando em teu amor e no caminho que ainda podemos construir.</p>
-        <p class="prayer-ending" data-prayer-paragraph>Em nome de Jesus, amém.</p>
+        <p class="prayer-ending" data-prayer-paragraph>Em nome de Jesus, amém.</p><!-- prayer:text:end -->
         <div class="prayer-actions"><button type="button" class="button button-primary" id="sharePrayer"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 15V3m-4 4 4-4 4 4M5 12v8h14v-8"/></svg>Compartilhar oração</button><button type="button" class="button button-quiet" id="copyPrayer"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M15 8V4H4v11h4"/></svg>Copiar texto</button><button type="button" class="text-button" id="copyPrayerLink">Copiar link</button></div>
         <p class="action-status" id="shareStatus" role="status" aria-live="polite"></p>
       </article>
@@ -55,7 +55,7 @@
 
     <section class="reflection-section section-width" aria-labelledby="reflectionTitle">
       <div class="section-intro"><span class="section-number" aria-hidden="true">03</span><p class="eyebrow">LEVE PARA O SEU DIA</p></div>
-      <div class="reflection-copy"><h2 id="reflectionTitle">Você não precisa resolver<br>tudo neste instante.</h2><p>A fé pode nos ajudar a atravessar as incertezas com esperança. Hoje, experimente um gesto possível: escute alguém com atenção, aceite uma ajuda ou reserve alguns minutos para descansar.</p><p class="reflection-prompt">Qual pequeno gesto de cuidado você pode oferecer hoje?</p>
+      <div class="reflection-copy"><!-- prayer:reflection:start --><h2 id="reflectionTitle">Você não precisa resolver<br>tudo neste instante.</h2><p>A fé pode nos ajudar a atravessar as incertezas com esperança. Hoje, experimente um gesto possível: escute alguém com atenção, aceite uma ajuda ou reserve alguns minutos para descansar.</p><p class="reflection-prompt">Qual pequeno gesto de cuidado você pode oferecer hoje?</p><!-- prayer:reflection:end -->
         <div class="amen-row"><div><h3>Se esta oração falou ao seu coração, <br>deixe seu amém.</h3><p>Um gesto de fé, no seu tempo.</p></div><button type="button" class="button button-outline" id="amenButton" aria-pressed="false"><span aria-hidden="true">♡</span> Amém</button></div><p class="amen-status" id="amenStatus" role="status" aria-live="polite">Seu amém fica apenas nesta página.</p>
       </div>
     </section>
@@ -65,7 +65,7 @@
       <aside class="support-note" aria-labelledby="supportTitle"><span class="support-symbol" aria-hidden="true">✳</span><p class="eyebrow">APOIO VOLUNTÁRIO</p><h3 id="supportTitle">Ajude a cultivar <br>este espaço.</h3><p>Se desejar e puder, escolha um valor para contribuir. A oração continuará aberta a todos.</p><p id="supportBeneficiary" class="support-beneficiary" hidden></p><fieldset id="supportAmounts" class="support-amounts" disabled><legend>Escolha o valor</legend><div class="amount-options"><label><input type="radio" name="supportAmount" value="50"><span>R$ 0,50</span></label><label><input type="radio" name="supportAmount" value="100"><span>R$ 1</span></label><label><input type="radio" name="supportAmount" value="200"><span>R$ 2</span></label><label><input type="radio" name="supportAmount" value="300"><span>R$ 3</span></label><label><input type="radio" name="supportAmount" value="500" checked><span>R$ 5</span></label></div></fieldset><p class="support-terms">Contribuição única e opcional, sem assinatura. Revise o valor e o recebedor no Mercado Pago.</p><button id="supportButton" class="button button-outline" type="button" disabled aria-describedby="supportStatus">Apoio em preparação</button><p id="supportStatus" class="availability-detail" role="status" aria-live="polite">O apoio ainda não está disponível. O recebedor e a forma de pagamento serão informados antes de qualquer contribuição.</p><button id="refreshSupport" class="text-button" type="button" hidden>Verificar confirmação do apoio</button></aside>
     </section>
   </main>
-  <footer class="site-footer"><a class="brand footer-brand" href="/">Vitrine<span>City</span></a><p>Um espaço de fé, acolhimento e esperança.<br>Oração e reflexão originais · edição de 10 de setembro de 2026.</p><a href="#oracao">Voltar à oração <span aria-hidden="true">↑</span></a></footer>
+  <footer class="site-footer"><a class="brand footer-brand" href="/">Vitrine<span>City</span></a><p>Um espaço de fé, acolhimento e esperança.<br>Oração e reflexão originais · edição de <!-- prayer:footer-edition:start -->10 de setembro de 2026<!-- prayer:footer-edition:end -->.</p><a href="#oracao">Voltar à oração <span aria-hidden="true">↑</span></a></footer>
 
   <dialog id="manualCopy" aria-labelledby="manualCopyTitle" aria-describedby="manualCopyDescription"><div class="dialog-heading"><h2 id="manualCopyTitle">Copie a mensagem</h2><button type="button" id="closeManualCopy" class="dialog-close" aria-label="Fechar">×</button></div><p id="manualCopyDescription">A cópia automática não está disponível. Selecione o texto abaixo e use a opção Copiar do seu aparelho.</p><label for="manualCopyText">Texto para copiar</label><textarea id="manualCopyText" rows="8" readonly></textarea><button type="button" class="button button-primary" id="selectManualCopy">Selecionar texto</button></dialog>
 </body>

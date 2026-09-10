@@ -5,6 +5,7 @@ import {createStoryAssets,normalizeStoryImagePath} from './web-story-assets.js';
 import {renderWebStory,renderStoryDirectory,storyPageVisibleText,escapeStory as esc} from './web-story-render.js';
 import {createWebStorySources} from './web-story-sources.js';
 import {storySourceCta} from './web-story-cta.js';
+import {storyEditorialPortal} from './web-story-categories.js';
 
 const fail=(message,status=400)=>Object.assign(Error(message),{status});
 const hashArticle=a=>createHash('sha256').update(JSON.stringify([a.title,a.summary,a.body,a.image_url,a.updated_at,...(a.commercial?[a.facts,a.sourcePath]:[])])).digest('hex');
@@ -83,6 +84,12 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
 
   // Automatic publication is explicitly configured by the administrator. Its
   // transaction cannot survive a pause, changed source or concurrent manual edit.
+  function canGenerateAutomatically(sourceKey) {
+    const existing=db.prepare('SELECT id FROM editorial_web_stories WHERE article_id=?').get(sourceKey);
+    if(!existing)return true;
+    const last=db.prepare('SELECT event FROM editorial_web_story_events WHERE story_id=? ORDER BY id DESC LIMIT 1').get(existing.id)?.event;
+    return ['published_automatic','generated_automatic'].includes(last);
+  }
   async function generateAndPublish(source,{signal,isCurrent=()=>true}={}) {
     if(typeof generateStory!=='function')throw fail('A geração pela IA gestora ainda não está configurada.',503);
     const key=source.key||source.id,initial=article(key);
@@ -109,8 +116,8 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     const original={title:initial.title,description:initial.summary,category:String(initial.portal||'VitrineCity').replace(/-/g,' ').slice(0,26),logo:logo.url,sourcePath,sourceKind:initial.kind||'article',commercial:!!initial.commercial,...storyButtons(initial,previous),generation:'gestora',affiliateDisclosure:initial.kind==='affiliate'?'Link de afiliado: podemos receber comissão.':'',sources:storySources(initial)};
     if(result.method==='local_editorial'){original.generation='editorial-local';original.aiGenerated=false;original.editorialMethod='source_preserved';}
     const draft=await validateDraft({...result.draft,...(Object.hasOwn(previous,'cta')?{cta:previous.cta}:{}),...(Object.hasOwn(previous,'homeCta')?{homeCta:previous.homeCta}:{})},original);
-    const companion=companionId?{title:draft.title,summary:draft.description,body:text(result.draft.articleBody,3000,'Artigo relacionado',900),image_url:draft.pages[0].image,sources_json:JSON.stringify(draft.sources)}:null;
-    if(companion)draft.companionHash=companionHash(companion);
+    const companion=companionId?{portal:storyEditorialPortal(initial),title:draft.title,summary:draft.description,body:text(result.draft.articleBody,3000,'Artigo relacionado',900),image_url:draft.pages[0].image,sources_json:JSON.stringify(draft.sources)}:null;
+    if(companion){draft.companionHash=companionHash(companion);draft.companionPortal=companion.portal;}
     if(draft.pages.some((_,i)=>[...storyPageVisibleText(draft,i)].length>180))throw fail('A IA produziu texto demais em uma página. A história ficou sem publicação.');
     const approved=result.approved===true,now=new Date().toISOString(),req={user:{id:'web-story-automation'}};
     let saved;
@@ -121,11 +128,14 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
       else if(latest)throw fail('Uma história foi criada em outra sessão. Ela foi preservada.',409);
       if(companion){
         const currentCompanion=db.prepare('SELECT * FROM editorial_articles WHERE id=?').get(companionId);
-        const expected=existing?.published_json?JSON.parse(existing.published_json).companionHash:null;
-        if(currentCompanion&&(!expected||companionHash(currentCompanion)!==expected||currentCompanion.status!=='published'))throw fail('O artigo relacionado recebeu uma edição manual. Ela foi preservada.',409);
+        const previousSnapshot=existing?.published_json?JSON.parse(existing.published_json):{},expected=previousSnapshot.companionHash;
+        // Legacy snapshots have no portal proof: never silently recategorize an
+        // existing article. New snapshots bind category changes as well as text.
+        const expectedPortal=previousSnapshot.companionPortal||companion.portal;
+        if(currentCompanion&&(!expected||companionHash(currentCompanion)!==expected||currentCompanion.portal!==expectedPortal||currentCompanion.status!=='published'))throw fail('O artigo relacionado recebeu uma edição manual. Ela foi preservada.',409);
         if(approved)db.prepare(`INSERT INTO editorial_articles(id,slug,portal,title,summary,body,image_url,sources_json,status,published_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,'published',?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,summary=excluded.summary,body=excluded.body,image_url=excluded.image_url,sources_json=excluded.sources_json,updated_at=excluded.updated_at`)
-          .run(companionId,companionSlug,initial.portal==='esportes'?'esportes':initial.portal==='entretenimento'?'entretenimento':'noticias',companion.title,companion.summary,companion.body,companion.image_url,companion.sources_json,now,now);
+          VALUES(?,?,?,?,?,?,?,?,'published',?,?) ON CONFLICT(id) DO UPDATE SET portal=excluded.portal,title=excluded.title,summary=excluded.summary,body=excluded.body,image_url=excluded.image_url,sources_json=excluded.sources_json,updated_at=excluded.updated_at`)
+          .run(companionId,companionSlug,companion.portal,companion.title,companion.summary,companion.body,companion.image_url,companion.sources_json,now,now);
       }
       const id=existing?.id||randomUUID(),slug=existing?.slug||(initial.slug||'historia').slice(0,90)+'-'+createHash('sha256').update(key).digest('hex').slice(0,8),json=JSON.stringify(draft),revision=(existing?.revision||0)+1;
       if(existing)db.prepare('UPDATE editorial_web_stories SET source_hash=?,draft_json=?,revision=?,previewed_revision=0,updated_at=? WHERE id=?').run(fingerprint,json,revision,now,id);
@@ -236,5 +246,5 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     const day=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}),today=day.format(new Date()),items=published();
     return {date:today,timeZone:'America/Sao_Paulo',total:items.length,today:items.filter(item=>day.format(new Date(item.published_at))===today).length};
   }
-  return {sitemapPaths:()=>['/stories',...published().map(item=>'/stories/'+item.slug)],generateAndPublish,recoveryForSource,publicationCounts};
+  return {sitemapPaths:()=>['/stories',...published().map(item=>'/stories/'+item.slug)],generateAndPublish,canGenerateAutomatically,recoveryForSource,publicationCounts};
 }

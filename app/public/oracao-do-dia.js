@@ -4,9 +4,10 @@ export function buildPrayerShareText({title,edition,verse,paragraphs,url}){
   return [String(title).trim(),`VitrineCity · ${String(edition).trim()}`,...paragraphs.map(text=>String(text).trim()).filter(Boolean),`${String(verse).trim()} — Salmos 23:1 (ARA)`,`Fonte bíblica: https://www.sbb.org.br/biblia/ARA/PSA.23`,String(url).trim()].filter(Boolean).join('\n\n');
 }
 
-export function prayerShareUrl(locationHref){
+export function prayerShareUrl(locationHref,editionDay){
   const url=new URL(locationHref);
   url.search='';url.hash='oracao';
+  if(typeof editionDay==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(editionDay)&&Number.isFinite(Date.parse(`${editionDay}T00:00:00Z`))&&new Date(`${editionDay}T00:00:00Z`).toISOString().slice(0,10)===editionDay)url.searchParams.set('dia',editionDay);
   return url.href;
 }
 
@@ -17,7 +18,8 @@ export async function writePrayerClipboard(text,clipboard){
 
 export function installPrayerPage({document,navigator,location,config=PRAYER_PAGE_CONFIG}){
   const status=document.getElementById('shareStatus'),dialog=document.getElementById('manualCopy'),manualText=document.getElementById('manualCopyText');
-  function shareText(){return buildPrayerShareText({title:document.getElementById('prayerTitle').textContent,edition:document.getElementById('prayerEdition').textContent,verse:document.getElementById('dailyVerse').textContent,paragraphs:[...document.querySelectorAll('[data-prayer-paragraph]')].map(node=>node.textContent),url:prayerShareUrl(location.href)});}
+  function editionUrl(){return prayerShareUrl(location.href,document.getElementById('prayerEdition').getAttribute('datetime'));}
+  function shareText(){return buildPrayerShareText({title:document.getElementById('prayerTitle').textContent,edition:document.getElementById('prayerEdition').textContent,verse:document.getElementById('dailyVerse').textContent,paragraphs:[...document.querySelectorAll('[data-prayer-paragraph]')].map(node=>node.textContent),url:editionUrl()});}
   function showManualCopy(text){
     manualText.value=text;
     dialog.showModal();manualText.focus();manualText.select();
@@ -28,7 +30,7 @@ export function installPrayerPage({document,navigator,location,config=PRAYER_PAG
     showManualCopy(text);
   }
   document.getElementById('copyPrayer').addEventListener('click',()=>copy(shareText(),'Oração copiada. Você pode enviá-la a alguém com carinho.'));
-  document.getElementById('copyPrayerLink').addEventListener('click',()=>copy(prayerShareUrl(location.href),'Link da oração copiado.'));
+  document.getElementById('copyPrayerLink').addEventListener('click',()=>copy(editionUrl(),'Link desta edição da oração copiado.'));
   document.getElementById('sharePrayer').addEventListener('click',async()=>{
     const text=shareText();
     if(typeof navigator.share!=='function'){await copy(text,'Oração copiada. Escolha onde deseja compartilhar.');return;}

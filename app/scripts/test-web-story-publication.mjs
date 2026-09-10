@@ -56,6 +56,17 @@ test('approved automatic stories have at least ten pages and a stable public ide
   assert.match((await f.call(f.publicUrl())).raw,/Guia atualizado/);assert.equal(f.db.prepare('SELECT count(*) n FROM editorial_web_stories').get().n,1);
 });
 
+test('companion articles preserve every supported editorial portal, and category-only manual edits win',async t=>{
+  for(const portal of ['receitas','esportes','noticias','plantas-e-jardinagem','tecnologia','inteligencia-artificial','entretenimento','celebridades']){
+    const f=await fixture(t,{commercial:false,trend:true});f.state.source.portal=portal;
+    const result=await f.generate();assert.equal(result.status,'published');assert.equal(f.companion().portal,portal);assert.equal(JSON.parse(f.row().published_json).companionPortal,portal);
+    assert.equal((await f.call(f.publicUrl())).status,200);
+    f.db.prepare('UPDATE editorial_articles SET portal=? WHERE id=?').run(portal==='receitas'?'noticias':'receitas',f.companion().id);
+    const before=f.companion(),story=f.snapshot();f.state.source.updated_at='2026-09-09T12:00:00Z';
+    await assert.rejects(f.generate(),error=>error.status===409&&/edição manual/.test(error.message));assert.deepEqual(f.companion(),before);assert.deepEqual(f.snapshot(),story);
+  }
+});
+
 test('the final page leads home and the source CTA appears before it',async t=>{
   const f=await fixture(t);await f.generate();const document=await f.call(f.publicUrl());assert.equal(document.status,200);
   const pages=[...document.raw.matchAll(/<amp-story-page id="([^"]+)">([\s\S]*?)<\/amp-story-page>/g)];

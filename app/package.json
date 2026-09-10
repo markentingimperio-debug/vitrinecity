@@ -27,7 +27,7 @@
     "test:reviews": "node --test scripts/test-review-importer.mjs && node scripts/test-review-importer-api.mjs",
     "test:city-exploration": "node --test scripts/test-city-exploration.mjs scripts/test-city-architecture.mjs scripts/test-retail-architecture.mjs scripts/test-architectural-lighting.mjs scripts/test-exploration-progress-ui.mjs scripts/test-modeled-buildings.mjs scripts/test-modeled-city-assets.mjs",
     "test:city-shopping": "node --test scripts/test-city-guide-products.mjs scripts/test-external-product-purchase.mjs",
-    "test:prayer": "node --test scripts/test-prayer-support.mjs scripts/test-prayer-page.mjs",
+    "test:prayer": "node --test scripts/test-prayer-support.mjs scripts/test-prayer-page.mjs scripts/test-prayer-daily.mjs",
     "test:retention": "node --test scripts/test-customer-retention.mjs"
   },
   "dependencies": {

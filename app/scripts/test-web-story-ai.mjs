@@ -70,7 +70,18 @@ test('one generation, independent review, one image; complete 10 page draft only
 });
 test('invalid drafts never reach images; only structural failures receive one repair',async()=>{
   const variants=[{...copy(),pages:copy().pages.slice(0,3)},{...copy(),pages:copy().pages.map(()=>({text:pages[1]}))},{...copy(),title:'Cultivo com 999 resultados'},{...copy(),pages:copy().pages.map((p,i)=>i===0?{text:'x'.repeat(101)}:p)}];
-  for(const generation of variants){const {ai,calls}=setup({generation}),result=await ai.generate(source());assert.equal(result.approved,false);assert.equal(calls.text.length,['ai_ten_pages_required','ai_page_invalid'].includes(result.notes)?2:1);assert.equal(calls.image.length,0);assert.ok(calls.text.every(call=>!call.system.startsWith('Você revisa')));}
+  for(const generation of variants){const {ai,calls}=setup({generation}),result=await ai.generate(source());assert.equal(result.approved,false);assert.equal(calls.text.length,['ai_ten_pages_required','ai_page_invalid','ai_repetitive_or_thin'].includes(result.notes)?2:1);assert.equal(calls.image.length,0);assert.ok(calls.text.every(call=>!call.system.startsWith('Você revisa')));}
+});
+
+test('a repetitive first draft gets only one source-bound repair and still needs independent approval before an image',async()=>{
+  const repetitive={...copy(),pages:copy().pages.map(()=>({text:pages[1]}))};
+  const fixed=setup({generations:[repetitive,copy()]}),result=await fixed.ai.generate(source());
+  assert.equal(result.approved,true);assert.equal(result.repair.reason,'ai_repetitive_or_thin');assert.equal(result.repair.outcome,'corrected');assert.equal(fixed.calls.text.length,3);assert.equal(fixed.calls.image.length,1);
+  assert.equal(JSON.parse(fixed.calls.text[0].user).source.group,'trends');assert.equal(JSON.parse(fixed.calls.text[0].user).source.portal,'plantas-e-jardinagem');
+  const held=setup({generations:[repetitive,copy()],review:{...approved(),grounded:false,risk:'medium'}}),rejected=await held.ai.generate(source());
+  assert.equal(rejected.notes,'ai_review_held');assert.equal(rejected.approved,false);assert.equal(held.calls.text.length,3);assert.equal(held.calls.image.length,0);
+  const invented=setup({generations:[repetitive,{...copy(),title:'Cultivo com 999 resultados'}]}),unsafe=await invented.ai.generate(source());
+  assert.equal(unsafe.notes,'ai_unbacked_numbers');assert.equal(invented.calls.text.length,2);assert.equal(invented.calls.image.length,0);
 });
 test('news and Trends without fetched independent evidence have no AI calls',async()=>{
   for(const changes of [{group:'news',portal:'noticias'},{kind:'trend',evidenceReady:false},{kind:'trend',evidenceReady:true,sources:[{publisher:'globo',checkedAt:'now',excerptHash:'x'},{publisher:'globo',checkedAt:'now',excerptHash:'y'}]}]){const {ai,calls}=setup(),result=await ai.generate({...source(),...changes});assert.equal(result.notes,'source_needs_verified_evidence');assert.equal(calls.text.length,0);assert.equal(calls.image.length,0);}

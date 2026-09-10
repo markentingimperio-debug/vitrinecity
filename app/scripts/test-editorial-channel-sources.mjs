@@ -59,6 +59,16 @@ test('public recipe is exact paired text for manual review; no Story, article or
   const item=x.channels.snapshot().items[0];assert.equal(item.sourceStatus,'text_ready');assert.equal(item.editorUrl,null);assert.equal(item.evidence.sourceUrl,recipeUrl);assert.equal(item.evidence.ingredients.length,3);assert.equal(item.evidence.steps.length,2);assert.match(item.evidence.contentHash,/^[a-f0-9]{64}$/);
   assert.equal(x.db.prepare("SELECT count(*) n FROM sqlite_master WHERE name IN ('web_stories','editorial_articles','web_story_automation_jobs')").get().n,0);x.close();
 });
+
+test('Panelinha podcasts never become recipes from the channel label; only matching complete recipe evidence qualifies',async()=>{
+  const x=fixture({respond:(url,c)=>c?response(feed(c,c.id==='panelinha'?[entry(c,{index:1,title:'Você sabia que o grande problema dos dentes hoje já não é mais a cárie?'}),entry(c,{index:2,description:recipeUrl})]:[])):response(recipe(),'text/html')});
+  await x.channels.sync();const before=x.db.prepare('SELECT * FROM editorial_channel_items ORDER BY video_id').all(),all=x.channels.snapshot();
+  assert.equal(all.total,2);assert.equal(all.items.find(item=>item.key==='youtube:'+video(1)).topic,'general');assert.equal(all.items.find(item=>item.key==='youtube:'+video(1)).sourceStatus,'discovery_only');
+  const recipes=x.channels.snapshot({topic:'recipes'});assert.deepEqual(recipes.items.map(item=>item.key),['youtube:'+video(2)]);assert.equal(recipes.items[0].evidence.kind,'recipe');assert.equal(recipes.items[0].sourceStatus,'text_ready');assert.equal(recipes.items[0].editorUrl,null);
+  assert.deepEqual(x.db.prepare('SELECT * FROM editorial_channel_items ORDER BY video_id').all(),before,'read-time classification preserves history without migrating or deleting items');
+  x.db.prepare('UPDATE editorial_channel_items SET title=? WHERE video_id=?').run('Até onde você iria na busca pelo sorriso perfeito?',video(2));
+  assert.equal(x.channels.snapshot({topic:'recipes'}).total,0,'an unrelated title cannot reuse recipe evidence');x.close();
+});
 test('unrelated recipe or changed video title cannot retain a ready association',async()=>{
   let changed=false;const x=fixture({respond:(url,c)=>c?response(feed(c,c.id==='panelinha'?[entry(c,{index:2,title:changed?'Salada de frango e legumes':'Bolo de cenoura',description:recipeUrl})]:[])):response(recipe(),'text/html')});await x.channels.sync();assert.equal(x.channels.snapshot().items[0].sourceStatus,'text_ready');
   changed=true;x.advance(3600001);await x.channels.sync();assert.equal(x.channels.snapshot().items[0].sourceStatus,'discovery_only');assert.equal(x.channels.snapshot().items[0].evidence,null);

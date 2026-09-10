@@ -20,6 +20,20 @@ function setup({trends=[],enrich,getEnriched,automaticEligible=()=>false,text,co
 test('schedule=false constructs without timers, provider calls, sync or eager configuration (TDZ safe)',()=>{
   const x=setup();assert.deepEqual(x.calls,{configured:0,text:0,image:0,sync:0});assert.equal(x.daily.automation.status().enabled,false);assert.equal(x.calls.configured,1);x.close();
 });
+
+test('manual stories are filtered before automatic pagination and claims while remaining available in the editor',async()=>{
+  const x=setup();x.add('recipe-manual');x.add('recipe-new');
+  const stamp='2026-09-08T12:00:00Z';
+  x.db.prepare('INSERT INTO editorial_web_stories(id,slug,article_id,source_hash,draft_json,revision,created_at,updated_at,created_by) VALUES(?,?,?,?,?,1,?,?,?)').run('manual-story','manual-story','recipe-manual','manual-hash','{}',stamp,stamp,'editor');
+  x.db.prepare('INSERT INTO editorial_web_story_events(story_id,event,revision,actor,created_at) VALUES(?,?,?,?,?)').run('manual-story','saved',1,'editor',stamp);
+  const before=x.db.prepare("SELECT * FROM editorial_web_stories WHERE id='manual-story'").get();
+  assert.equal(x.daily.canGenerateAutomatically('recipe-manual'),false);assert.equal(x.daily.canGenerateAutomatically('recipe-new'),true);
+  assert.deepEqual(x.daily.catalog.list({group:'recipes',automatic:true,limit:1}).map(row=>row.key),['recipe-new']);
+  assert.ok(x.daily.catalog.list({group:'recipes'}).some(row=>row.key==='recipe-manual'));
+  x.daily.automation.updateSettings({revision:1,enabled:true,dailyLimit:2,groups:['recipes']});x.daily.automation.run({manual:true});await x.daily.automation.awaitIdle();
+  assert.equal(x.daily.automation.status().quota.attempted,1);assert.equal(x.calls.text,1);assert.equal(x.calls.image,0);
+  assert.equal(x.db.prepare("SELECT COUNT(*) n FROM web_story_automation_jobs WHERE source_key='recipe-manual'").get().n,0);assert.deepEqual(x.db.prepare("SELECT * FROM editorial_web_stories WHERE id='manual-story'").get(),before);x.close();
+});
 test('merged pagination reaches >200 Trends and then own sources; legacy IDs win',()=>{
   const trends=Array.from({length:250},(_,i)=>({key:'trend:'+i,id:'trend:'+i,kind:'trend',group:'news',title:'Tema '+i}));
   const x=setup({trends});x.add('article-a','noticias');x.add('article-b','noticias');

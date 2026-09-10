@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import {createWebStoryResearch,extractStoryResearchArticle,fetchStoryResearchText,parseStoryTrends,storyResearchUrl} from '../web-story-research.js';
 import {publicImageAddress} from '../catalog-product-images.js';
+import {storyEditorialPortal,storyTopicCategory} from '../web-story-categories.js';
 
 const clock=Date.parse('2026-09-08T18:00:00Z');
 const ref=(host,title='Palmeiras e os próximos jogos')=>`<ht:news_item><ht:news_item_title>${title}</ht:news_item_title><ht:news_item_url>https://${host}/esportes/palmeiras</ht:news_item_url><ht:news_item_source>Publicação</ht:news_item_source></ht:news_item>`;
@@ -19,6 +20,18 @@ test('observed fixed publisher list, only HTTPS; no private/DNS alias shortcuts'
   for(const ip of ['127.0.0.1','10.0.0.2','169.254.169.254','100.64.0.1','192.168.1.1','0.0.0.0','::1','224.0.0.1'])assert.equal(publicImageAddress(ip),false);
   assert.equal(publicImageAddress('8.8.8.8'),true);
   assert.equal(parseStoryTrends(feed(ref('www.bbc.com')+ref('evil.test')))[0].refs.length,1);
+});
+
+test('new researched topics retain their real editorial destination including recipes, without lowering evidence requirements',()=>{
+  const x=setup(),stamp=new Date(clock).toISOString();
+  const examples=[['Receita de bolo de cenoura','recipes','receitas'],['Palmeiras','sports','esportes'],['Cuidados com plantas no jardim','trends','plantas-e-jardinagem'],['Tecnologia em celulares','trends','tecnologia'],['Inteligência artificial no cotidiano','trends','inteligencia-artificial'],['Cinema e filmes brasileiros','news','entretenimento'],['Receita Federal atualiza calendário','news','noticias'],...['Jogo no Xbox e Game Pass','Novo jogo de PlayStation','Jogo de videogame','Campeonato de jogos eletrônicos'].map(title=>[title,'trends','tecnologia'])];
+  for(const [title,group,portal] of examples){
+    const topic=parseStoryTrends(feed().replace('<title>Palmeiras</title>','<title>'+title+'</title>'))[0];assert.equal(topic.group,group);assert.deepEqual(storyTopicCategory(title),{group,portal});
+    x.db.prepare('INSERT INTO web_story_trend_topics(id,title,topic_group,published_at,references_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run(topic.id,title,group,stamp,'[]',stamp,stamp);
+    const result=x.research.get('trend:'+topic.id);assert.equal(result.portal,portal);assert.equal(result.evidenceReady,false);assert.equal(x.research.automaticEligible(result),false);
+    assert.ok(x.research.list({group}).some(source=>source.key===result.key));
+  }
+  assert.equal(storyEditorialPortal({portal:'receitas',group:'news',title:'Cinema brasileiro'}),'receitas','an explicit editorial portal wins over title hints');assert.equal(x.calls.length,0);x.db.close();
 });
 test('only new table is written; two independent fetched texts make evidence ready with actual timestamps',async()=>{
   const {db,research,calls}=setup();assert.equal((await research.syncTrends()).count,1);const initial=research.list()[0];assert.equal(initial.kind,'trend');assert.equal(initial.group,'sports');assert.equal(initial.evidenceReady,false);assert.equal(initial.body,'');

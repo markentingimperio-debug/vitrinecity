@@ -20,9 +20,9 @@ export function setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl
   const channelSources=createEditorialChannelSources({db,canRun,research,fetchImpl:sourceFetchImpl});
   const sources=createWebStorySources({db,services,courses,publicDir});
   const enrichCached=source=>source&&research.getEnriched?research.getEnriched(source):source;
-  const automaticEligible=source=>source.kind==='trend'||(source.kind==='article'&&['news','sports','noticias','esportes'].includes(source.group||source.portal))
+  const automaticEligible=source=>webStories.canGenerateAutomatically(source.key)&&(source.kind==='trend'||(source.kind==='article'&&['news','sports','noticias','esportes'].includes(source.group||source.portal))
     ?research.automaticEligible?.(source)===true
-    :storySourcePreflight(source,{siteUrl}).eligible;
+    :storySourcePreflight(source,{siteUrl}).eligible);
   function trendRows(options) {
     const result=[];
     // The research adapter itself pages at 200. Count all eligible trend rows
