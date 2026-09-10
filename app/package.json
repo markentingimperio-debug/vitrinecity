@@ -9,7 +9,7 @@
     "test:whatsapp-products": "node --test scripts/test-whatsapp-product-campaigns.mjs scripts/test-whatsapp-schedule-worker.mjs scripts/test-admin-whatsapp-products.mjs",
     "test:social-comment-campaigns": "node --test scripts/test-social-comment-campaigns.mjs scripts/test-meta-comment-api.mjs scripts/test-admin-social-comment-campaigns.mjs scripts/test-social-oauth-intent.mjs",
     "test:youtube-channel-scope": "node --test scripts/test-external-metrics-store.mjs scripts/test-admin-youtube-scope.mjs",
-    "test:video-provider-receipts": "node --test scripts/test-video-provider-receipts.mjs",
+    "test:video-provider-receipts": "node --test scripts/test-video-provider-receipts.mjs scripts/test-viral-production-status.mjs",
     "test:media-publication": "node --test scripts/test-media-publication-lifecycle.mjs scripts/test-media-publication-routes.mjs scripts/test-admin-media-publication.mjs",
     "test:facebook-photo-publisher": "node --test scripts/test-facebook-photo-publisher.mjs scripts/test-meta-photo-api.mjs scripts/test-admin-publicacoes.mjs",
     "test:stories": "node --test scripts/test-web-stor*.mjs scripts/test-admin-web-stor*.mjs scripts/test-editorial-*sources*.mjs scripts/test-editorial-source-search.mjs",
