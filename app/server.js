@@ -62,6 +62,7 @@ import {
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { originalCourse } from './course-content.js';
+import { setupCourseLandingPages } from './course-landing-pages.js';
 import { setupAdminAnalytics } from './admin-analytics.js';
 import { setupOrganicAcquisition, recordAcquisitionSignup } from './organic-acquisition.js';
 import { injectPublicMeasurement } from './public-measurement.js';
@@ -2662,6 +2663,7 @@ const customerRetention=setupCustomerRetention({app,db,requireAdmin,requireUser,
   signingSecret:managementSecret,allowAttempt:(key,limit,windowMs)=>allowAttempt(authAttempts,key,limit,windowMs),
   sendVerification:mailTransport?message=>mailTransport.sendMail({from:`VitrineCity <${SMTP_USER}>`,...message}):null});
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
+const courseLandingPages = setupCourseLandingPages({ app, managedCourse, courseReady, originalCourse, origin: SITE_URL });
 setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, publicDir: path.join(dir, 'public') });
 const cryptoObservability = createCryptoObservability(db);
 cryptoObservability.seedLatest();
@@ -2837,6 +2839,7 @@ app.get('/sitemap.xml', (_req, res) => {
   const books = db.prepare("SELECT slug FROM digital_books WHERE status='published' ORDER BY published_at DESC LIMIT 2000").all();
   const dynamicPaths = [
     ...affiliateCatalog.sitemapPaths(),
+    ...courseLandingPages.sitemapPaths(),
     ...mediaCatalog.sitemapPaths(),
     ...webStories.sitemapPaths(),
     ...stores.map(store => publicStorePath(store)),
