@@ -1,6 +1,6 @@
 (() => {
   // The 3D city has its own building billboards; page-wide banners cover its controls.
-  if(window.__vcGlobalMarketBannerLoaded || location.pathname.startsWith('/admin') || location.pathname==='/recuperar-acesso-entregador.html' || location.pathname==='/multiverso' || /^\/vitriny-multiverse-(?:explore|district)(?:\.html)?\/?$/.test(location.pathname))return;
+  if(window.__vcGlobalMarketBannerLoaded || location.pathname.startsWith('/admin') || location.pathname==='/recuperar-acesso-entregador.html' || location.pathname==='/multiverso' || /^\/vitriny-multiverse-(?:explore|district)(?:\.html)?\/?$/.test(location.pathname) || /^\/oracao-do-dia(?:\.html)?\/?$/.test(location.pathname))return;
   window.__vcGlobalMarketBannerLoaded=true;
   window.__vcMarketStylesReady=new Promise(resolve=>{
     let css=document.querySelector('link[data-vc-market-styles]');
