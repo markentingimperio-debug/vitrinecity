@@ -18,13 +18,13 @@ O módulo reutiliza `MERCADOPAGO_ACCESS_TOKEN` e `MERCADOPAGO_WEBHOOK_SECRET` ex
 
 O endpoint oficial de conta usado no módulo é `https://api.mercadolibre.com/users/me`, conforme a documentação de credenciais. A verificação operacional de 10/09 usou `https://api.mercadopago.com/users/me`. Ambos devem identificar a conta configurada; uma falha de consulta mantém o apoio fechado.
 
-Esta implementação **não altera a configuração de produção**. O segredo do webhook deve corresponder à aplicação Mercado Pago que emite as preferências. A URL pública de notificação é `/api/prayer-support/webhook`.
+Configuração ativada em produção em 10/09/2026, reutilizando as credenciais existentes. A consulta pública de configuração confirmou o recebedor e `enabled:true`. O segredo do webhook deve corresponder à aplicação Mercado Pago que emite as preferências. A URL pública de notificação é `/api/prayer-support/webhook`.
 
 ## Valores e confirmação
 
 O servidor aceita somente **50, 100, 200, 300 ou 500 centavos**, quantidade um, BRL e apoio único. O valor padrão de apresentação é 500 centavos. O valor escolhido é gravado antes de chamar o provedor e conferido contra o pagamento recebido. Não há substituição automática de valor em caso de rejeição.
 
-A referência oficial de meios de pagamento mostra `min_allowed_amount: 0.5` em um exemplo Visa. Isso não comprova a disponibilidade de R$0,50 para todos os meios, a conta real ou cada configuração de Checkout Pro. A aceitação dos cinco valores foi validada somente com simulação nesta entrega. Uma rejeição explícita do provedor informa que o valor não foi disponibilizado, sem afirmar cobrança ou enviar outro valor.
+A referência oficial de meios de pagamento mostra `min_allowed_amount: 0.5` em um exemplo Visa. Em 10/09/2026, o navegador abriu uma preferência real de R$0,50 e a revisão do Mercado Pago exibiu esse valor e a Agrotécnica como recebedora. O botão Pagar não foi acionado; o retorno permaneceu pendente. Isso não comprova liquidação, webhook real ou disponibilidade para todos os meios. Os cinco valores passaram na simulação. Uma rejeição explícita do provedor informa que o valor não foi disponibilizado, sem afirmar cobrança ou enviar outro valor.
 
 O botão da página deve informar o valor e o caráter opcional/único. O clique explícito envia `accepted:true`; o servidor não exige um checkbox adicional. O Mercado Pago apresenta a confirmação final. A página não coleta CPF, e-mail ou cartão neste fluxo.
 
