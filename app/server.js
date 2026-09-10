@@ -3,6 +3,7 @@ import {cleanPublicRoutes} from './clean-public-routes.js';
 import { setupCatalogProductImages } from './catalog-product-images.js';
 import {setupCityMembership} from './city-membership.js';
 import {setupCampaignPreferences} from './campaign-preferences.js';
+import {setupCustomerRetention} from './customer-retention.js';
 import { integrationObserver, openRouterOperation } from './integration-health.js';
 import {videoReceipt,videoPollingUrl,videoPollState,videoFailureMessage,videoRetryableFailure,videoProjectUnchanged,downloadVideo} from './video-provider-receipts.js';
 import express from 'express';
@@ -2082,6 +2083,8 @@ ADMIN_HTML_PATHS.add('/admin-captacao.html');
 ADMIN_HTML_PATHS.add('/admin-live');
 ADMIN_HTML_PATHS.add('/admin-avaliacoes');
 ADMIN_HTML_PATHS.add('/admin-avaliacoes.html');
+ADMIN_HTML_PATHS.add('/admin-recompra');
+ADMIN_HTML_PATHS.add('/admin-recompra.html');
 
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
@@ -2594,7 +2597,7 @@ app.use((req, res, next) => {
     const type = String(res.getHeader('content-type') || '');
     const candidate = Buffer.isBuffer(body) ? body.toString('utf8') : body;
     const looksLikeHtml = typeof candidate === 'string' && /^\s*(?:<!doctype\s+html|<html\b)/i.test(candidate);
-    if (res.locals.vcAmpStory === true || req.method !== 'GET' || req.path.startsWith('/admin') || (!type.includes('text/html') && !looksLikeHtml)) return send(body);
+    if (res.locals.vcAmpStory === true || req.method !== 'GET' || req.path.startsWith('/admin') || req.path.startsWith('/recompra') || (!type.includes('text/html') && !looksLikeHtml)) return send(body);
     const wasBuffer = Buffer.isBuffer(body);
     let page = injectPublicMeasurement(candidate, req.path);
     if (typeof page !== 'string') return send(body);
@@ -2648,6 +2651,9 @@ setupCourierAccount({app,db,requireCourier,requireAdmin,sameOriginOnly,hashPassw
   siteUrl:SITE_URL,publicDir:path.join(dir,'public'),redispatch:dispatchNextCourier});
 setupCityMembership(app,{db,currentUser,requireUser,sameOriginOnly,isAdministrativeUser,grantGameReward:cityRewards.grantGame});
 const campaignPreferences=setupCampaignPreferences(app,{db,requireUser,sameOriginOnly,recordConsent});
+const customerRetention=setupCustomerRetention({app,db,requireAdmin,requireUser,sameOriginOnly,publicDir:path.join(dir,'public'),siteUrl:SITE_URL,campaignPreferences,
+  signingSecret:managementSecret,allowAttempt:(key,limit,windowMs)=>allowAttempt(authAttempts,key,limit,windowMs),
+  sendVerification:mailTransport?message=>mailTransport.sendMail({from:`VitrineCity <${SMTP_USER}>`,...message}):null});
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, publicDir: path.join(dir, 'public') });
 const cryptoObservability = createCryptoObservability(db);
@@ -3606,6 +3612,7 @@ app.get('/api/privacy/export',requireUser,(req,res)=>{
   const userId=req.user.id;
   const exportData={generatedAt:new Date().toISOString(),account:{name:req.user.name,email:req.user.email,whatsapp:req.user.whatsapp||'',createdAt:req.user.created_at},
     cityChat:cityChat.exportUser(userId),
+    customerRetention:customerRetention.exportUser(userId),
     cityRewards:cityRewards.exportUser(userId),
     farmProgress:db.prepare('SELECT state_json stateJson,updated_at updatedAt FROM city_farm_progress WHERE user_id=?').get(userId)||null,
     partnerTraffic:db.prepare('SELECT day,slug,kind,events FROM affiliate_partner_daily WHERE affiliate_id IN (SELECT id FROM affiliates WHERE user_id=?) ORDER BY day DESC').all(userId),
