@@ -14,7 +14,13 @@ export function createArchitectureKit({renderer,scene,shadows=false,lite=false})
   const box=geometry(new THREE.BoxGeometry(1,1,1));
   const leafShape=geometry(leafyCanopyGeometry(lite));
   const cylinder=geometry(new THREE.CylinderGeometry(1,1,1,8));
-  const stone=standard({color:'#e1d8c6',roughness:.72});
+  // Fine limestone grain stays subtle on both wide slabs and narrow reveals.
+  const stoneCanvas=document.createElement('canvas');stoneCanvas.width=stoneCanvas.height=256;
+  const stoneContext=stoneCanvas.getContext('2d'),stonePixels=stoneContext.createImageData(256,256);
+  for(let i=0;i<256*256;i++){const x=i%256,y=Math.floor(i/256),grain=Math.sin(x*12.9898+y*78.233)*43758.5453,shade=Math.floor((grain-Math.floor(grain))*13)+237;stonePixels.data.set([shade,shade-2,shade-7,255],i*4);}
+  stoneContext.putImageData(stonePixels,0,0);
+  const stoneMap=new THREE.CanvasTexture(stoneCanvas);stoneMap.colorSpace=THREE.SRGBColorSpace;stoneMap.wrapS=stoneMap.wrapT=THREE.RepeatWrapping;stoneMap.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());textures.add(stoneMap);
+  const stone=standard({color:'#e6dcc9',map:stoneMap,roughness:.78});
   const graphite=standard({color:'#293b40',metalness:.45,roughness:.34});
   const brass=standard({color:'#bca16a',metalness:.72,roughness:.3});
   const wood=standard({color:'#bbaa92',map:pbr('wood_floor','Diffuse',2),normalMap:lite?null:pbr('wood_floor','nor_gl',2),normalScale:new THREE.Vector2(.35,.35),roughnessMap:lite?null:pbr('wood_floor','Rough',2),roughness:.85,emissive:'#895b30',emissiveIntensity:.06});
@@ -23,7 +29,7 @@ export function createArchitectureKit({renderer,scene,shadows=false,lite=false})
   const glass=standard({color:'#aed3d7',metalness:.18,roughness:.14,transparent:true,opacity:.16,depthWrite:false});
   const foliage=['#355139','#617747','#486237'].map(color=>standard({color,roughness:.93,side:THREE.DoubleSide}));
   const curtainMaterials=createPremiumFacades({mobile:lite});
-  for(const material of curtainMaterials){materials.add(material);textures.add(material.map);textures.add(material.emissiveMap);}
+  for(const material of curtainMaterials){materials.add(material);if(material.map)textures.add(material.map);if(material.emissiveMap)textures.add(material.emissiveMap);}
   const curtain=curtainMaterials[0],roundShapes=new Map();
   const goods=['#c0aa88','#b66c46','#49696f','#7c8750'].map(color=>standard({color,emissive:color,emissiveIntensity:.16,roughness:.8}));
   function part(parent,material,x,y,z,w,h,d,shape=box){const m=new THREE.Mesh(shape,material);m.position.set(x,y,z);m.scale.set(w,h,d);m.castShadow=shadows&&!material.transparent;m.receiveShadow=shadows;m.userData.architecturalPart=true;parent.add(m);return m;}

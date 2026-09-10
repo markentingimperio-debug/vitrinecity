@@ -1,7 +1,11 @@
 const BASE='/api/rewards/exploration',KEY='vitrinecity:store-visit:';
+const UNAVAILABLE='Não foi possível carregar suas conquistas agora. Tente novamente em instantes.';
 async function api(suffix='',body){
-  const response=await fetch(BASE+suffix,{method:body?'POST':'GET',credentials:'same-origin',cache:'no-store',headers:body?{'Content-Type':'application/json'}:{},...(body?{body:JSON.stringify(body)}:{})});
-  const data=await response.json().catch(()=>({}));if(!response.ok)throw Object.assign(new Error(data.error||'Não foi possível conferir suas conquistas agora.'),{status:response.status,code:data.code});return data;
+  let response;try{response=await fetch(BASE+suffix,{method:body?'POST':'GET',credentials:'same-origin',cache:'no-store',headers:body?{'Content-Type':'application/json'}:{},...(body?{body:JSON.stringify(body)}:{})});}catch{throw new Error(UNAVAILABLE);}
+  const data=await response.json().catch(()=>null);
+  if(!response.ok)throw Object.assign(new Error(typeof data?.error==='string'?data.error:UNAVAILABLE),{status:response.status,code:data?.code});
+  if(!data||typeof data!=='object'||Array.isArray(data)||!Object.keys(data).length)throw new Error(UNAVAILABLE);
+  return data;
 }
 function loginLink(){const a=document.createElement('a');a.href='/entrar-cidade.html?returnTo='+encodeURIComponent(location.pathname+location.search);a.textContent='Entrar na conta';return a;}
 function style(){if(document.querySelector('link[data-exploration-style]'))return;const link=document.createElement('link');link.rel='stylesheet';link.href='/vitriny-exploration-rewards.css';link.dataset.explorationStyle='true';document.head.append(link);}
@@ -51,11 +55,35 @@ export function mountStoreReward({storeReference,productId=null,container=null}=
 export function mountExplorationProgress(container,{compact=false,checkIn=true}={}){
   if(!container)return;style();const box=document.createElement('section');box.className=compact?'exploration-progress compact':'exploration-progress';
   const heading=document.createElement('strong'),copy=document.createElement('p'),progress=document.createElement('progress'),detail=document.createElement('p'),link=document.createElement('a');
-  heading.textContent='Suas conquistas na cidade';copy.setAttribute('role','status');copy.textContent='Conferindo suas moedas…';progress.max=100;progress.value=0;progress.setAttribute('aria-label','Progresso para a próxima fase');
+  heading.textContent='Suas conquistas na cidade';copy.setAttribute('role','status');copy.textContent='Conferindo suas moedas…';progress.max=100;progress.value=0;progress.hidden=true;progress.style.display='none';progress.setAttribute('aria-label','Progresso para a próxima fase');
   link.href='/central-creditos.html';link.textContent='Usar moedas e ver benefícios';box.append(heading,copy,progress,detail,link);container.append(box);
-  const show=data=>{heading.textContent=`Fase ${data.level} · ${data.name}`;copy.textContent=`${data.balance} ${data.balance===1?'moeda':'moedas'} · ${data.visitedToday.length} ${data.visitedToday.length===1?'loja descoberta':'lojas descobertas'} hoje`;progress.value=data.progress;detail.textContent=`${data.streak} ${data.streak===1?'dia seguido':'dias seguidos'} · ${data.nextLevelXp-data.xp} XP para a próxima fase`;};
-  api(checkIn?'/check-in':'',checkIn?{}:undefined).then(show).catch(error=>{progress.hidden=true;detail.textContent='Visitas completas: +1 moeda e +10 XP. Entrada diária: +5 XP.';copy.textContent=error.status===401?'Entre na sua conta para participar.':error.message;if(error.status===401){link.replaceWith(loginLink());}});
+  let hasSummary=false;
+  const show=data=>{
+    // Validate the complete snapshot before changing any visible element. Events
+    // and successful HTTP responses can both arrive without a usable summary.
+    const summary=progressSummary(data);if(!summary)return false;
+    heading.textContent=`Fase ${summary.level} · ${summary.name}`;copy.textContent=`${summary.balance} ${summary.balance===1?'moeda':'moedas'} · ${summary.visits} ${summary.visits===1?'loja descoberta':'lojas descobertas'} hoje`;
+    progress.value=summary.progress;progress.hidden=false;progress.style.display='';detail.textContent=`${summary.streak} ${summary.streak===1?'dia seguido':'dias seguidos'} · ${summary.remainingXp} XP para a próxima fase`;
+    link.href='/central-creditos.html';link.textContent='Usar moedas e ver benefícios';hasSummary=true;return true;
+  };
+  const unavailable=error=>{
+    if(hasSummary)return;
+    heading.textContent='Suas conquistas na cidade';progress.hidden=true;progress.style.display='none';detail.textContent='Visitas completas: +1 moeda e +10 XP. Entrada diária: +5 XP.';
+    copy.textContent=error?.status===401?'Entre na sua conta para participar.':UNAVAILABLE;
+    if(error?.status===401){const login=loginLink();link.href=login.href;link.textContent=login.textContent;}
+  };
+  api(checkIn?'/check-in':'',checkIn?{}:undefined).then(data=>{if(!show(data))unavailable();}).catch(unavailable);
   addEventListener('vitrinecity:reward-earned',event=>show(event.detail));return box;
+}
+
+function progressSummary(data){
+  try{
+    if(!data||typeof data!=='object'||Array.isArray(data))return null;
+    const {level,name,balance,visitedToday,progress,streak,xp,nextLevelXp}=data;
+    if(![level,balance,progress,streak,xp,nextLevelXp].every(Number.isSafeInteger)||level<1||balance<0||streak<0||xp<0||progress<0||progress>=100||nextLevelXp<=xp)return null;
+    if(typeof name!=='string'||!name.trim()||name.length>100||!Array.isArray(visitedToday)||!visitedToday.every(reference=>typeof reference==='string'&&reference.length>0&&reference.length<=120))return null;
+    return {level,name:name.trim(),balance,visits:visitedToday.length,progress,streak,remainingXp:nextLevelXp-xp};
+  }catch{return null;}
 }
 
 const rewardContext=document.querySelector('[data-reward-store]');

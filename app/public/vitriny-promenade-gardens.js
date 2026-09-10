@@ -1,54 +1,139 @@
 import * as THREE from '/vendor/three/three.module.js';
+import {createLandscapeModels} from './vitriny-landscape-models.js';
 
-export function mountPromenadeGardens({scene,architecture,lite=false}){
-  const a=architecture,group=new THREE.Group();group.name='promenade-gardens';
-  const paving=a.pavingMaterial({color:'#bdb7a8',repeat:18,formal:true});
-  // A pedestrian boulevard connects the existing store fronts to the civic tower.
-  for(const [center,length] of [[-56,276],[159,82]])a.part(group,paving,-164,.51,center,92,.14,length);
-  for(const x of [-171,-157])for(const [center,length] of [[-56,276],[159,82]])a.part(group,a.warm,x,.59,center,.08,.025,length);
-  for(const z of [-152,-105,-5,69,163]){
-    a.roundedPart(group,a.stone,-164,.93,z,8.5,.7,19,3.5);
-    a.roundedPart(group,a.foliage[0],-164,1.33,z,7.7,.15,18.2,3.1);
-    a.shrubs(group,-164,1.35,z,7,17);a.tree(group,-164,z-4,1.05,1.3);a.tree(group,-164,z+4,.84,1.3);
-    for(const side of [-1,1])a.roundedPart(group,a.wood,-164+side*4.6,1.01,z,1,.2,11,.4);
+function annularGeometry(inner, outer, segments = 48) {
+  const shape = new THREE.Shape(), hole = new THREE.Path();
+  shape.absarc(0, 0, outer, 0, Math.PI * 2, false);
+  hole.absarc(0, 0, inner, 0, Math.PI * 2, true); shape.holes.push(hole);
+  const geometry = new THREE.ExtrudeGeometry(shape, {depth: 1, bevelEnabled: false, curveSegments: segments / 4});
+  geometry.rotateX(-Math.PI / 2); geometry.translate(0, -.5, 0); return geometry;
+}
+
+function curvedSeatGeometry(radius, width, arc) {
+  const outer = radius + width / 2, inner = radius - width / 2, shape = new THREE.Shape();
+  shape.absarc(0, 0, outer, -arc / 2, arc / 2, false);
+  shape.lineTo(Math.cos(arc / 2) * inner, Math.sin(arc / 2) * inner);
+  shape.absarc(0, 0, inner, arc / 2, -arc / 2, true); shape.closePath();
+  const geometry = new THREE.ExtrudeGeometry(shape, {depth: 1, bevelEnabled: false, curveSegments: 18});
+  geometry.rotateX(-Math.PI / 2); geometry.translate(0, -.5, 0); return geometry;
+}
+
+export function mountPromenadeGardens({scene, architecture, lite = false}) {
+  const a = architecture, group = new THREE.Group(); group.name = 'promenade-gardens';
+  const l = createLandscapeModels({architecture: a, lite});
+  const paving = a.pavingMaterial({color: '#c2bba9', repeat: 18, formal: true});
+  paving.map.repeat.set(18, 54);
+  const foregroundPaving = a.pavingMaterial({color: '#c2bba9', repeat: 18, formal: true});
+  foregroundPaving.map.repeat.set(18, 26);
+  // The transverse street stays open; the store references and entrances are untouched.
+  a.part(group, paving, -164, .51, -56, 92, .14, 276);
+  a.part(group, foregroundPaving, -164, .51, 185, 92, .14, 134);
+  const inset = l.material({color: '#afa99a', roughness: .79});
+  for (const x of [-192, -136]) for (const [center, length] of [[-56, 276], [185, 134]]) {
+    a.part(group, inset, x, .59, center, .24, .035, length);
   }
-  const water=new THREE.MeshPhysicalMaterial({color:'#407987',roughness:.14,metalness:.5,clearcoat:1});a.materials.add(water);
-  for(const z of [-47,31]){
-    const island=new THREE.Group();island.position.set(-164,.59,z);group.add(island);
-    const basin=new THREE.Mesh(new THREE.CylinderGeometry(7.4,7.8,.75,48),a.stone);basin.position.y=.4;island.add(basin);
-    const surface=new THREE.Mesh(new THREE.CircleGeometry(6.9,48),water);surface.rotation.x=-Math.PI/2;surface.position.y=.82;island.add(surface);
-    const edge=new THREE.Mesh(new THREE.TorusGeometry(7.15,.055,6,64),a.warm);edge.rotation.x=-Math.PI/2;edge.position.y=.86;island.add(edge);
-    if(z<0){
-      for(let i=0;i<9;i++){
-        const angle=i*Math.PI*2/9,r=i?3.2:0,curve=new THREE.QuadraticBezierCurve3(new THREE.Vector3(Math.cos(angle)*r,.9,Math.sin(angle)*r),new THREE.Vector3(Math.cos(angle)*r*.7,5.2,Math.sin(angle)*r*.7),new THREE.Vector3(Math.cos(angle)*r*.32,.9,Math.sin(angle)*r*.32));
-        const stream=new THREE.Mesh(new THREE.TubeGeometry(curve,12,.065,4,false),new THREE.MeshBasicMaterial({color:'#c9e6ec',transparent:true,opacity:.75}));island.add(stream);
-      }
-    }else{
-      a.roundedPart(island,a.graphite,0,1.45,0,2.3,1.2,2.3,.6);
-      for(const rotation of [[0,0,0],[0,Math.PI/2,0],[Math.PI/2,0,0]]){const orbit=new THREE.Mesh(new THREE.TorusGeometry(3.1,.08,8,64),a.brass);orbit.position.y=5.1;orbit.rotation.set(...rotation);island.add(orbit);}
-      for(const latitude of [-1.6,1.6]){const ring=new THREE.Mesh(new THREE.TorusGeometry(2.65,.055,6,48),a.brass);ring.rotation.x=Math.PI/2;ring.position.y=5.1+latitude;island.add(ring);}
+  // Staggered islands leave generous paths around both sides. Soil sits below
+  // layered foliage instead of forming a flat green rectangle.
+  for (const [index, z] of [-156, -107, -54, -5, 66].entries()) {
+    const x = -164 + (index % 2 ? 2.5 : -2.5), y = l.bed(group, {x, z, width: 10.4, depth: 22, radius: 4.5, seed: 30 + index});
+    l.tree(group, x - .8, z - 4.2, 1.25, y, index);
+    l.tree(group, x + 1.1, z + 4.4, .91, y, index + 1);
+    l.bench(group, x - 6.1, z, 7.2, Math.PI / 2);
+    l.bench(group, x + 6.1, z, 7.2, -Math.PI / 2);
+  }
+  for (const [side, x] of [-183, -145].entries()) {
+    for (const [index, z] of [-171, -124, -76, -27, 56, 133, 181, 220].entries()) {
+      const y = l.bed(group, {x, z, width: 6.8, depth: 17, radius: 3, seed: 92 + index * 7 + side});
+      l.tree(group, x + (side ? -.4 : .4), z - 3.4, 1.08 + (index % 3) * .09, y, index + side);
+      l.tree(group, x + (side ? .55 : -.55), z + 3.7, .8, y, index + side + 1);
+      l.bench(group, x + (side ? 4.3 : -4.3), z, 5.4, side ? -Math.PI / 2 : Math.PI / 2);
+      l.lamp(group, x + (side ? -4.5 : 4.5), z - 9.2);
     }
   }
-  // This planting uses the existing wide pavements. Crossings and store doors stay open.
-  for(const x of [-183,-145])for(const z of [-105,-74,-25,44,120,169]){
-    const bed=new THREE.Group();bed.position.set(x,0,z);group.add(bed);
-    a.roundedPart(bed,a.stone,0,.6,0,5.2,.75,12,2);
-    a.roundedPart(bed,a.foliage[0],0,1.04,0,4.55,.14,11.3,1.8);
-    a.shrubs(bed,0,1.1,0,4.4,10.5);a.tree(bed,0,-2,1.28,1.05);a.tree(bed,.2,3,.86,1.05);
-    a.part(bed,a.wood,x<-164?3.1:-3.1,.87,1,1.1,.24,7);
-    a.part(bed,a.warm,0,.45,5.97,3.1,.04,.04);
-    a.part(bed,a.brass,0,4.65,-7.1,.11,8.6,.11);
-    a.part(bed,a.brass,0,8.91,-6,3.7,.14,2.4);
-    a.part(bed,a.warm,0,8.81,-6,3.5,.065,2.15);
+  for (const [x, z, yaw] of [[-184, 237, .3], [-144, 237, -.3], [-184, 195, .3], [-144, 195, -.3], [-185, -43, .5], [-143, 7, -.7]]) {
+    l.cafe(group, x, z, yaw, true);
+    if (!lite) l.cafe(group, x + (x < -164 ? 3 : -3), z - 4.5, yaw + .7, false);
   }
-  // Four civic garden islands frame the fountain, leaving the central paths unobstructed.
-  for(const [x,z] of [[-39,-31],[39,-31],[-39,34],[39,34]]){
-    a.roundedPart(group,paving,x,.35,z,21,.3,15,5);
-    a.roundedPart(group,a.stone,x,.85,z,16,.8,10,4);
-    a.roundedPart(group,a.foliage[1],x,1.3,z,15,.16,9,3.6);
-    a.tree(group,x-4,z,1.6,1.2);a.tree(group,x+4,z-1,1.1,1.2);
-    a.roundedPart(group,a.wood,x,.94,z+6,15,.24,1.1,.5);
-    a.part(group,a.warm,x,.78,z+6.4,14,.05,.06);
+
+  const water = new THREE.MeshPhysicalMaterial({color: '#426c70', roughness: .2, metalness: .42, clearcoat: 1});
+  a.materials.add(water);
+  const basinDisc = l.trackGeometry(new THREE.CylinderGeometry(1, 1, 1, lite ? 36 : 56));
+  const fountainRim = l.trackGeometry(annularGeometry(7.6, 8.35));
+  const waterDisc = l.trackGeometry(new THREE.CircleGeometry(7.55, lite ? 40 : 64));
+  const fountain = new THREE.Group(); fountain.name = 'promenade-fountain'; fountain.position.set(-164, .59, 31); group.add(fountain);
+  l.mesh(fountain, basinDisc, l.planterStone, 0, .12, 0, 9.1, .24, 9.1);
+  l.mesh(fountain, fountainRim, a.warm, 0, .25, 0, 1, .045, 1);
+  l.mesh(fountain, fountainRim, l.planterStone, 0, .65, 0, 1, .6, 1);
+  const surface = l.mesh(fountain, waterDisc, water, 0, .68, 0); surface.rotation.x = -Math.PI / 2;
+  // Animated normals use the existing render loop, without another reflection pass.
+  water.onBeforeCompile = shader => {
+    shader.uniforms.landscapeTime = {value: 0};
+    shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 landscapePosition;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nlandscapePosition = position;');
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nuniform float landscapeTime;\nvarying vec3 landscapePosition;')
+      .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nnormal.xy += vec2(sin(landscapePosition.x * 7.0 + landscapeTime), cos(landscapePosition.y * 9.0 - landscapeTime * .8)) * .065;\nnormal = normalize(normal);');
+    surface.onBeforeRender = () => { shader.uniforms.landscapeTime.value = performance.now() * .00075; };
+  };
+  water.customProgramCacheKey = () => 'vitrinecity-landscape-water-v1';
+  const streamMaterial = l.material({color: '#dcebe9', emissive: '#a9d0ca', emissiveIntensity: .5, roughness: .18, metalness: .12});
+  const streamGeometry = l.trackGeometry(new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(
+    new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 5.6, 0), new THREE.Vector3(2, 0, 0)), lite ? 14 : 22, .043, 5, false));
+  const jetRing = l.trackGeometry(new THREE.TorusGeometry(.27, .045, 5, 16));
+  for (let i = 0; i < 12; i++) {
+    const angle = i * Math.PI * 2 / 12, radius = 3.55;
+    const x = Math.cos(angle) * radius, z = Math.sin(angle) * radius;
+    l.mesh(fountain, streamGeometry, streamMaterial, x, .75, z, 1, 1 + (i % 2) * .23, 1, -angle + Math.PI);
+    const nozzle = l.mesh(fountain, jetRing, a.warm, x, .73, z); nozzle.rotation.x = Math.PI / 2;
   }
-  a.batch(group);scene.add(group);return group;
+  const centralStream = l.trackGeometry(new THREE.CylinderGeometry(.03, .13, 5.2, 7));
+  l.mesh(fountain, centralStream, streamMaterial, 0, 3.25, 0);
+  const seatGeometry = l.trackGeometry(curvedSeatGeometry(9.05, .82, Math.PI * .57));
+  for (const yaw of [0, Math.PI]) {
+    l.mesh(fountain, seatGeometry, l.planterStone, 0, .31, 0, 1, .42, 1, yaw);
+    l.mesh(fountain, seatGeometry, a.wood, 0, .57, 0, 1, .12, 1, yaw);
+  }
+  for (const x of [-174.7, -153.3]) for (const z of [21, 41]) l.lamp(group, x, z, 3.9);
+
+  // A planted armillary globe marks the first block, as in the reference view.
+  const globeGarden = new THREE.Group(); globeGarden.name = 'promenade-globe-garden';
+  globeGarden.position.set(-164, .59, 159); group.add(globeGarden);
+  const outerRing = l.trackGeometry(annularGeometry(3.1, 8.8));
+  const soilRing = l.trackGeometry(annularGeometry(3.36, 8.52));
+  l.mesh(globeGarden, basinDisc, l.planterStone, 0, .13, 0, 9.6, .26, 9.6);
+  l.mesh(globeGarden, outerRing, a.warm, 0, .27, 0, 1, .035, 1);
+  l.mesh(globeGarden, outerRing, l.planterStone, 0, .59, 0, 1, .55, 1);
+  l.mesh(globeGarden, soilRing, l.soil, 0, .88, 0, 1, .045, 1);
+  for (let sector = 0; sector < 14; sector++) {
+    const angle = sector * Math.PI * 2 / 14, r = 6.35;
+    l.planting(globeGarden, {x: Math.cos(angle) * r, z: Math.sin(angle) * r, y: .92, width: 3.8, depth: 3.8, seed: sector + 420});
+  }
+  for (const [index, angle] of [.3, Math.PI - .3, Math.PI + .42, Math.PI * 2 - .42].entries()) {
+    l.tree(globeGarden, Math.cos(angle) * 6.7, Math.sin(angle) * 6.7, .82, .92, index);
+  }
+  l.mesh(globeGarden, basinDisc, l.darkMetal, 0, .55, 0, 2.8, 1.05, 2.8);
+  l.mesh(globeGarden, basinDisc, a.brass, 0, 1.14, 0, 2.45, .18, 2.45);
+  l.mesh(globeGarden, basinDisc, l.planterStone, 0, 1.8, 0, 1.1, 1.2, 1.1);
+  const globe = new THREE.Group(); globe.position.y = 5.5; globe.rotation.z = -.19; globeGarden.add(globe);
+  const longitude = l.trackGeometry(new THREE.TorusGeometry(3.4, .047, 6, lite ? 40 : 64));
+  for (let i = 0; i < 6; i++) l.mesh(globe, longitude, a.brass, 0, 0, 0, 1, 1, 1, i * Math.PI / 6);
+  for (const latitude of [-Math.PI / 3, -Math.PI / 6, 0, Math.PI / 6, Math.PI / 3]) {
+    const ring = l.mesh(globe, longitude, a.brass, 0, Math.sin(latitude) * 3.4, 0, Math.cos(latitude), Math.cos(latitude), Math.cos(latitude));
+    ring.rotation.x = Math.PI / 2;
+  }
+  const cradle = l.trackGeometry(new THREE.TorusGeometry(3.72, .115, 8, lite ? 40 : 64, Math.PI * 1.3));
+  const support = l.mesh(globeGarden, cradle, a.brass, 0, 5.5, 0); support.rotation.z = -Math.PI * .65;
+  const globeSeat = l.trackGeometry(curvedSeatGeometry(9.15, .72, Math.PI * .48));
+  for (const yaw of [-Math.PI / 2, Math.PI / 2]) {
+    l.mesh(globeGarden, globeSeat, l.planterStone, 0, .34, 0, 1, .42, 1, yaw);
+    l.mesh(globeGarden, globeSeat, a.wood, 0, .59, 0, 1, .12, 1, yaw);
+  }
+
+  // The existing civic plaza keeps its clear centre and operational walkways.
+  for (const [index, [x, z]] of [[-39, -31], [39, -31], [-39, 34], [39, 34]].entries()) {
+    a.roundedPart(group, paving, x, .35, z, 21, .3, 15, 5);
+    const y = l.bed(group, {x, z, width: 16, depth: 10, radius: 4, y: .5, seed: index + 560});
+    l.tree(group, x - 4, z, 1.2, y, index); l.tree(group, x + 4, z - 1, .94, y, index + 1);
+    l.bench(group, x, z + 6.2, 10.8);
+  }
+  a.batch(group); scene.add(group); return group;
 }

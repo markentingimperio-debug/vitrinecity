@@ -1,5 +1,6 @@
 import * as THREE from '/vendor/three/three.module.js';
 import {storeBuildingIdentity} from './vitriny-store-building-core.js';
+import {dressRetailGallery} from './vitriny-retail-architecture.js';
 
 export function storeArchitectureStyle(name=''){
   return storeBuildingIdentity(name).style;
@@ -7,6 +8,7 @@ export function storeArchitectureStyle(name=''){
 
 // Add real architectural depth without replacing entrance anchors or catalogue meshes.
 export function dressBoutique({group,architecture,width,depth,height,label,lite=false,catalog=false}){
+  if(catalog)return dressRetailGallery({group,architecture,width,depth,height,label,lite});
   const a=architecture,w=width,d=depth,h=height,front=d/2,style=storeArchitectureStyle(label);
   group.userData.architectureStyle=style;
   const colors={botanical:['#6e8d71','#d9d3bb'],country:['#ae7850','#e1c49b'],learning:['#86acba','#dce4e4'],creative:['#b98f9e','#ddd1da'],gallery:['#8a999f','#cbd3d7']},[accent,trim]=colors[style];
@@ -39,43 +41,6 @@ export function dressBoutique({group,architecture,width,depth,height,label,lite=
   }
   // Planters and recessed lighting create a recognisable, human-scale threshold.
   for(const x of [-w*.4,w*.4]){a.part(group,porcelain,x,.75,front+1.15,1.55,.75,.9);a.part(group,a.warm,x,.45,front+1.62,1.4,.035,.06);}
-  if(catalog){
-    const identity=storeBuildingIdentity(label),base=h+4.2,total=identity.towerHeight,tw=w*.88,td=d*.78,tz=-d*.1;
-    group.name='store-building:'+label;group.userData.buildingHeight=base+total+5;
-    const tiers=[{fraction:.42,scale:1},{fraction:.34,scale:.83},{fraction:.24,scale:.65}];
-    let bottom=base;
-    for(const [index,tier] of tiers.entries()){
-      const height=total*tier.fraction,width=tw*tier.scale,depth=td*tier.scale,offset=(style==='creative'?1:-1)*index*w*.035;
-      a.roundedPart(group,a.curtain,offset,bottom+height/2,tz,width,height,depth,style==='country'?1.2:2.6);
-      for(const side of [-1,1]){
-        // Paired structural piers frame recessed glazing on both street elevations.
-        a.part(group,style==='country'?a.wood:porcelain,offset+side*width*.4,bottom+height/2,tz+depth/2,.48,height,.75);
-        a.part(group,a.brass,offset+side*width*.4,bottom+height/2,tz+depth/2+.41,.055,height,.09);
-      }
-      for(let y=bottom+3.5;y<bottom+height-.8;y+=3.5){
-        a.roundedPart(group,porcelain,offset,y,tz,width+.3,.13,depth+.3,2.3);
-      }
-      a.terrace(group,{x:offset,y:bottom+height+.14,z:tz,width:width+1.5,depth:depth+1.5,green:!lite||index===0});
-      bottom+=height;
-    }
-    if(style==='botanical'){
-      // Garden terraces and a light pergola distinguish the Agrotecnica building.
-      for(const x of [-tw*.42,tw*.42])for(const y of [base+4,base+11])a.tree(group,x,tz+td/2,.35,y);
-      for(let x=-tw*.26;x<=tw*.26;x+=1.4)a.part(group,a.brass,x,bottom+3.6,tz,.1,.18,td*.65);
-      for(const x of [-tw*.28,tw*.28])a.part(group,porcelain,x,bottom+1.8,tz-td*.25,.22,3.6,.22);
-    }else if(style==='country'){
-      for(const side of [-1,1]){const roof=a.part(group,a.wood,side*tw*.17,bottom+2,tz,tw*.36,.22,td*.68);roof.rotation.z=-side*.15;}
-    }else if(style==='learning'){
-      for(const side of [-1,1]){const wing=a.part(group,porcelain,side*tw*.18,bottom+1.7,tz,tw*.4,.3,td*.75);wing.rotation.z=side*.13;}
-    }else if(style==='creative'){
-      a.roundedPart(group,frame,tw*.29,base+total*.55,tz,1.3,total*1.03,td*.65,.5);
-    }
-    const signY=base+total-1.6,signWidth=tw*.7,signHeight=2.5,front=tz+td*.65/2;
-    a.roundedPart(group,a.graphite,0,signY,tz,signWidth,signHeight,td*.65+.6,1.3);
-    const sign=a.textSign(group,identity.name,{width:signWidth-1,height:2.2,y:signY,z:front+.34,subtitle:identity.subtitle});
-    const back=sign.clone();back.position.z=tz-td*.65/2-.34;back.rotation.y=Math.PI;group.add(back);
-    for(const side of [-1,1]){const end=sign.clone();end.position.set(side*(signWidth/2+.02),signY,tz);end.rotation.y=side*Math.PI/2;end.scale.x=(td*.65-1)/(signWidth-1);group.add(end);}
-  }
   return style;
 }
 

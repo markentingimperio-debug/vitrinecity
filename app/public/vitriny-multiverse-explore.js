@@ -11,6 +11,7 @@ import {TRANSIT_CITY_IDS,fetchCityPortals,loadCityCheckpoint,saveCityCheckpoint,
 import {fallbackSpatialCityIdentity,normalizeSpatialCityIdentity} from './vitriny-spatial-city-identity.js';
 import {mountSpatialCityEnvironment} from './vitriny-spatial-environment-renderer.js';
 import {mountPremiumAtmosphere,createPremiumFacades} from './vitriny-spatial-premium-atmosphere.js';
+import {configureArchitecturalLighting} from './vitriny-architectural-lighting.js';
 import {mountPromenadeGardens} from './vitriny-promenade-gardens.js';
 import {createArchitectureKit} from './vitriny-premium-architecture.js';
 import {mountCityHeadquarters,installHeadquartersDirectory} from './vitriny-city-headquarters.js';
@@ -51,7 +52,7 @@ worldStat.textContent=`${cityContext.name} · ${isActiveCity?'HUB':'PREVIEW'}`;
 const scene=new THREE.Scene();
 scene.background=new THREE.Color('#b5c9d2');
 scene.fog=new THREE.FogExp2(new THREE.Color('#c5d2d4'),0.0010);
-const camera=new THREE.PerspectiveCamera(58,innerWidth/innerHeight,.1,1800);
+const camera=new THREE.PerspectiveCamera(innerWidth<=760?50:44,innerWidth/innerHeight,.1,1800);
 let renderer;
 try{renderer=new THREE.WebGLRenderer({antialias:profile.id!=='LITE',powerPreference:'high-performance'});}
 catch(error){$('loadingText').textContent='3D indisponível neste aparelho. Use o guia de lojas e serviços ou volte à página inicial.';throw error;}
@@ -72,6 +73,7 @@ const sharedMaterials=new Set([groundMat,roadMat,sidewalkMat,laneMat,roofMat,...
 let storeBuildingLots=[];
 const cityGround=new THREE.Mesh(new THREE.PlaneGeometry(2600,2600),groundMat);cityGround.rotation.x=-Math.PI/2;cityGround.position.y=-.08;cityGround.receiveShadow=profile.shadows;scene.add(cityGround);
 const premiumAtmosphere=mountPremiumAtmosphere({scene,identity:cityIdentity,profileId:profile.id});
+const architecturalLighting=isActiveCity?configureArchitecturalLighting({renderer,scene,sun,profile}):{dispose(){}};
 const cityLife=mountCityLife({scene,architecture,profileId:profile.id});
 if(isActiveCity)mountPromenadeGardens({scene,architecture,lite:profile.id==='LITE'});
 const reducedMotion=matchMedia('(prefers-reduced-motion:reduce)');
@@ -287,8 +289,8 @@ async function loadLiveStores(){
 }
 
 const phoneArrival=isActiveCity&&innerWidth<=760;
-const position=isActiveCity?new THREE.Vector3(-164,phoneArrival?23:27,205):new THREE.Vector3(0,38,132),velocity=new THREE.Vector3(),keys=new Set();
-let yaw=Math.PI,pitch=isActiveCity?-.015:.14,speed=16,dragging=false,lastX=0,lastY=0,pointerStartX=0,pointerStartY=0,activePortal=null;
+const position=isActiveCity?new THREE.Vector3(-164,phoneArrival?23:27,235):new THREE.Vector3(0,38,132),velocity=new THREE.Vector3(),keys=new Set();
+let yaw=Math.PI,pitch=isActiveCity?-.16:.14,speed=16,dragging=false,lastX=0,lastY=0,pointerStartX=0,pointerStartY=0,activePortal=null;
 let chunkSource=cityApiOnline?'api':'fallback',disposed=false,navigating=false,raf=0;
 function restoreSpatialContext(){
   if(new URLSearchParams(location.search).get('return')!=='1')return;
@@ -299,7 +301,7 @@ function restoreSpatialContext(){
 restoreSpatialContext();
 function updateViewButton(){const button=$('toggleView');if(button){button.textContent=position.y>10?'Explorar a pé':'Vista panorâmica';button.setAttribute('aria-pressed',String(position.y>10));}}
 updateViewButton();
-$('toggleView')?.addEventListener('click',()=>{avatarMode=false;if(position.y>10){position.set(23,2.2,53);yaw=Math.PI-.4;pitch=.035;}else{position.set(isActiveCity?-164:0,isActiveCity?27:38,isActiveCity?205:132);yaw=Math.PI;pitch=isActiveCity?-.015:.1;}releaseControls();updateViewButton();});
+$('toggleView')?.addEventListener('click',()=>{avatarMode=false;if(position.y>10){position.set(23,2.2,53);yaw=Math.PI-.4;pitch=.035;}else{position.set(isActiveCity?-164:0,isActiveCity?27:38,isActiveCity?235:132);yaw=Math.PI;pitch=isActiveCity?-.16:.1;}releaseControls();updateViewButton();});
 $('visitStores')?.addEventListener('click',()=>{position.set(-164,avatarMode?1.7:4.2,145);yaw=Math.PI;pitch=.12;releaseControls();updateViewButton();});
 const avatar=mountVisitorAvatar({scene,dialog:$('avatarDirectory'),onEnter(){avatarMode=true;position.set(23,1.7,53);yaw=Math.PI-.4;pitch=.02;releaseControls();updateViewButton();}});
 $('openAvatar').addEventListener('click',()=>{releaseControls();$('avatarDirectory').showModal();});
@@ -359,7 +361,7 @@ addEventListener('vitriny:guide-visit',event=>{
   if(store){const offset=innerWidth<=760?60:48;position.set(store.position.x-38,16,store.position.z+offset);yaw=-Math.PI/2-Math.atan2(offset,38);pitch=.2;}
   else if(place==='commerce'){position.set(-164,7,170);yaw=Math.PI;pitch=.14;}
   else if(place==='emissora'&&landmark){position.copy(landmark.localToWorld(new THREE.Vector3(18,14,innerWidth<=760?72:58)));yaw=Math.atan2(position.x-landmark.position.x,landmark.position.z-position.z);pitch=.11;}
-  else if(landmark){const p=landmark.position,distance=place==='headquarters'?170:innerWidth<=760?85:65;position.set(p.x+32,place==='headquarters'?52:14,p.z+distance);yaw=Math.PI-Math.atan2(32,distance);pitch=place==='headquarters'?.2:.13;}
+  else if(landmark){const p=landmark.position,distance=place==='headquarters'?(innerWidth<=760?250:215):innerWidth<=760?85:65;position.set(p.x+32,place==='headquarters'?60:14,p.z+distance);yaw=Math.PI-Math.atan2(32,distance);pitch=place==='headquarters'?0:.13;}
   else{const portal=portalTargets.find(target=>target.userData.id===place);if(!portal)return;const p=portal.getWorldPosition(new THREE.Vector3());position.set(p.x*1.55,9,p.z*1.55);yaw=Math.atan2(p.x,-p.z);pitch=.1;}
   updateViewButton();renderer.domElement.focus({preventScroll:true});const notice=$('guideArrival');notice.textContent='Você está perto de '+String(title||'seu destino').slice(0,100)+'.';clearTimeout(guideArrivalTimer);guideArrivalTimer=setTimeout(()=>notice.textContent='',5000);
 });
@@ -427,7 +429,7 @@ function updateStoreEntrances(){
 function animate(now){
   if(disposed)return;raf=requestAnimationFrame(animate);
   const dt=Math.min(.05,(now-last)/1000);last=now;if(document.hidden)return;
-  frames++;if(now-fpsClock>=1000){fpsStat.textContent=`${profile.id==='LITE'?'Visual leve':profile.id==='ULTRA'?'Visual detalhado':'Visual equilibrado'} · ${Math.round(frames*1000/(now-fpsClock))} FPS`;frames=0;fpsClock=now;}
+  frames++;if(now-fpsClock>=1000){fpsStat.textContent=`${profile.id==='LITE'?'Visual leve':profile.id==='ULTRA'?'Visual detalhado':'Visual equilibrado'} · ${Math.round(frames*1000/(now-fpsClock))} FPS`;fpsStat.dataset.drawCalls=String(renderer.info.render.calls);fpsStat.dataset.triangles=String(renderer.info.render.triangles);frames=0;fpsClock=now;}
   const basis=spatialMovementBasis(yaw);forwardVector.set(basis.forward.x,0,basis.forward.z);rightVector.set(basis.right.x,0,basis.right.z);velocity.set(0,0,0);
   if(keys.has('KeyW')||keys.has('ArrowUp'))velocity.add(forwardVector);if(keys.has('KeyS')||keys.has('ArrowDown'))velocity.sub(forwardVector);
   if(keys.has('KeyD')||keys.has('ArrowRight'))velocity.add(rightVector);if(keys.has('KeyA')||keys.has('ArrowLeft'))velocity.sub(rightVector);
@@ -438,6 +440,8 @@ function animate(now){
 
   lookTarget.set(basis.forward.x*Math.cos(pitch),Math.sin(pitch),basis.forward.z*Math.cos(pitch)).add(position);
   if(avatarMode){camera.position.copy(position).addScaledVector(forwardVector,-6);camera.position.y=4.4;lookTarget.copy(position).addScaledVector(forwardVector,4);lookTarget.y=1.9+pitch*6;}else camera.position.copy(position);
+  const fieldOfView=avatarMode||position.y<10?58:innerWidth<=760?50:44;
+  if(camera.fov!==fieldOfView){camera.fov=fieldOfView;camera.updateProjectionMatrix();}
   camera.lookAt(lookTarget);avatar.tick(dt,{position,yaw,moving:velocity.lengthSq()>0,visible:avatarMode});
   if(!animationPaused)neuralCore.rotation.y+=dt*.45;premiumAtmosphere.tick(dt,{paused:animationPaused});cityLife.tick(dt,{paused:animationPaused});billboards.tick(dt,{paused:animationPaused});storefronts.tick(dt,{paused:animationPaused});
   updatePortal();syncChunks();renderer.render(scene,camera);updateStoreEntrances();
@@ -450,6 +454,6 @@ addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updat
 addEventListener('pagehide',event=>{
   if(!navigating)saveSpatialContext();releaseControls();
   if(event.persisted)return;
-  disposed=true;cancelAnimationFrame(raf);billboards.dispose();storefronts.dispose();cityLife.dispose?.();architecture.dispose();cityEnvironmentMount?.dispose();cityEnvironmentMount=null;disposeGroup(scene,{keepShared:false});disposeReflections();renderer.dispose();
+  disposed=true;cancelAnimationFrame(raf);billboards.dispose();storefronts.dispose();cityLife.dispose?.();architecture.dispose();cityEnvironmentMount?.dispose();cityEnvironmentMount=null;architecturalLighting.dispose();disposeGroup(scene,{keepShared:false});disposeReflections();renderer.dispose();
 });
 addEventListener('pageshow',()=>{doorEntry.reset();navigating=false;last=performance.now();fpsClock=last;frames=0;});
