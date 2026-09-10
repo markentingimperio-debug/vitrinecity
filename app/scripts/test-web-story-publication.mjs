@@ -37,7 +37,7 @@ async function fixture(t,{commercial=true,trend=false}={}){
   const instance=setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl:'https://vitrinecity.test',publicDir:path.join(appDir,'public'),dataDir:folder,assets,sourceCatalog,
     generateStory:async(source,context)=>{state.generationCalls++;if(state.generateGate)await state.generateGate(source,context);return state.noDraft?{approved:false,notes:'Faltam informações verificadas.'}:{draft:structuredClone(state.generated),approved:state.approved,notes:state.approved?'Conteúdo verificado.':'Aguardando revisão.'};}});
   const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));origin='http://127.0.0.1:'+server.address().port;
-  const call=async(url,{method='GET',body,admin=false}={})=>{const response=await fetch(origin+url,{method,headers:{origin,'content-type':'application/json',...(admin?{'x-admin':'fixture'}:{})},body:body===undefined?undefined:JSON.stringify(body)});const raw=await response.text();return {status:response.status,raw,json:()=>JSON.parse(raw)};};
+  const call=async(url,{method='GET',body,admin=false,foreign=false}={})=>{const response=await fetch(origin+url,{method,headers:{origin:foreign?'https://foreign.test':origin,'content-type':'application/json',...(admin?{'x-admin':'fixture'}:{})},body:body===undefined?undefined:JSON.stringify(body)});const raw=await response.text();return {status:response.status,raw,json:()=>JSON.parse(raw)};};
   const generate=options=>instance.generateAndPublish({key:state.source.key},options);
   const row=()=>db.prepare('SELECT * FROM editorial_web_stories WHERE article_id=?').get(state.source.key);
   const companion=()=>db.prepare('SELECT * FROM editorial_articles WHERE id=?').get('story-companion:'+state.source.key);
@@ -54,6 +54,41 @@ test('approved automatic stories have at least ten pages and a stable public ide
   const repeat=await f.generate();assert.equal(repeat.storyId,created.storyId);assert.equal(f.state.generationCalls,1);assert.equal(f.row().revision,first.revision);
   f.state.source.facts.priceCents=1500;f.state.generated.title='Guia atualizado';const changed=await f.generate();assert.equal(changed.storyId,first.id);assert.equal(f.row().slug,first.slug);assert.equal(f.row().published_at,first.published_at);
   assert.match((await f.call(f.publicUrl())).raw,/Guia atualizado/);assert.equal(f.db.prepare('SELECT count(*) n FROM editorial_web_stories').get().n,1);
+});
+
+test('manual draft import supports complete human copy from a short public source, but never approves or publishes',async t=>{
+  const f=await fixture(t);Object.assign(f.state.source,{kind:'affiliate',portal:'ofertas',body:'Resumo curto do produto.',sourcePath:'/ofertas/kit-fixture',sources:[{title:'Oferta publicada',url:'/ofertas/kit-fixture'}]});
+  const input={sourceKey:f.state.source.key,actor:'forged-actor',draft:{...draft(),sourcePath:'https://foreign.test/pay',sources:[{url:'https://foreign.test'}],affiliateDisclosure:'',generation:'gestora',approved:true,published:true,reviewed_by:'forged-review',logo:'https://foreign.test/logo.png'}};
+  assert.equal((await f.call('/api/admin/web-stories',{method:'POST',admin:true,body:{articleId:f.state.source.key}})).status,400,'the existing template path remains unchanged');
+  const created=await f.call('/api/admin/web-stories/manual-draft',{method:'POST',admin:true,body:input});assert.equal(created.status,201);
+  const saved=f.row(),body=created.json(),copy=body.draft;assert.equal(saved.created_by,'fixture-admin');assert.equal(saved.published_json,null);assert.equal(saved.published_at,null);assert.equal(saved.published_revision,null);assert.equal(saved.reviewed_by,'');assert.equal(saved.previewed_revision,0);assert.equal(saved.revision,1);assert.equal(f.state.generationCalls,0);
+  assert.equal(copy.sourcePath,f.state.source.sourcePath);assert.deepEqual(copy.sources,f.state.source.sources);assert.equal(copy.logo,'/assets/pwa-icon-192.png');assert.equal(copy.commercial,true);assert.equal(copy.sourceKind,'affiliate');assert.match(copy.affiliateDisclosure,/comissão/);assert.equal(copy.generation,'manual');assert.equal(copy.editorialMethod,'manual_curation');assert.equal(copy.approved,undefined);assert.equal(copy.published,undefined);assert.equal(copy.reviewed_by,undefined);
+  assert.equal(f.instance.canGenerateAutomatically(f.state.source.key),false);assert.equal((await f.call(f.publicUrl())).status,404);
+  assert.equal((await f.call('/api/admin/web-stories/'+saved.id+'/publish',{method:'POST',admin:true,body:{revision:1,reviewed:true,rightsConfirmed:true}})).status,409,'manual draft still requires a saved preview');
+  assert.deepEqual(f.db.prepare('SELECT event,actor FROM editorial_web_story_events').all(),[{event:'manual_draft_created',actor:'fixture-admin'}]);
+  assert.equal(f.db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE name='web_story_automation_jobs'").get().n,0);
+  const before=f.snapshot();assert.equal((await f.call('/api/admin/web-stories/manual-draft',{method:'POST',admin:true,body:input})).status,409);assert.deepEqual(f.snapshot(),before);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM editorial_web_story_events').get().n,1);
+});
+
+test('manual import requires admin and same origin, a current published source, local valid images and complete pages',async t=>{
+  const f=await fixture(t),url='/api/admin/web-stories/manual-draft',input={articleId:f.state.source.key,draft:draft()};
+  assert.equal((await f.call(url,{method:'POST',body:input})).status,401);assert.equal((await f.call(url,{method:'POST',admin:true,foreign:true,body:input})).status,403);
+  f.state.available=false;assert.equal((await f.call(url,{method:'POST',admin:true,body:input})).status,409);f.state.available=true;
+  for(const altered of [{...input,sourceKey:'different'},{...input,draft:{...draft(),pages:draft().pages.slice(0,9)}},{...input,draft:{...draft(),cta:'x'.repeat(31)}},{...input,draft:{...draft(),pages:draft().pages.map(p=>({...p,image:'https://foreign.test/photo.png'}))}},{...input,draft:{...draft(),pages:draft().pages.map(p=>({...p,text:'Curto'}))}}])assert.equal((await f.call(url,{method:'POST',admin:true,body:altered})).status,400);
+  f.state.source.sourcePath='//foreign.test';assert.equal((await f.call(url,{method:'POST',admin:true,body:input})).status,400);assert.equal(f.row(),undefined);assert.equal(f.state.generationCalls,0);
+  const trend=await fixture(t,{trend:true});await assert.rejects(trend.instance.createManualDraft({sourceKey:trend.state.source.key,draft:draft()}),error=>error.status===409);
+});
+
+test('manual import exported service records explicit maintenance authorship and refuses source changes or concurrent creation',async t=>{
+  const f=await fixture(t),input={sourceKey:f.state.source.key,draft:draft()},wait=deferred();f.state.imageGate=()=>wait.promise;
+  const first=f.instance.createManualDraft(input);await new Promise(resolve=>setImmediate(resolve));
+  await assert.rejects(f.instance.createManualDraft(input),error=>error.status===409);f.state.source.body+=' Atualização concorrente da fonte.';wait.resolve();await assert.rejects(first,error=>error.status===409);assert.equal(f.row(),undefined);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM editorial_web_story_events').get().n,0);
+  f.state.imageGate=null;const imported=await f.instance.createManualDraft(input,{actor:'editorial-maintenance'});assert.equal(imported.created_by,'editorial-maintenance');assert.equal(imported.published_at,null);assert.equal(f.db.prepare('SELECT actor FROM editorial_web_story_events').get().actor,'editorial-maintenance');assert.equal(f.state.generationCalls,0);
+});
+
+test('manual draft and its audit record commit atomically without leaving a draft after an event failure',async t=>{
+  const f=await fixture(t);f.db.exec("CREATE TRIGGER fixture_manual_failure BEFORE INSERT ON editorial_web_story_events WHEN NEW.event='manual_draft_created' BEGIN SELECT RAISE(ABORT,'fixture manual failure'); END");
+  await assert.rejects(f.instance.createManualDraft({sourceKey:f.state.source.key,draft:draft()}),/fixture manual failure/);assert.equal(f.row(),undefined);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM editorial_web_story_events').get().n,0);
 });
 
 test('companion articles preserve every supported editorial portal, and category-only manual edits win',async t=>{

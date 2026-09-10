@@ -84,6 +84,39 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
 
   // Automatic publication is explicitly configured by the administrator. Its
   // transaction cannot survive a pause, changed source or concurrent manual edit.
+  // A curator may supply complete copy even when the public catalog blurb is
+  // short. This path never calls AI, approves, previews or publishes anything.
+  async function createManualDraft(input,{actor:author='editorial-maintenance'}={}) {
+    if(!input||typeof input!=='object'||Array.isArray(input))throw fail('Informe a fonte e o rascunho editorial.');
+    const key=text(input.sourceKey??input.articleId,300,'Fonte');
+    if(input.sourceKey!==undefined&&input.articleId!==undefined&&input.sourceKey!==input.articleId)throw fail('As referências da fonte precisam ser iguais.');
+    const editor=text(author,160,'Responsável');
+    if(!input.draft||typeof input.draft!=='object'||Array.isArray(input.draft))throw fail('Informe um rascunho editorial completo.');
+    const ensureSpace=()=>{
+      if(db.prepare('SELECT 1 FROM editorial_web_stories WHERE article_id=?').get(key))throw fail('Esta fonte já possui uma história. Abra a edição existente; ela foi preservada.',409);
+      if(db.prepare('SELECT COUNT(*) n FROM editorial_web_stories').get().n>=10000)throw fail('O estúdio atingiu o limite de 10 mil histórias.',409);
+    };
+    ensureSpace();if(creating.size)throw fail('Aguarde a criação de rascunho em andamento.',409);
+    const source=article(key);
+    if(!source||source.kind==='trend'||source.researchOnly)throw fail('A fonte precisa estar publicada e disponível na plataforma.',409);
+    const sourcePath=source.sourcePath||(typeof source.slug==='string'?'/artigo/'+encodeURIComponent(source.slug):'');
+    if(!sourcePath.startsWith('/')||sourcePath.startsWith('//')||/[\\\u0000-\u0020]/.test(sourcePath)||/^\/(?:api|admin)(?:[\/-]|$)/.test(sourcePath))throw fail('A fonte não possui um destino público válido.');
+    const fingerprint=hashArticle(source),sourceState=JSON.stringify([fingerprint,sourcePath,source.kind,source.portal,source.commercial,storySources(source)]);
+    const unchanged=()=>{const fresh=article(key);return fresh&&!fresh.researchOnly&&JSON.stringify([hashArticle(fresh),fresh.sourcePath||(typeof fresh.slug==='string'?'/artigo/'+encodeURIComponent(fresh.slug):''),fresh.kind,fresh.portal,fresh.commercial,storySources(fresh)])===sourceState;};
+    creating.add(key);
+    try{
+      const original={title:source.title,description:source.summary,category:String(source.portal||'VitrineCity').replace(/-/g,' ').slice(0,26),logo:'/assets/pwa-icon-192.png',sourcePath,sourceKind:source.kind||'article',commercial:!!source.commercial,sources:storySources(source),...storyButtons(source),affiliateDisclosure:source.kind==='affiliate'?'Link de afiliado: podemos receber comissão.':'',generation:'manual',editorialMethod:'manual_curation',aiGenerated:false};
+      const draft=await validateDraft(input.draft,original);
+      if(draft.pages.some((_,index)=>[...storyPageVisibleText(draft,index)].length>180))throw fail('Há texto demais em uma página. Ajuste o rascunho antes de salvar.');
+      const now=new Date().toISOString(),item={id:randomUUID(),slug:(source.slug||'historia').slice(0,90)+'-'+createHash('sha256').update(key).digest('hex').slice(0,8),article_id:key,source_hash:fingerprint,draft_json:JSON.stringify(draft),created_at:now,updated_at:now,created_by:editor};
+      db.transaction(()=>{
+        ensureSpace();if(!unchanged())throw fail('A fonte mudou durante a preparação. Revise a versão atual antes de criar o rascunho.',409);
+        db.prepare('INSERT INTO editorial_web_stories(id,slug,article_id,source_hash,draft_json,created_at,updated_at,created_by) VALUES(@id,@slug,@article_id,@source_hash,@draft_json,@created_at,@updated_at,@created_by)').run(item);
+        db.prepare("INSERT INTO editorial_web_story_events(story_id,event,revision,actor,created_at) VALUES(?,'manual_draft_created',1,?,?)").run(item.id,editor,now);
+      }).immediate();
+      return dto(row(item.id));
+    }finally{creating.delete(key);}
+  }
   function canGenerateAutomatically(sourceKey) {
     const existing=db.prepare('SELECT id FROM editorial_web_stories WHERE article_id=?').get(sourceKey);
     if(!existing)return true;
@@ -165,6 +198,7 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
   app.get('/api/admin/web-stories/images',requireAdmin,route(async(req,res)=>res.json(await imageLibrary(typeof req.query.q==='string'?req.query.q.trim().slice(0,80):'',typeof req.query.articleId==='string'?req.query.articleId.slice(0,300):'',Math.max(1,parseInt(req.query.p,10)||1)))));
   app.get('/api/admin/web-stories',requireAdmin,route((_req,res)=>res.json({items:db.prepare('SELECT * FROM editorial_web_stories ORDER BY updated_at DESC LIMIT 200').all().map(dto)})));
   app.get('/api/admin/web-stories/:id',requireAdmin,route((req,res)=>res.json(dto(get(req.params.id)))));
+  app.post('/api/admin/web-stories/manual-draft',requireAdmin,sameOriginOnly,route(async(req,res)=>res.status(201).json(await createManualDraft(req.body,{actor:actor(req)}))));
   app.post('/api/admin/web-stories',requireAdmin,sameOriginOnly,route(async(req,res)=>{
     const id=text(req.body?.articleId,300,'Artigo'),existing=db.prepare('SELECT * FROM editorial_web_stories WHERE article_id=?').get(id);
     if(existing)return res.json(dto(existing));
@@ -246,5 +280,5 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     const day=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}),today=day.format(new Date()),items=published();
     return {date:today,timeZone:'America/Sao_Paulo',total:items.length,today:items.filter(item=>day.format(new Date(item.published_at))===today).length};
   }
-  return {sitemapPaths:()=>['/stories',...published().map(item=>'/stories/'+item.slug)],generateAndPublish,canGenerateAutomatically,recoveryForSource,publicationCounts};
+  return {sitemapPaths:()=>['/stories',...published().map(item=>'/stories/'+item.slug)],generateAndPublish,createManualDraft,canGenerateAutomatically,recoveryForSource,publicationCounts};
 }
