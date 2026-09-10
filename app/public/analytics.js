@@ -83,6 +83,7 @@
         const headers = new Headers(init.headers === undefined && input instanceof Request ? input.headers : init.headers);
         headers.set('X-VC-Session', sid);
         headers.set('X-VC-Analytics-Consent', 'accepted');
+        if (read('localStorage', OPENAI_KEY) === 'accepted') headers.set('X-VC-OpenAI-Ads-Consent', 'accepted');
         if (read('localStorage', GOOGLE_KEY) === 'accepted' && read('localStorage', CONVERSION_KEY) === 'accepted') headers.set('X-VC-Google-Analytics-Consent', 'accepted');
         init = { ...init, headers };
       }

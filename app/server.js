@@ -66,6 +66,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { originalCourse } from './course-content.js';
 import { setupCourseLandingPages } from './course-landing-pages.js';
+import { setupOpenAIPurchaseMeasurement } from './openai-purchase-measurement.js';
 import { setupAdminAnalytics } from './admin-analytics.js';
 import { setupOrganicAcquisition, recordAcquisitionSignup } from './organic-acquisition.js';
 import { injectPublicMeasurement } from './public-measurement.js';
@@ -2669,6 +2670,7 @@ const customerRetention=setupCustomerRetention({app,db,requireAdmin,requireUser,
   signingSecret:managementSecret,allowAttempt:(key,limit,windowMs)=>allowAttempt(authAttempts,key,limit,windowMs),
   sendVerification:mailTransport?message=>mailTransport.sendMail({from:`VitrineCity <${SMTP_USER}>`,...message}):null});
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
+setupOpenAIPurchaseMeasurement({ app, db, requireUser });
 const courseLandingPages = setupCourseLandingPages({ app, managedCourse, courseReady, originalCourse, origin: SITE_URL });
 setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, publicDir: path.join(dir, 'public') });
 const cryptoObservability = createCryptoObservability(db);

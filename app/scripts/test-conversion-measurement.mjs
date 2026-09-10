@@ -98,3 +98,12 @@ test('real route wiring only issues receipts after success, private order page k
   assert.match(page, /analytics\.js\?v=conversions/);
   assert.doesNotMatch(page, /data-vc-google-analytics|googletagmanager/);
 });
+
+test('server checkout keeps explicit OpenAI consent independently from Google', () => {
+  const { db, analytics } = fixture();
+  const base = request('accepted', 'essential');
+  analytics.recordCheckout({...base,get:key=>key==='x-vc-openai-ads-consent'?'accepted':base.get(key)}, 'course-one', 'course',2399);
+  const meta=JSON.parse(db.prepare("SELECT metadata_json FROM analytics_events WHERE asset_id='course-one'").get().metadata_json);
+  assert.equal(meta.openaiConsent,true);assert.equal(meta.googleConsent,false);assert.equal(meta.origin,'server');
+  db.close();
+});

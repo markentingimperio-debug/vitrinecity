@@ -407,7 +407,8 @@ export function setupAdminAnalytics({ app, db, requireAdmin, publicDir }) {
     db.prepare(`INSERT INTO analytics_events
       (session_id,user_id,event_name,path,asset_type,asset_id,value_cents,metadata_json) VALUES (?,?,?,?,?,?,?,?)`)
       .run(sid, req.user?.id || source.user_id, eventName, clean(req.path, 300), clean(assetType, 40), clean(assetId, 120), valueCents,
-        JSON.stringify({ origin: 'server', googleConsent: req.get('x-vc-google-analytics-consent') === 'accepted' }));
+        JSON.stringify({ origin: 'server', googleConsent: req.get('x-vc-google-analytics-consent') === 'accepted',
+          ...(req.get('x-vc-openai-ads-consent') === 'accepted' ? { openaiConsent: true } : {}) }));
     } catch { console.warn('Optional server analytics could not be recorded.'); }
   }
 
