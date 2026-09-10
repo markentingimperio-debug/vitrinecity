@@ -25,7 +25,9 @@ try{
   assert.equal(calls[1].headers.get('authorization'),'Bearer audit-secret-example','OpenRouter must retain its own bearer token');
 
   await globalThis.fetch('https://api.openai.com/v1/responses',{headers:{Authorization:'Bearer audit-secret-example'}});
-  assert.equal(calls[2].headers.get('authorization'),'Bearer audit-secret-example','OpenAI must retain its own bearer token');
+  assert.equal(calls[2].headers.get('authorization'),null,'OpenAI must never receive the OpenRouter bearer token');
+  await globalThis.fetch('https://openrouter.ai/api/v1/models',{headers:{Authorization:'Bearer audit-openai-example'}});
+  assert.equal(calls.at(-1).headers.get('authorization'),null,'OpenRouter must never receive the OpenAI bearer token');
 
   await globalThis.fetch('https://cdn.example.invalid/second.mp4',{headers:{Authorization:'Bearer audit-openai-example'}});
   assert.equal(calls.at(-1).headers.get('authorization'),null,'Both configured credentials must be protected');

@@ -1,5 +1,8 @@
 const nativeFetch = globalThis.fetch;
-const allowedAiOrigins = new Set(['https://openrouter.ai', 'https://api.openai.com']);
+const aiOriginKeys = () => new Map([
+  ['https://openrouter.ai', String(process.env.OPENROUTER_API_KEY || '').trim()],
+  ['https://api.openai.com', String(process.env.OPENAI_API_KEY || '').trim()]
+]);
 
 function aiSecrets() {
   return new Set([process.env.OPENROUTER_API_KEY, process.env.OPENAI_API_KEY]
@@ -28,7 +31,7 @@ globalThis.fetch = function guardedFetch(input, init = {}) {
 
   const headers = guardedHeaders(input, init);
   const bearer = /^Bearer\s+(.+)$/i.exec(headers.get('authorization') || '');
-  if (bearer && secrets.has(bearer[1].trim()) && !allowedAiOrigins.has(url.origin)) {
+  if (bearer && secrets.has(bearer[1].trim()) && aiOriginKeys().get(url.origin) !== bearer[1].trim()) {
     headers.delete('authorization');
     return nativeFetch(input, { ...init, headers });
   }

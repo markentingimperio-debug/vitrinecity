@@ -6,6 +6,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import Database from 'better-sqlite3';
 import * as receipts from '../video-provider-receipts.js';
+import {mediaJobPolicy, requireMediaJob} from '../media-job-policy.js';
 const {videoReceipt,videoPollingUrl,videoPollState,videoFailureMessage,videoDownloadTarget,downloadVideo}=receipts;
 const job='job-abc123',poll=`https://openrouter.ai/api/v1/videos/${job}`,mp4=Buffer.from([0,0,0,20,102,116,121,112,105,115,111,109,0,0,0,0]);
 test('accepts documented relative and absolute receipts, keeps exact job binding',()=>{
@@ -54,15 +55,15 @@ test('diagnostics classify account and policy blocks without leaking raw provide
   assert.doesNotMatch(videoFailureMessage(Error('Bearer extremely-private-value https://private.example')),/private|Bearer/);
 });
 const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
-function fixture(request,download=async()=>mp4){
+function fixture(request,download=async()=>mp4,{mediaConfig={provider:'openrouter',configured:true,imageConfigured:true,videoEnabled:true}}={}){
   const db=new Database(':memory:');
   db.exec(`CREATE TABLE admin_viral_quizzes(id INTEGER PRIMARY KEY,status TEXT);
     INSERT INTO admin_viral_quizzes VALUES(1,'in_production');
-    CREATE TABLE viral_quiz_scenes(id INTEGER PRIMARY KEY,quiz_id INTEGER DEFAULT 1,scene_number INTEGER DEFAULT 1,status TEXT DEFAULT 'pending',prompt TEXT DEFAULT 'safe',duration_seconds INTEGER DEFAULT 8,attempt_count INTEGER DEFAULT 0,remote_job_id TEXT DEFAULT '',polling_url TEXT DEFAULT '',model TEXT DEFAULT '',error_message TEXT DEFAULT '',local_path TEXT DEFAULT '',output_url TEXT DEFAULT '',updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE admin_media_projects(id INTEGER PRIMARY KEY,task_id INTEGER DEFAULT 1,format TEXT DEFAULT 'short_video',production_status TEXT DEFAULT 'script',progress INTEGER DEFAULT 0,remote_job_id TEXT DEFAULT '',polling_url TEXT DEFAULT '',error_message TEXT DEFAULT '',updated_at TEXT DEFAULT CURRENT_TIMESTAMP,model TEXT DEFAULT 'test',prompt TEXT DEFAULT 'safe',duration_seconds INTEGER DEFAULT 8,aspect_ratio TEXT DEFAULT '9:16',output_url TEXT DEFAULT '',usage_cost_usd REAL DEFAULT 0);
+    CREATE TABLE viral_quiz_scenes(id INTEGER PRIMARY KEY,quiz_id INTEGER DEFAULT 1,scene_number INTEGER DEFAULT 1,status TEXT DEFAULT 'pending',video_provider TEXT DEFAULT 'openrouter',prompt TEXT DEFAULT 'safe',duration_seconds INTEGER DEFAULT 8,attempt_count INTEGER DEFAULT 0,remote_job_id TEXT DEFAULT '',polling_url TEXT DEFAULT '',model TEXT DEFAULT '',error_message TEXT DEFAULT '',local_path TEXT DEFAULT '',output_url TEXT DEFAULT '',updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE admin_media_projects(id INTEGER PRIMARY KEY,task_id INTEGER DEFAULT 1,format TEXT DEFAULT 'short_video',production_status TEXT DEFAULT 'script',image_provider TEXT DEFAULT 'openrouter',video_provider TEXT DEFAULT 'openrouter',progress INTEGER DEFAULT 0,remote_job_id TEXT DEFAULT '',polling_url TEXT DEFAULT '',error_message TEXT DEFAULT '',updated_at TEXT DEFAULT CURRENT_TIMESTAMP,model TEXT DEFAULT 'test',prompt TEXT DEFAULT 'safe',duration_seconds INTEGER DEFAULT 8,aspect_ratio TEXT DEFAULT '9:16',output_url TEXT DEFAULT '',usage_cost_usd REAL DEFAULT 0);
     CREATE TABLE admin_agent_tasks(id INTEGER PRIMARY KEY,status TEXT,updated_at TEXT);INSERT INTO admin_agent_tasks VALUES(1,'running','before');`);
   const routes=new Map(),calls=[],writes=[];
-  const context=vm.createContext({...receipts,db,ecosystemCanRun:()=>true,aiConfigured:()=>true,AI_PROVIDER:'openrouter',AI_API_KEY:'test-key',OPENROUTER_VIDEO_MODEL:'test-model',MEDIA_VIDEO_MODELS:[],finishViralQuizVideo:async()=>{},openRouterRequest:async(url,options)=>{calls.push({url,options});return request(url,options);},downloadVideo:download,generatedMediaDir:'/tmp',fs:{writeFileSync:(...args)=>writes.push(args)},path:{join:(...parts)=>parts.join('/')},Buffer,requireAdmin(){},requireEcosystemRunning(){},app:{post:(route,...handlers)=>routes.set(route,handlers.at(-1))},mediaFactoryProject:id=>db.prepare('SELECT * FROM admin_media_projects WHERE id=?').get(id)});
+  const context=vm.createContext({...receipts,mediaJobPolicy,requireMediaJob,AI_MEDIA_CONFIG:mediaConfig,db,ecosystemCanRun:()=>true,aiConfigured:()=>true,AI_PROVIDER:'openrouter',AI_API_KEY:'test-key',OPENROUTER_VIDEO_MODEL:'test-model',MEDIA_VIDEO_MODELS:[],finishViralQuizVideo:async()=>{},openRouterRequest:async(url,options)=>{calls.push({url,options});return request(url,options);},aiMediaClient:{requestImage:async input=>{calls.push({image:input});return request('image',{method:'POST',body:JSON.stringify(input)});}},downloadVideo:download,generatedMediaDir:'/tmp',fs:{writeFileSync:(...args)=>writes.push(args)},path:{join:(...parts)=>parts.join('/')},Buffer,requireAdmin(){},requireEcosystemRunning(){},app:{post:(route,...handlers)=>routes.set(route,handlers.at(-1))},mediaFactoryProject:id=>db.prepare('SELECT * FROM admin_media_projects WHERE id=?').get(id)});
   vm.runInContext(server.slice(server.indexOf('let viralVideoFactoryRunning=false;'),server.indexOf("app.get('/api/admin/viral-factory/automation'")),context);
   vm.runInContext(server.slice(server.indexOf("app.post('/api/admin/media-projects/:id/generate'"),server.indexOf("app.post('/api/admin/media-projects/:id/approve'")),context);
   const run=()=>vm.runInContext('processViralVideoFactory()',context),scene=()=>db.prepare('SELECT * FROM viral_quiz_scenes WHERE id=1').get();
@@ -113,8 +114,56 @@ test('cancel during manual submission preserves the returned receipt without reo
 test('cancel during status GET prevents download and final publication state',async()=>{
   let release,downloads=0;const pending=new Promise(resolve=>{release=resolve;});const f=fixture(()=>pending,async()=>{downloads++;return mp4;});f.db.prepare("INSERT INTO admin_media_projects(id,production_status,remote_job_id,polling_url) VALUES(1,'editing',?,?)").run(job,poll);const syncing=f.route('sync');f.db.exec("UPDATE admin_media_projects SET production_status='cancelled'");release({data:{id:job,status:'completed'}});assert.equal((await syncing).code,409);assert.equal(downloads,0);assert.equal(f.writes.length,0);assert.equal(f.db.prepare('SELECT production_status FROM admin_media_projects').get().production_status,'cancelled');f.db.close();
 });
-test('cancel, receipt replacement, output/format edit and approval during download win transactionally',async()=>{
-  for(const update of ["production_status='cancelled'","remote_job_id='new-job'","output_url='https://cdn.vendor.com/manually-edited.mp4'","production_status='approved'","prompt='changed briefing'","format='image'"]){
+test('cancel, provider/receipt replacement, output/format edit and approval during download win transactionally',async()=>{
+  for(const update of ["production_status='cancelled'","video_provider='openai'","remote_job_id='new-job'","output_url='https://cdn.vendor.com/manually-edited.mp4'","production_status='approved'","prompt='changed briefing'","format='image'"]){
     let release,started;const pending=new Promise(resolve=>{release=resolve;}),entered=new Promise(resolve=>{started=resolve;});const f=fixture(()=>({data:{id:job,status:'completed'}}),async()=>{started();return pending;});f.db.prepare("INSERT INTO admin_media_projects(id,production_status,remote_job_id,polling_url) VALUES(1,'editing',?,?)").run(job,poll);const syncing=f.route('sync');await entered;f.db.exec('UPDATE admin_media_projects SET '+update);const before=f.db.prepare('SELECT * FROM admin_media_projects').get();release(mp4);assert.equal((await syncing).code,409);assert.deepEqual(f.db.prepare('SELECT * FROM admin_media_projects').get(),before);assert.equal(f.db.prepare('SELECT status FROM admin_agent_tasks').get().status,'running');assert.equal(f.writes.length,0);f.db.close();
   }
+});
+
+test('OpenAI selection leaves queued, processing and completed legacy scenes untouched across worker runs',async()=>{
+  const f=fixture(()=>{throw Error('Unexpected provider request');},async()=>{throw Error('Unexpected download');},{mediaConfig:{provider:'openai',configured:true,imageConfigured:true,videoEnabled:false,videoReason:'Vídeo indisponível.'}});
+  f.db.exec("INSERT INTO viral_quiz_scenes(id,status,remote_job_id,polling_url,output_url,error_message) VALUES(1,'pending','','','',''),(2,'generating','job-old','https://openrouter.ai/api/v1/videos/job-old','',''),(3,'failed','job-failed','https://openrouter.ai/api/v1/videos/job-failed','','review'),(4,'submitting','','','','uncertain'),(5,'downloaded','job-ready','https://openrouter.ai/api/v1/videos/job-ready','/uploads/generated-videos/existing.mp4','')");
+  const before=f.db.prepare('SELECT * FROM viral_quiz_scenes ORDER BY id').all();
+  await f.run();await f.run();
+  assert.deepEqual(f.db.prepare('SELECT * FROM viral_quiz_scenes ORDER BY id').all(),before);
+  assert.deepEqual(f.calls,[]);assert.deepEqual(f.writes,[]);f.db.close();
+});
+
+test('OpenAI manual generation and sync reject old-provider jobs or unavailable videos before mutation or network',async()=>{
+  for(const [provider,action,status,expectedCode,expectedReason] of [
+    ['openrouter','generate','script',409,'ai_media_job_provider_mismatch'],
+    ['openrouter','sync','editing',409,'ai_media_job_provider_mismatch'],
+    ['openai','generate','script',503,'ai_video_unavailable'],
+    ['openai','sync','editing',503,'ai_video_unavailable']
+  ]){
+    const f=fixture(()=>{throw Error('Unexpected provider request');},async()=>{throw Error('Unexpected download');},{mediaConfig:{provider:'openai',configured:true,imageConfigured:true,videoEnabled:false,videoReason:'Vídeo indisponível.'}});
+    f.db.prepare("INSERT INTO admin_media_projects(id,production_status,video_provider,remote_job_id,polling_url,output_url) VALUES(1,?,?,?,?,'/uploads/generated-videos/existing.mp4')").run(status,provider,status==='editing'?job:'',status==='editing'?poll:'');
+    const before=f.db.prepare('SELECT * FROM admin_media_projects').all(),tasks=f.db.prepare('SELECT * FROM admin_agent_tasks').all();
+    const result=await f.route(action);
+    assert.equal(result.code,expectedCode);assert.equal(result.body.code,expectedReason);
+    assert.deepEqual(f.db.prepare('SELECT * FROM admin_media_projects').all(),before);
+    assert.deepEqual(f.db.prepare('SELECT * FROM admin_agent_tasks').all(),tasks);
+    assert.deepEqual(f.calls,[]);assert.deepEqual(f.writes,[]);f.db.close();
+  }
+});
+
+test('OpenAI cannot generate an old-provider image project or replace its saved asset',async()=>{
+  const f=fixture(()=>{throw Error('Unexpected image request');},async()=>mp4,{mediaConfig:{provider:'openai',configured:true,imageConfigured:true,videoEnabled:false}});
+  f.db.exec("INSERT INTO admin_media_projects(id,format,production_status,image_provider,output_url) VALUES(1,'image','assets','openrouter','/uploads/generated-videos/original.png')");
+  const before=f.db.prepare('SELECT * FROM admin_media_projects').get();
+  const result=await f.route('generate');assert.equal(result.code,409);assert.equal(result.body.code,'ai_media_job_provider_mismatch');
+  assert.deepEqual(f.db.prepare('SELECT * FROM admin_media_projects').get(),before);
+  assert.deepEqual(f.calls,[]);assert.deepEqual(f.writes,[]);f.db.close();
+});
+
+test('provider change during manual status GET prevents download and finalization',async()=>{
+  let release,downloads=0;const pending=new Promise(resolve=>{release=resolve;});
+  const f=fixture(()=>pending,async()=>{downloads++;return mp4;});
+  f.db.prepare("INSERT INTO admin_media_projects(id,production_status,remote_job_id,polling_url) VALUES(1,'editing',?,?)").run(job,poll);
+  const syncing=f.route('sync');f.db.exec("UPDATE admin_media_projects SET video_provider='openai'");
+  const before=f.db.prepare('SELECT * FROM admin_media_projects').get();
+  release({data:{id:job,status:'completed'}});
+  assert.equal((await syncing).code,409);assert.equal(downloads,0);assert.deepEqual(f.writes,[]);
+  assert.deepEqual(f.db.prepare('SELECT * FROM admin_media_projects').get(),before);
+  assert.equal(f.db.prepare('SELECT status FROM admin_agent_tasks').get().status,'running');f.db.close();
 });

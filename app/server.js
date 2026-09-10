@@ -6,6 +6,9 @@ import {setupCityMembership} from './city-membership.js';
 import {setupCampaignPreferences} from './campaign-preferences.js';
 import {setupCustomerRetention} from './customer-retention.js';
 import { integrationObserver, openRouterOperation } from './integration-health.js';
+import { createAiTextClient } from './ai-text-provider.js';
+import { createMediaProvider } from './ai-media-provider.js';
+import { mediaJobPolicy, requireMediaJob } from './media-job-policy.js';
 import {videoReceipt,videoPollingUrl,videoPollState,videoFailureMessage,videoRetryableFailure,videoProjectUnchanged,downloadVideo} from './video-provider-receipts.js';
 import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
@@ -1021,6 +1024,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS viral_quiz_scenes (
 CREATE INDEX IF NOT EXISTS idx_viral_quiz_scenes_status ON viral_quiz_scenes(status,id);`);
 ensureColumn('viral_quiz_scenes', 'attempt_count', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('viral_quiz_scenes', 'model', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('viral_quiz_scenes', 'video_provider', "TEXT NOT NULL DEFAULT 'openrouter'");
 db.exec(`CREATE TABLE IF NOT EXISTS viral_distribution_jobs (
   id INTEGER PRIMARY KEY,
   quiz_id INTEGER NOT NULL REFERENCES admin_viral_quizzes(id) ON DELETE CASCADE,
@@ -1109,6 +1113,8 @@ ensureColumn('admin_media_projects', 'usage_cost_usd', 'REAL NOT NULL DEFAULT 0'
 ensureColumn('admin_media_projects', 'error_message', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('admin_media_projects', 'caption', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('admin_media_projects', 'published_post_id', "TEXT NOT NULL DEFAULT ''");
+ensureColumn('admin_media_projects', 'video_provider', "TEXT NOT NULL DEFAULT 'openrouter'");
+ensureColumn('admin_media_projects', 'image_provider', "TEXT NOT NULL DEFAULT 'openrouter'");
 db.exec(`CREATE TABLE IF NOT EXISTS admin_business_reviews (
   id INTEGER PRIMARY KEY,
   created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -2702,12 +2708,23 @@ const mediaPublications = createMediaPublicationLifecycle({ db, siteUrl:SITE_URL
   onError:post=>refundSocialLink(post.id,'falha no processamento do vídeo') });
 setupTrendRadar({ app, db, siteUrl:SITE_URL, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft, reviewEditorialDraft, canRun:ecosystemCanRun, automationAllowed:()=>!dailyStories?.automation.status().enabled });
 setupEmissora({app,db,siteUrl:SITE_URL});
-const storyOpenAIRequest=createOpenAIStoryRequest({apiKey:()=>process.env.OPENAI_API_KEY});
-const generateEditorialCover=createEditorialCoverGenerator({outputDir:generatedMediaDir,openAIRequest:storyOpenAIRequest,openRouterRequest,openRouterModel:()=>OPENROUTER_IMAGE_MODEL,onFailure:details=>console.error('Editorial cover pending',details)});
+const rawStoryOpenAIRequest=createOpenAIStoryRequest({apiKey:()=>process.env.OPENAI_API_KEY});
+const aiMediaClient=createMediaProvider({env:{...process.env,SITE_URL},observer:integrationObserver});
+const AI_MEDIA_CONFIG=aiMediaClient.config;
+const storyOpenAIRequest=(...args)=>integrationObserver.run('openai_media',()=>{
+  if(AI_MEDIA_CONFIG.explicit&&(!AI_MEDIA_CONFIG.imageConfigured||AI_MEDIA_CONFIG.provider!=='openai'))throw Object.assign(new Error(AI_MEDIA_CONFIG.error||'ai_media_provider_invalid'),{status:503});
+  return rawStoryOpenAIRequest(...args);
+});
+const storyImageProvider=()=>AI_MEDIA_CONFIG.explicit?AI_MEDIA_CONFIG.provider:process.env.OPENAI_API_KEY?'openai':'openrouter';
+const storyImageModel=()=>storyImageProvider()==='openai'?AI_MEDIA_CONFIG.provider==='openai'?AI_MEDIA_CONFIG.imageModel:'gpt-image-2':OPENROUTER_IMAGE_MODEL;
+const generateEditorialCover=createEditorialCoverGenerator({outputDir:generatedMediaDir,openAIRequest:storyOpenAIRequest,openRouterRequest,
+  openAIConfigured:()=>storyImageProvider()==='openai'&&(AI_MEDIA_CONFIG.explicit?AI_MEDIA_CONFIG.imageConfigured:Boolean(String(process.env.OPENAI_API_KEY||'').trim())),
+  openRouterConfigured:()=>storyImageProvider()==='openrouter'&&(AI_MEDIA_CONFIG.explicit?AI_MEDIA_CONFIG.imageConfigured:Boolean(String(process.env.OPENROUTER_API_KEY||'').trim())),
+  openAIModel:storyImageModel,openRouterModel:()=>OPENROUTER_IMAGE_MODEL,onFailure:details=>console.error('Editorial cover pending',details)});
 const webStories = dailyStories = setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl:SITE_URL,publicDir:path.join(dir,'public'),dataDir,
   searchSources:createEditorialSourceSearch(),
   services:()=>DIGITAL_SERVICE_PACKAGES,courses:()=>managedCourses(true).filter(course=>courseReady(course.slug)),
-  requestText:requestEditorialText,requestImage:createStoryImageProvider({provider:()=>process.env.OPENAI_API_KEY?'openai':'openrouter',request:(url,...args)=>url==='https://api.openai.com/v1/images/generations'?storyOpenAIRequest(url,...args):openRouterRequest(url,...args),model:()=>process.env.OPENAI_API_KEY?'gpt-image-2':OPENROUTER_IMAGE_MODEL,outputDir:generatedMediaDir}),
+  requestText:requestEditorialText,requestImage:createStoryImageProvider({provider:storyImageProvider,request:(url,...args)=>url==='https://api.openai.com/v1/images/generations'?storyOpenAIRequest(url,...args):openRouterRequest(url,...args),model:storyImageModel,outputDir:generatedMediaDir}),
   isConfigured:()=>aiConfigured(),canRun:ecosystemCanRun,autoRunAllowed:()=>!ecosystem?.policy().enabled});
 const socialCommentSourceOptions = {
   db, publicDir:path.join(dir,'public'), services:()=>DIGITAL_SERVICE_PACKAGES,
@@ -4100,7 +4117,7 @@ async function whatsappQrSitemapLinks(){
 }
 app.get('/api/admin/whatsapp-qr/sitemap-links',requireAdmin,async(_req,res)=>{try{return res.json({links:await whatsappQrSitemapLinks()})}catch{return res.status(502).json({error:'Não foi possível ler o sitemap agora.'})}});
 app.get('/api/admin/whatsapp-qr/schedules',requireAdmin,(_req,res)=>res.set('Cache-Control','no-store').json({schedules:db.prepare(`SELECT id,group_jid groupJid,group_name groupName,sitemap_url sitemapUrl,message,scheduled_at scheduledAt,status,confirmation_state confirmationState,claimed_at claimedAt,provider_message_id providerMessageId,error,created_at createdAt,sent_at sentAt FROM whatsapp_qr_schedules ORDER BY scheduled_at DESC LIMIT 100`).all().map(item=>({...item,status:whatsappScheduleState(item)}))}));
-app.get('/api/admin/omnichannel-automation',requireAdmin,(_req,res)=>res.json({configured:aiConfigured(),provider:AI_PROVIDER,model:OPENAI_MODEL,channels:db.prepare(`SELECT channel,enabled,instructions,campaign_mode campaignMode,site_url siteUrl,whatsapp_group_url whatsappGroupUrl,daily_limit dailyLimit,start_hour startHour,end_hour endHour,approval_required approvalRequired,updated_at updatedAt FROM omnichannel_automation_settings ORDER BY channel`).all().map(item=>({...item,enabled:Boolean(item.enabled),approvalRequired:Boolean(item.approvalRequired)})),jobs:db.prepare(`SELECT id,channel,source_text sourceText,reply_text replyText,status,error,created_at createdAt,processed_at processedAt FROM omnichannel_automation_jobs ORDER BY created_at DESC LIMIT 40`).all()}));
+app.get('/api/admin/omnichannel-automation',requireAdmin,(_req,res)=>res.json({configured:aiConfigured(),provider:AI_TEXT_CONFIG.provider,configurationError:AI_TEXT_CONFIG.error||null,model:OPENAI_MODEL,channels:db.prepare(`SELECT channel,enabled,instructions,campaign_mode campaignMode,site_url siteUrl,whatsapp_group_url whatsappGroupUrl,daily_limit dailyLimit,start_hour startHour,end_hour endHour,approval_required approvalRequired,updated_at updatedAt FROM omnichannel_automation_settings ORDER BY channel`).all().map(item=>({...item,enabled:Boolean(item.enabled),approvalRequired:Boolean(item.approvalRequired)})),jobs:db.prepare(`SELECT id,channel,source_text sourceText,reply_text replyText,status,error,created_at createdAt,processed_at processedAt FROM omnichannel_automation_jobs ORDER BY created_at DESC LIMIT 40`).all()}));
 app.put('/api/admin/omnichannel-automation/:channel',requireAdmin,sameOriginOnly,(req,res)=>{
   const channel=String(req.params.channel||'');if(!['facebook','instagram','whatsapp_qr'].includes(channel))return res.status(400).json({error:'Canal inválido.'});
   const enabled=req.body?.enabled===true?1:0,instructions=String(req.body?.instructions||'').trim().slice(0,4000),campaignMode=String(req.body?.campaignMode||'site');
@@ -4896,7 +4913,7 @@ function viralQuizPackage({ theme, category, voice, destinationUrl, destinationL
 function viralQuizRow(id) {
   const row = db.prepare('SELECT * FROM admin_viral_quizzes WHERE id=?').get(id);
   if (!row) return null;
-  const scenes=db.prepare('SELECT id,scene_number,duration_seconds,status,output_url,error_message FROM viral_quiz_scenes WHERE quiz_id=? ORDER BY scene_number').all(id);
+  const scenes=db.prepare('SELECT id,scene_number,duration_seconds,status,output_url,error_message,video_provider FROM viral_quiz_scenes WHERE quiz_id=? ORDER BY scene_number').all(id).map(scene=>({...scene,...mediaJobPolicy(scene,AI_MEDIA_CONFIG)}));
   const distribution=db.prepare('SELECT provider,status,publication_id,error_message,updated_at FROM viral_distribution_jobs WHERE quiz_id=? ORDER BY provider').all(id);
   const media=row.media_project_id?mediaFactoryProject(row.media_project_id):null;
   const publication=media?.publication||null;
@@ -4904,7 +4921,8 @@ function viralQuizRow(id) {
     job.publication=publication;job.status=publication.status==='published'?'published':'pending';job.error_message=publication.status==='published'?'':publication.message;
   }
   return { ...row, status:media?.production_status==='cancelled'||media?.task_status==='cancelled'?'cancelled':row.status==='published'&&publication?.status!=='published'?'approved':row.status,
-    questions: JSON.parse(row.questions_json || '[]'), scenes, distribution, media, publication };
+    questions: JSON.parse(row.questions_json || '[]'), scenes, distribution, media, publication,
+    videoAvailable:AI_MEDIA_CONFIG.videoEnabled,videoUnavailableReason:AI_MEDIA_CONFIG.videoReason||null };
 }
 app.get('/api/admin/viral-quizzes', requireAdmin, (_req,res) => {
   const quizzes = db.prepare('SELECT * FROM admin_viral_quizzes ORDER BY id DESC LIMIT 40').all()
@@ -4930,6 +4948,7 @@ app.post('/api/admin/viral-quizzes', requireAdmin, (req,res) => {
   return res.status(201).json({quiz:viralQuizRow(Number(result.lastInsertRowid)),message:'Pacote criado e enviado para aprovação da Gestora.'});
 });
 function approveViralQuiz(id,userId){
+  requireMediaJob({video_provider:AI_MEDIA_CONFIG.provider},AI_MEDIA_CONFIG);
   const quiz=viralQuizRow(id);if(!quiz)throw Object.assign(new Error('Quiz não encontrado.'),{status:404});
   if(quiz.status!=='awaiting_approval')throw Object.assign(new Error('Este quiz não está aguardando aprovação.'),{status:409});
   const media=db.prepare("SELECT id,status FROM admin_specialist_agents WHERE code='midia'").get();
@@ -4985,7 +5004,7 @@ async function chooseViralThemes(trends,counts) {
     const parsed=JSON.parse(responseOutputText(data).trim());
     if(!Array.isArray(parsed))return fallback;
     const safe=parsed.filter(x=>x&&['plants','curiosities'].includes(x.category)&&String(x.theme||'').trim().length>=5)
-      .map(x=>({source:'openrouter_curator',topic:String(x.theme).trim().slice(0,160),category:x.category,score:100}));
+      .map(x=>({source:AI_TEXT_CONFIG.provider+'_curator',topic:String(x.theme).trim().slice(0,160),category:x.category,score:100}));
     if(safe.filter(x=>x.category==='plants').length===counts.plants&&safe.filter(x=>x.category==='curiosities').length===counts.curiosities)return safe;
   }catch(error){console.error('Curadoria viral via IA falhou:',String(error?.message||'ai_failure').slice(0,200));}
   return fallback;
@@ -5010,7 +5029,7 @@ async function runViralFactory({force=false,userId=null}={}) {
     db.transaction(()=>{for(const item of themes){const pack=viralQuizPackage({theme:item.topic,category:item.category,voice:'br-feminina-energica',destinationUrl:settings.destination_url,destinationLabel:settings.destination_label});
       const result=insert.run(userId,item.topic,item.category,'medium','br-feminina-energica',settings.destination_url,settings.destination_label,JSON.stringify(pack.questions),pack.script,pack.captions,'Vitrine Social, TikTok, Instagram/Facebook Reels, YouTube Shorts, Kwai, Bilibili');created.push(Number(result.lastInsertRowid));}
       db.prepare("UPDATE viral_factory_settings SET last_run_day=?,last_run_at=CURRENT_TIMESTAMP,last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=1").run(day);})();
-    if(!settings.approval_required)for(const id of created)approveViralQuiz(id,userId);
+    if(!settings.approval_required && AI_MEDIA_CONFIG.videoEnabled)for(const id of created)approveViralQuiz(id,userId);
     return {ok:true,created:created.map(viralQuizRow),trends:trends.slice(0,10)};
   }catch(error){db.prepare('UPDATE viral_factory_settings SET last_error=?,last_run_at=CURRENT_TIMESTAMP WHERE id=1').run(String(error?.message||'automation_failed').slice(0,500));throw error;}
   finally{viralFactoryRunning=false;}
@@ -5042,14 +5061,14 @@ async function publishViralToVitrine(quizId){
 }
 let viralVideoFactoryRunning=false;
 async function processViralVideoFactory(){
-  if(!ecosystemCanRun()||viralVideoFactoryRunning||!aiConfigured()||AI_PROVIDER!=='openrouter')return;viralVideoFactoryRunning=true;
+  if(!ecosystemCanRun()||viralVideoFactoryRunning||!AI_MEDIA_CONFIG.videoEnabled)return;viralVideoFactoryRunning=true;
   try{
     // Resume a montage held by pause without generating its scenes again.
     const ready=db.prepare("SELECT q.id FROM admin_viral_quizzes q JOIN viral_quiz_scenes s ON s.quiz_id=q.id WHERE q.status='in_production' AND s.status='downloaded' GROUP BY q.id HAVING count(*)=9 LIMIT 1").get();
     if(ready)await finishViralQuizVideo(ready.id);
     if(!ecosystemCanRun())return;
     const pending=db.prepare(`SELECT s.* FROM viral_quiz_scenes s JOIN admin_viral_quizzes q ON q.id=s.quiz_id WHERE s.status='pending' AND s.remote_job_id='' AND s.polling_url='' AND q.status='in_production' ORDER BY s.quiz_id,s.scene_number LIMIT 1`).get();
-    if(pending){const claimed=db.prepare("UPDATE viral_quiz_scenes SET status='submitting',attempt_count=attempt_count+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND remote_job_id='' AND polling_url=''").run(pending.id);if(claimed.changes)try{
+    if(pending&&mediaJobPolicy(pending,AI_MEDIA_CONFIG).generationAvailable){const claimed=db.prepare("UPDATE viral_quiz_scenes SET status='submitting',video_provider=?,attempt_count=attempt_count+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND remote_job_id='' AND polling_url=''").run(AI_MEDIA_CONFIG.provider,pending.id);if(claimed.changes)try{
       const models=[...new Set([OPENROUTER_VIDEO_MODEL,...MEDIA_VIDEO_MODELS])],model=models[Math.min(Number(pending.attempt_count||0),models.length-1)];
       const result=await openRouterRequest('https://openrouter.ai/api/v1/videos',{method:'POST',redirect:'error',body:JSON.stringify({model,prompt:pending.prompt,duration:pending.duration_seconds,aspect_ratio:'9:16',resolution:'720p',generate_audio:true})},60000);
       const {jobId,pollingUrl}=videoReceipt(result.data);
@@ -5059,13 +5078,13 @@ async function processViralVideoFactory(){
       db.prepare("UPDATE viral_quiz_scenes SET status='generating',error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(pending.id);
     }catch(error){db.prepare("UPDATE viral_quiz_scenes SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(videoFailureMessage(error),pending.id);}}
     const generating=db.prepare("SELECT * FROM viral_quiz_scenes WHERE status='generating' ORDER BY id LIMIT 3").all();
-    for(const scene of generating)try{if(!ecosystemCanRun())break;const pollingUrl=videoPollingUrl(scene.polling_url,scene.remote_job_id);if(!pollingUrl)throw new Error('video_receipt_invalid');
+    for(const scene of generating)try{if(!ecosystemCanRun())break;if(!mediaJobPolicy(scene,AI_MEDIA_CONFIG).syncAvailable)continue;const pollingUrl=videoPollingUrl(scene.polling_url,scene.remote_job_id);if(!pollingUrl)throw new Error('video_receipt_invalid');
       const result=await openRouterRequest(pollingUrl,{method:'GET',redirect:'error'},30000);if(videoPollState(result.data,scene.remote_job_id)!=='completed')continue;
       const buffer=await downloadVideo(result.data,scene.remote_job_id,{apiKey:AI_API_KEY});const name=`viral-${scene.quiz_id}-scene-${scene.scene_number}.mp4`,local=path.join(generatedMediaDir,name);fs.writeFileSync(local,buffer);db.prepare("UPDATE viral_quiz_scenes SET status='downloaded',local_path=?,output_url=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(local,`/uploads/generated-videos/${name}`,scene.id);await finishViralQuizVideo(scene.quiz_id);
     }catch(error){db.prepare("UPDATE viral_quiz_scenes SET status=?,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='generating'").run(videoRetryableFailure(error)?'generating':'failed',videoFailureMessage(error),scene.id);}
   }finally{viralVideoFactoryRunning=false;}
 }
-app.get('/api/admin/viral-factory/automation',requireAdmin,(_req,res)=>res.json({settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get(),trends:db.prepare('SELECT * FROM viral_factory_trends ORDER BY id DESC LIMIT 20').all(),openrouterConfigured:aiConfigured()}));
+app.get('/api/admin/viral-factory/automation',requireAdmin,(_req,res)=>res.json({settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get(),trends:db.prepare('SELECT * FROM viral_factory_trends ORDER BY id DESC LIMIT 20').all(),openrouterConfigured:AI_MEDIA_CONFIG.provider==='openrouter'&&AI_MEDIA_CONFIG.configured,textProvider:AI_TEXT_CONFIG.provider,textConfigured:AI_TEXT_CONFIG.configured,mediaProvider:AI_MEDIA_CONFIG.provider,videoEnabled:AI_MEDIA_CONFIG.videoEnabled,videoReason:AI_MEDIA_CONFIG.videoReason}));
 app.put('/api/admin/viral-factory/automation',requireAdmin,(req,res)=>{const enabled=Boolean(req.body?.enabled),approvalRequired=req.body?.approvalRequired!==false;
   const destinationUrl=String(req.body?.destinationUrl||'').trim();let parsed;try{parsed=new URL(destinationUrl)}catch{return res.status(400).json({error:'Informe um destino válido.'})}if(parsed.protocol!=='https:')return res.status(400).json({error:'O destino precisa usar HTTPS.'});
   db.prepare(`UPDATE viral_factory_settings SET enabled=?,approval_required=?,destination_url=?,destination_label=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(enabled?1:0,approvalRequired?1:0,destinationUrl,String(req.body?.destinationLabel||'Vitrine City').trim().slice(0,100));return res.json({ok:true,settings:db.prepare('SELECT * FROM viral_factory_settings WHERE id=1').get()});});
@@ -5082,7 +5101,7 @@ app.patch('/api/manual-assistant/profile', requireUser, (req, res) => {
 
 app.post('/api/manual-assistant/suggest', requireUser, async (req, res) => {
   if (!aiConfigured()) {
-    return res.status(503).json({ error: 'A IA ainda precisa da chave OPENAI_API_KEY configurada.' });
+    return res.status(503).json({ error: 'A IA ainda precisa da configuração do provedor selecionado.' });
   }
   if (!allowAttempt(aiAttempts, `manual-support:${req.user.id}`, 30, 60 * 60 * 1000)) {
     return res.status(429).json({ error: 'Limite temporário de sugestões atingido. Aguarde um pouco.' });
@@ -5168,19 +5187,15 @@ const AD_CAMPAIGN_ACTIONS = Object.freeze({
   complete: Object.freeze({ from: ['funded', 'in_review', 'active', 'paused'], to: 'completed' })
 });
 
-const AI_PROVIDER = process.env.OPENROUTER_API_KEY ? 'openrouter' : 'openai';
-const AI_API_KEY = String(process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || '').trim();
-const OPENAI_MODEL = String(process.env.OPENROUTER_MODEL || process.env.OPENAI_MODEL ||
-  (AI_PROVIDER === 'openrouter' ? 'nvidia/nemotron-3.5-lightning:free' : 'gpt-4o-mini')).trim();
-const OPENROUTER_FALLBACK_MODEL = String(process.env.OPENROUTER_FALLBACK_MODEL || 'openrouter/free').trim();
+// Legacy video downloads and router requests receive only the router credential.
+const AI_API_KEY = String(process.env.OPENROUTER_API_KEY || '').trim();
+const aiTextClient = createAiTextClient({env:{...process.env,SITE_URL},onFailure:detail=>console.error('Text AI request failed',JSON.stringify(detail))});
+const AI_TEXT_CONFIG = aiTextClient.config;
+const OPENAI_MODEL = AI_TEXT_CONFIG.model;
 const OPENROUTER_IMAGE_MODEL = String(process.env.OPENROUTER_IMAGE_MODEL || 'qwen/qwen-image-3').trim();
 const OPENROUTER_VIDEO_MODEL = String(process.env.OPENROUTER_VIDEO_MODEL || 'google/veo-3.1-lite').trim();
-const MEDIA_IMAGE_MODELS = Object.freeze(['qwen/qwen-image-3','meta/muse-image','bytedance-seed/seedream-5-0-lite']);
 const MEDIA_VIDEO_MODELS = Object.freeze(['google/veo-3.1-lite','alibaba/wan-3.0','bytedance/seedance-2.0-mini']);
-const OPENAI_RESPONSES_URL = AI_PROVIDER === 'openrouter'
-  ? 'https://openrouter.ai/api/v1/responses'
-  : 'https://api.openai.com/v1/responses';
-const aiConfigured = () => Boolean(AI_API_KEY);
+const aiConfigured = () => AI_TEXT_CONFIG.configured;
 const AI_PUBLIC_ROOT = path.resolve(dir, 'public');
 const AI_BLOCKED_PAGES = new Set([
   'admin.html', 'admin-agentes.html', 'admin-quizzes.html', 'admin-growth.html', 'admin-tiktok.html', 'admin-lojas.html', 'admin-servicos.html', 'carteira.html', 'painel-lojista.html',
@@ -5366,32 +5381,8 @@ function executeAdminAiTool(name, args = {}, userId = null) {
 }
 
 async function requestOpenAI(body) {
-  const models=AI_PROVIDER==='openrouter'&&OPENROUTER_FALLBACK_MODEL&&body.model!==OPENROUTER_FALLBACK_MODEL?
-    [body.model,OPENROUTER_FALLBACK_MODEL]:[body.model];
-  let lastStatus=502;
-  for(const model of models){
-    let response;
-    try{response = await fetch(OPENAI_RESPONSES_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${AI_API_KEY}`,
-        'Content-Type': 'application/json',
-        ...(AI_PROVIDER === 'openrouter' ? {
-          'HTTP-Referer': SITE_URL,
-          'X-OpenRouter-Title': 'VitrineCity Jarvis'
-        } : {})
-      },
-      body: JSON.stringify({...body,model}),
-      signal: AbortSignal.timeout(AI_PROVIDER==='openrouter'?30000:60000)
-    });}catch(error){console.error(`IA ${model} unavailable`,String(error?.name||error?.message||'network_error'));lastStatus=504;continue;}
-    const data = await response.json().catch(() => ({}));
-    if(response.ok)return data;
-    lastStatus=response.status;
-    const detail = String(data?.error?.message || `IA status ${response.status}`).slice(0, 300);
-    console.error(`IA ${model} error`, detail);
-    if(AI_PROVIDER!=='openrouter'||![404,408,429,502,503].includes(response.status))break;
-  }
-  const error = new Error('OPENAI_REQUEST_FAILED');error.status=lastStatus;throw error;
+  if(!AI_TEXT_CONFIG.configured)return aiTextClient.request(body);
+  return integrationObserver.run(AI_TEXT_CONFIG.provider+'_text',()=>aiTextClient.request(body));
 }
 
 function openRouterHeaders() {
@@ -5408,7 +5399,11 @@ async function openRouterRequest(url, options = {}, timeout = 60000) {
 }
 
 async function performOpenRouterRequest(url, options = {}, timeout = 60000) {
-  if (AI_PROVIDER !== 'openrouter' || !AI_API_KEY) {
+  const operation=openRouterOperation(url),selected=operation==='openrouter_text'?AI_TEXT_CONFIG.provider:AI_MEDIA_CONFIG.provider;
+  if(selected!=='openrouter')throw Object.assign(new Error('O OpenRouter está desativado para esta operação.'),{status:503,code:'openrouter_disabled'});
+  const config=operation==='openrouter_text'?AI_TEXT_CONFIG:AI_MEDIA_CONFIG;
+  if(config.explicit&&!config.configured)throw Object.assign(new Error(config.error),{status:503});
+  if (!AI_API_KEY) {
     const error = new Error('Configure OPENROUTER_API_KEY na VPS.'); error.status = 503; throw error;
   }
   let response;
@@ -5434,7 +5429,11 @@ function parseEditorialJson(value) {
 }
 
 async function requestEditorialText(system,user,maxTokens=2200){
-  if(AI_PROVIDER==='openrouter'){
+  if(AI_TEXT_CONFIG.explicit){
+    const result=await requestOpenAI({model:OPENAI_MODEL,max_output_tokens:maxTokens,store:false,input:[{role:'system',content:[{type:'input_text',text:system}]},{role:'user',content:[{type:'input_text',text:user}]}]});
+    const text=responseOutputText(result);if(!text)throw new Error('O modelo não devolveu conteúdo editorial.');return text;
+  }
+  if(AI_TEXT_CONFIG.provider==='openrouter'){
     try{const result=await openRouterRequest('https://openrouter.ai/api/v1/chat/completions',{method:'POST',body:JSON.stringify({model:OPENAI_MODEL,messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:maxTokens,temperature:0.5})},45000);const text=result.data?.choices?.[0]?.message?.content;if(typeof text==='string'&&text.trim())return text.trim();}catch(error){console.error('OpenRouter editorial fallback',String(error.message||error));}
     const directKey=String(process.env.OPENAI_API_KEY||'').trim();
     if(directKey){const response=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{Authorization:`Bearer ${directKey}`,'Content-Type':'application/json'},body:JSON.stringify({model:String(process.env.OPENAI_DIRECT_MODEL||'gpt-4o-mini'),messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:maxTokens,temperature:0.5}),signal:AbortSignal.timeout(60000)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(String(data?.error?.message||`OpenAI ${response.status}`).slice(0,300));const text=data?.choices?.[0]?.message?.content;if(typeof text==='string'&&text.trim())return text.trim();}
@@ -5481,12 +5480,11 @@ async function generateBookChapter(chapter) {
 }
 
 async function generateBookCover(book) {
-  if(AI_PROVIDER!=='openrouter')return '/assets/vitriny-city-master.jpg';
-  const result=await openRouterRequest('https://openrouter.ai/api/v1/images',{method:'POST',body:JSON.stringify({model:OPENROUTER_IMAGE_MODEL,prompt:`Capa de livro digital profissional, proporção vertical 2:3, categoria ${book.category}, tema ${book.title}, composição editorial elegante, sem texto, sem logotipos, sem marcas, sem rosto de pessoa real`,n:1,aspect_ratio:'2:3'})},120000);
+  const result=await aiMediaClient.requestImage({prompt:`Capa de livro digital profissional, proporção vertical 2:3, categoria ${book.category}, tema ${book.title}, composição editorial elegante, sem texto, sem logotipos, sem marcas, sem rosto de pessoa real`,aspectRatio:'2:3'});
   const item=result.data?.data?.[0]||result.data?.images?.[0],encoded=String(item?.b64_json||item?.image_url?.url||'').replace(/^data:[^;]+;base64,/,'');const buffer=Buffer.from(encoded,'base64');
   if(!buffer.length||buffer.length>25*1024*1024)throw new Error('A capa gerada é inválida.');const file=`book-${Date.now()}-${randomBytes(4).toString('hex')}.png`;fs.writeFileSync(path.join(generatedMediaDir,file),buffer,{flag:'wx'});return `/uploads/generated-videos/${file}`;
 }
-async function generateBookIllustration(chapter){if(AI_PROVIDER!=='openrouter')return '/assets/vitriny-city-master.jpg';const result=await openRouterRequest('https://openrouter.ai/api/v1/images',{method:'POST',body:JSON.stringify({model:OPENROUTER_IMAGE_MODEL,prompt:`Ilustração editorial profissional para livro, formato horizontal 16:9, livro ${chapter.book_title}, categoria ${chapter.category}, capítulo ${chapter.position}: ${chapter.title}. Sem texto escrito, logotipos, marcas ou rosto de pessoa real. Visual educativo e elegante.`,n:1,aspect_ratio:'16:9'})},120000);const item=result.data?.data?.[0]||result.data?.images?.[0],encoded=String(item?.b64_json||item?.image_url?.url||'').replace(/^data:[^;]+;base64,/,'');const buffer=Buffer.from(encoded,'base64');if(!buffer.length||buffer.length>25*1024*1024)throw new Error('Ilustração inválida.');const file=`book-chapter-${chapter.id}-${Date.now()}.png`;fs.writeFileSync(path.join(generatedMediaDir,file),buffer,{flag:'wx'});return `/uploads/generated-videos/${file}`}
+async function generateBookIllustration(chapter){const result=await aiMediaClient.requestImage({prompt:`Ilustração editorial profissional para livro, formato horizontal 16:9, livro ${chapter.book_title}, categoria ${chapter.category}, capítulo ${chapter.position}: ${chapter.title}. Sem texto escrito, logotipos, marcas ou rosto de pessoa real. Visual educativo e elegante.`,aspectRatio:'16:9'});const item=result.data?.data?.[0]||result.data?.images?.[0],encoded=String(item?.b64_json||item?.image_url?.url||'').replace(/^data:[^;]+;base64,/,'');const buffer=Buffer.from(encoded,'base64');if(!buffer.length||buffer.length>25*1024*1024)throw new Error('Ilustração inválida.');const file=`book-chapter-${chapter.id}-${Date.now()}.png`;fs.writeFileSync(path.join(generatedMediaDir,file),buffer,{flag:'wx'});return `/uploads/generated-videos/${file}`}
 
 const WHATSAPP_MESSAGE_CREDIT_UNITS = 100;
 const whatsappVersion = () => String(process.env.META_API_VERSION || 'v24.0').trim();
@@ -5753,7 +5751,8 @@ app.get('/api/admin/ai', requireAdmin, (req, res) => {
     WHERE user_id=? ORDER BY id DESC LIMIT 60`).all(req.user.id).reverse();
   return res.json({
     configured: aiConfigured(),
-    provider: AI_PROVIDER,
+    provider: AI_TEXT_CONFIG.provider,
+    configurationError: AI_TEXT_CONFIG.error || null,
     model: OPENAI_MODEL,
     readOnly: false,
     supervised: true,
@@ -5835,7 +5834,7 @@ function mediaFactoryProject(id) {
   const project=db.prepare(`SELECT m.*,t.title,t.instructions,t.priority,t.status AS task_status,a.name AS agent_name
     FROM admin_media_projects m JOIN admin_agent_tasks t ON t.id=m.task_id
     JOIN admin_specialist_agents a ON a.id=t.agent_id WHERE m.id=?`).get(id);
-  return project?{...project,publication:mediaPublications.snapshot(project)}:null;
+  return project?{...project,...mediaJobPolicy(project,AI_MEDIA_CONFIG),publication:mediaPublications.snapshot(project)}:null;
 }
 
 app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
@@ -5843,7 +5842,7 @@ app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
     FROM admin_media_projects m JOIN admin_agent_tasks t ON t.id=m.task_id
     JOIN admin_specialist_agents a ON a.id=t.agent_id ORDER BY m.id DESC LIMIT 40`).all();
   let budget = null;
-  if (AI_PROVIDER === 'openrouter' && AI_API_KEY) {
+  if (AI_MEDIA_CONFIG.provider === 'openrouter' && AI_MEDIA_CONFIG.configured) {
     try {
       const result = await openRouterRequest('https://openrouter.ai/api/v1/key', { method: 'GET' }, 12000);
       const key = result.data?.data || result.data || {};
@@ -5851,10 +5850,11 @@ app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
         remaining: key.limit_remaining == null ? null : Number(key.limit_remaining), isFreeTier: Boolean(key.is_free_tier) };
     } catch (error) { budget = { unavailable: true, message: error.message }; }
   }
-  return res.json({ configured: AI_PROVIDER === 'openrouter' && Boolean(AI_API_KEY),
-    models: { image: OPENROUTER_IMAGE_MODEL, video: OPENROUTER_VIDEO_MODEL,
-      imageOptions: MEDIA_IMAGE_MODELS, videoOptions: MEDIA_VIDEO_MODELS }, budget,
-    projects:projects.map(project=>({...project,publication:mediaPublications.snapshot(project)})) });
+  return res.json({ configured: AI_MEDIA_CONFIG.configured,provider:AI_MEDIA_CONFIG.provider,
+    imageConfigured:AI_MEDIA_CONFIG.imageConfigured,videoEnabled:AI_MEDIA_CONFIG.videoEnabled,videoReason:AI_MEDIA_CONFIG.videoReason,
+    models: { image: AI_MEDIA_CONFIG.imageModel, video: AI_MEDIA_CONFIG.videoModel,
+      imageOptions: AI_MEDIA_CONFIG.imageOptions, videoOptions: AI_MEDIA_CONFIG.videoOptions }, budget,
+    projects:projects.map(project=>({...project,...mediaJobPolicy(project,AI_MEDIA_CONFIG),publication:mediaPublications.snapshot(project)})) });
 });
 
 app.post('/api/admin/media-factory', requireAdmin, (req, res) => {
@@ -5866,17 +5866,20 @@ app.post('/api/admin/media-factory', requireAdmin, (req, res) => {
   const channels = String(req.body?.channels || 'VitrineCity').trim().slice(0, 300) || 'VitrineCity';
   const caption = String(req.body?.caption || '').trim().slice(0, 500);
   const requestedModel = String(req.body?.model || '').trim();
-  const modelOptions = format === 'image' ? MEDIA_IMAGE_MODELS : MEDIA_VIDEO_MODELS;
-  const model = modelOptions.includes(requestedModel) ? requestedModel : (format === 'image' ? OPENROUTER_IMAGE_MODEL : OPENROUTER_VIDEO_MODEL);
+  const modelOptions = format === 'image' ? AI_MEDIA_CONFIG.imageOptions : AI_MEDIA_CONFIG.videoOptions;
+  const model = modelOptions.includes(requestedModel) ? requestedModel : (format === 'image' ? AI_MEDIA_CONFIG.imageModel : AI_MEDIA_CONFIG.videoModel);
   if (!['image','short_video'].includes(format) || prompt.length < 10) return res.status(400).json({ error: 'Escolha imagem ou vídeo e descreva a criação em pelo menos 10 caracteres.' });
+  const access=mediaJobPolicy({format,image_provider:AI_MEDIA_CONFIG.provider,video_provider:AI_MEDIA_CONFIG.provider},AI_MEDIA_CONFIG);
+  if(!access.generationAvailable)return res.status(503).json({error:access.generationBlockReason,code:access.generationBlockCode});
+  if(requestedModel&&!modelOptions.includes(requestedModel))return res.status(400).json({error:'Escolha um modelo disponível no provedor selecionado.'});
   const agent = db.prepare("SELECT id,status FROM admin_specialist_agents WHERE code='midia'").get();
   if (!agent || agent.status !== 'active') return res.status(409).json({ error: 'Ative o Agente Audiovisual antes de criar.' });
   const task = db.prepare(`INSERT INTO admin_agent_tasks (agent_id,created_by_user_id,title,instructions,priority,status)
     VALUES (?,?,?,?,?,'in_progress')`).run(agent.id, req.user.id, title, prompt, 'normal');
   const project = db.prepare(`INSERT INTO admin_media_projects
-    (task_id,format,channels,source_notes,prompt,aspect_ratio,duration_seconds,caption,model,production_status,progress)
-    VALUES (?,?,?,?,?,?,?,?,?,'briefing',5)`).run(Number(task.lastInsertRowid), format, channels, prompt, prompt,
-      aspectRatio, duration, caption, model);
+    (task_id,format,channels,source_notes,prompt,aspect_ratio,duration_seconds,caption,model,image_provider,video_provider,production_status,progress)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,'briefing',5)`).run(Number(task.lastInsertRowid), format, channels, prompt, prompt,
+      aspectRatio, duration, caption, model,AI_MEDIA_CONFIG.provider,AI_MEDIA_CONFIG.provider);
   return res.status(201).json({ project: mediaFactoryProject(Number(project.lastInsertRowid)) });
 });
 
@@ -5884,12 +5887,12 @@ app.post('/api/admin/media-projects/:id/generate', requireAdmin, requireEcosyste
   const id = Number(req.params.id), project = mediaFactoryProject(id);
   if (!project) return res.status(404).json({ error: 'Projeto de mídia não encontrado.' });
   if (!['briefing','script','assets'].includes(project.production_status)) return res.status(409).json({ error: 'Este projeto já foi enviado para geração.' });
+  const access=mediaJobPolicy(project,AI_MEDIA_CONFIG);
+  if(!access.generationAvailable)return res.status(access.generationBlockCode==='ai_media_job_provider_mismatch'?409:503).json({error:access.generationBlockReason,code:access.generationBlockCode});
   try {
     if (project.format === 'image') {
       db.prepare("UPDATE admin_media_projects SET production_status='assets',progress=25,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
-      const result = await openRouterRequest('https://openrouter.ai/api/v1/images', { method: 'POST', body: JSON.stringify({
-        model: project.model || OPENROUTER_IMAGE_MODEL, prompt: project.prompt, n: 1, aspect_ratio: project.aspect_ratio
-      }) }, 120000);
+      const result = await aiMediaClient.requestImage({model:project.model||AI_MEDIA_CONFIG.imageModel,prompt:project.prompt,aspectRatio:project.aspect_ratio});
       const item = result.data?.data?.[0] || result.data?.images?.[0];
       const encoded = String(item?.b64_json || item?.image_url?.url || '').replace(/^data:[^;]+;base64,/, '');
       if (!encoded) throw new Error('O modelo não devolveu uma imagem utilizável.');
@@ -5904,7 +5907,7 @@ app.post('/api/admin/media-projects/:id/generate', requireAdmin, requireEcosyste
     }
     // Claim before any network await. A timeout/crash must never make a second
     // manual click submit another paid generation for this project.
-    const claim=db.prepare("UPDATE admin_media_projects SET production_status='editing',progress=10,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND production_status IN ('briefing','script','assets') AND remote_job_id='' AND polling_url=''").run(id);
+    const claim=db.prepare("UPDATE admin_media_projects SET production_status='editing',video_provider=?,progress=10,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND production_status IN ('briefing','script','assets') AND remote_job_id='' AND polling_url=''").run(AI_MEDIA_CONFIG.provider,id);
     if(!claim.changes)return res.status(409).json({error:'Esta geração já foi iniciada e precisa de conferência.'});
     const result = await openRouterRequest('https://openrouter.ai/api/v1/videos', { method: 'POST', redirect:'error', body: JSON.stringify({
       model: project.model || OPENROUTER_VIDEO_MODEL, prompt: project.prompt, duration: project.duration_seconds,
@@ -5926,6 +5929,9 @@ app.post('/api/admin/media-projects/:id/generate', requireAdmin, requireEcosyste
 
 app.post('/api/admin/media-projects/:id/sync', requireAdmin, async (req, res) => {
   const id = Number(req.params.id), project = mediaFactoryProject(id);
+  if(!project)return res.status(404).json({error:'Projeto de mídia não encontrado.'});
+  const access=mediaJobPolicy(project,AI_MEDIA_CONFIG);
+  if(!access.syncAvailable)return res.status(access.generationBlockCode==='ai_media_job_provider_mismatch'?409:503).json({error:access.generationBlockReason||'Este projeto não possui consulta de vídeo disponível.',code:access.generationBlockCode});
   const pollingUrl=videoPollingUrl(project?.polling_url,project?.remote_job_id);
   if (!pollingUrl||project.production_status!=='editing') return res.status(409).json({ error: 'Este projeto não possui vídeo em processamento com recibo válido.' });
   try {

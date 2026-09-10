@@ -20,6 +20,7 @@ test('real admin routes and signed callbacks preserve moderation, receipts and t
       return new Response(JSON.stringify({success:true,result:{uid:config.uid,readyToStream:config.ready,status:{state:config.ready?'ready':'inprogress'}}}),{status:200,headers:{'Content-Type':'application/json'}});
     };`);
   const env={PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,TEMP:temp,TMP:temp,DATA_DIR:temp,PORT:String(port),SITE_URL:origin,
+    AI_MEDIA_PROVIDER:'openrouter',OPENROUTER_API_KEY:'OFFLINE_ONLY',
     STREAM_TEST_MOCK:mock,STREAM_TEST_LOG:log,CLOUDFLARE_ACCOUNT_ID:'c'.repeat(32),CLOUDFLARE_STREAM_API_TOKEN:'OFFLINE_ONLY',CLOUDFLARE_STREAM_WEBHOOK_SECRET:secret};
   let output='',db;
   const child=spawn(process.execPath,['--import',pathToFileURL(preload).href,'server.js'],{cwd:new URL('..',import.meta.url),env,stdio:['ignore','pipe','pipe']});

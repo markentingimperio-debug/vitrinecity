@@ -1,5 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {resolveMediaConfig} from '../ai-media-provider.js';
+
+const mediaConfig=resolveMediaConfig();
+if(!mediaConfig.videoEnabled)throw new Error(mediaConfig.videoReason||'A geração de vídeo está indisponível.');
 
 const apiKey=String(process.env.OPENROUTER_API_KEY||'').trim();
 if(!apiKey)throw new Error('OPENROUTER_API_KEY não configurada.');
