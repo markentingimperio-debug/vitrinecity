@@ -2709,13 +2709,14 @@ const webStories = dailyStories = setupDailyWebStories({app,db,requireAdmin,same
   services:()=>DIGITAL_SERVICE_PACKAGES,courses:()=>managedCourses(true).filter(course=>courseReady(course.slug)),
   requestText:requestEditorialText,requestImage:createStoryImageProvider({provider:()=>process.env.OPENAI_API_KEY?'openai':'openrouter',request:(url,...args)=>url==='https://api.openai.com/v1/images/generations'?storyOpenAIRequest(url,...args):openRouterRequest(url,...args),model:()=>process.env.OPENAI_API_KEY?'gpt-image-2':OPENROUTER_IMAGE_MODEL,outputDir:generatedMediaDir}),
   isConfigured:()=>aiConfigured(),canRun:ecosystemCanRun,autoRunAllowed:()=>!ecosystem?.policy().enabled});
-const socialCommentSources = createWebStorySources({
+const socialCommentSourceOptions = {
   db, publicDir:path.join(dir,'public'), services:()=>DIGITAL_SERVICE_PACKAGES,
   courses:()=>managedCourses(true).filter(course=>courseReady(course.slug))
-});
+};
+const socialCommentSources = createWebStorySources(socialCommentSourceOptions);
 const socialCommentCampaigns = registerSocialCommentCampaigns({
   app, db, requireAdmin, sameOriginOnly, siteUrl:SITE_URL,
-  sourceCatalog:socialCommentSources,canRun:ecosystemCanRun,
+  sourceCatalog:createWebStorySources({...socialCommentSourceOptions,includePrayerPage:true}),canRun:ecosystemCanRun,
   commentModerationReason:socialModerationReason,
   metaAdapter:createMetaCommentApi({db,decryptToken:decryptSocialToken})
 });

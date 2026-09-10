@@ -4,6 +4,10 @@ import {randomUUID} from 'node:crypto';
 import express from 'express';
 import Database from 'better-sqlite3';
 import {registerSocialCommentCampaigns} from '../social-comment-campaigns.js';
+import {createWebStorySources} from '../web-story-sources.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const API='/api/admin/social-comment-campaigns',origin='https://vitrinecity.com';
 async function fixture(t,options={}){
@@ -15,7 +19,7 @@ async function fixture(t,options={}){
     ['plant',{key:'plant',title:'Guia de plantas',summary:'Entenda os cuidados básicos.',image_url:'/uploads/guia.png',sourcePath:'/artigo/plantas',commercial:false,facts:{category:'plantas'},body:'Cuidados com plantas.'}],
     ['product',{key:'product',title:'Adubo para plantas',summary:'Conheça a apresentação e confira a oferta.',image_url:'https://http2.mlstatic.com/D_NQ_NP_2X_123-F.webp',sourcePath:'/ofertas/adubo',commercial:true,facts:{affiliate:true},body:'Descrição conferida.'}]
   ])};
-  const sourceCatalog={get:key=>state.sources.get(key),list:({q='',limit=200}={})=>[...state.sources.values()].filter(source=>!q||source.title.toLowerCase().includes(q.toLowerCase())).slice(0,limit)};
+  const sourceCatalog=options.createSourceCatalog?.(db)||{get:key=>state.sources.get(key),list:({q='',limit=200}={})=>[...state.sources.values()].filter(source=>!q||source.title.toLowerCase().includes(q.toLowerCase())).slice(0,limit)};
   const metaAdapter={inspect:async input=>{state.inspections.push(input);if(state.inspectHook)return state.inspectHook(input);return {ready:state.ready,missing:state.ready?[]:['Falta a permissão necessária.'],postUrl:'https://www.facebook.com/100/posts/'+input.postId};},send:async input=>{state.sends.push(input);state.sequence.push('private');if(state.sendHook)return state.sendHook(input);return {messageId:'message_'+state.sends.length};},replyPublic:async input=>{state.publicReplies.push(input);state.sequence.push('public');if(state.publicHook)return state.publicHook(input);return {commentId:'900_'+state.publicReplies.length};},likeComment:async input=>{state.reactions.push(input);state.sequence.push('reaction');if(state.reactionHook)return state.reactionHook(input);return {success:true};}};
   const app=express();app.use(express.json());
   const register=app=>registerSocialCommentCampaigns({app,db,sourceCatalog,metaAdapter,canRun:()=>!state.paused,commentModerationReason:options.commentModerationReason,siteUrl:origin,now:()=>state.time,sendTimeoutMs:options.sendTimeoutMs??50,inspectTimeoutMs:options.inspectTimeoutMs??1000,
@@ -67,6 +71,22 @@ test('catalog and routes require admin; mutations require origin; account tokens
   assert.equal((await f.request('/catalog')).body.accounts.length,1);
   f.state.sources.set('bad',{key:'bad',title:'Bad',image_url:'javascript:bad',sourcePath:'https://evil.test'});
   assert.equal((await f.request('/catalog')).body.items.length,3);
+});
+
+test('a prayer draft points to the fixed page and changing the published prayer invalidates activation without sending',async t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'vitrine-prayer-campaign-'));
+  t.after(()=>{const resolved=path.resolve(root);assert.equal(path.dirname(resolved),path.resolve(os.tmpdir()));assert.ok(path.basename(resolved).startsWith('vitrine-prayer-campaign-'));fs.rmSync(resolved,{recursive:true,force:true});});
+  const file=path.join(root,'oracao-do-dia.html'),image=path.join(root,'assets/prayer/jesus-areia-v1.png');
+  fs.mkdirSync(path.dirname(image),{recursive:true});fs.writeFileSync(image,'fixture image');
+  const html=fs.readFileSync(new URL('../public/oracao-do-dia.html',import.meta.url),'utf8');fs.writeFileSync(file,html);
+  const f=await fixture(t,{createSourceCatalog:db=>createWebStorySources({db,publicDir:root,includePrayerPage:true})});
+  const preview=await f.preview({sourceKey:'page:oracao-do-dia',triggerMode:'any_comment',keyword:'EU QUERO',caption:'Deixe seu comentário para receber esta oração.',invite:'none'});
+  assert.equal(preview.status,200);assert.equal(preview.body.status,'draft');assert.equal(preview.body.source.commercial,false);
+  assert.match(preview.body.privateReply,/https:\/\/vitrinecity\.com\/oracao-do-dia\.html\?/);assert.doesNotMatch(preview.body.privateReply,/Publicidade|\/produto\//);
+  const updated=html.replace('Senhor, neste momento eu me coloco em tua presença.','Senhor, esta é uma nova edição da oração.');assert.notEqual(updated,html);fs.writeFileSync(file,updated);
+  const activation=await f.request('/'+preview.body.id+'/activate','POST',{});assert.equal(activation.status,409);assert.match(activation.body.error,/conteúdo mudou/i);
+  assert.equal(f.db.prepare('SELECT status FROM social_content_campaigns WHERE id=?').get(preview.body.id).status,'draft');
+  assert.equal(f.state.sends.length,0);assert.equal(f.state.publicReplies.length,0);assert.equal(f.state.reactions.length,0);assert.equal(f.rows().length,0);
 });
 
 test('draft without a post prepares photo, copy, disclosure and optional VIP invitation without publishing',async t=>{
