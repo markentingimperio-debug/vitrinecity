@@ -6,8 +6,18 @@ import {storeBuildingIdentity} from './vitriny-store-building-core.js';
 export function dressRetailGallery({group,architecture:a,width:w,depth:d,height:h,label,lite=false}){
   const identity=storeBuildingIdentity(label),style=identity.style,front=d/2;
   const material=options=>{const m=new THREE.MeshStandardMaterial(options);a.materials.add(m);return m;};
-  const window=material({color:'#a4b7ba',metalness:.3,roughness:.1,transparent:true,opacity:.3,depthWrite:false});
-  const sideGlazing=material({color:'#718995',metalness:.78,roughness:.16,envMapIntensity:1.3});
+  // Each real gallery carries its architectural identity on the existing piers,
+  // cornices and screen surround; product photographs retain their own colours.
+  const palette={
+    botanical:{cladding:'#256348',window:'#568c80',glass:'#245c59'},
+    country:{cladding:'#a55738',window:'#71908d',glass:'#315664'},
+    learning:{cladding:'#245d78',window:'#4c899f',glass:'#17485f'},
+    creative:{cladding:'#714852',window:'#718294',glass:'#344d67'},
+    gallery:{cladding:'#426b89',window:'#5e8fa8',glass:'#254f70'}
+  }[style];
+  const cladding=material({color:palette.cladding,metalness:style==='country'?.16:.28,roughness:.62});
+  const window=material({color:palette.window,metalness:.18,roughness:.12,envMapIntensity:.85,transparent:true,opacity:.3,depthWrite:false});
+  const sideGlazing=material({color:palette.glass,metalness:.56,roughness:.2,envMapIntensity:.85});
   const innerWall=material({color:style==='country'?'#94795d':'#a08e75',roughness:.91,emissive:'#e6b26c',emissiveIntensity:.035});
   const ceiling=material({color:'#bca78b',roughness:.78,emissive:'#e7a652',emissiveIntensity:.06});
   const linen=material({color:'#ede1ca',roughness:1}),leather=material({color:style==='creative'?'#787c70':'#aa7851',roughness:.72});
@@ -38,8 +48,8 @@ export function dressRetailGallery({group,architecture:a,width:w,depth:d,height:
     a.roundedPart(group,ceiling,0,y+floorHeight-.22,zz,ww-.65,.12,dd-.65,1.8);
     a.part(group,innerWall,0,y+floorHeight/2,zz-dd/2+.3,ww-.7,floorHeight-.4,.45);
     for(const side of [-1,1]){
-      a.part(group,a.stone,side*(ww/2-.2),y+floorHeight/2,zz-dd/2+.4,.5,floorHeight,.8);
-      a.part(group,a.stone,side*(ww/2-.1),y+floorHeight/2,zz+dd/2-.6,.7,floorHeight,1.35);
+      a.part(group,cladding,side*(ww/2-.2),y+floorHeight/2,zz-dd/2+.4,.5,floorHeight,.8);
+      a.part(group,cladding,side*(ww/2-.1),y+floorHeight/2,zz+dd/2-.6,.7,floorHeight,1.35);
       a.part(group,a.brass,side*(ww/2-.54),y+floorHeight/2,zz+dd/2+.11,.075,floorHeight,.12);
       a.part(group,sideGlazing,side*(ww/2+.015),y+floorHeight/2,zz,.04,floorHeight-.36,dd-1.8);
       for(let z=-dd/2+2.6;z<dd/2-1;z+=2.8)a.part(group,a.brass,side*(ww/2+.08),y+floorHeight/2,zz+z,.1,floorHeight-.3,.075);
@@ -49,7 +59,7 @@ export function dressRetailGallery({group,architecture:a,width:w,depth:d,height:
     const pane=a.part(group,window,0,y+floorHeight/2,zz+dd/2+.015,ww-1.1,floorHeight-.4,.045);pane.renderOrder=2;
     for(let x=-ww/2+2.7;x<ww/2-1;x+=2.8){a.part(group,a.brass,x,y+floorHeight/2,zz+dd/2+.065,.085,floorHeight-.35,.11);}
     a.part(group,a.brass,0,y+1.25,zz+dd/2+.06,ww-.8,.055,.085);
-    a.roundedPart(group,a.stone,0,y+floorHeight,zz,ww+1.25,.48,dd+1.25,2.5);
+    a.roundedPart(group,cladding,0,y+floorHeight,zz,ww+1.25,.48,dd+1.25,2.5);
     a.roundedPart(group,a.warm,0,y+floorHeight-.2,zz,ww+1.28,.045,dd+1.28,2.5);
     for(const side of [-1,1]){
       const x=side*ww*.26;
@@ -74,11 +84,10 @@ export function dressRetailGallery({group,architecture:a,width:w,depth:d,height:
       }
     }
   }
-  // A solid pale frame surrounds the portrait catalog screen instead of an
-  // office tower behind a freestanding billboard.
+  // The coloured surround integrates the real catalog screen into its facade.
   const screenY=h+7.4;
-  for(const side of [-1,1])a.part(group,a.stone,side*5.5,screenY,front+.65,.8,13.6,1.3);
-  for(const side of [-1,1])a.part(group,a.stone,0,screenY+side*6.65,front+.65,11.8,.8,1.3);
+  for(const side of [-1,1])a.part(group,cladding,side*5.5,screenY,front+.65,.8,13.6,1.3);
+  for(const side of [-1,1])a.part(group,cladding,0,screenY+side*6.65,front+.65,11.8,.8,1.3);
   a.part(group,a.warm,0,screenY+6.21,front+1.3,10.2,.045,.08);
   a.roundedPart(group,a.stone,0,top+.4,-setbacks.at(-1)*.55,w-setbacks.at(-1)*2+1.6,.7,d-setbacks.at(-1)*1.1+1.6,2.5);
   const signWidth=w*.74;

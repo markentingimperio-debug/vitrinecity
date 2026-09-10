@@ -7,9 +7,9 @@ export function createPremiumFacades({mobile=false}={}){
     const canvas=document.createElement('canvas');canvas.width=mobile?256:512;canvas.height=mobile?512:1024;
     const ctx=canvas.getContext('2d');ctx.scale(canvas.width/256,canvas.height/512);
     const gradient=ctx.createLinearGradient(0,0,256,512);
-    gradient.addColorStop(0,['#667d87','#727f81','#5f7780'][variant]);
-    gradient.addColorStop(.52,['#526771','#606f71','#536c76'][variant]);
-    gradient.addColorStop(1,['#3d505b','#495e64','#40565f'][variant]);
+    gradient.addColorStop(0,['#417caa','#3c817f','#9b7951'][variant]);
+    gradient.addColorStop(.52,['#285f8c','#286762','#795735'][variant]);
+    gradient.addColorStop(1,['#153c61','#173f40','#4c3525'][variant]);
     ctx.fillStyle=gradient;ctx.fillRect(0,0,256,512);
     for(let col=0;col<8;col++){
       const x=col*32;
@@ -27,7 +27,7 @@ export function createPremiumFacades({mobile=false}={}){
     }
     const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;
     texture.anisotropy=mobile?2:4;texture.wrapS=texture.wrapT=THREE.RepeatWrapping;
-    const material=new THREE.MeshStandardMaterial({map:texture,color:'#d0dce2',metalness:.76,roughness:.18,envMapIntensity:1.15});
+    const material=new THREE.MeshStandardMaterial({map:texture,color:'#c5dced',metalness:.64,roughness:.19,envMapIntensity:1.0});
     material.name='architectural-curtain-glass-'+variant;
     return material;
   });

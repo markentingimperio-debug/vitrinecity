@@ -20,12 +20,12 @@ export function createArchitectureKit({renderer,scene,shadows=false,lite=false})
   for(let i=0;i<256*256;i++){const x=i%256,y=Math.floor(i/256),grain=Math.sin(x*12.9898+y*78.233)*43758.5453,shade=Math.floor((grain-Math.floor(grain))*13)+237;stonePixels.data.set([shade,shade-2,shade-7,255],i*4);}
   stoneContext.putImageData(stonePixels,0,0);
   const stoneMap=new THREE.CanvasTexture(stoneCanvas);stoneMap.colorSpace=THREE.SRGBColorSpace;stoneMap.wrapS=stoneMap.wrapT=THREE.RepeatWrapping;stoneMap.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());textures.add(stoneMap);
-  const stone=standard({color:'#e6dcc9',map:stoneMap,roughness:.78});
-  const graphite=standard({color:'#293b40',metalness:.45,roughness:.34});
-  const brass=standard({color:'#bca16a',metalness:.72,roughness:.3});
-  const wood=standard({color:'#bbaa92',map:pbr('wood_floor','Diffuse',2),normalMap:lite?null:pbr('wood_floor','nor_gl',2),normalScale:new THREE.Vector2(.35,.35),roughnessMap:lite?null:pbr('wood_floor','Rough',2),roughness:.85,emissive:'#895b30',emissiveIntensity:.06});
-  const interior=standard({color:'#ded1ad',roughness:.82,emissive:'#eec480',emissiveIntensity:.3});
-  const warm=glow('#ffd891',1.7),white=glow('#f4eddb',.65);
+  const stone=standard({color:'#cbb58f',map:stoneMap,roughness:.78});
+  const graphite=standard({color:'#172e3b',metalness:.45,roughness:.34});
+  const brass=standard({color:'#c49a46',metalness:.72,roughness:.3});
+  const wood=standard({color:'#ae7c4e',map:pbr('wood_floor','Diffuse',2),normalMap:lite?null:pbr('wood_floor','nor_gl',2),normalScale:new THREE.Vector2(.35,.35),roughnessMap:lite?null:pbr('wood_floor','Rough',2),roughness:.85,emissive:'#895b30',emissiveIntensity:.025});
+  const interior=standard({color:'#cba36f',roughness:.82,emissive:'#ffbd68',emissiveIntensity:.16});
+  const warm=glow('#ffc66b',1.25),white=glow('#eed6ad',.38);
   const glass=standard({color:'#aed3d7',metalness:.18,roughness:.14,transparent:true,opacity:.16,depthWrite:false});
   const foliage=['#355139','#617747','#486237'].map(color=>standard({color,roughness:.93,side:THREE.DoubleSide}));
   const curtainMaterials=createPremiumFacades({mobile:lite});

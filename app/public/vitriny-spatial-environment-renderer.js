@@ -12,7 +12,7 @@ function setTransform(mesh,index,{x=0,y=0,z=0,sx=1,sy=1,sz=1,ry=0},matrix,quater
 function setCount(mesh,factor){if(!mesh?.isInstancedMesh)return;const base=mesh.userData.baseCount||mesh.count;mesh.count=Math.max(0,Math.min(base,Math.ceil(base*factor)));mesh.visible=mesh.count>0;}
 function cameraDistance(camera){const x=Number(camera?.position?.x),z=Number(camera?.position?.z);return Number.isFinite(x)&&Number.isFinite(z)?Math.hypot(x,z):0;}
 
-export async function mountSpatialCityEnvironment({scene,camera=null,cityId,identity,profileId='STANDARD',shadows=false,fetchImpl=globalThis.fetch}={}){
+export async function mountSpatialCityEnvironment({scene,camera=null,cityId,identity,profileId='STANDARD',shadows=false,fixedArchitecturalLighting=false,fetchImpl=globalThis.fetch}={}){
   if(!scene?.add)throw new TypeError('spatial_environment_scene_required');
   const environment=await fetchSpatialEnvironment({cityId,profileId,fetchImpl});
   const group=new THREE.Group();group.name=`city-environment:${environment.cityId}:${environment.profileId}`;group.userData={spatialEnvironment:true,cityId:environment.cityId,profileId:environment.profileId};
@@ -74,15 +74,19 @@ export async function mountSpatialCityEnvironment({scene,camera=null,cityId,iden
   const original={hemi:hemi?.intensity??null,directional:directional?.intensity??null,fog:scene.fog?.density??null};
   let currentPhase=null;
   function applyPhase(){
-    const phase=resolveSpatialDayPhase(new Date().getHours());if(currentPhase?.id===phase.id)return;currentPhase=phase;group.userData.dayPhase=phase.id;
-    if(hemi&&original.hemi!=null)hemi.intensity=original.hemi*phase.ambient;
-    if(directional&&original.directional!=null)directional.intensity=original.directional*phase.sun;
-    if(scene.fog&&original.fog!=null)scene.fog.density=original.fog*phase.fog;
+    const phase=resolveSpatialDayPhase(fixedArchitecturalLighting?18:new Date().getHours());if(currentPhase?.id===phase.id)return;currentPhase=phase;group.userData.dayPhase=phase.id;
+    // A photographic sunset owns its sun, ambient light and haze independently
+    // from the visitor's clock. Only decorative fixtures use this dusk phase.
+    if(!fixedArchitecturalLighting){
+      if(hemi&&original.hemi!=null)hemi.intensity=original.hemi*phase.ambient;
+      if(directional&&original.directional!=null)directional.intensity=original.directional*phase.sun;
+      if(scene.fog&&original.fog!=null)scene.fog.density=original.fog*phase.fog;
+    }
     if(meshes.skyline?.material)meshes.skyline.material.emissiveIntensity=.035+.12*phase.emissive;
     if(meshes.lights?.material){meshes.lights.material.opacity=.45+.5*phase.emissive;meshes.lights.material.transparent=true;}
     if(meshes.districtLights?.material)meshes.districtLights.material.opacity=.52+.46*phase.emissive;
   }
-  applyPhase();const phaseTimer=setInterval(applyPhase,60000);
+  applyPhase();const phaseTimer=fixedArchitecturalLighting?null:setInterval(applyPhase,60000);
 
   const fpsLod=createSpatialLodController({profile:profileId});
   const distanceLod=createSpatialDistanceLodController({profile:profileId,initialDistance:cameraDistance(camera)});
@@ -111,5 +115,5 @@ export async function mountSpatialCityEnvironment({scene,camera=null,cityId,iden
   raf=requestAnimationFrame(sample);
 
   scene.add(group);
-  return Object.freeze({group,environment,get phase(){return currentPhase?.id||'day';},get lodLevel(){return fpsLod.level;},get distanceTier(){return distanceLod.tier;},dispose(){disposed=true;cancelAnimationFrame(raf);clearInterval(phaseTimer);if(hemi&&original.hemi!=null)hemi.intensity=original.hemi;if(directional&&original.directional!=null)directional.intensity=original.directional;if(scene.fog&&original.fog!=null)scene.fog.density=original.fog;scene.remove(group);group.traverse(object=>{object.geometry?.dispose?.();for(const material of Array.isArray(object.material)?object.material:[object.material]){material?.map?.dispose?.();material?.dispose?.();}});}});
+  return Object.freeze({group,environment,get phase(){return currentPhase?.id||'day';},get lodLevel(){return fpsLod.level;},get distanceTier(){return distanceLod.tier;},dispose(){disposed=true;cancelAnimationFrame(raf);if(phaseTimer!==null)clearInterval(phaseTimer);if(!fixedArchitecturalLighting){if(hemi&&original.hemi!=null)hemi.intensity=original.hemi;if(directional&&original.directional!=null)directional.intensity=original.directional;if(scene.fog&&original.fog!=null)scene.fog.density=original.fog;}scene.remove(group);group.traverse(object=>{object.geometry?.dispose?.();for(const material of Array.isArray(object.material)?object.material:[object.material]){material?.map?.dispose?.();material?.dispose?.();}});}});
 }

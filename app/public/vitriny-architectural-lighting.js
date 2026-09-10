@@ -31,11 +31,11 @@ export function configureArchitecturalLighting({renderer,scene,sun,profile={id:'
     if(hiddenHorizon)hiddenHorizon.visible=horizonVisible;
   }
   renderer.toneMapping=THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure=.85;
-  if(scene.fog){scene.fog.color.set('#cdbba6');if('density' in scene.fog)scene.fog.density=.00055;}
+  renderer.toneMappingExposure=.8;
+  if(scene.fog){scene.fog.color.set('#a39784');if('density' in scene.fog)scene.fog.density=.00035;}
   for(const light of scene.children){
-    if(light.isHemisphereLight){light.color.set('#bacadf');light.groundColor.set('#8d7660');light.intensity=.32;}
-    if(light.isAmbientLight)light.intensity=.06;
+    if(light.isHemisphereLight){light.color.set('#adc6e5');light.groundColor.set('#8d6844');light.intensity=.18;}
+    if(light.isAmbientLight)light.intensity=.025;
   }
   if(sun){
     sun.color.set('#ffc58c');sun.intensity=2.2;
@@ -62,7 +62,7 @@ export function configureArchitecturalLighting({renderer,scene,sun,profile={id:'
       generator=new THREE.PMREMGenerator(renderer);
       environmentTarget=generator.fromEquirectangular(texture);
       scene.environment=environmentTarget.texture;
-      scene.environmentIntensity=lite ? .65 : .7;
+      scene.environmentIntensity=lite ? .56 : .58;
       if(photograph){
         photograph.colorSpace=THREE.SRGBColorSpace;
         // Direct panorama sampling avoids Three's automatic 2048px cubemap for a 4K sky.

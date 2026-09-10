@@ -24,12 +24,12 @@ export function mountCityHeadquarters({scene,architecture,facade,shadows=false})
   const {part,roundedPart,stone,graphite,brass,warm,wood,tree,shrubs,textSign,glass}=architecture;
   function material(options){const value=new THREE.MeshStandardMaterial(options);architecture.materials.add(value);return value;}
   function geometry(value){architecture.geometries.add(value);return value;}
-  const porcelain=material({color:'#e9dfcf',roughness:.62,metalness:.025});
+  const porcelain=material({color:'#d0b891',roughness:.62,metalness:.025});
   const plaster=material({color:'#daceb7',roughness:.84,emissive:'#db9b49',emissiveIntensity:.11});
   const silk=material({color:'#bc9d77',roughness:.96});
-  const darkGlass=material({color:'#496874',metalness:.78,roughness:.15,envMapIntensity:1.15});
-  const spandrel=material({color:'#344e58',metalness:.64,roughness:.24});
-  const upperGlass=(facade||architecture.curtain).clone();upperGlass.color.set('#c8d9de');upperGlass.metalness=.66;upperGlass.roughness=.19;upperGlass.emissiveIntensity=.22;architecture.materials.add(upperGlass);
+  const darkGlass=material({color:'#195b83',metalness:.68,roughness:.15,envMapIntensity:1.0});
+  const spandrel=material({color:'#193e56',metalness:.64,roughness:.24});
+  const upperGlass=(facade||architecture.curtain).clone();upperGlass.color.set('#83b9df');upperGlass.metalness=.66;upperGlass.roughness=.19;architecture.materials.add(upperGlass);
   const pendantShape=geometry(new THREE.TorusGeometry(1,.028,6,32));
   const columnShape=geometry(new THREE.CylinderGeometry(1,1,1,12));
 

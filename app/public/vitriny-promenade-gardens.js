@@ -21,14 +21,14 @@ function curvedSeatGeometry(radius, width, arc) {
 export function mountPromenadeGardens({scene, architecture, lite = false}) {
   const a = architecture, group = new THREE.Group(); group.name = 'promenade-gardens';
   const l = createLandscapeModels({architecture: a, lite});
-  const paving = a.pavingMaterial({color: '#c2bba9', repeat: 18, formal: true});
+  const paving = a.pavingMaterial({color: '#8f8069', repeat: 18, formal: true});
   paving.map.repeat.set(18, 54);
-  const foregroundPaving = a.pavingMaterial({color: '#c2bba9', repeat: 18, formal: true});
+  const foregroundPaving = a.pavingMaterial({color: '#8f8069', repeat: 18, formal: true});
   foregroundPaving.map.repeat.set(18, 26);
   // The transverse street stays open; the store references and entrances are untouched.
   a.part(group, paving, -164, .51, -56, 92, .14, 276);
   a.part(group, foregroundPaving, -164, .51, 185, 92, .14, 134);
-  const inset = l.material({color: '#afa99a', roughness: .79});
+  const inset = l.material({color: '#63594a', roughness: .79});
   for (const x of [-192, -136]) for (const [center, length] of [[-56, 276], [185, 134]]) {
     a.part(group, inset, x, .59, center, .24, .035, length);
   }

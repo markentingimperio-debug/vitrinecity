@@ -45,7 +45,7 @@ export function dressBoutique({group,architecture,width,depth,height,label,lite=
 }
 
 export function dressCommercialCenter({group,architecture,center}){
-  const a=architecture,h=center.height,accent=new THREE.MeshStandardMaterial({color:new THREE.Color(center.color).lerp(new THREE.Color("#b3b3a0"),.68),metalness:.6,roughness:.24}),glazing=new THREE.MeshStandardMaterial({color:'#486b80',metalness:.7,roughness:.18});
+  const a=architecture,h=center.height,accent=new THREE.MeshStandardMaterial({color:new THREE.Color(center.color).lerp(new THREE.Color('#b3b3a0'),.24),metalness:.38,roughness:.34}),glazing=new THREE.MeshStandardMaterial({color:'#486b80',metalness:.7,roughness:.18});
   a.materials.add(accent);a.materials.add(glazing);
   // Deep window bays establish individual floors instead of one stretched texture.
   for(let y=17;y<h-2;y+=5.6)for(const x of [-16,-8,0,8,16])a.part(group,a.brass,x,y,12.6,.085,4.7,.12);

@@ -216,7 +216,7 @@ $('deliveryBaseDirectory').querySelector('[data-close]').addEventListener('click
 installHeadquartersDirectory($('headquartersDirectory'));
 $('openHeadquarters').addEventListener('click',()=>{releaseControls();$('headquartersDirectory').showModal();});
 let cityEnvironmentMount=null;
-mountSpatialCityEnvironment({scene,camera,cityId,identity:cityIdentity,profileId:profile.id,shadows:profile.shadows}).then(result=>{if(disposed){result.dispose();return;}cityEnvironmentMount=result;}).catch(()=>{cityEnvironmentMount=null;});
+mountSpatialCityEnvironment({scene,camera,cityId,identity:cityIdentity,profileId:profile.id,shadows:profile.shadows,fixedArchitecturalLighting:isActiveCity}).then(result=>{if(disposed){result.dispose();return;}cityEnvironmentMount=result;}).catch(()=>{cityEnvironmentMount=null;});
 const districtIds=['commerce','social','creator','food','education','entertainment','business','services'];
 for(let i=0;i<districtIds.length;i++){
   const id=districtIds[i],experience=districtExperience(id);if(!experience)continue;
