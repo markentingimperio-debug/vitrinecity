@@ -274,8 +274,9 @@ function addLiveStore(entity){
   const storeBillboard=billboards.registerStore(g,entity,{roof:9,onPlaylist:updateDisplay});
   liveStoreGroup.add(g);storeTargets.push(g);
   modeledBuildings.mountStore(g,entity,fallback,{onReady:layout=>storeBillboard.setLayout(layout)});
-  const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=entity.href;entry.setAttribute('aria-label',`Visitar ${entity.name}`);
-  const name=document.createElement('small');name.textContent=entity.name;const action=document.createElement('strong');action.textContent='Visitar loja  →';entry.append(name,action);
+  const isPlantStore=entity.reference==='official_agrotecnica';
+  const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=entity.href;entry.setAttribute('aria-label',isPlantStore?'Ver adubos para plantas da Agrotécnica':`Visitar ${entity.name}`);
+  const name=document.createElement('small');name.textContent=entity.name;const action=document.createElement('strong');action.textContent=isPlantStore?'Ver adubos →':'Ver produtos →';entry.append(name,action);
   entry.addEventListener('click',()=>saveSpatialContext({spatialPath:`/v/br/go/${cityId}/commerce/${encodeURIComponent(entity.reference)}`,districtId:'commerce',targetType:'store',targetId:entity.reference}));entranceLayer.append(entry);
   const anchor=g.localToWorld(new THREE.Vector3(0,2.5,entity.size.depth/2+.4));storeEntrances.push({element:entry,anchor,normal:new THREE.Vector3(0,0,1).transformDirection(g.matrixWorld),href:entity.href,reference:entity.reference});
 }

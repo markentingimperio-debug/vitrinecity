@@ -34,4 +34,9 @@ if(deliveryParams.get('delivery')==='local'){
   fetch('/api/marketplace/products?delivery=local&q='+encodeURIComponent(search.value.trim())).then(response=>response.json()).then(payload=>{products=payload.products||[];render()});
   const localDigitalRender=render;render=()=>{localDigitalRender();for(const product of products.filter(item=>item.product_type==='digital')){const card=productsBox.querySelector(`[data-add="${product.id}"]`)?.closest('.card')||productsBox.querySelector(`a[href*="/produto/${product.id}/"]`)?.closest('.card');if(card&&!card.querySelector('.digital-delivery-badge'))card.querySelector('.copy').insertAdjacentHTML('afterbegin','<span class="digital-delivery-badge" style="display:inline-flex;padding:4px 8px;border-radius:999px;background:#e8f1ff;color:#075bc7;font-size:11px;font-weight:900">Entrega digital</span>')}};
 }
+</script><script type="module">
+import {applyExternalPhysicalProductLinks} from '/vitriny-external-product-purchase.js';
+const baseExternalProductRender=render;
+render=(...args)=>{baseExternalProductRender(...args);applyExternalPhysicalProductLinks(productsBox,products,{origin:location.origin});};
+render();
 </script></body></html>

@@ -27,6 +27,7 @@ import {ADS_TERMS_VERSION,ADS_VALIDITY_DAYS,creditExpiryForOrder} from './credit
 import {setupCityChat} from './city-chat.js';
 import {setupCityExploration,decorateExplorationPage} from './city-exploration.js';
 import {setupCityRewards} from './city-rewards.js';
+import {setupPrayerSupport} from './prayer-support.js';
 import {setupCourierAccount} from './courier-account.js';
 import { setupMediaCatalog } from './media-catalog.js';
 import { setupEmissora } from './emissora.js';
@@ -2643,6 +2644,9 @@ const cityRewards=setupCityRewards({app,db,requireUser,requireAdmin,sameOriginOn
     const data=await response.json();if(!response.ok)throw Error('Pagamento indisponível');return data;}
 });
 const cityExploration=setupCityExploration({app,db,requireUser,sameOriginOnly,rewards:cityRewards});
+setupPrayerSupport({app,db,siteUrl:SITE_URL,sameOriginOnly,
+  allowAttempt:ip=>allowAttempt(checkoutAttempts,`prayer-support:${ip}`,5,10*60*1000),
+  verifySignature:(req,id)=>validMercadoPagoSignature(req,id)});
 const cityChat=setupCityChat({app,db,requireUser,requireAdmin,sameOriginOnly,publicDir:path.join(dir,'public')});
 setupCourierAccount({app,db,requireCourier,requireAdmin,sameOriginOnly,hashPassword,verifyPassword,sessionHash,
   allowAttempt:(key,limit,windowMs)=>allowAttempt(authAttempts,key,limit,windowMs),

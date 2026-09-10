@@ -7,6 +7,7 @@ export const MODELED_RETAIL_ASSETS=Object.freeze({
   gallery:'/assets/architecture/vc-retail-gallery-v1.glb'
 });
 export const MODELED_RETAIL_LAYOUT=Object.freeze({width:20.8,height:6.8,y:21.3,z:9.55,portrait:false});
+export const AGROTECNICA_STORE_SIGN=Object.freeze({label:'ADUBO PARA PLANTAS',action:'VER PRODUTOS →',width:21.4,height:2.2,y:26.4,z:9.64});
 const accentColors={botanical:'#256348',country:'#a55738',learning:'#245d78',creative:'#714852',gallery:'#426b89'};
 
 async function loadRetailModel(url){
@@ -63,6 +64,24 @@ function createStoreName(parent,entity,{width,height,y,z}){
   sign.position.set(0,y,z);parent.add(sign);
 }
 
+export function createAgrotecnicaStoreSign(parent,entity,{document=globalThis.document}={}){
+  const href=typeof entity?.href==='string'?entity.href:'';
+  if(entity?.reference!=='official_agrotecnica'||!href.startsWith('/')||href.startsWith('//')||/[\u0000-\u0020\u007f\\]/.test(href))return null;
+  const {label,action,width,height,y,z}=AGROTECNICA_STORE_SIGN,canvas=document.createElement('canvas');
+  canvas.width=2048;canvas.height=Math.round(canvas.width*height/width);
+  const ctx=canvas.getContext('2d');ctx.fillStyle='#bd9a55';ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#123b2b';ctx.fillRect(6,6,canvas.width-12,canvas.height-12);
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff5d7';ctx.font=`750 ${Math.round(canvas.height*.62)}px system-ui`;
+  ctx.fillText(label,canvas.width/2,canvas.height*.39,canvas.width*.94);
+  ctx.fillStyle='#d7e9c7';ctx.font=`600 ${Math.round(canvas.height*.19)}px system-ui`;
+  ctx.fillText(action,canvas.width/2,canvas.height*.84,canvas.width*.8);
+  const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=4;
+  const group=new THREE.Group();group.name='store-sign:official_agrotecnica:adubo-para-plantas';group.position.set(0,y,z);
+  group.userData={store:true,storeSign:true,reference:entity.reference,href,label,storeName:entity.name,action:'open-store'};
+  const face=new THREE.Mesh(new THREE.PlaneGeometry(width,height),new THREE.MeshBasicMaterial({map:texture,toneMapped:false}));
+  face.name='store-sign-face:official_agrotecnica:adubo-para-plantas';face.userData={...group.userData};group.add(face);parent.add(group);return group;
+}
+
 export function mountModeledBuildings({loadModel=loadRetailModel,shadows=false,createSign=createStoreName,disposeFallback=()=>{}}={}){
   const assets=new Map(),variants=new Map(),resources=new Set(),instances=new Set();
   let disposed=false;
@@ -114,6 +133,7 @@ export function mountModeledBuildings({loadModel=loadRetailModel,shadows=false,c
         });
         const signGroup=new THREE.Group();signGroup.name='modeled-store-name';modelGroup.add(signGroup);
         createSign(signGroup,entity,{width:20.4,height:1.35,y:17.05,z:9.62});
+        createAgrotecnicaStoreSign(signGroup,entity);
         collectResources(signGroup,resources);
         modelGroup.userData={architectureSource:'blender-glb',architectureAsset:url,architectureStyle:style,...loaded.metrics};
         // The billboard stays registered to the same store and receives its
