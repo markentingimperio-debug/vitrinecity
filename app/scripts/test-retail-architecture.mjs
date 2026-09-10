@@ -145,3 +145,21 @@ test('terrace foliage remains outside the next gallery and clear of structural s
     }finally{cleanup(f);}
   }
 });
+
+test('modeled retail billboard preserves its real destination and photograph proportions when resized',()=>{
+  const f=fixture();
+  try{
+    f.billboards=mountSpatialBillboards({scene:f.scene,architecture:f.architecture,active:false});
+    const entry=f.billboards.registerStore(f.parent,f.store,{roof:f.store.size.height});f.billboards.tick(0,{paused:true});
+    const identity=entry.group.userData,oldTexture=entry.texture;let disposedTextures=0;oldTexture.addEventListener('dispose',()=>disposedTextures++);
+    entry.setLayout({width:20.8,height:6.8,y:21.3,z:9.55,portrait:false});f.billboards.tick(0,{paused:true});f.scene.updateMatrixWorld(true);
+    assert.equal(entry.group.parent,f.parent);assert.equal(entry.group.userData,identity);assert.equal(entry.group.userData.item.href,f.store.href);
+    assert.equal(disposedTextures,1);assert.notEqual(entry.texture,oldTexture);assert.equal(entry.wideStore,true);
+    const screen=entry.group.children.find(object=>object.isMesh&&object.geometry.type==='PlaneGeometry'&&object.position.z>0);
+    const width=screen.geometry.parameters.width*entry.group.scale.x,height=screen.geometry.parameters.height*entry.group.scale.y;
+    assert.ok(Math.abs(width-20.8)<1e-6);assert.ok(Math.abs(height-6.8)<1e-6);
+    assert.ok(Math.abs(width/height-entry.canvas.width/entry.canvas.height)<.006,'Wide photo canvas must match the installed display without stretching');
+    assert.ok(Math.abs(entry.group.position.z+screen.position.z-9.85)<1e-6);
+    assert.equal(screen.material.map,entry.texture);
+  }finally{cleanup(f);}
+});

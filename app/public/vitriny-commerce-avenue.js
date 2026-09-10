@@ -13,7 +13,7 @@ export function mountCommerceAvenue({scene,architecture,billboards,facade}){
     const group=new THREE.Group();group.name=`center-${center.id}`;group.position.set(-210,0,-115+index*64);group.rotation.y=Math.PI/2;
     group.userData={store:true,reference:`center-${center.id}`,label:center.title,href:center.href};
     const {part,stone,graphite,brass,glass,warm,textSign,tree}=architecture,{height}=center;
-    const accent=new THREE.MeshStandardMaterial({color:new THREE.Color(center.color).lerp(new THREE.Color("#b3b3a0"),.68),metalness:.3,roughness:.38});architecture.materials.add(accent);
+    const accent=new THREE.MeshStandardMaterial({color:new THREE.Color(center.color).lerp(new THREE.Color("#b3b3a0"),.24),metalness:.3,roughness:.38});architecture.materials.add(accent);
     const logoTexture=new THREE.TextureLoader().load(center.logo);logoTexture.colorSpace=THREE.SRGBColorSpace;logoTexture.anisotropy=8;
     if(center.logoCrop){const crop=center.logoCrop;logoTexture.repeat.set(crop.width,crop.height);logoTexture.offset.set(crop.x,1-crop.y-crop.height);}
     const logoMaterial=new THREE.MeshBasicMaterial({map:logoTexture,transparent:true,depthWrite:false,toneMapped:false});architecture.materials.add(logoMaterial);
@@ -24,9 +24,43 @@ export function mountCommerceAvenue({scene,architecture,billboards,facade}){
       const logoWidth=Math.min(width*.9,(signHeight-1)*center.logoRatio);
       const logo=new THREE.Mesh(new THREE.PlaneGeometry(logoWidth,logoWidth/center.logoRatio),logoMaterial);logo.position.set(0,y,z+.35);group.add(logo);
     }
-    architecture.roundedPart(group,stone,0,.6,0,48,1.2,39,4);architecture.roundedPart(group,architecture.curtain,0,height/2,-2,38,height,28,4);
-    for(const x of [-18,18])for(const z of [-12,9])part(group,stone,x,height/2,z,.65,height,.7);
-    for(let floor=1;floor<=3;floor++)architecture.terrace(group,{y:floor*height/3,z:-2,width:42-floor,depth:33,green:true});
+    architecture.roundedPart(group,stone,0,.6,0,48,1.2,39,4);
+    // The upper facade bows towards the avenue and stops above the inhabited
+    // ground floor. Separate reveals catch the sky without an opaque lobby box.
+    const frontage=new THREE.Group();frontage.name='bowed-commercial-facade';group.add(frontage);
+    const bow=center.id==='shopee'?2.1:center.id==='cakto'?1.5:3.5;
+    const frontZ=x=>12.1+bow*(1-Math.pow(x/19,2));
+    const glazing=(facade||architecture.curtain).clone();glazing.color.set('#6695ac');glazing.metalness=.58;glazing.roughness=.17;glazing.envMapIntensity=.9;
+    glazing.vertexColors=true;architecture.materials.add(glazing);
+    const positions=[],uv=[],colors=[];
+    function pane(ax,az,bx,bz,y,h,tone){
+      const vertices=[[ax,y,az,0,0],[bx,y,bz,1,0],[ax,y+h,az,0,h/24],[ax,y+h,az,0,h/24],[bx,y,bz,1,0],[bx,y+h,bz,1,h/24]];
+      for(const [x,yy,z,u,v] of vertices){positions.push(x,yy,z);uv.push(u*.3,v);colors.push(tone,tone,tone);}
+    }
+    for(let column=0;column<14;column++){
+      const x=-19+column*38/14,next=-19+(column+1)*38/14;
+      pane(x,frontZ(x),next,frontZ(next),13,height-13,.85+(column%4)*.05);
+      const fin=part(frontage,column%4===0?brass:graphite,x,13+(height-13)/2,frontZ(x)+.08,.07,height-13,.22);
+      fin.rotation.y=Math.atan(2*bow*x/(19*19));
+    }
+    pane(19,frontZ(19),19,-16,13,height-13,.87);
+    pane(-19,-16,-19,frontZ(-19),13,height-13,.87);
+    const skin=new THREE.BufferGeometry();skin.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));skin.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));skin.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));skin.computeVertexNormals();architecture.geometries.add(skin);
+    part(frontage,glazing,0,0,0,1,1,1,skin);
+    part(group,graphite,0,(height+13)/2,-16,38,height-13,.35);
+    for(const x of [-19.2,19.2]){
+      part(group,stone,x,(height+13)/2,10.4,.75,height-12,3.8);
+      for(let y=16;y<height;y+=3.4)part(group,graphite,x,y,12.32,.77,.035,.035);
+    }
+    // Thin transoms follow the actual curve instead of broad repeated terraces.
+    for(let y=17.5;y<height;y+=4.5)for(let i=0;i<14;i++){
+      const x=-19+i*38/14,next=-19+(i+1)*38/14,z=frontZ(x),nz=frontZ(next);
+      const transom=part(frontage,graphite,(x+next)/2,y,(z+nz)/2+.1,Math.hypot(next-x,nz-z),.085,.14);transom.rotation.y=-Math.atan2(nz-z,next-x);
+    }
+    architecture.terrace(group,{y:height+.15,z:-1,width:41,depth:37,green:true});
+    // The public entrance retains its existing anchor beneath a floating portico.
+    architecture.roundedPart(group,stone,0,8.96,21.5,31,.16,9.3,3.2);
+    for(const x of [-17.5,17.5]){part(group,brass,x,4.7,18.7,.16,7.8,.22);part(group,graphite,x,4.7,18.52,.22,7.8,.22);}
     // Five architectural silhouettes with brand identity kept on unchanged official artwork.
     if(center.id==='mercadolivre'){
       for(const x of [-12,12])part(group,accent,x,height-1,-2,5,5,31);

@@ -29,6 +29,7 @@ export function mountCityHeadquarters({scene,architecture,facade,shadows=false})
   const silk=material({color:'#bc9d77',roughness:.96});
   const darkGlass=material({color:'#195b83',metalness:.68,roughness:.15,envMapIntensity:1.0});
   const spandrel=material({color:'#193e56',metalness:.64,roughness:.24});
+  const wingGlass=glass.clone();wingGlass.color.set('#86b5c8');wingGlass.opacity=.3;wingGlass.roughness=.16;wingGlass.envMapIntensity=.75;architecture.materials.add(wingGlass);
   const upperGlass=(facade||architecture.curtain).clone();upperGlass.color.set('#83b9df');upperGlass.metalness=.66;upperGlass.roughness=.19;architecture.materials.add(upperGlass);
   const pendantShape=geometry(new THREE.TorusGeometry(1,.028,6,32));
   const columnShape=geometry(new THREE.CylinderGeometry(1,1,1,12));
@@ -149,9 +150,30 @@ export function mountCityHeadquarters({scene,architecture,facade,shadows=false})
   // unequal heights leave the central glass volume legible from the promenade.
   for(const side of [-1,1]){
     const wing=new THREE.Group(),height=side<0?25:34;wing.position.set(side*30,0,-4);group.add(wing);
-    roundedPart(wing,stone,0,height/2+.8,0,17,height,34,3.5);
-    part(wing,darkGlass,0,height/2+1,17.04,12,height-3,.12);
-    for(let y=5;y<height;y+=4.4)part(wing,brass,0,y,17.14,12,.08,.14);
+    // Open galleries give the lower wings real floor depth. The stone piers
+    // and recessed glass stay within the former footprint and clear the lobby.
+    part(wing,wood,0,height/2+.8,-16.1,15.6,height,.4);
+    for(const x of [-7.5,7.5]){
+      roundedPart(wing,stone,x,height/2+.8,0,2,height,34,1);
+      for(let y=5;y<height;y+=4.4)part(wing,graphite,x,y,17.015,2,.035,.03);
+      part(wing,brass,x-Math.sign(x)*1.02,height/2+.8,16.8,.055,height,.11);
+    }
+    part(wing,wingGlass,0,height/2+1,16.82,12,height-3,.045);
+    for(let y=.9;y<height;y+=4.4){
+      part(wing,stone,0,y,0,13,.18,32.8);
+      part(wing,graphite,0,y+.15,16.68,12,.19,.16);
+      part(wing,brass,0,y+.3,16.93,12,.055,.08);
+      // The long ceiling cove sits behind the glazing, with desks set farther
+      // back so the office scale reads from the promenade without extra lights.
+      if(y+4<height){
+        part(wing,warm,0,y+4.1,13.8,10.6,.035,.16);
+        for(const x of [-3.5,3.5]){
+          roundedPart(wing,silk,x,y+.52,10.5,2.1,.56,.95,.2);
+          part(wing,wood,x,y+.83,7.8,2.9,.12,1.15);
+          part(wing,graphite,x,y+.43,7.8,.14,.7,.85);
+        }
+      }
+    }
     for(const x of [-4,0,4])part(wing,brass,x,height/2+1,17.17,.065,height-3,.1);
     roundedPart(wing,stone,0,height+1,0,18,.4,35,3.5);
     roundedPart(wing,warm,0,height+.72,0,18.05,.07,35.05,3.5);

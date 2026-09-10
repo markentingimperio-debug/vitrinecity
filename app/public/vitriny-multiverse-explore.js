@@ -20,6 +20,7 @@ import {arrangeStoreBuildings,intersectsStoreBuilding} from './vitriny-store-bui
 import {mountDeliveryBase} from './vitriny-delivery-base.js';
 import {mountVisitorAvatar} from './vitriny-visitor-avatar.js';
 import {mountStorefrontDisplays} from './vitriny-storefront-displays.js';
+import {mountModeledBuildings} from './vitriny-modeled-buildings.js';
 import {mountGamesBuilding} from './vitriny-city-games-building.js';
 import {mountCinemaBuilding} from './vitriny-cinema-building.js';
 import {mountEmissoraBuilding} from './vitriny-emissora-building.js';
@@ -175,7 +176,7 @@ const headquarters=mountCityHeadquarters({scene,architecture,facade:facades[0],s
 const billboards=mountSpatialBillboards({scene,architecture,active:isActiveCity,cityName:cityContext.name});
 const storefronts=mountStorefrontDisplays({architecture,directory:$('storefrontProducts'),onVisit(store,{building=false}={}){
   $('storefrontDirectory').close();$('cityTools').open=false;releaseControls();
-  if(building){const offset=innerWidth<=760?60:48;avatarMode=false;position.set(store.position.x-38,16,store.position.z+offset);yaw=-Math.PI/2-Math.atan2(offset,38);pitch=.2;}
+  if(building){const offset=innerWidth<=760?60:48;avatarMode=false;position.set(store.position.x-38,16,store.position.z+offset);yaw=-Math.PI/2-Math.atan2(offset,38);pitch=-.035;}
   else{const distance=innerWidth<=760?37:29;position.set(store.position.x-distance,avatarMode?1.7:3.1,store.position.z+3);yaw=-Math.PI/2-.06;pitch=.05;}
   updateViewButton();
 }});
@@ -263,14 +264,16 @@ async function loadCityConnections(){
 }
 
 const liveStoreGroup=new THREE.Group();liveStoreGroup.name='commerce-live-stores';scene.add(liveStoreGroup);
+const modeledBuildings=mountModeledBuildings({shadows:profile.shadows,disposeFallback:group=>disposeGroup(group)});
 function addLiveStore(entity){
   const accent=palette[entity.accentIndex%palette.length],g=new THREE.Group();g.position.set(entity.position.x,0,entity.position.z);
   g.userData={store:true,href:entity.href,interiorHref:entity.interiorHref,label:entity.name,reference:entity.reference};
   g.rotation.y=-Math.PI/2;
-  architecture.boutique(g,{label:entity.name,width:entity.size.width,depth:entity.size.depth,height:entity.size.height,variant:entity.accentIndex,subtitle:entity.city,catalog:true});
+  const fallback=architecture.boutique(g,{label:entity.name,width:entity.size.width,depth:entity.size.depth,height:entity.size.height,variant:entity.accentIndex,subtitle:entity.city,catalog:true});
   const updateDisplay=storefronts.registerStore(g,entity);
-  billboards.registerStore(g,entity,{roof:9,onPlaylist:updateDisplay});
+  const storeBillboard=billboards.registerStore(g,entity,{roof:9,onPlaylist:updateDisplay});
   liveStoreGroup.add(g);storeTargets.push(g);
+  modeledBuildings.mountStore(g,entity,fallback,{onReady:layout=>storeBillboard.setLayout(layout)});
   const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=entity.href;entry.setAttribute('aria-label',`Visitar ${entity.name}`);
   const name=document.createElement('small');name.textContent=entity.name;const action=document.createElement('strong');action.textContent='Visitar loja  →';entry.append(name,action);
   entry.addEventListener('click',()=>saveSpatialContext({spatialPath:`/v/br/go/${cityId}/commerce/${encodeURIComponent(entity.reference)}`,districtId:'commerce',targetType:'store',targetId:entity.reference}));entranceLayer.append(entry);
@@ -358,7 +361,7 @@ addEventListener('vitriny:guide-visit',event=>{
   const store=storeReference?storeBuildingLots.find(s=>s.reference===storeReference):place==='education'?storeBuildingLots.find(s=>/educacional/i.test(s.name)):null;
   const landmark={headquarters,delivery:deliveryBase,games:gamesBuilding,music:musicArena,cinema:cinemaBuilding,emissora:emissoraBuilding,credits:creditsBuilding}[place];
   releaseControls();avatarMode=false;doorEntry.reset();
-  if(store){const offset=innerWidth<=760?60:48;position.set(store.position.x-38,16,store.position.z+offset);yaw=-Math.PI/2-Math.atan2(offset,38);pitch=.2;}
+  if(store){const offset=innerWidth<=760?60:48;position.set(store.position.x-38,16,store.position.z+offset);yaw=-Math.PI/2-Math.atan2(offset,38);pitch=-.035;}
   else if(place==='commerce'){position.set(-164,7,170);yaw=Math.PI;pitch=.14;}
   else if(place==='emissora'&&landmark){position.copy(landmark.localToWorld(new THREE.Vector3(18,14,innerWidth<=760?72:58)));yaw=Math.atan2(position.x-landmark.position.x,landmark.position.z-position.z);pitch=.11;}
   else if(landmark){const p=landmark.position,distance=place==='headquarters'?(innerWidth<=760?250:215):innerWidth<=760?85:65;position.set(p.x+32,place==='headquarters'?60:14,p.z+distance);yaw=Math.PI-Math.atan2(32,distance);pitch=place==='headquarters'?0:.13;}
@@ -454,6 +457,6 @@ addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updat
 addEventListener('pagehide',event=>{
   if(!navigating)saveSpatialContext();releaseControls();
   if(event.persisted)return;
-  disposed=true;cancelAnimationFrame(raf);billboards.dispose();storefronts.dispose();cityLife.dispose?.();architecture.dispose();cityEnvironmentMount?.dispose();cityEnvironmentMount=null;architecturalLighting.dispose();disposeGroup(scene,{keepShared:false});disposeReflections();renderer.dispose();
+  disposed=true;cancelAnimationFrame(raf);billboards.dispose();storefronts.dispose();modeledBuildings.dispose();cityLife.dispose?.();architecture.dispose();cityEnvironmentMount?.dispose();cityEnvironmentMount=null;architecturalLighting.dispose();disposeGroup(scene,{keepShared:false});disposeReflections();renderer.dispose();
 });
 addEventListener('pageshow',()=>{doorEntry.reset();navigating=false;last=performance.now();fpsClock=last;frames=0;});
