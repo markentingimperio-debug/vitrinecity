@@ -20,39 +20,40 @@ export const headquartersSectors=Object.freeze([
 ]);
 
 export function mountCityHeadquarters({scene,architecture,facade,shadows=false}){
-  const group=new THREE.Group();group.name='vitrine-city-headquarters';group.position.set(0,0,-154);group.userData={headquarters:true,label:'Torre VitrineCity'};
-  const {part,stone,graphite,brass,warm,tree,textSign}=architecture;
-  part(group,stone,0,.6,0,72,1.2,58);
-  for(let i=0;i<4;i++)part(group,stone,0,.16+i*.15,31-i*1.3,44,.3+i*.3,2.7);
-  part(group,graphite,0,6,0,60,10,43);
-  const lobbyGlass=new THREE.MeshStandardMaterial({color:'#788c8d',metalness:.55,roughness:.18,emissive:'#e4b96f',emissiveIntensity:.18});
-  part(group,lobbyGlass,0,5.5,22,48,8,.3);
-  for(let x=-24;x<=24;x+=6)part(group,brass,x,5.5,22.4,.16,9,.2);
-  part(group,graphite,0,10.3,27,64,.65,15);
-  part(group,warm,0,10.15,34.4,63,.09,.09);
-  textSign(group,'VITRINE CITY',{width:45,height:4,y:7,z:22.6,subtitle:'SEDE ADMINISTRATIVA · MULTIVERSAL'});
-  const tierData=[{w:37,d:32,y:11,h:54},{w:31,d:27,y:65,h:47},{w:25,d:22,y:112,h:37},{w:19,d:17,y:149,h:24}];
-  for(const [index,tier] of tierData.entries()){
-    const geometry=new THREE.BoxGeometry(tier.w,tier.h,tier.d),uv=geometry.attributes.uv;
-    for(let i=0;i<uv.count;i++)uv.setXY(i,uv.getX(i)*tier.w/12,uv.getY(i)*tier.h/24);
-    const body=new THREE.Mesh(geometry,[facade,facade,graphite,graphite,facade,facade]);body.position.y=tier.y+tier.h/2;body.castShadow=shadows;body.receiveShadow=shadows;group.add(body);
-    part(group,graphite,0,tier.y+tier.h,0,tier.w+2,.8,tier.d+2);
-    for(const z of [-tier.d/2,tier.d/2]){
-      part(group,warm,0,tier.y+tier.h+.5,z,tier.w+1,.12,.13);
-      for(const x of [-tier.w/2,tier.w/2])part(group,brass,x,tier.y+tier.h/2,z,.65,tier.h,.65);
-      // Diagonal external braces give the tower a distinct, structural silhouette.
-      const length=Math.hypot(tier.w,tier.h),brace=part(group,brass,0,tier.y+tier.h/2,z+.3,.6,length,.65);brace.rotation.z=(index%2?1:-1)*Math.atan2(tier.w,tier.h);
+  const group=new THREE.Group();group.name='vitrine-city-headquarters';group.position.set(-164,0,-220);group.userData={headquarters:true,label:'Torre VitrineCity'};
+  const {part,roundedPart,terrace,stone,graphite,brass,warm,tree,textSign,curtain,glass}=architecture;
+  roundedPart(group,stone,0,.55,0,72,1.1,58,7);
+  for(let i=0;i<4;i++)roundedPart(group,stone,0,.16+i*.15,31-i*1.3,44,.3+i*.3,2.7,1);
+  roundedPart(group,graphite,0,7,0,64,12,46,7);
+  // Tall shopfront windows reveal a warm, recessed entrance hall.
+  part(group,architecture.wood,0,5.6,18.8,49,9,.25);
+  part(group,glass,0,5.8,23.3,48,9.5,.08);
+  for(let x=-23;x<=23;x+=4.6)part(group,brass,x,5.8,23.5,.13,9.5,.3);
+  for(const x of [-23,23])part(group,stone,x,6.2,23,1.6,10.6,3);
+  roundedPart(group,stone,0,12.8,1,68,.75,49,7);
+  roundedPart(group,warm,0,12.4,1,68.1,.08,49.1,7);
+  textSign(group,'VitrineCity',{width:37,height:3.4,y:10.3,z:24.7});
+  for(const x of [-14,0,14])part(group,warm,x,5,19,1.5,5,.1);
+  const tiers=[{w:46,d:36,y:13,h:42,x:0,z:0},{w:38,d:30,y:55,h:34,x:2,z:-2},{w:29,d:24,y:89,h:27,x:4,z:-4}];
+  for(const tier of tiers){
+    roundedPart(group,curtain,tier.x,tier.y+tier.h/2,tier.z,tier.w,tier.h,tier.d,5);
+    for(let y=tier.y+4;y<tier.y+tier.h-1;y+=4)roundedPart(group,graphite,tier.x,y,tier.z,tier.w+.08,.12,tier.d+.08,5);
+    for(const side of [-1,1]){
+      part(group,stone,tier.x+side*tier.w*.37,tier.y+tier.h/2,tier.z+tier.d/2,.9,tier.h,1);
+      part(group,brass,tier.x+side*tier.w*.37,tier.y+tier.h/2,tier.z+tier.d/2+.55,.11,tier.h,.1);
+      part(group,brass,tier.x+side*tier.w/2,tier.y+tier.h/2,tier.z,.14,tier.h,tier.d*.66);
     }
-    if(index<3)for(const x of [-tier.w*.43,tier.w*.43])tree(group,x,0,.85,tier.y+tier.h+.4);
+    terrace(group,{x:tier.x,y:tier.y+tier.h+.2,z:tier.z,width:tier.w+2,depth:tier.d+2});
+    for(const x of [-tier.w*.28,tier.w*.28])tree(group,tier.x+x,tier.z-4,.72,tier.y+tier.h+.7);
   }
-  for(const x of [-9,9])part(group,brass,x,181,0,.7,18,15);
-  part(group,graphite,0,190,0,20,1.1,17);
-  part(group,warm,0,190.7,8.55,20,.13,.14);
-  part(group,brass,0,200,0,.5,19,.5);
-  part(group,warm,0,210,0,.35,1,.35);
-  textSign(group,'VC',{width:12,height:6,y:158,z:11.2});
+  roundedPart(group,curtain,4,121,-4,23,8,18,4);
+  terrace(group,{x:4,y:125.4,z:-4,width:25,depth:20,green:false});
+  // A slender asymmetric sail makes the civic tower recognisable from the avenue.
+  part(group,stone,14,74,-2,1.3,139,18);
+  part(group,brass,14.75,74,7.1,.12,139,.12);
+  part(group,warm,14.8,74,7.25,.05,139,.06);
   for(const x of [-29,29])for(const z of [-18,0,18])tree(group,x,z,1.2,1.2);
-  scene.add(group);return group;
+  architecture.batch(group);scene.add(group);return group;
 }
 
 export function installHeadquartersDirectory(dialog){

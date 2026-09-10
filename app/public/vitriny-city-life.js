@@ -1,4 +1,5 @@
 import * as THREE from '/vendor/three/three.module.js';
+import {createUrbanCrowd,createUrbanVehicle} from './vitriny-urban-models.js';
 
 // These residents and vehicles are ambient scenery, never online visitor counts.
 export function mountCityLife({scene,architecture,profileId='STANDARD'}){
@@ -26,31 +27,23 @@ export function mountCityLife({scene,architecture,profileId='STANDARD'}){
   for(const x of [-15,0,15])for(const z of [-5,6]){part(lounge,wood,x,1.25,z,3.4,.2,2.2);part(lounge,graphite,x,.65,z,.25,1.2,.25);for(const dx of [-2.3,2.3]){part(lounge,wood,x+dx,.75,z,1.2,.18,1.2);part(lounge,graphite,x+dx,.36,z,.12,.7,.12);}}
   for(const x of [-25,25])tree(lounge,x,0,1.2);
   const sign=architecture.textSign(lounge,'PRAÇA DE CONVIVÊNCIA',{width:32,height:2.2,y:7,z:-15.4,subtitle:'MÚSICA · ENCONTROS · DESCOBERTAS'});sign.rotation.y=Math.PI;
-  const count=lite?14:30,dummy=new THREE.Object3D(),skinPalette=['#e6b990','#aa7851','#724d38','#543526'],outfitPalette=['#bfbd9b','#507782','#8b5b61','#37465e','#7d8559','#c49a65'];
-  const bodyGeometry=new THREE.CapsuleGeometry(.22,.58,3,6),headGeometry=new THREE.SphereGeometry(.17,8,6),limbGeometry=new THREE.CapsuleGeometry(.065,.5,2,5);
-  const bodies=new THREE.InstancedMesh(bodyGeometry,new THREE.MeshStandardMaterial({roughness:.78}),count),heads=new THREE.InstancedMesh(headGeometry,new THREE.MeshStandardMaterial({roughness:.8}),count),legs=new THREE.InstancedMesh(limbGeometry,new THREE.MeshStandardMaterial({color:'#253444',roughness:.85}),count*2),arms=new THREE.InstancedMesh(limbGeometry,new THREE.MeshStandardMaterial({roughness:.8}),count*2);
-  for(const mesh of [bodies,heads,legs,arms]){mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);mesh.frustumCulled=false;group.add(mesh);}
-  for(let i=0;i<count;i++){bodies.setColorAt(i,new THREE.Color(outfitPalette[i%6]));heads.setColorAt(i,new THREE.Color(skinPalette[i%4]));for(let j=0;j<2;j++)arms.setColorAt(i*2+j,new THREE.Color(skinPalette[i%4]));}
+  const count=lite?12:24,crowd=createUrbanCrowd({parent:group,count});
   const cars=[];for(let i=0;i<(lite?3:6);i++){
-    const car=new THREE.Group(),paint=new THREE.MeshStandardMaterial({color:['#a6acb7','#253c4f','#a88553','#374949','#74677d','#d2ccc0'][i],metalness:.65,roughness:.25}),windows=new THREE.MeshStandardMaterial({color:'#182f42',metalness:.7,roughness:.17});architecture.materials.add(paint);architecture.materials.add(windows);
-    part(car,paint,0,.8,0,2.05,.55,4.8);part(car,windows,0,1.3,-.15,1.85,.68,2.6);part(car,paint,0,1.68,-.15,1.9,.12,2.7);for(const x of [-.95,.95])for(const z of [-1.45,1.45])part(car,graphite,x,.46,z,.24,.75,.75);
-    for(const x of [-.64,.64])part(car,warm,x,.88,2.42,.47,.12,.025);part(car,paint,0,.76,-2.43,1.7,.14,.02);
-    car.userData.direction=i%2?1:-1;car.userData.avenue=i<2;
-    car.rotation.y=i<2?(i%2?0:Math.PI):(i%2?Math.PI/2:-Math.PI/2);car.position.set(i<2?-164+(i%2?3.1:-3.1):-290+i*97,.18,i<2?145-i*120:i%2?103.6:96.4);group.add(car);cars.push(car);
+    const car=createUrbanVehicle({architecture,color:['#a6acb7','#253c4f','#a88553','#374949','#74677d','#d2ccc0'][i],variant:i});
+    car.userData.direction=i%2?1:-1;car.userData.avenue=false;
+    car.rotation.y=i%2?Math.PI/2:-Math.PI/2;car.position.set(-290+i*97,.18,i%2?103.6:96.4);group.add(car);cars.push(car);
   }
   let elapsed=0,posed=false;
-  function pose(instance,index,x,y,z,swing=0,yaw=0){dummy.position.set(x,y,z);dummy.rotation.set(swing,yaw,0);dummy.scale.setScalar(1);dummy.updateMatrix();instance.setMatrixAt(index,dummy.matrix);}
   function tick(dt,{paused=false}={}){
     if(paused&&posed)return;posed=true;
     if(!paused)elapsed+=dt;
     for(let i=0;i<count;i++){
       const direction=i%2?1:-1,angle=i*2.39996+elapsed*(.025+(i%4)*.004)*direction,r=22+(i%4)*4.5,along=(i*39+elapsed*(.75+(i%3)*.1))%600;
       const inAvenue=i<count*.7,x=inAvenue?(i%2?-147:-179)+Math.sin(i)*1.2:Math.cos(angle)*r,z=inAvenue?-125+(along<300?along:600-along):Math.sin(angle)*r,yaw=inAvenue?(along<300?0:Math.PI):-angle+(direction>0?Math.PI:0),walk=Math.sin(elapsed*5.8+i)*.32;
-      pose(bodies,i,x,1.18,z,0,yaw);pose(heads,i,x,1.84,z,0,yaw);
-      for(let j=0;j<2;j++){const side=j?1:-1,dx=Math.cos(yaw)*side,dz=-Math.sin(yaw)*side;pose(legs,i*2+j,x+dx*.13,.53,z+dz*.13,walk*side,yaw);pose(arms,i*2+j,x+dx*.3,1.12,z+dz*.3,-walk*side,yaw);}
+      const person=crowd.people[i];person.group.position.set(x,.28,z);person.group.rotation.y=yaw;person.pose(elapsed*5.8+i,true);
     }
-    for(const m of [bodies,heads,legs,arms])m.instanceMatrix.needsUpdate=true;
+    crowd.update();
     if(!paused)for(const [i,car] of cars.entries()){if(car.userData.avenue){car.position.z+=car.userData.direction*dt*6;if(car.position.z>173)car.position.z=-140;if(car.position.z<-140)car.position.z=173;}else{car.position.x+=car.userData.direction*dt*(7.8+i*.4);if(car.position.x>315)car.position.x=-315;if(car.position.x<-315)car.position.x=315;}}
   }
-  tick(0,{paused:true});return {group,tick};
+  tick(0,{paused:true});return {group,tick,dispose(){crowd.dispose();}};
 }

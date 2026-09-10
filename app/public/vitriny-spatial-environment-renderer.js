@@ -1,4 +1,5 @@
 import * as THREE from '/vendor/three/three.module.js';
+import {leafyCanopyGeometry} from './vitriny-architectural-geometry.js';
 import {fetchSpatialEnvironment} from './vitriny-spatial-environment-client.js';
 import {createPremiumFacades} from './vitriny-spatial-premium-atmosphere.js';
 import {intersectsCommerceAvenue} from './vitriny-affiliate-centers-core.js';
@@ -19,7 +20,7 @@ export async function mountSpatialCityEnvironment({scene,camera=null,cityId,iden
   const matrix=new THREE.Matrix4(),quaternion=new THREE.Quaternion(),scale=new THREE.Vector3(),position=new THREE.Vector3();
   const meshes={};
 
-  const skylineItems=environment.skyline.filter(item=>cityId!=='vitrine-city'||!intersectsCommerceAvenue(item));
+  const skylineItems=environment.skyline.filter(item=>cityId!=='vitrine-city'||(!intersectsCommerceAvenue(item)&&!(Math.abs(item.position.x+164)<60&&item.position.z<-172&&item.position.z>-280)));
   if(skylineItems.length){
     const geometry=new THREE.BoxGeometry(1,1,1),[material,...unused]=createPremiumFacades();
     for(const item of unused){item.map.dispose();item.dispose();}material.map.repeat.set(2,5);
@@ -30,7 +31,7 @@ export async function mountSpatialCityEnvironment({scene,camera=null,cityId,iden
 
   if(environment.vegetation.length){
     const trunk=meshes.trunks=instanced(group,new THREE.CylinderGeometry(.18,.28,1,profileId==='LITE'?5:7),new THREE.MeshStandardMaterial({color:'#4e4031',roughness:.88}),environment.vegetation.length,'urban-green-trunks');
-    const crown=meshes.vegetation=instanced(group,new THREE.IcosahedronGeometry(1,profileId==='LITE'?0:1),new THREE.MeshStandardMaterial({color:'#ffffff',roughness:.95}),environment.vegetation.length,'urban-green-crowns');
+    const crown=meshes.vegetation=instanced(group,leafyCanopyGeometry(profileId==='LITE'),new THREE.MeshStandardMaterial({color:'#ffffff',roughness:.95,side:THREE.DoubleSide,vertexColors:true}),environment.vegetation.length,'urban-green-crowns');
     environment.vegetation.forEach((item,index)=>{const h=(item.kind==='palm'?5.8:item.kind==='cerrado-tree'?4.3:3.8)*item.scale,crownY=h+(item.kind==='garden'?.8:1.6)*item.scale;setTransform(trunk,index,{x:item.position.x,y:h/2,z:item.position.z,sx:item.kind==='palm'?.65:1,sy:h,sz:item.kind==='palm'?.65:1},matrix,quaternion,scale,position);setTransform(crown,index,{x:item.position.x,y:crownY,z:item.position.z,sx:(item.kind==='garden'?1.7:2.2)*item.scale,sy:(item.kind==='canopy'?1.1:1.6)*item.scale,sz:(item.kind==='garden'?1.7:2.2)*item.scale},matrix,quaternion,scale,position);const c=color(item.kind==='cerrado-tree'?'#6f9b55':item.kind==='palm'?'#3f8f66':'#3d7f58','#3d7f58');c.lerp(accent,.08);crown.setColorAt(index,c);});
     trunk.instanceMatrix.needsUpdate=true;crown.instanceMatrix.needsUpdate=true;if(crown.instanceColor)crown.instanceColor.needsUpdate=true;
   }

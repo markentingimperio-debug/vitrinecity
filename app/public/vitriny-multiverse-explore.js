@@ -11,6 +11,7 @@ import {TRANSIT_CITY_IDS,fetchCityPortals,loadCityCheckpoint,saveCityCheckpoint,
 import {fallbackSpatialCityIdentity,normalizeSpatialCityIdentity} from './vitriny-spatial-city-identity.js';
 import {mountSpatialCityEnvironment} from './vitriny-spatial-environment-renderer.js';
 import {mountPremiumAtmosphere,createPremiumFacades} from './vitriny-spatial-premium-atmosphere.js';
+import {mountPromenadeGardens} from './vitriny-promenade-gardens.js';
 import {createArchitectureKit} from './vitriny-premium-architecture.js';
 import {mountCityHeadquarters,installHeadquartersDirectory} from './vitriny-city-headquarters.js';
 import {mountSpatialBillboards} from './vitriny-spatial-billboards.js';
@@ -48,23 +49,23 @@ document.title=`Vitriny Multiverse · ${cityContext.name}`;
 worldStat.textContent=`${cityContext.name} · ${isActiveCity?'HUB':'PREVIEW'}`;
 
 const scene=new THREE.Scene();
-scene.background=new THREE.Color('#758baf');
-scene.fog=new THREE.FogExp2(new THREE.Color('#758baf'),0.00115);
+scene.background=new THREE.Color('#b5c9d2');
+scene.fog=new THREE.FogExp2(new THREE.Color('#c5d2d4'),0.0010);
 const camera=new THREE.PerspectiveCamera(58,innerWidth/innerHeight,.1,1800);
 let renderer;
 try{renderer=new THREE.WebGLRenderer({antialias:profile.id!=='LITE',powerPreference:'high-performance'});}
 catch(error){$('loadingText').textContent='3D indisponível neste aparelho. Use o guia de lojas e serviços ou volte à página inicial.';throw error;}
 renderer.setPixelRatio(profile.pixel);renderer.setSize(innerWidth,innerHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;
-renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.02;renderer.shadowMap.enabled=profile.shadows;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.03;renderer.shadowMap.enabled=profile.shadows;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 document.body.prepend(renderer.domElement);
 renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Explorar a cidade com as setas ou WASD');
-scene.add(new THREE.HemisphereLight(0xbad4f4,0x806f53,1.45));
-const sun=new THREE.DirectionalLight(0xffd2a4,2.4);sun.position.set(-170,110,180);sun.castShadow=profile.shadows;
+scene.add(new THREE.HemisphereLight(0xc6e1f2,0x827864,1.15));
+const sun=new THREE.DirectionalLight(0xffd2a4,3.05);sun.position.set(-30,155,220);sun.target.position.set(-164,0,-10);scene.add(sun.target);sun.castShadow=profile.shadows;
 sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-220,right:220,top:220,bottom:-220,near:1,far:680});sun.shadow.bias=-.00025;sun.shadow.normalBias=.14;scene.add(sun);
 const architecture=createArchitectureKit({renderer,scene,shadows:profile.shadows,lite:profile.id==='LITE'}),disposeReflections=architecture.reflections();
-const groundMat=architecture.pavingMaterial({color:'#777b70',repeat:20});
+const groundMat=architecture.pavingMaterial({color:'#a4aa97',repeat:20});
 const roadMat=new THREE.MeshStandardMaterial({color:'#303c43',roughness:.85,metalness:.03});
-const sidewalkMat=architecture.pavingMaterial({color:'#aab4c0',repeat:9,formal:true});
+const sidewalkMat=architecture.pavingMaterial({color:'#d1cbbb',repeat:9,formal:true});
 const laneMat=new THREE.MeshBasicMaterial({color:'#d0c7ac'}),roofMat=new THREE.MeshStandardMaterial({color:'#65716e',roughness:.7});
 const facades=createPremiumFacades({mobile:profile.id!=='ULTRA'});
 const sharedMaterials=new Set([groundMat,roadMat,sidewalkMat,laneMat,roofMat,...facades,...architecture.materials]),chunkGroups=new Map();
@@ -72,6 +73,7 @@ let storeBuildingLots=[];
 const cityGround=new THREE.Mesh(new THREE.PlaneGeometry(2600,2600),groundMat);cityGround.rotation.x=-Math.PI/2;cityGround.position.y=-.08;cityGround.receiveShadow=profile.shadows;scene.add(cityGround);
 const premiumAtmosphere=mountPremiumAtmosphere({scene,identity:cityIdentity,profileId:profile.id});
 const cityLife=mountCityLife({scene,architecture,profileId:profile.id});
+if(isActiveCity)mountPromenadeGardens({scene,architecture,lite:profile.id==='LITE'});
 const reducedMotion=matchMedia('(prefers-reduced-motion:reduce)');
 let animationPaused=reducedMotion.matches,avatarMode=false;
 function mesh(geometry,material,parent,position){
@@ -98,6 +100,7 @@ function createChunkGroup(chunk){
     if(isActiveCity&&intersectsEmissoraLot(building))continue;
     if(storeBuildingLots.some(store=>intersectsStoreBuilding(building,store)))continue;
     const px=building.position.x,pz=building.position.z;
+    if(isActiveCity&&Math.abs(px+164)<58&&pz>-275&&pz<-172)continue;
     if((Math.abs(px)<320&&pz>82&&pz<120)||(px>-40&&px<50&&pz>122&&pz<180)||(px>70&&px<164&&pz>122&&pz<190)||(px>-95&&px<-20&&pz>170&&pz<230)||(px>85&&px<166&&pz>-225&&pz<-148))continue;
     if((px>82&&px<510&&Math.abs(pz)<68)||(Math.abs(px)<50&&pz>-195&&pz<-115)||(px>55&&px<160&&pz>-150&&pz<-45)||(px>-150&&px<-78&&pz>-125&&pz<68)||intersectsCommerceAvenue(building)||(px>-140&&px<-65&&pz>120&&pz<183))continue;
     const b=building,accent=palette[b.accentIndex%palette.length],g=new THREE.Group();
@@ -110,7 +113,7 @@ function createChunkGroup(chunk){
     architecture.part(g,architecture.graphite,0,b.size.height+.3,0,b.size.width+1,.6,b.size.depth+1);
     for(const z of [-b.size.depth/2,b.size.depth/2])architecture.part(g,architecture.warm,0,b.size.height+.08,z,b.size.width,.065,.065);
     // Articulated ground floor and structural mullions replace uniform luminous boxes.
-    for(const x of [-b.size.width/2,b.size.width/2])architecture.part(g,architecture.graphite,x,b.size.height/2,0,.25,b.size.height,b.size.depth+.1);
+    for(const x of [-b.size.width/2,b.size.width/2])for(const z of [-b.size.depth/2,b.size.depth/2])architecture.part(g,architecture.graphite,x,b.size.height/2,z,.18,b.size.height,.18);
     architecture.part(g,architecture.stone,0,.35,0,b.size.width+2,.7,b.size.depth+2);
     if(Math.hypot(b.position.x,b.position.z)<210){
       for(let col=0;col<3;col++)architecture.part(g,architecture.brass,-b.size.width*.32+col*b.size.width*.32,2.7,b.size.depth/2+.15,.09,4.8,.09);
@@ -284,8 +287,8 @@ async function loadLiveStores(){
 }
 
 const phoneArrival=isActiveCity&&innerWidth<=760;
-const position=isActiveCity?new THREE.Vector3(-164,phoneArrival?8:11.5,191):new THREE.Vector3(0,38,132),velocity=new THREE.Vector3(),keys=new Set();
-let yaw=phoneArrival?-Math.PI/2-Math.atan2(46,38):Math.PI,pitch=phoneArrival?.2:.14,speed=16,dragging=false,lastX=0,lastY=0,pointerStartX=0,pointerStartY=0,activePortal=null;
+const position=isActiveCity?new THREE.Vector3(-164,phoneArrival?23:27,205):new THREE.Vector3(0,38,132),velocity=new THREE.Vector3(),keys=new Set();
+let yaw=Math.PI,pitch=isActiveCity?-.015:.14,speed=16,dragging=false,lastX=0,lastY=0,pointerStartX=0,pointerStartY=0,activePortal=null;
 let chunkSource=cityApiOnline?'api':'fallback',disposed=false,navigating=false,raf=0;
 function restoreSpatialContext(){
   if(new URLSearchParams(location.search).get('return')!=='1')return;
@@ -296,7 +299,7 @@ function restoreSpatialContext(){
 restoreSpatialContext();
 function updateViewButton(){const button=$('toggleView');if(button){button.textContent=position.y>10?'Explorar a pé':'Vista panorâmica';button.setAttribute('aria-pressed',String(position.y>10));}}
 updateViewButton();
-$('toggleView')?.addEventListener('click',()=>{avatarMode=false;if(position.y>10){position.set(23,2.2,53);yaw=Math.PI-.4;pitch=.035;}else{position.set(0,38,132);yaw=Math.PI;pitch=.1;}releaseControls();updateViewButton();});
+$('toggleView')?.addEventListener('click',()=>{avatarMode=false;if(position.y>10){position.set(23,2.2,53);yaw=Math.PI-.4;pitch=.035;}else{position.set(isActiveCity?-164:0,isActiveCity?27:38,isActiveCity?205:132);yaw=Math.PI;pitch=isActiveCity?-.015:.1;}releaseControls();updateViewButton();});
 $('visitStores')?.addEventListener('click',()=>{position.set(-164,avatarMode?1.7:4.2,145);yaw=Math.PI;pitch=.12;releaseControls();updateViewButton();});
 const avatar=mountVisitorAvatar({scene,dialog:$('avatarDirectory'),onEnter(){avatarMode=true;position.set(23,1.7,53);yaw=Math.PI-.4;pitch=.02;releaseControls();updateViewButton();}});
 $('openAvatar').addEventListener('click',()=>{releaseControls();$('avatarDirectory').showModal();});
@@ -447,6 +450,6 @@ addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updat
 addEventListener('pagehide',event=>{
   if(!navigating)saveSpatialContext();releaseControls();
   if(event.persisted)return;
-  disposed=true;cancelAnimationFrame(raf);billboards.dispose();storefronts.dispose();architecture.dispose();cityEnvironmentMount?.dispose();cityEnvironmentMount=null;disposeGroup(scene,{keepShared:false});disposeReflections();renderer.dispose();
+  disposed=true;cancelAnimationFrame(raf);billboards.dispose();storefronts.dispose();cityLife.dispose?.();architecture.dispose();cityEnvironmentMount?.dispose();cityEnvironmentMount=null;disposeGroup(scene,{keepShared:false});disposeReflections();renderer.dispose();
 });
 addEventListener('pageshow',()=>{doorEntry.reset();navigating=false;last=performance.now();fpsClock=last;frames=0;});

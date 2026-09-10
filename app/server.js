@@ -25,6 +25,7 @@ import { createWebStorySources } from './web-story-sources.js';
 import { SERVICE_EDITORIAL_GUIDES } from './service-editorial-guides.js';
 import {ADS_TERMS_VERSION,ADS_VALIDITY_DAYS,creditExpiryForOrder} from './credits-policy.js';
 import {setupCityChat} from './city-chat.js';
+import {setupCityExploration,decorateExplorationPage} from './city-exploration.js';
 import {setupCityRewards} from './city-rewards.js';
 import {setupCourierAccount} from './courier-account.js';
 import { setupMediaCatalog } from './media-catalog.js';
@@ -2641,6 +2642,7 @@ const cityRewards=setupCityRewards({app,db,requireUser,requireAdmin,sameOriginOn
       auto_return:'approved',statement_descriptor:'VITRINECITY',expires:true,expiration_date_from:new Date().toISOString(),expiration_date_to:new Date(Date.now()+24*60*60*1000).toISOString()}),signal:AbortSignal.timeout(12000)});
     const data=await response.json();if(!response.ok)throw Error('Pagamento indisponível');return data;}
 });
+const cityExploration=setupCityExploration({app,db,requireUser,sameOriginOnly,rewards:cityRewards});
 const cityChat=setupCityChat({app,db,requireUser,requireAdmin,sameOriginOnly,publicDir:path.join(dir,'public')});
 setupCourierAccount({app,db,requireCourier,requireAdmin,sameOriginOnly,hashPassword,verifyPassword,sessionHash,
   allowAttempt:(key,limit,windowMs)=>allowAttempt(authAttempts,key,limit,windowMs),
@@ -3607,6 +3609,7 @@ app.get('/api/privacy/export',requireUser,(req,res)=>{
   const exportData={generatedAt:new Date().toISOString(),account:{name:req.user.name,email:req.user.email,whatsapp:req.user.whatsapp||'',createdAt:req.user.created_at},
     cityChat:cityChat.exportUser(userId),
     cityRewards:cityRewards.exportUser(userId),
+    cityExploration:cityExploration.exportUser(userId),
     farmProgress:db.prepare('SELECT state_json stateJson,updated_at updatedAt FROM city_farm_progress WHERE user_id=?').get(userId)||null,
     partnerTraffic:db.prepare('SELECT day,slug,kind,events FROM affiliate_partner_daily WHERE affiliate_id IN (SELECT id FROM affiliates WHERE user_id=?) ORDER BY day DESC').all(userId),
     addresses:db.prepare('SELECT label,recipient_name recipientName,postal_code postalCode,street,number,complement,neighborhood,city,state,is_default isDefault,created_at createdAt FROM customer_addresses WHERE user_id=?').all(userId),
@@ -9680,9 +9683,9 @@ app.get(['/loja/:reference', '/loja/:reference/:slug'], (req, res) => {
   const products = db.prepare(`SELECT id,name,description,category,price_cents,image_url,product_url,sku,stock_quantity
     FROM store_products WHERE store_reference=? AND active=1 AND marketplace_enabled=1
       AND price_cents>0 AND stock_quantity>0 ORDER BY updated_at DESC,id DESC LIMIT 120`).all(reference);
-  return res.set('Cache-Control', 'public,max-age=60').send(renderPublicStorePage({
+  return res.set('Cache-Control', 'public,max-age=60').send(decorateExplorationPage(renderPublicStorePage({
     store, products, siteUrl: SITE_URL, productFallback: PRODUCT_FALLBACK_PATH
-  }));
+  }),{storeReference:reference}));
 });
 
 app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
@@ -9739,7 +9742,7 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     price_cents: product.price_cents, stock_quantity: product.stock_quantity,
     image_url: productImagePath, store_name: product.store_name
   }).replace(/</g, '\\u003c');
-  res.set('Cache-Control', 'public,max-age=60').send(`<!doctype html><html lang="pt-BR"><head>
+  res.set('Cache-Control', 'public,max-age=60').send(decorateExplorationPage(`<!doctype html><html lang="pt-BR"><head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <title>${escapeHtml(title)}</title><meta name="description" content="${escapeHtml(description)}">
     <link rel="canonical" href="${escapeHtml(canonical)}"><meta property="og:type" content="product">
@@ -9751,7 +9754,7 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     <script src="/analytics.js" defer></script></head><body>
     <header><a class="brand" href="/loja">Vitriny <span>Loja</span></a><a class="back" href="/loja">← Voltar à loja</a></header>
     <main><img class="photo" src="${escapeHtml(productImagePath)}" onerror="this.onerror=null;this.src='/assets/store-seed/utilidades.svg'" alt="${escapeHtml(product.name)}">
-    <section><div class="badge">${escapeHtml(product.category || 'Produto')}</div><a class="seller" href="${escapeHtml(storePath)}">Vendido por ${escapeHtml(product.store_name)}</a>
+    <section data-reward-product-content><div class="badge">${escapeHtml(product.category || 'Produto')}</div><a class="seller" href="${escapeHtml(storePath)}">Vendido por ${escapeHtml(product.store_name)}</a>
     <h1>${escapeHtml(product.name)}</h1><p class="description">${escapeHtml(description)}</p>
     <div class="price">${(product.price_cents / 100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</div>
     <div class="stock">${isDigital?'Acesso digital disponível':`${product.stock_quantity} unidades disponíveis`}</div><div class="rating">${product.rating_count?`★ ${Number(product.rating_average).toFixed(1)} · ${product.rating_count} ${product.rating_count===1?'avaliação':'avaliações'}`:'☆ Ainda sem avaliações'}</div>
@@ -9760,7 +9763,7 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     <section class="reviews" id="avaliacoes"><h2>Avaliações de clientes</h2>${reviews.length?`<div class="review-grid">${reviews.map(review=>`<article class="review"><div class="rating">${'★'.repeat(review.rating)}${'☆'.repeat(5-review.rating)}</div><h3>${escapeHtml(review.title||'Avaliação do produto')}</h3><p>${escapeHtml(review.body)}</p><small>${escapeHtml(review.author_name)} · ${new Date(`${review.created_at.replace(' ', 'T')}Z`).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</small>${renderReviewPhotos(review,escapeHtml)}${renderImportedReviewSource(review,escapeHtml)}${review.verified_purchase&&!review.source?'<div class="verified">✓ Compra verificada</div>':''}</article>`).join('')}</div>`:'<p class="description">Este produto ainda não recebeu avaliações. As avaliações publicadas aparecerão aqui.</p>'}${reviewPageCount > 1 ? `<nav class="review-pagination" aria-label="Páginas de avaliações">${reviewPage > 1 ? `<a class="button alt" rel="prev" href="${reviewPath}?avaliacoes=${reviewPage - 1}#avaliacoes">← Anteriores</a>` : ''}<span>Página ${reviewPage} de ${reviewPageCount} · ${product.rating_count} avaliações</span>${reviewPage < reviewPageCount ? `<a class="button alt" rel="next" href="${reviewPath}?avaliacoes=${reviewPage + 1}#avaliacoes">Próximas →</a>` : ''}</nav>` : ''}</section>
     </main>
     <script>const product=${publicProduct},add=document.getElementById('add');if(add)add.onclick=()=>{let cart=[];try{cart=JSON.parse(localStorage.getItem('vc_shop_cart')||'[]')}catch{}if(cart.length&&cart[0].store_reference!==product.store_reference){document.getElementById('status').textContent='Finalize primeiro os produtos da outra loja.';return}const old=cart.find(item=>item.id===product.id);if(old)old.quantity=Math.min(product.stock_quantity,old.quantity+1);else cart.push({...product,quantity:1});localStorage.setItem('vc_shop_cart',JSON.stringify(cart));location.href='/loja?carrinho=1'};</script>
-    </body></html>`);
+    </body></html>`,{storeReference:product.store_reference,productId:product.id}));
 });
 
 app.get('/categoria/:slug', (req, res) => {

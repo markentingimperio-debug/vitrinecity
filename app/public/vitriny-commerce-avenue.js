@@ -4,7 +4,7 @@ import {dressCommercialCenter} from './vitriny-building-signatures.js';
 export function mountCommerceAvenue({scene,architecture,billboards,facade}){
   const buildings=[];
   const promenade=new THREE.Group();promenade.name='avenida-dos-afiliados';scene.add(promenade);
-  const paving=architecture.pavingMaterial({color:'#bab7a7',repeat:25});
+  const paving=architecture.pavingMaterial({color:'#d2c9b7',repeat:25,formal:true});
   architecture.part(promenade,paving,-162,.22,12,94,.25,320);
   architecture.part(promenade,architecture.graphite,-164,.37,12,12,.1,318);
   for(let z=-139;z<172;z+=12)architecture.part(promenade,architecture.warm,-164,.43,z,.18,.015,4);
@@ -13,7 +13,7 @@ export function mountCommerceAvenue({scene,architecture,billboards,facade}){
     const group=new THREE.Group();group.name=`center-${center.id}`;group.position.set(-210,0,-115+index*64);group.rotation.y=Math.PI/2;
     group.userData={store:true,reference:`center-${center.id}`,label:center.title,href:center.href};
     const {part,stone,graphite,brass,glass,warm,textSign,tree}=architecture,{height}=center;
-    const accent=new THREE.MeshStandardMaterial({color:center.color,metalness:.3,roughness:.38});architecture.materials.add(accent);
+    const accent=new THREE.MeshStandardMaterial({color:new THREE.Color(center.color).lerp(new THREE.Color("#b3b3a0"),.68),metalness:.3,roughness:.38});architecture.materials.add(accent);
     const logoTexture=new THREE.TextureLoader().load(center.logo);logoTexture.colorSpace=THREE.SRGBColorSpace;logoTexture.anisotropy=8;
     if(center.logoCrop){const crop=center.logoCrop;logoTexture.repeat.set(crop.width,crop.height);logoTexture.offset.set(crop.x,1-crop.y-crop.height);}
     const logoMaterial=new THREE.MeshBasicMaterial({map:logoTexture,transparent:true,depthWrite:false,toneMapped:false});architecture.materials.add(logoMaterial);
@@ -24,9 +24,9 @@ export function mountCommerceAvenue({scene,architecture,billboards,facade}){
       const logoWidth=Math.min(width*.9,(signHeight-1)*center.logoRatio);
       const logo=new THREE.Mesh(new THREE.PlaneGeometry(logoWidth,logoWidth/center.logoRatio),logoMaterial);logo.position.set(0,y,z+.35);group.add(logo);
     }
-    part(group,stone,0,.6,0,48,1.2,39);part(group,facade,0,height/2,-2,38,height,28);
-    for(const x of [-19,19])part(group,accent,x,height/2,-2,.45,height,29);
-    for(let floor=1;floor<=3;floor++){part(group,graphite,0,floor*height/3,-2,40,.55,30);part(group,warm,0,floor*height/3+.32,13.1,39,.08,.08);}
+    architecture.roundedPart(group,stone,0,.6,0,48,1.2,39,4);architecture.roundedPart(group,architecture.curtain,0,height/2,-2,38,height,28,4);
+    for(const x of [-18,18])for(const z of [-12,9])part(group,stone,x,height/2,z,.65,height,.7);
+    for(let floor=1;floor<=3;floor++)architecture.terrace(group,{y:floor*height/3,z:-2,width:42-floor,depth:33,green:true});
     // Five architectural silhouettes with brand identity kept on unchanged official artwork.
     if(center.id==='mercadolivre'){
       for(const x of [-12,12])part(group,accent,x,height-1,-2,5,5,31);
@@ -40,8 +40,8 @@ export function mountCommerceAvenue({scene,architecture,billboards,facade}){
       part(group,graphite,0,height+2,-5,24,4,21);
     }else if(center.id==='tiktok'){
       const cyan=new THREE.MeshStandardMaterial({color:'#25f4ee',emissive:'#25f4ee',emissiveIntensity:.3});architecture.materials.add(cyan);
-      for(const x of [-16,-8,8,16])part(group,x<0?cyan:accent,x,height/2,13.2,.6,height,.4);
-      part(group,graphite,0,height+2,-2,41,3,30);
+      for(const x of [-16,16])part(group,x<0?cyan:accent,x,height/2,13.2,.12,height,.15);
+      architecture.roundedPart(group,stone,0,height+.6,-2,41,.6,30,4);
     }else{
       for(let level=1;level<=3;level++){
         const y=level*10;part(group,stone,0,y,14,42-level*2,.6,7);
@@ -49,15 +49,20 @@ export function mountCommerceAvenue({scene,architecture,billboards,facade}){
       }
       part(group,accent,0,height+1,-2,40,1,30);
     }
-    part(group,graphite,0,6,15.3,44,12,5);part(group,glass,0,5,18,41,9,.06);
-    part(group,architecture.wood,0,4.6,15,40,8,.4);part(group,warm,0,9,17.7,39,.05,.1);
-    brandSign(11.8,18.3,39,7);brandSign(height+5.8,16,36,9);
+    // Open, warm shopfronts share the same entrance and real department links.
+    part(group,stone,0,.9,15.3,44,.35,6);
+    part(group,architecture.wood,0,4.6,13,40,8,.4);
+    part(group,glass,0,5,18,41,9,.06);
+    for(const x of [-20,-12,-4,4,12,20])part(group,brass,x,5,18.1,.12,9,.18);
+    for(const y of [2.4,4.8,7.2]){part(group,stone,0,y,14,38,.14,1.4);part(group,warm,0,y-.1,14.8,37,.05,.08);}
+    part(group,warm,0,9,17.7,39,.05,.1);
+    brandSign(11.3,18.3,32,4.2);brandSign(height+2.8,16,26,4.5);
     textSign(group,center.title,{width:22,height:2.8,y:6.5,z:18.8,color:'#f5ead5',subtitle:'SELEÇÃO AFILIADA · VITRINECITY'});
     textSign(group,'ENTRAR E EXPLORAR',{width:18,height:2.5,y:3.8,z:18.3,color:'#f2e2b6',subtitle:'PRODUTOS POR DEPARTAMENTO'});
     for(const x of [-23,23])tree(group,x,14,.8,1.1);
     dressCommercialCenter({group,architecture,center});
     billboards.registerCenter(group,center);
-    scene.add(group);buildings.push({group,center,anchor:group.localToWorld(new THREE.Vector3(0,3,19))});
+    architecture.batch(group);scene.add(group);buildings.push({group,center,anchor:group.localToWorld(new THREE.Vector3(0,3,19))});
   });
   return buildings;
 }

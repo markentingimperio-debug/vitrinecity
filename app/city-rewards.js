@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 const DAY=86400000;
-export const REWARD_TERMS='city-rewards-2026-09-08';
+export const REWARD_TERMS='city-rewards-2026-09-10';
 export function rewardDiscount(priceCents,points,coinsPerReal){
   if(!Number.isSafeInteger(priceCents)||priceCents<1||!Number.isSafeInteger(points)||points<0||!Number.isSafeInteger(coinsPerReal)||coinsPerReal<1)return {discountCents:0,points:0,payCents:priceCents};
   const discountCents=Math.min(Math.floor(priceCents*.3),Math.floor(points*100/coinsPerReal));
