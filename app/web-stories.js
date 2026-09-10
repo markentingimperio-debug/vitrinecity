@@ -27,7 +27,7 @@ export function splitStoryText(body,max=130) {
   return pages;
 }
 
-export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publicDir,dataDir,assets=createStoryAssets({publicDir,dataDir,siteUrl}),sourceCatalog=createWebStorySources({db}),generateStory=null,canRun=()=>true}) {
+export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publicDir,dataDir,assets=createStoryAssets({publicDir,dataDir,siteUrl}),sourceCatalog=createWebStorySources({db}),generateStory=null,canRun=()=>true,automaticSourceAllowed=()=>true}) {
   const origin=new URL(siteUrl).origin,creating=new Set();
   db.exec(`CREATE TABLE IF NOT EXISTS editorial_web_stories(
     id TEXT PRIMARY KEY,slug TEXT NOT NULL UNIQUE,article_id TEXT NOT NULL UNIQUE,
@@ -118,6 +118,8 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     }finally{creating.delete(key);}
   }
   function canGenerateAutomatically(sourceKey) {
+    const source=article(sourceKey);
+    if(!source||automaticSourceAllowed(source)!==true)return false;
     const existing=db.prepare('SELECT id FROM editorial_web_stories WHERE article_id=?').get(sourceKey);
     if(!existing)return true;
     const last=db.prepare('SELECT event FROM editorial_web_story_events WHERE story_id=? ORDER BY id DESC LIMIT 1').get(existing.id)?.event;
@@ -127,13 +129,14 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     if(typeof generateStory!=='function')throw fail('A geração pela IA gestora ainda não está configurada.',503);
     const key=source.key||source.id,initial=article(key);
     if(!initial)throw fail('O conteúdo de origem não está mais disponível.',409);
+    if(automaticSourceAllowed(initial)!==true)throw fail('Esta origem foi excluída da produção automática. Escolha um conteúdo editorial próprio.',409);
     const fingerprint=hashArticle(initial),existing=db.prepare('SELECT * FROM editorial_web_stories WHERE article_id=?').get(key);
     if(existing){
       const last=db.prepare('SELECT event FROM editorial_web_story_events WHERE story_id=? ORDER BY id DESC LIMIT 1').get(existing.id)?.event;
       if(!['published_automatic','generated_automatic'].includes(last))return {storyId:existing.id,status:'review',summary:'Já existe uma edição manual desta história. Ela foi preservada.'};
       if(existing.published_json&&existing.published_source_hash===fingerprint)return {storyId:existing.id,status:'published',summary:'A história atual já está publicada.'};
     } else if(db.prepare('SELECT COUNT(*) n FROM editorial_web_stories').get().n>=10000)throw fail('O estúdio atingiu o limite de 10 mil histórias.',409);
-    const eligible=()=>canRun()&&!signal?.aborted&&isCurrent()&&article(key)&&hashArticle(article(key))===fingerprint;
+    const eligible=()=>{const current=article(key);return canRun()&&!signal?.aborted&&isCurrent()&&current&&automaticSourceAllowed(current)===true&&hashArticle(current)===fingerprint;};
     if(!eligible())throw fail('Rodada pausada ou conteúdo atualizado.',409);
     const previous=existing?JSON.parse(existing.draft_json):{};
     const result=await generateStory(initial,{signal,isCurrent:eligible,buttons:storyButtons(initial,previous)});

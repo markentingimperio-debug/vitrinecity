@@ -193,6 +193,14 @@ export function createWebStoryResearch({db,fetchImpl,now=Date.now,searchSources=
     result.hash=hash(result);result.sourceHash=result.hash;return result;
   }
   function get(key){return source(row(key));}
+  // Ingestion owns these persisted namespaces: syncTrends writes feed hashes;
+  // addDiscoveredTopic writes channel-<YouTube ID>. Both expose kind='trend',
+  // so neither editorial group nor caller-supplied readiness proves origin.
+  // Google Trends remains searchable/researchable but never seeds automation.
+  function automaticSourceAllowed(input){
+    const stored=row(typeof input==='string'?input:input?.key||input?.id);
+    return !!stored&&/^channel-[A-Za-z0-9_-]{11}$/.test(stored.id);
+  }
   // This is feasibility, not approval: actual fetching, freshness, grounding and
   // independent editorial review still run after a candidate is selected.
   // Trend references come from the persisted feed, never caller-supplied flags.
@@ -279,5 +287,5 @@ export function createWebStoryResearch({db,fetchImpl,now=Date.now,searchSources=
     }
     return null;
   }
-  return {syncTrends,list,get,enrich,getEnriched,automaticEligible,addDiscoveredTopic,prepareCandidates,findGardeningSource};
+  return {syncTrends,list,get,enrich,getEnriched,automaticEligible,automaticSourceAllowed,addDiscoveredTopic,prepareCandidates,findGardeningSource};
 }

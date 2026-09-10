@@ -20,6 +20,9 @@ export function setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl
   const channelSources=createEditorialChannelSources({db,canRun,research,fetchImpl:sourceFetchImpl});
   const sources=createWebStorySources({db,services,courses,publicDir});
   const enrichCached=source=>source&&research.getEnriched?research.getEnriched(source):source;
+  // Keep owned gardening/curiosity articles and official channels. Raw Google
+  // Trends topics are excluded before pagination and quota claims, in any group.
+  const automaticSourceAllowed=source=>source?.kind!=='trend'||research.automaticSourceAllowed?.(source)===true;
   const automaticEligible=source=>webStories.canGenerateAutomatically(source.key)&&(source.kind==='trend'||(source.kind==='article'&&['news','sports','noticias','esportes'].includes(source.group||source.portal))
     ?research.automaticEligible?.(source)===true
     :storySourcePreflight(source,{siteUrl}).eligible);
@@ -59,7 +62,7 @@ export function setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl
   };
   const ai=createWebStoryAI({requestText,requestImage,assets,siteUrl,dataDir});
   const local=createLocalEditorialStories({db,assets});
-  const webStories=setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publicDir,dataDir,assets,canRun,sourceCatalog:catalog,generateStory:async(...args)=>{
+  const webStories=setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publicDir,dataDir,assets,canRun,automaticSourceAllowed,sourceCatalog:catalog,generateStory:async(...args)=>{
     // Choose an approved source-preserving workflow BEFORE any AI call. A model
     // rejection can never fall through to local automatic approval.
     const result=await local.generate(...args)||await ai.generate(...args);

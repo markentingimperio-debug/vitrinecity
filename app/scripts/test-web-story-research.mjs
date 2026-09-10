@@ -22,6 +22,22 @@ test('observed fixed publisher list, only HTTPS; no private/DNS alias shortcuts'
   assert.equal(parseStoryTrends(feed(ref('www.bbc.com')+ref('evil.test')))[0].refs.length,1);
 });
 
+test('automatic origin policy reads persisted ingestion provenance while keeping Google research available manually',async()=>{
+  const x=setup();
+  try{
+    await x.research.syncTrends();const google=x.research.list()[0];
+    assert.ok(google);assert.equal(x.research.automaticSourceAllowed(google),false);
+    assert.equal(x.research.automaticSourceAllowed({...google,kind:'article',origin:'official-channel',group:'news',evidenceReady:true}),false);
+    assert.equal(x.research.automaticSourceAllowed({key:'trend:channel-abcdefghijk'}),false,'invented channel ID must exist in storage');
+    assert.equal(x.research.addDiscoveredTopic({id:'channel-abcdefghijk',group:'news',title:'Palmeiras e sua agenda',publishedAt:new Date(clock).toISOString(),refs:[{url:'https://www.bbc.com/a'},{url:'https://www.estadao.com.br/b'}]}),true);
+    const channel=x.research.get('trend:channel-abcdefghijk');assert.equal(channel.kind,'trend');
+    assert.equal(x.research.automaticSourceAllowed(channel),true);
+    assert.ok(x.research.list().some(item=>item.key===google.key));
+    const enriched=await x.research.enrich(google);assert.equal(enriched.evidenceReady,true,'manual source research is preserved');
+    assert.equal(x.research.automaticSourceAllowed(enriched),false,'good evidence does not opt a Google topic into automation');
+  }finally{x.db.close();}
+});
+
 test('new researched topics retain their real editorial destination including recipes, without lowering evidence requirements',()=>{
   const x=setup(),stamp=new Date(clock).toISOString();
   const examples=[['Receita de bolo de cenoura','recipes','receitas'],['Palmeiras','sports','esportes'],['Cuidados com plantas no jardim','trends','plantas-e-jardinagem'],['Tecnologia em celulares','trends','tecnologia'],['Inteligência artificial no cotidiano','trends','inteligencia-artificial'],['Cinema e filmes brasileiros','news','entretenimento'],['Receita Federal atualiza calendário','news','noticias'],...['Jogo no Xbox e Game Pass','Novo jogo de PlayStation','Jogo de videogame','Campeonato de jogos eletrônicos'].map(title=>[title,'trends','tecnologia'])];

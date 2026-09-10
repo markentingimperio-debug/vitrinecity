@@ -35,6 +35,7 @@ async function fixture(t,{commercial=true,trend=false}={}){
   let origin;
   const sameOriginOnly=(req,res,next)=>req.get('origin')===origin?next():res.status(403).json({error:'origin'});
   const instance=setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl:'https://vitrinecity.test',publicDir:path.join(appDir,'public'),dataDir:folder,assets,sourceCatalog,
+    automaticSourceAllowed:()=>state.automaticSourceAllowed!==false,
     generateStory:async(source,context)=>{state.generationCalls++;if(state.generateGate)await state.generateGate(source,context);return state.noDraft?{approved:false,notes:'Faltam informações verificadas.'}:{draft:structuredClone(state.generated),approved:state.approved,notes:state.approved?'Conteúdo verificado.':'Aguardando revisão.'};}});
   const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));origin='http://127.0.0.1:'+server.address().port;
   const call=async(url,{method='GET',body,admin=false,foreign=false}={})=>{const response=await fetch(origin+url,{method,headers:{origin:foreign?'https://foreign.test':origin,'content-type':'application/json',...(admin?{'x-admin':'fixture'}:{})},body:body===undefined?undefined:JSON.stringify(body)});const raw=await response.text();return {status:response.status,raw,json:()=>JSON.parse(raw)};};
@@ -196,6 +197,19 @@ test('pause, abort and changed source invalidate work waiting on the generation 
 test('the final transaction checks eligibility again after asynchronous image preparation',async t=>{
   const f=await fixture(t),entered=deferred(),release=deferred();let current=true;
   f.state.imageGate=async()=>{entered.resolve();await release.promise;};const pending=f.generate({isCurrent:()=>current});await entered.promise;current=false;release.resolve();await assert.rejects(pending,error=>error.status===409);assert.equal(f.row(),undefined);
+});
+
+test('automatic source policy blocks direct calls before generation and is rechecked before companion publication',async t=>{
+  const f=await fixture(t,{trend:true});f.state.automaticSourceAllowed=false;
+  assert.equal(f.instance.canGenerateAutomatically(f.state.source.key),false);
+  await assert.rejects(f.generate(),error=>error.status===409);
+  assert.equal(f.state.generationCalls,0);assert.equal(f.row(),undefined);assert.equal(f.companion(),undefined);
+  f.state.automaticSourceAllowed=true;const entered=deferred(),release=deferred();
+  f.state.imageGate=async()=>{entered.resolve();await release.promise;};
+  const pending=f.generate();await entered.promise;f.state.automaticSourceAllowed=false;release.resolve();
+  await assert.rejects(pending,error=>error.status===409);
+  assert.equal(f.row(),undefined);assert.equal(f.companion(),undefined);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM editorial_web_story_events').get().n,0);
 });
 
 test('concurrent first-generation requests can create only one source story and public URL',async t=>{
