@@ -5,6 +5,8 @@
   const GOOGLE_KEY = 'vc_google_analytics_consent_v1';
   const CONVERSION_KEY = 'vc_conversion_measurement_consent_v1';
   const googleEnabled = !!document.querySelector('script[data-vc-google-analytics="enabled"]');
+  const OPENAI_KEY = 'vc_openai_ads_consent_v1';
+  const openaiEnabled = !!document.querySelector('script[data-vc-openai-ads="enabled"]');
   const SESSION_KEY = 'vc_analytics_session';
   const TOUCH_KEY = 'vc_analytics_first_touch_v1';
   const read = (area, key) => { try { return window[area].getItem(key); } catch { return null; } };
@@ -105,7 +107,9 @@
     if (activeBanner) return;
     const banner = document.createElement('aside');banner.id = 'vc-consent';
     activeBanner = banner;
-    const message = googleEnabled
+    const message = openaiEnabled
+      ? 'Com sua permissão, a VitrineCity, o Google Analytics e a OpenAI medem visitas e interações com produtos. A OpenAI recebe identificadores dos produtos, eventos e o identificador do clique do anúncio. Não enviamos campos de formulários. A medição é opcional.'
+      : googleEnabled
       ? 'Com sua permissão, a VitrineCity e o Google Analytics medem visitas, cadastros, contatos comerciais e compras. Não enviamos campos de formulários ao Google. A medição é opcional.'
       : 'Dados opcionais nos ajudam a melhorar a cidade.';
     banner.innerHTML = `<div><strong>Privacidade</strong><p>${message}</p></div><div class="vc-consent-actions"><button type="button" data-choice="essential">Só essenciais</button><button type="button" data-choice="accepted">Aceitar medição</button></div>`;
@@ -115,6 +119,7 @@
       const choice = event.target.dataset.choice;if (!choice) return;
       if (!['essential', 'accepted'].includes(choice)) return;
       write('localStorage', CONSENT_KEY, choice);
+      if (openaiEnabled) write('localStorage', OPENAI_KEY, choice);
       if (googleEnabled) {
         write('localStorage', GOOGLE_KEY, choice);
         write('localStorage', CONVERSION_KEY, choice);
@@ -126,7 +131,7 @@
     });
   };
   const consent = read('localStorage', CONSENT_KEY);
-  if (!consent || (googleEnabled && consent === 'accepted' && (!read('localStorage', GOOGLE_KEY) || (read('localStorage', GOOGLE_KEY) === 'accepted' && !read('localStorage', CONVERSION_KEY))))) showConsent();
+  if (!consent || (openaiEnabled && consent === 'accepted' && !read('localStorage', OPENAI_KEY)) || (googleEnabled && consent === 'accepted' && (!read('localStorage', GOOGLE_KEY) || (read('localStorage', GOOGLE_KEY) === 'accepted' && !read('localStorage', CONVERSION_KEY))))) showConsent();
   if (consent === 'accepted') { loadExperiment(); loadGoogle(); }
   if (googleEnabled) {
     const preferences = document.createElement('button');

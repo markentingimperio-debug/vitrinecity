@@ -1,3 +1,4 @@
+import { setupOpenAIProductFeed } from './openai-product-feed.js';
 import { setupProductionHardening } from './production-hardening.js';
 import {cleanPublicRoutes} from './clean-public-routes.js';
 import { setupCatalogProductImages } from './catalog-product-images.js';
@@ -2848,6 +2849,8 @@ function metaCatalogUrl(value, fallback = '/') {
   try { return new URL(String(value || fallback), SITE_URL).href; }
   catch { return new URL(fallback, SITE_URL).href; }
 }
+
+setupOpenAIProductFeed(app, db, SITE_URL);
 
 app.get('/feeds/meta-catalog.csv', (_req, res) => {
   const products = db.prepare(`SELECT p.id,p.name,p.description,p.category,p.price_cents,p.image_url,p.sku,
