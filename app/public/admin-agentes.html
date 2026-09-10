@@ -908,6 +908,7 @@
       .viral-card summary { cursor:pointer; color:#eef8ff; font-weight:800; }
       .viral-card pre { white-space:pre-wrap; color:#b9d6e8; font:11px/1.55 Inter,system-ui,sans-serif; }
       .viral-status { color:var(--amber); font-size:10px; margin:6px 0; text-transform:uppercase; letter-spacing:.7px; }
+      .viral-progress { color:#c6deed; font-size:13px; line-height:1.55; overflow-wrap:anywhere; }
       .empty {
         padding: 18px;
         text-align: center;
@@ -1632,9 +1633,32 @@
       async function loadViralAutomation(){const d=await api("/api/admin/viral-factory/automation"),s=d.settings||{};window.viralSettings=s;$("#viralAutomationStatus").textContent=`${s.enabled?"Automação ativa":"Automação pausada"} · OpenRouter ${d.openrouterConfigured?"conectado":"sem chave"} · última execução: ${s.last_run_at||"ainda não executada"}${s.last_error?` · erro: ${s.last_error}`:""}`;$("#toggleViral").textContent=s.enabled?"Pausar automação":"Ativar automação";}
       $("#runViralNow").onclick=async(e)=>{const b=e.currentTarget;b.disabled=true;b.textContent="Analisando tendências…";try{const d=await api("/api/admin/viral-factory/run",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});notify(`${d.created?.length||0} quizzes criados para aprovação.`);await load();await loadViralAutomation()}catch(x){notify(x.message,true)}finally{b.disabled=false;b.textContent="Buscar trends e gerar pauta agora"}};
       $("#toggleViral").onclick=async(e)=>{const b=e.currentTarget;b.disabled=true;try{const s=window.viralSettings||{};await api("/api/admin/viral-factory/automation",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:!s.enabled,approvalRequired:false,destinationUrl:s.destination_url||$("#viralDestinationUrl").value,destinationLabel:s.destination_label||$("#viralDestinationLabel").value})});await loadViralAutomation();notify("Automação atualizada com aprovação do time de agentes.")}catch(x){notify(x.message,true)}finally{b.disabled=false}};
+      // Presentation only: stored states, receipts and production controls remain unchanged.
+      function viralProductionStatus(q) {
+        const labels={awaiting_approval:"Aguardando Gestora",approved:"Vídeo final pronto",published:"Publicado",cancelled:"Cancelado"};
+        if(q?.status!=="in_production")return {label:Object.hasOwn(labels,q?.status)?labels[q.status]:String(q?.status||"Estado não informado"),detail:""};
+        const uncertain={label:"Estado das cenas em conferência",detail:"Ainda não há informação completa para confirmar o andamento do vídeo."};
+        if(!Array.isArray(q.scenes)||q.scenes.length!==9)return uncertain;
+        const counts={pending:0,submitting:0,generating:0,downloaded:0,failed:0};
+        for(const scene of q.scenes){
+          if(!scene||typeof scene.status!=="string"||!Object.hasOwn(counts,scene.status))return uncertain;
+          counts[scene.status]++;
+        }
+        if(counts.failed){
+          const unfinished=counts.pending+counts.submitting+counts.generating;
+          const progress=counts.pending+counts.generating?"Ainda há cenas na fila ou em processamento.":counts.submitting?"Há envios sem confirmação que precisam de conferência.":"Não há cenas na fila ou em processamento.";
+          return {
+            label:unfinished?"Produção parcial com falhas":"Produção bloqueada",
+            detail:`${counts.failed} de 9 cenas com falha. ${progress} O vídeo completo ainda não foi confirmado; as cenas falhadas precisam de revisão.`
+          };
+        }
+        if(counts.downloaded===9)return {label:"Cenas prontas",detail:"9 de 9 cenas disponíveis. O vídeo final ainda não foi confirmado."};
+        if(counts.generating)return {label:"Gerando cenas",detail:"Acompanhando as tarefas das cenas. O vídeo completo ainda não foi confirmado."};
+        if(counts.submitting)return {label:"Envio em conferência",detail:"Aguardando confirmação do envio das cenas. Uma tentativa não comprova geração concluída."};
+        return {label:"Cenas na fila",detail:"Há cenas aguardando processamento. O vídeo completo ainda não foi confirmado."};
+      }
       function renderViral() {
-        const status={awaiting_approval:"Aguardando Gestora",approved:"Vídeo final pronto",in_production:"Gerando e editando cenas",published:"Publicado",cancelled:"Cancelado"};
-        $("#viralJobs").innerHTML=viralQuizzes.length?viralQuizzes.map(q=>{const done=(q.scenes||[]).filter(s=>s.status==="downloaded").length;return `<details class="viral-card" ${q===viralQuizzes[0]?"open":""}><summary>${esc(q.theme)}</summary><div class="viral-status">${esc(status[q.status]||q.status)} · ${q.scenes?.length?`${done}/9 cenas · `:""}65 segundos · ${esc(q.voice)}</div>${q.publication?`<p class="factory-meta">Vitrine Social: ${esc(q.publication.message)}</p>`:""}<pre>${esc(q.script)}</pre><div class="factory-meta">Destino: ${esc(q.destination_label)} · ${esc(q.destination_url)}<br>Canais planejados: ${esc(q.channels)}</div>${q.status==="awaiting_approval"?`<div class="activity-actions"><button class="primary" data-viral="${q.id}" data-viral-action="approve">Aprovar e produzir 9 cenas</button></div>`:""}</details>`}).join(""):`<div class="empty">Crie o primeiro quiz. Nenhuma publicação acontece sem aprovação.</div>`;
+        $("#viralJobs").innerHTML=viralQuizzes.length?viralQuizzes.map(q=>{const done=(Array.isArray(q.scenes)?q.scenes:[]).filter(s=>s?.status==="downloaded").length,state=viralProductionStatus(q);return `<details class="viral-card" ${q===viralQuizzes[0]?"open":""}><summary>${esc(q.theme)}</summary><div class="viral-status">${esc(state.label)} · ${q.scenes?.length?`${done}/9 cenas · `:""}65 segundos · ${esc(q.voice)}</div>${state.detail?`<p class="viral-progress">${esc(state.detail)}</p>`:""}${q.publication?`<p class="factory-meta">Vitrine Social: ${esc(q.publication.message)}</p>`:""}<pre>${esc(q.script)}</pre><div class="factory-meta">Destino: ${esc(q.destination_label)} · ${esc(q.destination_url)}<br>Canais planejados: ${esc(q.channels)}</div>${q.status==="awaiting_approval"?`<div class="activity-actions"><button class="primary" data-viral="${q.id}" data-viral-action="approve">Aprovar e produzir 9 cenas</button></div>`:""}</details>`}).join(""):`<div class="empty">Crie o primeiro quiz. Nenhuma publicação acontece sem aprovação.</div>`;
       }
       $("#viralForm").onsubmit=async(e)=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{await api("/api/admin/viral-quizzes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({theme:$("#viralTheme").value,category:$("#viralCategory").value,difficulty:$("#viralDifficulty").value,voice:$("#viralVoice").value,destinationLabel:$("#viralDestinationLabel").value,destinationUrl:$("#viralDestinationUrl").value,channels:$("#viralChannels").value})});$("#viralTheme").value="";notify("Roteiro de 65 segundos criado para aprovação.");await load()}catch(x){notify(x.message,true)}finally{b.disabled=false}};
       $("#viralJobs").onclick=async(e)=>{const b=e.target.closest("[data-viral-action]");if(!b)return;b.disabled=true;try{await api(`/api/admin/viral-quizzes/${b.dataset.viral}/${b.dataset.viralAction}`,{method:"POST",headers:{"Content-Type":"application/json"}});notify("Quiz aprovado e enviado ao Estúdio Audiovisual.");await load()}catch(x){notify(x.message,true);b.disabled=false}};
