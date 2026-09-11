@@ -80,6 +80,8 @@ for (const pathname of ['/', '/loja.html', '/oracao-do-dia-extra.html', '/course
 // Exercise the real build script against in-memory files; never rewrite public
 // HTML or boot the production server just to verify its injection boundaries.
 const checkoutHtml = fs.readFileSync(new URL('../public/course-checkout.html', import.meta.url), 'utf8');
+const checkoutLoader = checkoutHtml.match(/<script type="module">[^<]*mountCourseCheckout[^<]*<\/script>/)?.[0];
+assert.ok(checkoutLoader, 'O formulário precisa carregar seu controlador de pagamento.');
 const sampleHtml = '<!doctype html><html><head></head><body><main>Conteúdo público</main></body></html>';
 const buildFiles = new Map([
   ['/fixture/public/course-checkout.html', checkoutHtml],
@@ -97,7 +99,7 @@ vm.runInNewContext(buildSource, { fs: fixtureFs, path: path.posix, injectPublicM
 const preparedCheckout = buildFiles.get('/fixture/public/course-checkout.html');
 assert.ok(!preparedCheckout.includes('/global-market-banner.js'), 'Build: o checkout não deve receber nenhuma versão do loader publicitário.');
 assert.match(preparedCheckout, /src="\/site-assistant\.js\?/, 'Build: a Lia deve permanecer disponível no checkout.');
-assert.match(preparedCheckout, /course-checkout\.js\?v=1/, 'Build: o script do formulário deve ser preservado.');
+assert.ok(preparedCheckout.includes(checkoutLoader), 'Build: o script completo do formulário deve ser preservado.');
 for (const filename of ['index.html', 'loja.html']) {
   const prepared = buildFiles.get('/fixture/public/' + filename);
   assert.match(prepared, /global-market-banner\.js\?v=9/, `${filename}: publicidade preservada.`);
@@ -123,7 +125,7 @@ function serveFixture(pathname, prepared) {
     Buffer, injectPublicMeasurement, injectSiteAssistant
   };
   vm.runInNewContext(sendWrapper + '\n' + staticMiddleware, context);
-  const req = { method: 'GET', path: pathname };
+  const req = { method: 'GET', path: pathname, query: {} };
   const res = {
     locals: {}, getHeader: key => headers.get(key), setHeader: (key, value) => headers.set(key, value),
     type(value) { headers.set('content-type', value === 'html' ? 'text/html' : value); return this; },
@@ -139,7 +141,7 @@ for (const prepared of [false, true]) {
   assert.ok(!checkout.includes('/global-market-banner.js'), 'Servidor: nem o middleware estático nem o wrapper podem recolocar v3/v5 no checkout.');
   assert.match(checkout, /src="\/site-assistant\.js\?/, 'Servidor: Lia preservada.');
   assert.match(checkout, /id="course-payment-form"/, 'Servidor: formulário preservado.');
-  assert.match(checkout, /course-checkout\.js\?v=1/, 'Servidor: lógica de pagamento preservada.');
+  assert.ok(checkout.includes(checkoutLoader), 'Servidor: lógica de pagamento preservada.');
   assert.match(checkout, /pwa-install\.js\?v=2/, 'Servidor: outros injetores não foram alterados.');
   for (const pathname of ['/', '/loja.html']) {
     const html = serveFixture(pathname, prepared);
