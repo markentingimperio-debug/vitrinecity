@@ -31,7 +31,7 @@ export function supportStatusMessage(status,amountCents=500){
   return 'Ainda não há confirmação disponível para este apoio.';
 }
 
-export async function installPrayerSupport({document,fetch,location,storage,crypto}){
+export async function installPrayerSupport({document,fetch,location,storage,crypto,window:win=globalThis.window}){
   const button=document.getElementById('supportButton'),status=document.getElementById('supportStatus'),amounts=document.getElementById('supportAmounts'),amountOptions=[...document.querySelectorAll('input[name="supportAmount"]')],beneficiary=document.getElementById('supportBeneficiary'),refresh=document.getElementById('refreshSupport');
   let busy=false,enabled=false,requestKey=null,returnReference=null,returnToken=null,selectedAmount=500,lockedAmount=null,allowedAmounts=[];
   function read(key){try{return storage?.getItem(STORAGE_PREFIX+key)||null;}catch{return null;}}
@@ -51,7 +51,7 @@ export async function installPrayerSupport({document,fetch,location,storage,cryp
       status.textContent=supportStatusMessage(order.status,order.amountCents);
       if(typeof order.beneficiary==='string'&&order.beneficiary.trim()){beneficiary.textContent='Recebedor: '+order.beneficiary.trim();beneficiary.hidden=false;}
       refresh.hidden=['approved','rejected','cancelled','refunded','partially_refunded','charged_back','creation_rejected'].includes(order.status);
-      if(refresh.hidden)clearRequest();
+      if(refresh.hidden){busy=false;clearRequest();}
     }catch{status.textContent='Não foi possível confirmar o apoio agora. Você pode tentar verificar novamente.';refresh.hidden=false;}
     refresh.disabled=false;
   }
@@ -79,7 +79,10 @@ export async function installPrayerSupport({document,fetch,location,storage,cryp
       }
       if(!checkoutUrl||!receiptValid||payment.amountCents!==selectedAmount||payment.currency!=='BRL')throw new Error('invalid checkout');
       status.textContent='Abrindo o Mercado Pago. Revise o recebedor e o valor antes de pagar.';
-      location.assign(checkoutUrl);
+      if(typeof win?.vcLiaNavigate==='function'&&win.vcLiaNavigate(checkoutUrl)===true){
+        status.textContent='Seu link de apoio está pronto. Continue pelo link de pagamento na conversa com a Lia e confira o recebedor e o valor no Mercado Pago. Nenhum pagamento foi confirmado nesta página.';
+        refresh.hidden=false;
+      }else location.assign(checkoutUrl);
     }catch{failure('Não foi possível abrir o apoio agora. Nenhum pagamento foi confirmado nesta página. Tente novamente quando desejar.');}
   });
   try{

@@ -107,6 +107,7 @@ import { injectSiteAssistant, injectSiteAssistantContent } from './site-assistan
 import { setupSiteSalesExperience } from './site-sales-experience.js';
 import { courseLiaQuote, marketplaceLiaQuote, publicLiaQuote, assertLiaQuoteAccepted } from './lia-discount.js';
 import { setupSiteSalesAssistant } from './site-sales-assistant.js';
+import { setupSiteAssistantGifts } from './site-assistant-gifts.js';
 import { setupSiteSalesNeural } from './site-sales-neural.js';
 import { setupBuildingSubscriptions } from './building-subscriptions.js';
 import { SITE_ASSISTANT_GROUPS } from './site-assistant-groups.js';
@@ -2647,7 +2648,7 @@ app.use((req, res, next) => {
     if (page.includes('</body>') && !page.includes('/pwa-install.js')) {
       page = page.replace('</body>', '<script src="/pwa-install.js?v=2" defer></script></body>');
     }
-    if (req.path !== '/course-checkout.html' && page.includes('</body>') && !page.includes('/global-market-banner.js')) {
+    if (!['/course-checkout.html','/presente.html'].includes(req.path) && page.includes('</body>') && !page.includes('/global-market-banner.js')) {
       page = page.replace('</body>', '<script src="/global-market-banner.js?v=5" defer></script></body>');
     }
     if (wasBuffer) res.setHeader('Content-Length', Buffer.byteLength(page));
@@ -2769,6 +2770,8 @@ const socialCommentCampaigns = registerSocialCommentCampaigns({
   metaAdapter:createMetaCommentApi({db,decryptToken:decryptSocialToken})
 });
 setupDigitalPublisher({app,db,requireAdmin,requireUser,sameOriginOnly,activeEnrollment,generateBookPlan,generateBookChapter,generateBookCover,generateBookIllustration,canRun:ecosystemCanRun});
+const siteAssistantGifts=setupSiteAssistantGifts({app,db,requireUser,sameOriginOnly,siteUrl:SITE_URL,
+  sendGiftEmail:mailTransport?message=>mailTransport.sendMail({from:process.env.EMAIL_FROM||`VitrineCity <${SMTP_USER}>`,...message}):null});
 const ecosystemCatalog=createEcosystemCatalog({db,siteUrl:SITE_URL,services:()=>publicServiceCatalog(),sourceCatalog:{get:key=>dailyStories?.catalog?.get(key)||socialCommentSources.get(key)}});
 const ecosystemInternalSocial=createEcosystemInternalSocial({db,siteUrl:SITE_URL,sourceCatalog:{get:key=>dailyStories?.catalog?.get(key)||socialCommentSources.get(key)},getPolicy:()=>ecosystem.policy(),moderationReason:socialModerationReason,isPublisherAllowed:id=>isAdministrativeUser(db.prepare('SELECT id,email,is_admin FROM users WHERE id=?').get(id))});
 ecosystem=createEcosystemOrchestrator({db,getStories:()=>dailyStories,catalog:ecosystemCatalog,runInternalSocial:options=>ecosystemInternalSocial.run(options),getInternalSocial:()=>ecosystemInternalSocial.snapshot()});
@@ -2999,7 +3002,7 @@ app.get('/feeds/meta-catalog.csv', (_req, res) => {
     .set('Cache-Control', 'public,max-age=300').send(`\uFEFF${csv}\n`);
 });
 app.get(['/oracao-do-dia','/oracao-do-dia.html'], createPrayerDailyHandler({readTemplate:()=>fs.readFileSync(path.join(dir,'public','oracao-do-dia.html'),'utf8')}));
-app.use((req,res,next)=>{if(req.method!=='GET'||req.path.startsWith('/admin'))return next();const relative=req.path==='/'?'index.html':decodeURIComponent(req.path).replace(/^\//,'');const candidates=relative.endsWith('.html')?[relative]:[`${relative}.html`];for(const candidate of candidates){if(candidate.includes('/')||candidate.includes('..'))continue;const file=path.join(dir,'public',candidate);if(!fs.existsSync(file))continue;const page=fs.readFileSync(file,'utf8');return res.type('html').send(candidate==='course-checkout.html'?page:page.replace('</body>','<script src="/global-market-banner.js?v=3" defer></script></body>'))}return next()});
+app.use((req,res,next)=>{if(req.method!=='GET'||req.path.startsWith('/admin'))return next();const relative=req.path==='/'?'index.html':decodeURIComponent(req.path).replace(/^\//,'');const candidates=relative.endsWith('.html')?[relative]:[`${relative}.html`];for(const candidate of candidates){if(candidate.includes('/')||candidate.includes('..'))continue;const file=path.join(dir,'public',candidate);if(!fs.existsSync(file))continue;const page=fs.readFileSync(file,'utf8');return res.type('html').send(['course-checkout.html','presente.html'].includes(candidate)?page:page.replace('</body>','<script src="/global-market-banner.js?v=3" defer></script></body>'))}return next()});
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
 
 app.get('/r/:code', (req, res) => {
@@ -5910,6 +5913,7 @@ function videoGenerationIssue(project) {
 const siteSalesAssistant = typeof setupSiteSalesAssistant === 'function' ? setupSiteSalesAssistant({app,db,requireAdmin,getSessionUser:currentUser,publicOrigin:SITE_URL,
   recipeVipUrl:process.env.RECIPE_VIP_WHATSAPP_URL || '',salesExperience:siteSalesExperience,
   getGroups:()=>SITE_ASSISTANT_GROUPS,
+  getWelcomeGift:()=>siteAssistantGifts.catalog(),
   getPublicCourses:()=>managedCourses(true).filter(course=>courseReady(course.slug)).map(course=>({...course,available:true})),
   getPublicServices:()=>publicServiceCatalog().map(service=>({...service,available:true})),
   canSendFollowups:()=>ecosystemCanRun()&&whatsappQrConfig().configured,

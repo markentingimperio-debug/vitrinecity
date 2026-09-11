@@ -52,16 +52,16 @@ export function safeSiteAssistantUrl(value, origin, { image = false } = {}) {
     if (url.username || url.password || !['http:', 'https:'].includes(url.protocol)) return '';
     if (url.origin !== base.origin && url.protocol !== 'https:') return '';
     if (!image && url.origin === base.origin) {
-      if (!classifySiteAssistantPath(url.pathname).enabled && !['/entrar-cidade.html', '/meus-cursos.html', '/social'].includes(url.pathname) && !/^\/ir\/[a-zA-Z0-9_-]+$/.test(url.pathname)) return '';
+      if (!classifySiteAssistantPath(url.pathname).enabled && !['/entrar-cidade.html', '/meus-cursos.html', '/social', '/presente.html'].includes(url.pathname) && !/^\/ir\/[a-zA-Z0-9_-]+$/.test(url.pathname)) return '';
       if ([...url.searchParams.keys()].some(key => /token|session|password|secret|auth/i.test(key))) return '';
     }
     return url.href;
   } catch { return ''; }
 }
 
-// The viewer may host these two existing customer forms, but their contents and
+// The viewer may host these customer forms, but their contents and
 // URLs never become AI context. This does not enable the assistant on them.
-const EMBEDDED_CUSTOMER_FORMS = ['/entrar.html', '/minha-conta.html'];
+const EMBEDDED_CUSTOMER_FORMS = ['/entrar.html', '/minha-conta.html', '/presente.html'];
 const CONTENT_LINKS = ['/entrar-cidade.html', '/meus-cursos.html', '/pedidos.html', '/social', '/entregas', '/recuperar-acesso.html', '/termos-creditos.html', '/termos-marketplace.html', '/privacy.html'];
 export function siteAssistantEmbeddedPath(path) {
   return classifySiteAssistantPath(path).enabled || EMBEDDED_CUSTOMER_FORMS.includes(path);

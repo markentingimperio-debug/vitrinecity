@@ -65,7 +65,7 @@ test('only ordinary document link clicks are intercepted; hash, download and han
 });
 
 test('the only private forms permitted in the viewer never become an assistant context',()=>{
-  for(const path of ['/entrar.html','/minha-conta.html']){
+  for(const path of ['/entrar.html','/minha-conta.html','/presente.html']){
     assert.equal(siteAssistantEmbeddedPath(path),true);assert.equal(classifySiteAssistantPath(path).enabled,false);assert.equal(siteAssistantContextPath(path,'?lia=1&returnTo=%2Floja'),'');
     const target=siteAssistantDestination(path+'?returnTo=%2Floja%3Fcarrinho%3D1',origin);assert.equal(target.kind,'embedded');assert.equal(target.contextPath,'');
   }
@@ -81,7 +81,7 @@ test('content URL boundaries reject credentials, sensitive queries, private retu
 
 const html='<!doctype html><html lang="pt-BR"><head><title>Original</title></head><body class="original"><form id="existing"><input name="email"></form><script src="/course-checkout.js" type="module"></script><script type="module" src="/site-assistant.js?v=old"></script><script src="/global-market-banner.js?v=3" defer></script><script src="/pwa-install.js?v=2"></script></body></html>';
 test('embedded HTML keeps original forms/controllers, removes nested widgets/banner/PWA, and is idempotent',()=>{
-  for(const path of ['/produto/13/adubo','/course-checkout.html','/entrar.html','/minha-conta.html']){
+  for(const path of ['/produto/13/adubo','/course-checkout.html','/entrar.html','/minha-conta.html','/presente.html']){
     const embedded=injectSiteAssistantContent(html,{path,embedded:true});
     assert.match(embedded,/<body class="original">/);assert.match(embedded,/<form id="existing"><input name="email"><\/form>/);assert.match(embedded,/src="\/course-checkout.js"/);
     assert.doesNotMatch(embedded,/src="\/(?:site-assistant|global-market-banner|pwa-install)\.js/);

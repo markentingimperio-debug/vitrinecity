@@ -10,6 +10,7 @@ import vm from 'node:vm';
 import {validWhatsAppReceiptId} from '../whatsapp-schedule-worker.js';
 
 const origin='https://vitrinecity.test',page='/artigo/bolo-caseiro';
+const welcomeGift={available:true,id:'zamioculca',topic:'plants',amountCents:0,title:'Guia prático da zamioculca: cultivo e cuidados em casa'};
 const response=(reply='Posso ajudar com os utensílios. O que você quer preparar?',offerIds=['product:1'])=>({output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({reply,offerIds})}]}]});
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 async function fixture(t,options={}){
@@ -32,7 +33,7 @@ async function fixture(t,options={}){
     INSERT INTO affiliate_catalog VALUES('mixer-bad-link','Mixer link inválido','','Cozinha','','shopee','https://evil.test/item','','published','available','reachable');`);
   const experience=options.realExperience?setupSiteSalesExperience({app,db,requireAdmin:(_req,res)=>res.sendStatus(403),siteUrl:origin,schedule:false}):{session(req,res){const token=req.get('cookie')?.match(/(?:^|; )test_sid=([a-f0-9]{64})/)?.[1];if(token&&sessions.has(token))return sessions.get(token);const id=randomBytes(32).toString('hex'),session={id,versionId:1,versionNumber:1,approach:options.approach||'helpful_question'};sessions.set(id,session);res.append('Set-Cookie',`test_sid=${id}; Path=/; HttpOnly; SameSite=Lax`);return session;},recordEvent(id,type,data){seen.events.push({id,type,data});},recordOutcome(id,data){seen.outcomes.push({id,...data});},registerOffers(id,offers){seen.offers.push({id,offers});}};
   if(options.interestError)experience.markInterest=()=>{throw Error('measurement_unavailable');};
-  const handler=setupSiteSalesAssistant({app,db,publicOrigin:origin,salesExperience:experience,getSessionUser:req=>req.get('x-test-user')==='active'?{id:7,name:'Ana',account_status:'active',email:'private@test.invalid'}:null,requestOpenAI:async body=>{seen.calls.push(body);return options.request?options.request(body,db):response();},getGroups:()=>options.groups||[],getPublicCourses:()=>options.courses||[],getPublicServices:()=>options.services||[],recipeVipUrl:options.recipeVipUrl||'',sendWhatsApp:options.sendWhatsApp||null,canSendFollowups:options.canSendFollowups||(()=>true)});
+  const handler=setupSiteSalesAssistant({app,db,publicOrigin:origin,salesExperience:experience,getSessionUser:req=>req.get('x-test-user')==='active'?{id:7,name:'Ana',account_status:'active',email:'private@test.invalid'}:null,requestOpenAI:async body=>{seen.calls.push(body);return options.request?options.request(body,db):response();},getWelcomeGift:()=>options.gift||null,getGroups:()=>options.groups||[],getPublicCourses:()=>options.courses||[],getPublicServices:()=>options.services||[],recipeVipUrl:options.recipeVipUrl||'',sendWhatsApp:options.sendWhatsApp||null,canSendFollowups:options.canSendFollowups||(()=>true)});
   const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const base='http://127.0.0.1:'+server.address().port;
   const client=()=>{const jar=new Map();return async(path,{method='GET',body,headers={},missingOrigin=false}={})=>{const res=await fetch(base+path,{method,headers:{...(!missingOrigin?{origin}:{}),...(jar.size?{cookie:[...jar.values()].join('; ')}:{}),...(body!==undefined?{'content-type':'application/json'}:{}),...headers},body:body===undefined?undefined:JSON.stringify(body)});for(const cookie of res.headers.getSetCookie()){const first=cookie.split(';')[0];jar.set(first.split('=')[0],first);}return {status:res.status,body:await res.json(),cookies:res.headers.getSetCookie()};};};
   const call=client();t.after(async()=>{handler.close();experience.close?.();server.closeAllConnections();await new Promise(r=>server.close(r));db.close();});
@@ -43,6 +44,23 @@ test('anonymous context is free and selects only available pertinent catalog ent
   assert.equal(r.status,200);assert.equal(r.body.enabled,true);assert.match(r.body.identity,/IA/);assert.match(r.body.greeting,/Oi! Eu sou a Lia/);assert.doesNotMatch(r.body.greeting,/assistente virtual/);assert.equal(r.body.visitorName,undefined);assert.equal(f.seen.calls.length,0);
   assert.deepEqual(r.body.offers.map(o=>o.id),['affiliate:mixer-real','product:1']);assert.match(r.body.offers[0].disclosure,/comissão/);
   assert.deepEqual(r.body.offers.map(o=>o.assetType),['affiliate','product']);assert.equal(f.seen.offers.length,1);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM site_assistant_history').get().n,0);
+});
+
+test('explicit welcome gift opens its secure form with no product, discount or claim of email delivery',async t=>{
+  const f=await fixture(t,{gift:welcomeGift});
+  const initial=await f.call('/api/site-assistant/context?path=/plantas-e-jardinagem');
+  assert.equal(initial.body.actions.some(a=>a.assetId==='gift:zamioculca'),false);
+  const result=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Não quero comprar, quero receber o guia gratuito de zamioculca.',contextPath:'/plantas-e-jardinagem'}});
+  assert.equal(result.status,200);assert.deepEqual(result.body.offers,[]);assert.equal(result.body.discountOffer,null);
+  assert.equal(result.body.contactOffer,null);assert.equal(result.body.actions[0].url,'/presente.html?guia=zamioculca');
+  assert.match(result.body.reply,/zamioculca/i);assert.doesNotMatch(result.body.reply,/enviei|foi enviado|pagamento aprovado/i);
+});
+
+test('gift form never becomes AI context and unavailable gifts are not promised',async t=>{
+  const f=await fixture(t,{gift:{...welcomeGift,available:false}});
+  assert.equal((await f.call('/api/site-assistant/context?path=/presente.html')).status,404);
+  const result=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Quero receber o guia gratuito de zamioculca.',contextPath:'/plantas-e-jardinagem'}});
+  assert.equal(result.status,200);assert.equal(result.body.actions.some(a=>a.assetId==='gift:zamioculca'),false);
 });
 test('authenticated name comes only from server session lookup, never client fields',async t=>{
   const f=await fixture(t),r=await f.call('/api/site-assistant/context?path='+page+'&name=Inventado',{headers:{'x-test-user':'active'}});
@@ -140,6 +158,89 @@ test('prayer and voluntary signup use real navigation without product pressure o
   const f=await fixture(t),prayer=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Quero oração',contextPath:'/oracao-do-dia.html'}});
   assert.equal(prayer.body.actions[0].url,'/oracao-do-dia.html');assert.deepEqual(prayer.body.offers,[]);assert.match(prayer.body.reply,/Não é necessário comprar/);
   const signup=await f.chat('Quero criar conta');assert.equal(signup.body.actions[0].url,'/entrar-cidade.html');assert.match(signup.body.reply,/opcional/);assert.equal(f.seen.calls.length,0);
+});
+
+const prayerChat=(call,message)=>call('/api/site-assistant/chat',{method:'POST',body:{message,contextPath:'/oracao-do-dia.html'}});
+const hasPrayerSupport=result=>result.body.actions.some(action=>action.assetId==='prayer-support');
+
+test('prayer support is offered once only after relevant help, survives history trimming and registers its safe destination',async t=>{
+  const f=await fixture(t,{realExperience:true});
+  const opening=await f.call('/api/site-assistant/context?path=/oracao-do-dia.html');
+  assert.equal(hasPrayerSupport(opening),false);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM site_assistant_prayer_support').get().n,0);
+  assert.equal(hasPrayerSupport(await prayerChat(f.call,'Obrigada!')),false);
+  const first=await prayerChat(f.call,'Quero acessar a oração de hoje');
+  assert.equal(hasPrayerSupport(first),false);assert.match(first.body.reply,/Não é necessário comprar, doar ou se cadastrar/);
+  const thanks=await prayerChat(f.call,'Amém, obrigada!');
+  assert.equal(hasPrayerSupport(thanks),true);assert.deepEqual(thanks.body.offers,[]);assert.equal(thanks.body.discountOffer,null);assert.equal(thanks.body.contactOffer,null);
+  assert.match(thanks.body.reply,/Se estiver ao seu alcance e não fizer falta para você/);assert.match(thanks.body.reply,/oração continua gratuita, com ou sem contribuição/);
+  assert.ok(thanks.body.reply.length<240);assert.doesNotMatch(thanks.body.reply,/R\$|recebedor|regra/i);
+  assert.deepEqual(thanks.body.actions,[{label:'Ver apoio voluntário',url:'/oracao-do-dia.html#supportTitle',kind:'internal',assetType:'prayer',assetId:'prayer-support'}]);
+  assert.ok(thanks.body.reply.length<=600);assert.doesNotMatch(thanks.body.reply,/bênç|cura|garant|foi confirmado|desconto|LIA5/i);
+  const invited=f.db.prepare('SELECT invited_ms FROM site_assistant_prayer_support').get().invited_ms;
+  assert.ok(invited>0);
+  const restored=await f.call('/api/site-assistant/context?path=/oracao-do-dia.html');
+  assert.equal(hasPrayerSupport(restored),false);assert.ok(restored.body.history.some(row=>row.content===thanks.body.reply));
+  for(let i=0;i<6;i++)assert.equal(hasPrayerSupport(await prayerChat(f.call,'Amém, obrigada!')),false);
+  assert.equal(f.db.prepare('SELECT invited_ms FROM site_assistant_prayer_support').get().invited_ms,invited);
+  assert.equal(f.db.prepare("SELECT COUNT(*) n FROM site_assistant_history WHERE content LIKE '%Se estiver ao seu alcance%'").get().n,0);
+  assert.equal(f.seen.calls.length,0);
+});
+
+test('an explicit support question can open the existing section without a prior appeal or provider request',async t=>{
+  const f=await fixture(t),r=await prayerChat(f.call,'Como posso contribuir?');
+  assert.equal(hasPrayerSupport(r),true);assert.match(r.body.reply,/apoio voluntário/);assert.deepEqual(r.body.offers,[]);
+  assert.equal(hasPrayerSupport(await prayerChat(f.call,'Como faço para doar?')),false);
+  assert.equal(f.seen.calls.length,0);assert.ok(f.seen.offers.some(event=>event.offers.some(offer=>offer.assetType==='prayer'&&offer.assetId==='prayer-support')));
+});
+
+test('declining support before or after an invitation prevents further appeals for that session',async t=>{
+  const f=await fixture(t);
+  for(const refusal of ['Não, obrigada','Agora não','Não quero','Só quero a oração','Não vou doar']){
+    const call=f.client();await prayerChat(call,'Quero a oração de hoje');
+    const declined=await prayerChat(call,refusal);assert.equal(hasPrayerSupport(declined),false);assert.match(declined.body.reply,/oração continua gratuita/);
+    assert.equal(hasPrayerSupport(await prayerChat(call,'Amém, obrigada!')),false);
+    assert.equal(hasPrayerSupport(await prayerChat(call,'Como posso apoiar?')),false);
+  }
+  const after=f.client();assert.equal(hasPrayerSupport(await prayerChat(after,'Quero contribuir')),true);
+  await prayerChat(after,'Não, obrigada');assert.equal(hasPrayerSupport(await prayerChat(after,'Amém!')),false);
+  assert.equal(f.seen.calls.length,0);
+});
+
+test('declared financial hardship suppresses prayer support across navigation and isolates sessions',async t=>{
+  const f=await fixture(t,{realExperience:true});
+  for(const statement of ['Estou sem dinheiro','Não tenho condições de contribuir','Estou desempregada','Estou com contas atrasadas','Não posso gastar','Isso vai me fazer falta','Não tenho como doar']){
+    const call=f.client();await prayerChat(call,'Quero a oração de hoje');
+    const r=await prayerChat(call,statement+'; como posso apoiar?');assert.equal(hasPrayerSupport(r),false);assert.match(r.body.reply,/não precisa contribuir/);
+    assert.equal(hasPrayerSupport(await prayerChat(call,'Amém, obrigada')),false);
+  }
+  const call=f.client();await call('/api/site-assistant/chat',{method:'POST',body:{message:'Estou sem dinheiro e só olhando',contextPath:page}});
+  await prayerChat(call,'Quero a oração');assert.equal(hasPrayerSupport(await prayerChat(call,'Obrigada!')),false);
+  assert.equal(hasPrayerSupport(await prayerChat(f.client(),'Como posso contribuir?')),true);
+  assert.deepEqual(f.db.prepare('PRAGMA table_info(site_assistant_prayer_support)').all().map(row=>row.name),['session_id','helped_ms','invited_ms','declined_ms','expires_ms']);
+  assert.equal(f.seen.calls.length,0);
+});
+
+test('new distress or a negative response is not treated as a moment to invite support',async t=>{
+  const f=await fixture(t);await prayerChat(f.call,'Quero a oração');
+  for(const message of ['Obrigada, mas ainda estou triste','Não me ajudou','Amém, estou com medo','Obrigada, como faço para compartilhar?'])assert.equal(hasPrayerSupport(await prayerChat(f.call,message)),false);
+  assert.equal(f.db.prepare('SELECT invited_ms FROM site_assistant_prayer_support').get().invited_ms,null);
+  assert.equal(f.seen.calls.length,0);
+});
+
+test('support preference records expire after 24 hours and page opening never extends them',async t=>{
+  const f=await fixture(t);const before=Date.now();await prayerChat(f.call,'Não tenho dinheiro');
+  const state=f.db.prepare('SELECT * FROM site_assistant_prayer_support').get();assert.ok(state.expires_ms>=before+86400000&&state.expires_ms<=Date.now()+86400000);
+  await f.call('/api/site-assistant/context?path=/oracao-do-dia.html');assert.equal(f.db.prepare('SELECT expires_ms FROM site_assistant_prayer_support').get().expires_ms,state.expires_ms);
+  f.db.prepare('UPDATE site_assistant_prayer_support SET expires_ms=?').run(Date.now()-1);
+  assert.equal(hasPrayerSupport(await prayerChat(f.call,'Como posso apoiar?')),true);
+});
+
+test('consultative instructions use declared needs, respect budget and preserve the existing AI budget',async t=>{
+  const f=await fixture(t);await f.chat('Quero uma forma para bolo');await f.chat('Está muito caro, tem uma opção mais barata?');
+  const request=f.seen.calls.at(-1),input=JSON.parse(request.input[0].content);
+  assert.equal(request.max_output_tokens,400);assert.equal(request.store,false);assert.ok(input.history.some(row=>row.content==='Quero uma forma para bolo'));
+  for(const rule of ['identifique a necessidade declarada no histórico','sem repetir algo já respondido','reconheça a preocupação sem discutir','Respeite o orçamento declarado','sem sugerir endividamento','depoimentos, garantias','Não afirme ter décadas de experiência'])assert.ok(request.instructions.includes(rule));
+  const prior=f.seen.calls.length,r=await f.chat('Não quero comprar, só olhando');assert.equal(f.seen.calls.length,prior);assert.deepEqual(r.body.offers,[]);assert.equal(r.body.discountOffer,null);
 });
 test('only injected ready courses enter the catalog',async t=>{
   const f=await fixture(t,{courses:[{slug:'cozinha-basica',title:'Cozinha básica',available:true},{slug:'cozinha-incompleta',title:'Cozinha incompleta',available:false}]});

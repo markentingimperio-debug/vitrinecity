@@ -58,7 +58,7 @@ function runLoader(pathname, search = '') {
 }
 
 const settle = () => new Promise(resolve => setImmediate(resolve));
-for (const pathname of ['/oracao-do-dia', '/oracao-do-dia/', '/oracao-do-dia.html', '/oracao-do-dia.html/', '/course-checkout.html', '/course-checkout.html/']) {
+for (const pathname of ['/oracao-do-dia', '/oracao-do-dia/', '/oracao-do-dia.html', '/oracao-do-dia.html/', '/course-checkout.html', '/course-checkout.html/', '/presente.html']) {
   const result = runLoader(pathname, '?curso=canva-para-lojas&utm_source=facebook');
   await settle();
   assert.deepEqual(result.effects, [], `${pathname}: não deve importar módulos, consultar/alterar o DOM, buscar anúncios ou criar estado global.`);
@@ -84,6 +84,7 @@ const checkoutLoader = checkoutHtml.match(/<script type="module">[^<]*mountCours
 assert.ok(checkoutLoader, 'O formulário precisa carregar seu controlador de pagamento.');
 const sampleHtml = '<!doctype html><html><head></head><body><main>Conteúdo público</main></body></html>';
 const buildFiles = new Map([
+  ['/fixture/public/presente.html', sampleHtml],
   ['/fixture/public/course-checkout.html', checkoutHtml],
   ['/fixture/public/index.html', sampleHtml],
   ['/fixture/public/loja.html', sampleHtml]
@@ -97,6 +98,7 @@ const buildSource = prepare.replace(/^import .*;\r?$/gm, '')
   .replace(/^const publicRoot = .*;\r?$/m, "const publicRoot = '/fixture/public';");
 vm.runInNewContext(buildSource, { fs: fixtureFs, path: path.posix, injectPublicMeasurement, injectSiteAssistant });
 const preparedCheckout = buildFiles.get('/fixture/public/course-checkout.html');
+assert.ok(!buildFiles.get('/fixture/public/presente.html').includes('/global-market-banner.js'), 'O cadastro do presente deve permanecer sem publicidade.');
 assert.ok(!preparedCheckout.includes('/global-market-banner.js'), 'Build: o checkout não deve receber nenhuma versão do loader publicitário.');
 assert.match(preparedCheckout, /src="\/site-assistant\.js\?/, 'Build: a Lia deve permanecer disponível no checkout.');
 assert.ok(preparedCheckout.includes(checkoutLoader), 'Build: o script completo do formulário deve ser preservado.');
@@ -115,6 +117,7 @@ function serveFixture(pathname, prepared) {
   const handlers = [], headers = new Map();
   let body, nextCalls = 0;
   const files = prepared ? buildFiles : new Map([
+    ['/fixture/public/presente.html', sampleHtml],
     ['/fixture/public/course-checkout.html', checkoutHtml],
     ['/fixture/public/index.html', sampleHtml],
     ['/fixture/public/loja.html', sampleHtml]
@@ -137,6 +140,7 @@ function serveFixture(pathname, prepared) {
   return body;
 }
 for (const prepared of [false, true]) {
+  assert.ok(!serveFixture('/presente.html', prepared).includes('/global-market-banner.js'), 'Os dois injetores do servidor devem preservar o cadastro do presente sem publicidade.');
   const checkout = serveFixture('/course-checkout.html', prepared);
   assert.ok(!checkout.includes('/global-market-banner.js'), 'Servidor: nem o middleware estático nem o wrapper podem recolocar v3/v5 no checkout.');
   assert.match(checkout, /src="\/site-assistant\.js\?/, 'Servidor: Lia preservada.');

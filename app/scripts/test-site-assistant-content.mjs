@@ -35,7 +35,7 @@ test('only the existing verified Mercado Pago hosts receive the payment label',(
   }
 });
 
-test('only the two designated customer forms embed without contributing a private context',()=>{
+test('designated customer forms embed without contributing a private context',()=>{
   for(const value of ['/entrar.html?returnTo=%2Floja.html','/minha-conta.html?returnTo=%2Floja.html']){
     const target=siteAssistantDestination(value,origin);assert.equal(target.kind,'embedded');assert.equal(target.contextPath,'');
     assert.equal(new URL(target.url).searchParams.get('lia'),'1');assert.equal(new URL(target.url).searchParams.get('returnTo'),'/loja.html');
@@ -46,4 +46,12 @@ test('only the two designated customer forms embed without contributing a privat
   for(const value of ['/privacy.html','/termos-marketplace.html','/recuperar-acesso.html']){
     assert.equal(siteAssistantDestination(value,origin).kind,'external');
   }
+});
+
+test('welcome gift form stays in the chat without exposing registration data as context',()=>{
+  const gift=siteAssistantDestination('/presente.html?guia=zamioculca',origin);
+  assert.equal(gift.kind,'embedded');assert.equal(gift.contextPath,'');
+  assert.equal(new URL(gift.url).searchParams.get('guia'),'zamioculca');
+  assert.equal(new URL(gift.url).searchParams.get('lia'),'1');
+  assert.equal(siteAssistantDestination('/presente.html?auth=secret',origin),null);
 });

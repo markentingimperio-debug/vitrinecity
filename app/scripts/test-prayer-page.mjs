@@ -89,6 +89,49 @@ test('each selected value is sent unchanged and displayed before redirecting',as
   }
 });
 
+test('an embedded support checkout reaches Lia only after the explicit click and never navigates its iframe',async()=>{
+  const calls=[],handoffs=[],url='https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=test';
+  const f=supportFixture(async(path,options)=>{calls.push({path,options});return path.endsWith('/config')?json(availableSupport):json({reference:'support-test',statusToken:'test-token',amountCents:500,currency:'BRL',checkoutUrl:url});});
+  f.window={vcLiaNavigate:destination=>{handoffs.push(destination);return true;}};
+  await installPrayerSupport(f);assert.equal(calls.length,1);assert.deepEqual(handoffs,[]);assert.deepEqual(f.redirects,[]);
+  await f.nodes.get('supportButton').listeners.click();
+  assert.equal(calls.length,2);assert.equal(calls[1].path,'/api/prayer-support/checkout');assert.deepEqual(JSON.parse(calls[1].options.body),{requestKey:'7bbdfddf-c219-4455-a50b-83e2ce9e99b2',amountCents:500,accepted:true});
+  assert.deepEqual(handoffs,[url]);assert.deepEqual(f.redirects,[]);assert.equal(f.data.get('vitrinecity:prayer-support:support-test'),'test-token');
+  assert.match(f.nodes.get('supportStatus').textContent,/link de pagamento na conversa/);assert.match(f.nodes.get('supportStatus').textContent,/Nenhum pagamento foi confirmado/);
+  assert.equal(f.nodes.get('refreshSupport').hidden,false);assert.equal(f.nodes.get('supportButton').disabled,true);
+  await f.nodes.get('supportButton').listeners.click();assert.equal(calls.length,2);
+});
+
+test('support bridge is never given an invalid destination, amount or unsuccessful receipt',async()=>{
+  const handoffs=[];
+  for(const patch of [{checkoutUrl:'https://evil.test/checkout/'},{amountCents:300},{currency:'USD'},{statusToken:''}]){
+    const f=supportFixture(async path=>path.endsWith('/config')?json(availableSupport):json({reference:'support-test',statusToken:'test-token',amountCents:500,currency:'BRL',checkoutUrl:'https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=test',...patch}));
+    f.window={vcLiaNavigate:url=>{handoffs.push(url);return true;}};await installPrayerSupport(f);await f.nodes.get('supportButton').listeners.click();assert.deepEqual(f.redirects,[]);
+  }
+  assert.deepEqual(handoffs,[]);
+});
+
+test('embedded support stays locked while pending and unlocks only after a verified terminal status',async()=>{
+  let providerStatus='pending',checkouts=0;
+  const f=supportFixture(async path=>{
+    if(path.endsWith('/config'))return json(availableSupport);
+    if(path.includes('/orders/'))return json({reference:'support-test',amountCents:500,currency:'BRL',status:providerStatus});
+    checkouts++;return json({reference:'support-test',statusToken:'test-token',amountCents:500,currency:'BRL',checkoutUrl:'https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=test'});
+  });
+  f.window={vcLiaNavigate:()=>true};const controller=await installPrayerSupport(f);
+  await f.nodes.get('supportButton').listeners.click();await controller.checkReturn();
+  assert.equal(f.nodes.get('supportButton').disabled,true);await f.nodes.get('supportButton').listeners.click();assert.equal(checkouts,1);
+  providerStatus='rejected';await controller.checkReturn();
+  assert.equal(f.nodes.get('supportButton').disabled,false);assert.equal(f.nodes.get('supportAmounts').disabled,false);
+  assert.equal(f.data.has('vitrinecity:prayer-support:request-key'),false);assert.equal(checkouts,1);assert.match(f.nodes.get('supportStatus').textContent,/não foi aprovado/);
+});
+
+test('the ordinary support page retains its normal redirect when no bridge handles the checkout',async()=>{
+  const url='https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=test';
+  const f=supportFixture(async path=>path.endsWith('/config')?json(availableSupport):json({reference:'support-test',statusToken:'test-token',amountCents:500,currency:'BRL',checkoutUrl:url}));
+  f.window={vcLiaNavigate:()=>false};await installPrayerSupport(f);await f.nodes.get('supportButton').listeners.click();assert.deepEqual(f.redirects,[url]);
+});
+
 test('the review page exposes unavailable actions and contains no automatic advertising or collection',()=>{
   const html=readFileSync(new URL('../public/oracao-do-dia.html',import.meta.url),'utf8'),script=readFileSync(new URL('../public/oracao-do-dia.js',import.meta.url),'utf8'),css=readFileSync(new URL('../public/oracao-do-dia.css',import.meta.url),'utf8');
   assert.ok(html.includes('Arte digital gerada por IA'));assert.ok(html.includes('width="1536" height="1024"'));assert.ok(html.includes('Convite do grupo em preparação'));

@@ -15,7 +15,7 @@ function visit(dir) {
     const pathname='/'+path.relative(publicRoot,file).split(path.sep).join('/');
     let html=injectPublicMeasurement(original,pathname);
     html=injectSiteAssistant(html,{path:pathname});
-    if(pathname!=='/course-checkout.html'&&/<\/body>/i.test(html)&&!html.includes('/global-market-banner.js'))html=html.replace(/<\/body>/i,'<script src="/global-market-banner.js?v=9" defer></script></body>');
+    if(!['/course-checkout.html','/presente.html'].includes(pathname)&&/<\/body>/i.test(html)&&!html.includes('/global-market-banner.js'))html=html.replace(/<\/body>/i,'<script src="/global-market-banner.js?v=9" defer></script></body>');
     if(html!==original)fs.writeFileSync(file,html);
   }
 }
