@@ -13,7 +13,7 @@ import {videoPollState,videoFailureMessage,videoRetryableFailure,videoProjectUnc
 import express from 'express';
 import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.js';
-import { createWhatsAppScheduleProcessor, whatsappScheduleState, countWhatsAppSchedules } from './whatsapp-schedule-worker.js';
+import { createWhatsAppScheduleProcessor, whatsappScheduleState, countWhatsAppSchedules, validWhatsAppReceiptId } from './whatsapp-schedule-worker.js';
 import { isWhatsAppCommercialGroupAllowed, WHATSAPP_COMMERCIAL_EXCLUDED_REASON } from './whatsapp-commercial-policy.js';
 import { registerSocialCommentCampaigns } from './social-comment-campaigns.js';
 import { createEcosystemOrchestrator, registerEcosystemRoutes, ecosystemLocalWindow } from './ecosystem-orchestrator.js';
@@ -2626,7 +2626,7 @@ app.use((req, res, next) => {
     if (page.includes('</body>') && !page.includes('/pwa-install.js')) {
       page = page.replace('</body>', '<script src="/pwa-install.js?v=2" defer></script></body>');
     }
-    if (page.includes('</body>') && !page.includes('/global-market-banner.js')) {
+    if (req.path !== '/course-checkout.html' && page.includes('</body>') && !page.includes('/global-market-banner.js')) {
       page = page.replace('</body>', '<script src="/global-market-banner.js?v=5" defer></script></body>');
     }
     if (wasBuffer) res.setHeader('Content-Length', Buffer.byteLength(page));
@@ -2962,7 +2962,7 @@ app.get('/feeds/meta-catalog.csv', (_req, res) => {
     .set('Cache-Control', 'public,max-age=300').send(`\uFEFF${csv}\n`);
 });
 app.get(['/oracao-do-dia','/oracao-do-dia.html'], createPrayerDailyHandler({readTemplate:()=>fs.readFileSync(path.join(dir,'public','oracao-do-dia.html'),'utf8')}));
-app.use((req,res,next)=>{if(req.method!=='GET'||req.path.startsWith('/admin'))return next();const relative=req.path==='/'?'index.html':decodeURIComponent(req.path).replace(/^\//,'');const candidates=relative.endsWith('.html')?[relative]:[`${relative}.html`];for(const candidate of candidates){if(candidate.includes('/')||candidate.includes('..'))continue;const file=path.join(dir,'public',candidate);if(!fs.existsSync(file))continue;const page=fs.readFileSync(file,'utf8');return res.type('html').send(page.replace('</body>','<script src="/global-market-banner.js?v=3" defer></script></body>'))}return next()});
+app.use((req,res,next)=>{if(req.method!=='GET'||req.path.startsWith('/admin'))return next();const relative=req.path==='/'?'index.html':decodeURIComponent(req.path).replace(/^\//,'');const candidates=relative.endsWith('.html')?[relative]:[`${relative}.html`];for(const candidate of candidates){if(candidate.includes('/')||candidate.includes('..'))continue;const file=path.join(dir,'public',candidate);if(!fs.existsSync(file))continue;const page=fs.readFileSync(file,'utf8');return res.type('html').send(candidate==='course-checkout.html'?page:page.replace('</body>','<script src="/global-market-banner.js?v=3" defer></script></body>'))}return next()});
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
 
 app.get('/r/:code', (req, res) => {
@@ -5882,10 +5882,11 @@ const siteSalesAssistant = typeof setupSiteSalesAssistant === 'function' ? setup
   getGroups:()=>SITE_ASSISTANT_GROUPS,
   getPublicCourses:()=>managedCourses(true).filter(course=>courseReady(course.slug)).map(course=>({...course,available:true})),
   getPublicServices:()=>publicServiceCatalog().map(service=>({...service,available:true})),
-  sendWhatsApp:async({phone,message,idempotencyKey})=>{
-    if(!ecosystemCanRun())throw Error('messaging_paused');
-    if(!whatsappQrConfig().configured)throw Error('whatsapp_not_configured');
-    return whatsappQrRequest('/chat/send/text',{method:'POST',body:JSON.stringify({Phone:String(phone).replace(/\D/g,''),Body:String(message).slice(0,900),Id:String(idempotencyKey).slice(0,120).toUpperCase()})});
+  canSendFollowups:()=>ecosystemCanRun()&&whatsappQrConfig().configured,
+  sendWhatsApp:async({phone,message,idempotencyKey,beforeSubmit})=>{
+    if(!ecosystemCanRun()||!whatsappQrConfig().configured||!beforeSubmit())throw Object.assign(Error('followup_not_submitted'),{notSubmitted:true});
+    const data=whatsappQrData(await whatsappQrRequest('/chat/send/text',{method:'POST',body:JSON.stringify({Phone:String(phone).replace(/\D/g,''),Body:String(message).slice(0,900),Id:String(idempotencyKey).slice(0,120).toUpperCase()})}));
+    return {providerMessageId:[data?.Id,data?.id].find(validWhatsAppReceiptId)?.trim()};
   },
   requestOpenAI:body=>{
     if(AI_TEXT_CONFIG.provider!=='openai')throw new Error('site_assistant_provider_unavailable');

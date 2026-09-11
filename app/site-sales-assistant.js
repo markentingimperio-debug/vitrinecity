@@ -2,6 +2,7 @@ import {createCipheriv,createDecipheriv,createHmac,createHash,randomBytes} from 
 import {validAffiliateUrl} from './affiliate-catalog.js';
 import {marketplaceSlug} from './marketplace-public.js';
 import {classifySiteAssistantPath} from './public/site-assistant-policy.js';
+import {validWhatsAppReceiptId} from './whatsapp-schedule-worker.js';
 
 const DAY=86400000,HOUR=3600000;
 const normalize=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
@@ -44,7 +45,7 @@ const unsafeReply=value=>/https?:|www\.|(?:\b[a-z0-9-]+\.)+(?:com|net|org|io|br)
 
 /** Public, read-only commerce conversation. No connection to omnichannel jobs,
  * sales-agent lifecycle, orders, payments or administrative AI tools. */
-export function setupSiteSalesAssistant({app,db,requestOpenAI,requireAdmin,getSessionUser=()=>null,publicOrigin,salesExperience,recipeVipUrl='',getPublicCourses=()=>[],getPublicServices=()=>[],getGroups=()=>[],sendWhatsApp=null}){
+export function setupSiteSalesAssistant({app,db,requestOpenAI,requireAdmin,getSessionUser=()=>null,publicOrigin,salesExperience,recipeVipUrl='',getPublicCourses=()=>[],getPublicServices=()=>[],getGroups=()=>[],sendWhatsApp=null,canSendFollowups=()=>true}){
   const origin=new URL(publicOrigin).origin;
   if(!salesExperience||typeof salesExperience.session!=='function')throw Error('site_sales_experience_required');
   // Public chat routes stay open; the contact list is protected by this middleware.
@@ -76,6 +77,14 @@ export function setupSiteSalesAssistant({app,db,requestOpenAI,requireAdmin,getSe
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_site_assistant_contacts_status ON site_assistant_contacts(revoked_at,consented_at);`);
+  db.transaction(()=>{
+    const contactColumns=new Set(db.prepare('PRAGMA table_info(site_assistant_contacts)').all().map(row=>row.name));
+    const legacy=!contactColumns.has('followup_provider_message_id');
+    for(const [name,type] of Object.entries({followup_claim_id:"TEXT NOT NULL DEFAULT ''",followup_claimed_at:'INTEGER',followup_provider_message_id:"TEXT NOT NULL DEFAULT ''"})){
+      if(!contactColumns.has(name))db.exec(`ALTER TABLE site_assistant_contacts ADD COLUMN ${name} ${type}`);
+    }
+    if(legacy)db.prepare("UPDATE site_assistant_contacts SET followup_status='uncertain',next_followup_at=0 WHERE followup_status='pending' AND followup_attempts>0").run();
+  }).immediate();
   db.prepare('INSERT OR IGNORE INTO site_assistant_privacy(id,salt) VALUES(1,?)').run(randomBytes(32).toString('hex'));
   const salt=db.prepare('SELECT salt FROM site_assistant_privacy WHERE id=1').get().salt;
   const fingerprint=value=>createHmac('sha256',salt).update(String(value)).digest('hex');
@@ -311,10 +320,11 @@ export function setupSiteSalesAssistant({app,db,requestOpenAI,requireAdmin,getSe
       if((purpose==='group_invite'||purpose==='group_and_offers')&&!group)return res.status(400).json({error:'O grupo escolhido não está confirmado agora.'});
       if(purpose==='offers'&&context.commercial===false)return res.status(400).json({error:'Ofertas não estão disponíveis neste conteúdo.'});
       const user=(()=>{try{return getSessionUser(req)||null;}catch{return null;}})();
-      const now=Date.now(),phoneHash=fingerprint(`contact:${phone}`),ciphertext=encryptContact(phone),topicKey=group?.topic||context.group||'platform';
-      const prior=db.prepare('SELECT id FROM site_assistant_contacts WHERE phone_hash=?').get(phoneHash);
+      const phoneHash=fingerprint(`contact:${phone}`),ciphertext=encryptContact(phone),topicKey=group?.topic||context.group||'platform';
+      const prior=db.prepare('SELECT id,consented_at FROM site_assistant_contacts WHERE phone_hash=?').get(phoneHash);
+      const now=Math.max(Date.now(),Number(prior?.consented_at||0)+1);
       if(prior){
-        db.prepare(`UPDATE site_assistant_contacts SET session_id=?,user_id=?,phone_ciphertext=?,phone_last4=?,purpose=?,topic=?,group_id=?,source_path=?,consent_version=?,consented_at=?,revoked_at=NULL,next_followup_at=?,followup_status='pending',followup_sent_at=NULL,followup_attempts=0,followup_error='',updated_at=? WHERE id=?`).run(session.id,Number.isSafeInteger(user?.id)?user.id:null,ciphertext,phone.slice(-4),purpose,topicKey,group?.id||'',context.path,contactConsentVersion,now,now+2*HOUR,now,prior.id);
+        db.prepare(`UPDATE site_assistant_contacts SET session_id=?,user_id=?,phone_ciphertext=?,phone_last4=?,purpose=?,topic=?,group_id=?,source_path=?,consent_version=?,consented_at=?,revoked_at=NULL,next_followup_at=?,followup_status='pending',followup_sent_at=NULL,followup_attempts=0,followup_error='',followup_claim_id='',followup_claimed_at=NULL,followup_provider_message_id='',updated_at=? WHERE id=?`).run(session.id,Number.isSafeInteger(user?.id)?user.id:null,ciphertext,phone.slice(-4),purpose,topicKey,group?.id||'',context.path,contactConsentVersion,now,now+2*HOUR,now,prior.id);
       }else{
         db.prepare(`INSERT INTO site_assistant_contacts(session_id,user_id,phone_ciphertext,phone_hash,phone_last4,purpose,topic,group_id,source_path,consent_version,consented_at,revoked_at,next_followup_at,followup_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL,?,'pending',?,?)`).run(session.id,Number.isSafeInteger(user?.id)?user.id:null,ciphertext,phoneHash,phone.slice(-4),purpose,topicKey,group?.id||'',context.path,contactConsentVersion,now,now+2*HOUR,now,now);
       }
@@ -339,28 +349,52 @@ export function setupSiteSalesAssistant({app,db,requestOpenAI,requireAdmin,getSe
     res.set('Cache-Control','no-store');
     try{
       const limit=Math.max(1,Math.min(200,Number(req.query.limit)||50)),includePhone=String(req.query.includePhone||'')==='1';
-      const items=db.prepare(`SELECT id,phone_ciphertext,phone_last4,purpose,topic,group_id groupId,source_path sourcePath,consent_version consentVersion,consented_at consentedAt,revoked_at revokedAt,next_followup_at nextFollowupAt,followup_status followupStatus,followup_sent_at followupSentAt,followup_attempts followupAttempts,created_at createdAt,updated_at updatedAt FROM site_assistant_contacts ORDER BY created_at DESC,id DESC LIMIT ?`).all(limit).map(item=>({id:item.id,phone:includePhone?decryptContact(item.phone_ciphertext):`+••••••${item.phone_last4}`,purpose:item.purpose,topic:item.topic,groupId:item.groupId,sourcePath:item.sourcePath,consentVersion:item.consentVersion,consentedAt:new Date(item.consentedAt).toISOString(),revokedAt:item.revokedAt?new Date(item.revokedAt).toISOString():null,nextFollowupAt:item.nextFollowupAt?new Date(item.nextFollowupAt).toISOString():null,followupStatus:item.followupStatus,followupSentAt:item.followupSentAt?new Date(item.followupSentAt).toISOString():null,followupAttempts:item.followupAttempts,createdAt:new Date(item.createdAt).toISOString(),updatedAt:new Date(item.updatedAt).toISOString()}));
+      const items=db.prepare(`SELECT id,phone_ciphertext,phone_last4,purpose,topic,group_id groupId,source_path sourcePath,consent_version consentVersion,consented_at consentedAt,revoked_at revokedAt,next_followup_at nextFollowupAt,followup_status followupStatus,followup_sent_at followupSentAt,followup_attempts followupAttempts,followup_provider_message_id providerMessageId,created_at createdAt,updated_at updatedAt FROM site_assistant_contacts ORDER BY created_at DESC,id DESC LIMIT ?`).all(limit).map(item=>({id:item.id,phone:includePhone?decryptContact(item.phone_ciphertext):`+••••••${item.phone_last4}`,purpose:item.purpose,topic:item.topic,groupId:item.groupId,sourcePath:item.sourcePath,consentVersion:item.consentVersion,consentedAt:new Date(item.consentedAt).toISOString(),revokedAt:item.revokedAt?new Date(item.revokedAt).toISOString():null,nextFollowupAt:item.nextFollowupAt?new Date(item.nextFollowupAt).toISOString():null,followupStatus:item.followupStatus==='sent'&&!validWhatsAppReceiptId(item.providerMessageId)?'uncertain':item.followupStatus,providerAccepted:validWhatsAppReceiptId(item.providerMessageId),followupSentAt:item.followupSentAt?new Date(item.followupSentAt).toISOString():null,followupAttempts:item.followupAttempts,createdAt:new Date(item.createdAt).toISOString(),updatedAt:new Date(item.updatedAt).toISOString()}));
       return res.json({items,privacy:includePhone?'Números exibidos somente nesta rota administrativa protegida.':'Números protegidos; use o fluxo aprovado de mensagens para qualquer contato.'});
     }catch{if(!res.headersSent)res.status(503).json({error:'Não foi possível consultar os contatos agora.'});}
   });
+  let followupRunning=false;
+  const followupsAllowed=()=>{try{return typeof sendWhatsApp==='function'&&enabled()&&canSendFollowups()===true;}catch{return false;}};
   async function processFollowups(){
-    if(typeof sendWhatsApp!=='function'||!enabled())return {status:'paused',sent:0,failed:0};
-    const now=Date.now(),rows=db.prepare(`SELECT id,phone_ciphertext,purpose,topic,group_id,followup_attempts FROM site_assistant_contacts
-      WHERE revoked_at IS NULL AND followup_status='pending' AND next_followup_at>0 AND next_followup_at<=? AND followup_attempts<3 ORDER BY next_followup_at,id LIMIT 5`).all(now);
-    let sent=0,failed=0;
-    for(const row of rows){
-      const claimed=db.prepare("UPDATE site_assistant_contacts SET followup_status='sending',followup_attempts=followup_attempts+1,updated_at=? WHERE id=? AND revoked_at IS NULL AND followup_status='pending'").run(now,row.id);
-      if(!claimed.changes)continue;
-      try{
-        const phone=decryptContact(row.phone_ciphertext);if(!phone)throw Error('contact_unavailable');
-        await sendWhatsApp({phone,message:followupText(row),idempotencyKey:`site-assistant-followup-${row.id}-${Number(row.followup_attempts||0)+1}`});
-        db.prepare("UPDATE site_assistant_contacts SET followup_status='sent',followup_sent_at=?,followup_error='',updated_at=? WHERE id=?").run(Date.now(),Date.now(),row.id);sent++;
-      }catch(error){
-        const attempts=Number(row.followup_attempts||0)+1,terminal=attempts>=3;
-        db.prepare("UPDATE site_assistant_contacts SET followup_status=?,next_followup_at=?,followup_error=?,updated_at=? WHERE id=?").run(terminal?'failed':'pending',terminal?0:Date.now()+15*60*1000,String(error?.message||'send_failed').slice(0,160),Date.now(),row.id);failed++;
+    if(followupRunning)return {status:'running',sent:0,failed:0};
+    followupRunning=true;
+    try{
+      // An interrupted request may already have reached WhatsApp. Never retry it automatically.
+      db.prepare("UPDATE site_assistant_contacts SET followup_status='uncertain',next_followup_at=0,followup_error='confirmation_unknown',updated_at=? WHERE followup_status='sending' AND (followup_claimed_at IS NULL OR followup_claimed_at<?)").run(Date.now(),Date.now()-120000);
+      if(!followupsAllowed())return {status:'paused',sent:0,failed:0};
+      const rows=db.prepare(`SELECT * FROM site_assistant_contacts WHERE revoked_at IS NULL AND followup_status='pending'
+        AND next_followup_at>0 AND next_followup_at<=? AND followup_attempts<3 ORDER BY next_followup_at,id LIMIT 5`).all(Date.now());
+      let sent=0,failed=0;
+      for(const row of rows){
+        if(!followupsAllowed())break;
+        const claim=randomBytes(16).toString('hex'),at=Date.now();
+        const claimed=db.prepare("UPDATE site_assistant_contacts SET followup_status='sending',followup_claim_id=?,followup_claimed_at=?,updated_at=? WHERE id=? AND consented_at=? AND revoked_at IS NULL AND followup_status='pending'").run(claim,at,at,row.id,row.consented_at);
+        if(!claimed.changes)continue;
+        let submitted=false;
+        const restorePending=()=>db.prepare("UPDATE site_assistant_contacts SET followup_status='pending',followup_claim_id='',followup_claimed_at=NULL,updated_at=? WHERE id=? AND consented_at=? AND followup_claim_id=? AND revoked_at IS NULL AND followup_status='sending'").run(Date.now(),row.id,row.consented_at,claim);
+        // The provider adapter calls this synchronously immediately before its request.
+        const beforeSubmit=()=>{
+          if(submitted||!followupsAllowed())return false;
+          submitted=Boolean(db.prepare("UPDATE site_assistant_contacts SET followup_attempts=followup_attempts+1,updated_at=? WHERE id=? AND consented_at=? AND followup_claim_id=? AND revoked_at IS NULL AND followup_status='sending'").run(Date.now(),row.id,row.consented_at,claim).changes);
+          return submitted;
+        };
+        try{
+          if(!followupsAllowed()){restorePending();break;}
+          const phone=decryptContact(row.phone_ciphertext);if(!phone)throw Object.assign(Error('contact_unavailable'),{notSubmitted:true});
+          const receipt=await sendWhatsApp({phone,message:followupText(row),idempotencyKey:`LIA-${fingerprint(`followup:${row.id}:${row.consent_version}:${row.consented_at}`).toUpperCase()}`,beforeSubmit});
+          if(!submitted||!validWhatsAppReceiptId(receipt?.providerMessageId))throw Error('confirmation_unknown');
+          const saved=db.prepare("UPDATE site_assistant_contacts SET followup_status=CASE WHEN revoked_at IS NULL THEN 'sent' ELSE 'cancelled' END,followup_provider_message_id=?,followup_sent_at=?,next_followup_at=0,followup_error='',updated_at=? WHERE id=? AND consented_at=? AND followup_claim_id=? AND followup_status IN ('sending','uncertain','cancelled')").run(receipt.providerMessageId.trim(),Date.now(),Date.now(),row.id,row.consented_at,claim);
+          if(saved.changes)sent++;
+        }catch(error){
+          const notSubmitted=error?.notSubmitted===true;
+          if(notSubmitted&&submitted)db.prepare("UPDATE site_assistant_contacts SET followup_attempts=MAX(0,followup_attempts-1) WHERE id=? AND consented_at=? AND followup_claim_id=?").run(row.id,row.consented_at,claim);
+          if(notSubmitted&&!followupsAllowed()){restorePending();break;}
+          const saved=db.prepare("UPDATE site_assistant_contacts SET followup_status=CASE WHEN revoked_at IS NULL THEN ? ELSE 'cancelled' END,next_followup_at=0,followup_error=?,updated_at=? WHERE id=? AND consented_at=? AND followup_claim_id=? AND followup_status IN ('sending','uncertain','cancelled')").run(notSubmitted?'failed':'uncertain',notSubmitted?'not_submitted':'confirmation_unknown',Date.now(),row.id,row.consented_at,claim);
+          if(saved.changes)failed++;
+        }
       }
-    }
-    return {status:'processed',sent,failed};
+      return {status:'processed',sent,failed};
+    }finally{followupRunning=false;}
   }
   let followupTimer=null;if(typeof sendWhatsApp==='function'){followupTimer=setInterval(()=>{void processFollowups().catch(()=>{});},5*60*1000);followupTimer.unref?.();}
   return {resolveContext:sourceContext,offersFor,processFollowups,revokePhone,close(){clearInterval(cleanupTimer);if(followupTimer)clearInterval(followupTimer);}};

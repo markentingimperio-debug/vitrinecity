@@ -5,6 +5,9 @@ import express from 'express';
 import Database from 'better-sqlite3';
 import {setupSiteSalesAssistant} from '../site-sales-assistant.js';
 import {setupSiteSalesExperience} from '../site-sales-experience.js';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+import {validWhatsAppReceiptId} from '../whatsapp-schedule-worker.js';
 
 const origin='https://vitrinecity.test',page='/artigo/bolo-caseiro';
 const response=(reply='Posso ajudar com os utensílios. O que você quer preparar?',offerIds=['product:1'])=>({output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({reply,offerIds})}]}]});
@@ -29,7 +32,7 @@ async function fixture(t,options={}){
     INSERT INTO affiliate_catalog VALUES('mixer-bad-link','Mixer link inválido','','Cozinha','','shopee','https://evil.test/item','','published','available','reachable');`);
   const experience=options.realExperience?setupSiteSalesExperience({app,db,requireAdmin:(_req,res)=>res.sendStatus(403),siteUrl:origin,schedule:false}):{session(req,res){const token=req.get('cookie')?.match(/(?:^|; )test_sid=([a-f0-9]{64})/)?.[1];if(token&&sessions.has(token))return sessions.get(token);const id=randomBytes(32).toString('hex'),session={id,versionId:1,versionNumber:1,approach:options.approach||'helpful_question'};sessions.set(id,session);res.append('Set-Cookie',`test_sid=${id}; Path=/; HttpOnly; SameSite=Lax`);return session;},recordEvent(id,type,data){seen.events.push({id,type,data});},recordOutcome(id,data){seen.outcomes.push({id,...data});},registerOffers(id,offers){seen.offers.push({id,offers});}};
   if(options.interestError)experience.markInterest=()=>{throw Error('measurement_unavailable');};
-  const handler=setupSiteSalesAssistant({app,db,publicOrigin:origin,salesExperience:experience,getSessionUser:req=>req.get('x-test-user')==='active'?{id:7,name:'Ana',account_status:'active',email:'private@test.invalid'}:null,requestOpenAI:async body=>{seen.calls.push(body);return options.request?options.request(body,db):response();},getGroups:()=>options.groups||[],getPublicCourses:()=>options.courses||[],getPublicServices:()=>options.services||[],recipeVipUrl:options.recipeVipUrl||'',sendWhatsApp:options.sendWhatsApp||null});
+  const handler=setupSiteSalesAssistant({app,db,publicOrigin:origin,salesExperience:experience,getSessionUser:req=>req.get('x-test-user')==='active'?{id:7,name:'Ana',account_status:'active',email:'private@test.invalid'}:null,requestOpenAI:async body=>{seen.calls.push(body);return options.request?options.request(body,db):response();},getGroups:()=>options.groups||[],getPublicCourses:()=>options.courses||[],getPublicServices:()=>options.services||[],recipeVipUrl:options.recipeVipUrl||'',sendWhatsApp:options.sendWhatsApp||null,canSendFollowups:options.canSendFollowups||(()=>true)});
   const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const base='http://127.0.0.1:'+server.address().port;
   const client=()=>{const jar=new Map();return async(path,{method='GET',body,headers={},missingOrigin=false}={})=>{const res=await fetch(base+path,{method,headers:{...(!missingOrigin?{origin}:{}),...(jar.size?{cookie:[...jar.values()].join('; ')}:{}),...(body!==undefined?{'content-type':'application/json'}:{}),...headers},body:body===undefined?undefined:JSON.stringify(body)});for(const cookie of res.headers.getSetCookie()){const first=cookie.split(';')[0];jar.set(first.split('=')[0],first);}return {status:res.status,body:await res.json(),cookies:res.headers.getSetCookie()};};};
   const call=client();t.after(async()=>{handler.close();experience.close?.();server.closeAllConnections();await new Promise(r=>server.close(r));db.close();});
@@ -212,7 +215,7 @@ test('news context resolves only the news group, never a recipe group',async t=>
   assert.equal(r.body.actions[0].assetType,'group');assert.equal(r.body.actions[0].assetId,'news-01');assert.equal(r.body.actions[0].url,url);assert.ok(f.seen.offers.at(-1).offers.some(o=>o.assetType==='group'));
 });
 test('VIP WhatsApp contact requires explicit consent, encrypts the number and schedules a reviewable follow-up',async t=>{
-  const url='https://chat.whatsapp.com/ABCDEFGHIJKLMNOPQRSTUV',sent=[],f=await fixture(t,{realExperience:true,groups:[{id:'news-01',topic:'news',title:'Notícias',url,enabled:true}],sendWhatsApp:async payload=>{sent.push(payload);}});
+  const url='https://chat.whatsapp.com/ABCDEFGHIJKLMNOPQRSTUV',sent=[],f=await fixture(t,{realExperience:true,groups:[{id:'news-01',topic:'news',title:'Notícias',url,enabled:true}],sendWhatsApp:async payload=>{assert.equal(payload.beforeSubmit(),true);sent.push(payload);return {providerMessageId:'REAL-FIXTURE-RECEIPT'};}});
   const chat=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Quero o grupo de notícias',contextPath:'/noticias'}});
   assert.equal(chat.status,200);assert.equal(chat.body.contactOffer.purpose,'group_and_offers');
   const refused=await f.call('/api/site-assistant/contact',{method:'POST',body:{phone:'62999999999',purpose:'group_and_offers',groupId:'news-01',contextPath:'/noticias',consent:false}});
@@ -223,6 +226,97 @@ test('VIP WhatsApp contact requires explicit consent, encrypts the number and sc
   const admin=await f.call('/api/admin/site-assistant/contacts?includePhone=1');assert.equal(admin.status,200);assert.equal(admin.body.items[0].phone,'+5562999999999');
   f.db.prepare('UPDATE site_assistant_contacts SET next_followup_at=?').run(Date.now()-1);assert.deepEqual((await f.handler.processFollowups()).sent,1);assert.equal(sent.length,1);assert.match(sent[0].message,/Sou a Lia/);assert.match(sent[0].message,/SAIR/);assert.equal(f.db.prepare('SELECT followup_status FROM site_assistant_contacts').get().followup_status,'sent');
   const revoked=await f.call('/api/site-assistant/contact/revoke',{method:'POST',body:{}});assert.equal(revoked.status,200);assert.equal(revoked.body.revoked,true);assert.equal(f.db.prepare('SELECT followup_status FROM site_assistant_contacts').get().followup_status,'cancelled');
+});
+async function followupFixture(t,options={}){
+  const f=await fixture(t,{...options,realExperience:true});await f.chat('Quero uma forma para bolo');
+  const saveConsent=()=>f.call('/api/site-assistant/contact',{method:'POST',body:{phone:'62999999999',purpose:'offers',contextPath:page,consent:true}});
+  assert.equal((await saveConsent()).status,201);
+  const due=()=>f.db.prepare('UPDATE site_assistant_contacts SET next_followup_at=?').run(Date.now()-1);due();
+  return {...f,due,saveConsent,row:()=>f.db.prepare('SELECT * FROM site_assistant_contacts').get()};
+}
+const rejectedBeforeSend=()=>Object.assign(Error('not dispatched'),{notSubmitted:true});
+
+test('follow-up pause or missing configuration leaves the contact pending without consuming attempts',async t=>{
+  let allowed=false,calls=0;
+  const f=await followupFixture(t,{canSendFollowups:()=>allowed,sendWhatsApp:async p=>{assert.equal(p.beforeSubmit(),true);calls++;return {providerMessageId:'fixture-receipt'};}});
+  for(let i=0;i<4;i++)assert.equal((await f.handler.processFollowups()).status,'paused');
+  assert.equal(calls,0);assert.equal(f.row().followup_attempts,0);assert.equal(f.row().followup_status,'pending');assert.equal(f.row().followup_claim_id,'');
+  allowed=true;assert.equal((await f.handler.processFollowups()).sent,1);assert.equal(calls,1);assert.equal(f.row().followup_attempts,1);
+});
+test('a pause at the dispatch boundary preserves attempts and the idempotency key when resumed',async t=>{
+  let allowed=true,pauseOnce=true;const keys=[];
+  const f=await followupFixture(t,{canSendFollowups:()=>allowed,sendWhatsApp:async p=>{
+    keys.push(p.idempotencyKey);if(pauseOnce){pauseOnce=false;allowed=false;}
+    if(!p.beforeSubmit())throw rejectedBeforeSend();return {providerMessageId:'receipt-after-resume'};
+  }});
+  await f.handler.processFollowups();assert.equal(f.row().followup_status,'pending');assert.equal(f.row().followup_attempts,0);
+  allowed=true;assert.equal((await f.handler.processFollowups()).sent,1);assert.equal(keys[0],keys[1]);assert.doesNotMatch(keys[0],/62999999999/);
+  const oldConsent=f.row().consented_at;assert.equal((await f.saveConsent()).status,201);assert.ok(f.row().consented_at>oldConsent);f.due();
+  await f.handler.processFollowups();assert.notEqual(keys[2],keys[1]);assert.equal(f.row().followup_attempts,1);
+});
+test('revocation between claim and dispatch prevents the request and consumes no attempt',async t=>{
+  let f,dispatched=0;f=await followupFixture(t,{sendWhatsApp:async p=>{
+    assert.equal(f.handler.revokePhone('62999999999'),true);if(!p.beforeSubmit())throw rejectedBeforeSend();dispatched++;return {providerMessageId:'must-not-be-sent'};
+  }});
+  await f.handler.processFollowups();assert.equal(dispatched,0);assert.ok(f.row().revoked_at);assert.equal(f.row().followup_status,'cancelled');assert.equal(f.row().followup_attempts,0);
+  await f.handler.processFollowups();assert.equal(dispatched,0);
+});
+test('missing or invalid receipt and unexpected provider errors become uncertain without automatic resend',async t=>{
+  for(const result of [undefined,{},true,{providerMessageId:'undefined'},{providerMessageId:123},'throw'])await t.test(String(result),async t=>{
+    let calls=0;const f=await followupFixture(t,{sendWhatsApp:async p=>{assert.equal(p.beforeSubmit(),true);calls++;if(result==='throw')throw Error('private provider detail');return result;}});
+    const first=await f.handler.processFollowups();assert.equal(first.sent,0);assert.equal(first.failed,1);assert.equal(f.row().followup_status,'uncertain');assert.equal(f.row().followup_error,'confirmation_unknown');
+    for(let i=0;i<4;i++){f.due();await f.handler.processFollowups();}assert.equal(calls,1);assert.equal(f.row().followup_attempts,1);assert.equal(f.row().followup_sent_at,null);
+  });
+});
+test('an adapter result without the dispatch guard cannot claim a successful send',async t=>{
+  const f=await followupFixture(t,{sendWhatsApp:async()=>({providerMessageId:'unverified-adapter-receipt'})});
+  assert.equal((await f.handler.processFollowups()).sent,0);assert.equal(f.row().followup_status,'uncertain');assert.equal(f.row().followup_attempts,0);
+});
+test('a documented pre-submission failure is held for review without treating it as a send',async t=>{
+  let calls=0;const f=await followupFixture(t,{sendWhatsApp:async p=>{assert.equal(p.beforeSubmit(),true);calls++;throw rejectedBeforeSend();}});
+  await f.handler.processFollowups();assert.equal(f.row().followup_status,'failed');assert.equal(f.row().followup_error,'not_submitted');assert.equal(f.row().followup_attempts,0);
+  f.due();await f.handler.processFollowups();assert.equal(calls,1);
+});
+test('concurrent polling cannot duplicate a submission and a receipt after revocation preserves cancellation',async t=>{
+  const gate=deferred();let calls=0;const f=await followupFixture(t,{sendWhatsApp:async p=>{assert.equal(p.beforeSubmit(),true);calls++;return gate.promise;}});
+  const pending=f.handler.processFollowups();assert.equal(calls,1);assert.equal((await f.handler.processFollowups()).status,'running');
+  const revoked=await f.call('/api/site-assistant/contact/revoke',{method:'POST',body:{}});assert.equal(revoked.status,200);const revokedAt=f.row().revoked_at;
+  gate.resolve({providerMessageId:'late-valid-receipt'});assert.equal((await pending).sent,1);
+  assert.equal(f.row().followup_status,'cancelled');assert.equal(f.row().revoked_at,revokedAt);assert.equal(f.row().followup_provider_message_id,'late-valid-receipt');assert.ok(f.row().followup_sent_at);
+  f.due();await f.handler.processFollowups();assert.equal(calls,1);
+});
+test('an old accepted response cannot overwrite a new explicit consent or its pending follow-up',async t=>{
+  const gate=deferred();const f=await followupFixture(t,{sendWhatsApp:async p=>{assert.equal(p.beforeSubmit(),true);return gate.promise;}});
+  const pending=f.handler.processFollowups(),old=f.row();assert.equal((await f.saveConsent()).status,201);const renewed=f.row();
+  assert.ok(renewed.consented_at>old.consented_at);gate.resolve({providerMessageId:'old-consent-receipt'});await pending;
+  assert.equal(f.row().consented_at,renewed.consented_at);assert.equal(f.row().followup_status,'pending');assert.equal(f.row().followup_attempts,0);assert.equal(f.row().followup_provider_message_id,'');
+});
+test('an abandoned sending claim becomes uncertain during pause and is not automatically retried',async t=>{
+  let allowed=false,calls=0;const f=await followupFixture(t,{canSendFollowups:()=>allowed,sendWhatsApp:async()=>{calls++;}});
+  f.db.prepare("UPDATE site_assistant_contacts SET followup_status='sending',followup_attempts=1,followup_claim_id='abandoned',followup_claimed_at=?").run(Date.now()-120001);
+  assert.equal((await f.handler.processFollowups()).status,'paused');assert.equal(f.row().followup_status,'uncertain');assert.equal(f.row().followup_attempts,1);
+  allowed=true;f.due();await f.handler.processFollowups();assert.equal(calls,0);
+});
+test('legacy pending retries with an ambiguous prior attempt migrate to uncertain without losing evidence',async t=>{
+  const f=await followupFixture(t);f.handler.close();
+  for(const name of ['followup_claim_id','followup_claimed_at','followup_provider_message_id'])f.db.exec(`ALTER TABLE site_assistant_contacts DROP COLUMN ${name}`);
+  f.db.prepare("UPDATE site_assistant_contacts SET followup_attempts=1,followup_error='legacy_timeout'").run();
+  const restart=setupSiteSalesAssistant({app:express(),db:f.db,publicOrigin:origin,salesExperience:{session:()=>null},canSendFollowups:()=>false});t.after(()=>restart.close());
+  assert.equal(f.row().followup_status,'uncertain');assert.equal(f.row().followup_attempts,1);assert.equal(f.row().followup_error,'legacy_timeout');assert.equal(f.row().next_followup_at,0);
+});
+test('production follow-up adapter checks pause and maps only existing WhatsApp receipt fields',async()=>{
+  const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
+  const start=server.indexOf('  canSendFollowups:',server.indexOf('const siteSalesAssistant =')),end=server.indexOf('  requestOpenAI:',start);
+  assert.ok(start>0&&end>start);let allowed=true,configured=true,calls=0,payload={data:{Id:'REAL-PROVIDER-ID'}};
+  const adapter=vm.runInNewContext('({'+server.slice(start,end)+'})',{ecosystemCanRun:()=>allowed,whatsappQrConfig:()=>({configured}),validWhatsAppReceiptId,
+    whatsappQrData:value=>{let data=value?.data??value;if(typeof data==='string'){try{data=JSON.parse(data);}catch{return {};}}return data&&typeof data==='object'?data:{};},
+    whatsappQrRequest:async(path,options)=>{calls++;assert.equal(path,'/chat/send/text');assert.equal(JSON.parse(options.body).Id,'LIA-STABLE');return payload;}});
+  const send=beforeSubmit=>adapter.sendWhatsApp({phone:'5562999999999',message:'Fixture',idempotencyKey:'LIA-STABLE',beforeSubmit});
+  assert.equal((await send(()=>true)).providerMessageId,'REAL-PROVIDER-ID');
+  payload={data:JSON.stringify({id:'LOWERCASE-ID'})};assert.equal((await send(()=>true)).providerMessageId,'LOWERCASE-ID');
+  payload={data:{success:true}};assert.equal((await send(()=>true)).providerMessageId,undefined);
+  const before=calls;allowed=false;assert.equal(adapter.canSendFollowups(),false);await assert.rejects(send(()=>true),e=>e.notSubmitted===true);
+  allowed=true;configured=false;await assert.rejects(send(()=>true),e=>e.notSubmitted===true);configured=true;await assert.rejects(send(()=>false),e=>e.notSubmitted===true);assert.equal(calls,before);
 });
 test('ready digital services use a server-built detail URL, ignoring arbitrary checkout URLs',async t=>{
   const f=await fixture(t,{services:[{slug:'site-simples',title:'Criação de site',description:'Página para seu negócio.',available:true,checkoutUrl:'https://evil.test'},{slug:'private',title:'Serviço privado',available:false}]});
