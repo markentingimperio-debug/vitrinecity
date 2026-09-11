@@ -3,7 +3,11 @@ import {readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 const directory=fileURLToPath(new URL('.',import.meta.url));
-const excluded=new Set(['test-platform-release.mjs','test-public-smoke.mjs']);
+// Browser QA uses an installed browser and Playwright on the test workstation.
+// The isolated application image contains neither; run these suites separately.
+const browserTests=['test-vitriny-casual-browser.mjs','test-vitriny-farm-browser.mjs'];
+const excluded=new Set(['test-platform-release.mjs','test-public-smoke.mjs',...browserTests]);
+console.log('Separate browser QA required: '+browserTests.join(', '));
 const files=readdirSync(directory).filter(name=>/^test-.+\.mjs$/.test(name)&&!excluded.has(name)).sort();
 const failures=[];
 for(const name of files){
