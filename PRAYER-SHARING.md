@@ -12,4 +12,6 @@ Instagram uses the previously verified Meta adapter, generalized to dated campai
 
 YouTube currently has only metrics API key/channel ID, without upload OAuth. TikTok authorization was renewed and creator info checked, but app configuration remains sandbox and the required publishing/visibility flow is outstanding. Facebook group distribution is a manual/native scheduling package; there is no configured supported Groups publisher. These channels are explicitly shown as pending/manual, not active automatic sends. No substitution of Facebook pages for requested groups.
 
-Validation: `node --test scripts/test-prayer-daily.mjs scripts/test-prayer-page.mjs scripts/test-prayer-media.mjs scripts/test-prayer-sharing.mjs`. Tests must use an isolated SQLite database and fake network; never send test messages to real groups.
+The dedicated prayer group is permitted only for the `prayer-v1:` campaign, while the same group's commercial exclusion remains in effect. The shared worker checks exclusions per schedule, so the prayer exception cannot allow promotions. Receitas 06 remains excluded from automation.
+
+Validation: `node --test scripts/test-prayer-daily.mjs scripts/test-prayer-page.mjs scripts/test-prayer-media.mjs scripts/test-prayer-sharing.mjs scripts/test-whatsapp-schedule-worker.mjs`. Tests must use an isolated SQLite database and fake network; never send test messages to real groups.

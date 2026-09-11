@@ -16,7 +16,7 @@ import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.js';
 import { createWhatsAppScheduleProcessor, whatsappScheduleState, countWhatsAppSchedules, validWhatsAppReceiptId } from './whatsapp-schedule-worker.js';
 import { isWhatsAppCommercialGroupAllowed, WHATSAPP_COMMERCIAL_EXCLUDED_REASON } from './whatsapp-commercial-policy.js';
-import { setupPrayerSharing } from './prayer-sharing.js';
+import { setupPrayerSharing, isWhatsAppPrayerGroupAllowed } from './prayer-sharing.js';
 import { setupWhatsAppThematicGroups } from './whatsapp-thematic-groups.js';
 import { registerSocialCommentCampaigns } from './social-comment-campaigns.js';
 import { createEcosystemOrchestrator, registerEcosystemRoutes, ecosystemLocalWindow } from './ecosystem-orchestrator.js';
@@ -4275,6 +4275,7 @@ const whatsappProductCampaigns = registerWhatsAppProductCampaigns({
 });
 const prayerSharing = setupPrayerSharing({app,db,dataDir,publicDir:path.join(dir,'public'),requireAdmin,sameOriginOnly,whatsappQrRequest,whatsappQrData,canRun:ecosystemCanRun});
 const processWhatsAppQrSchedules = createWhatsAppScheduleProcessor({
+  isGroupAllowed:(jid,item)=>String(item?.campaign_id||'').startsWith('prayer-v1:')?isWhatsAppPrayerGroupAllowed(jid):isWhatsAppCommercialGroupAllowed(jid),
   db, canRun:ecosystemCanRun, prepareScheduledMessage: item=>String(item.campaign_id||'').startsWith('prayer-v1:')?prayerSharing.prepareScheduledMessage(item):String(item.campaign_id||'').startsWith('thematic-v1:')?whatsappThematicGroups.prepareScheduledMessage(item):whatsappProductCampaigns.prepareScheduledMessage(item),
   whatsappQrRequest, whatsappQrData
 });

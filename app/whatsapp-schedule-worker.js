@@ -41,13 +41,13 @@ export function createWhatsAppScheduleProcessor({db,prepareScheduledMessage,what
       if(!canRun())return;
       // Cancel only unsubmitted commercial schedules. Keep historical receipts,
       // drafts and uncertain submissions intact, and avoid starving other groups.
-      for(const row of db.prepare("SELECT DISTINCT group_jid FROM whatsapp_qr_schedules WHERE status='pending'").all()) {
-        if(!isGroupAllowed(row.group_jid))db.prepare("UPDATE whatsapp_qr_schedules SET status='cancelled',error=? WHERE group_jid=? AND status='pending'").run(WHATSAPP_COMMERCIAL_EXCLUDED_REASON,row.group_jid);
+      for(const row of db.prepare("SELECT * FROM whatsapp_qr_schedules WHERE status='pending'").all()) {
+        if(!isGroupAllowed(row.group_jid,row))db.prepare("UPDATE whatsapp_qr_schedules SET status='cancelled',error=? WHERE id=? AND status='pending'").run(WHATSAPP_COMMERCIAL_EXCLUDED_REASON,row.id);
       }
       const due=db.prepare(`SELECT * FROM whatsapp_qr_schedules WHERE status='pending' AND scheduled_at<=? ORDER BY scheduled_at LIMIT 3`).all(now().toISOString());
       for(const item of due) {
         if(!canRun())break;
-        if(!isGroupAllowed(item.group_jid)) {
+        if(!isGroupAllowed(item.group_jid,item)) {
           db.prepare("UPDATE whatsapp_qr_schedules SET status='cancelled',error=? WHERE id=? AND status='pending'").run(WHATSAPP_COMMERCIAL_EXCLUDED_REASON,item.id);
           continue;
         }
@@ -65,7 +65,7 @@ export function createWhatsAppScheduleProcessor({db,prepareScheduledMessage,what
           if(!canRun()){restorePending();break;}
           const live=db.prepare('SELECT status,confirmation_state,claimed_at FROM whatsapp_qr_schedules WHERE id=?').get(item.id);
           if(live?.status!=='processing'||live.confirmation_state!=='submitting'||live.claimed_at!==claimTime)continue;
-          if(!isGroupAllowed(item.group_jid)) {
+          if(!isGroupAllowed(item.group_jid,item)) {
             db.prepare("UPDATE whatsapp_qr_schedules SET status='cancelled',confirmation_state='not_submitted',error=? WHERE id=? AND status='processing' AND claimed_at=?").run(WHATSAPP_COMMERCIAL_EXCLUDED_REASON,item.id,claimTime);
             continue;
           }
