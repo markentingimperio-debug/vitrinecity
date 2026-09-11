@@ -16,7 +16,7 @@ export function selectPrayerVideos(rows,day){
   }).sort((a,b)=>Number(normalize(b.caption).includes(`#oracao${day.replaceAll('-','')}`))-Number(normalize(a.caption).includes(`#oracao${day.replaceAll('-','')}`))||String(b.created_at).localeCompare(String(a.created_at))).slice(0,6).map(row=>({
     id:row.id,caption:row.caption,author:row.handle||row.name||'Vitriny Social',
     url:`/social?post=${encodeURIComponent(row.id)}`,
-    playerUrl:`https://iframe.videodelivery.net/${row.video_uid}?autoplay=false&muted=false&controls=true`,
+    playerUrl:`https://iframe.videodelivery.net/${row.video_uid}?controls=true`,
   }));
 }
 
