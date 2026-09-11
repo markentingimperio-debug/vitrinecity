@@ -60,6 +60,7 @@ export async function installPrayerVideos({document,fetch,stopAudio=()=>{}}){
         const button=document.createElement('button');button.type='button';button.className='button button-primary';button.textContent='▶ Assistir e ouvir';button.setAttribute('aria-label',`Assistir e ouvir: ${title.textContent}`);
         button.addEventListener('click',()=>{
           stopAudio();
+          for(const video of list.querySelectorAll('video'))video.pause();
           // Start only the requested player and stop any previously opened one.
           for(const other of list.querySelectorAll('iframe')){const wrap=other.parentElement;other.remove();wrap.querySelector('button').hidden=false;}
           const iframe=document.createElement('iframe');iframe.src=player;iframe.title=title.textContent;iframe.allow='fullscreen';iframe.allowFullscreen=true;iframe.referrerPolicy='strict-origin-when-cross-origin';
@@ -75,7 +76,7 @@ export async function installPrayerVideos({document,fetch,stopAudio=()=>{}}){
       status.textContent='Não foi possível carregar os vídeos agora. A oração e a leitura em voz alta continuam disponíveis.';retry.hidden=false;
     }
   }
-  retry.addEventListener('click',load);await load();
+  retry.addEventListener('click',()=>load().then(()=>installPreparedPrayerVideos({document,fetch,stopAudio})));await load();
 }
 
 export async function installPreparedPrayerVideos({document,fetch,stopAudio=()=>{}}){
@@ -88,7 +89,7 @@ export async function installPreparedPrayerVideos({document,fetch,stopAudio=()=>
       if(!['short','tiktok'].includes(item.format)||item.day!==day||item.url!==`/prayer-media/${day}/${item.format}.mp4`)continue;
       const card=document.createElement('article');card.className='prayer-video-card';
       const title=document.createElement('h3');title.textContent=`${item.title} · ${item.durationSeconds} segundos`;
-      const player=document.createElement('video');player.controls=true;player.preload='none';player.playsInline=true;player.src=item.url;player.style.width='100%';player.style.maxHeight='540px';player.style.borderRadius='16px';
+      const player=document.createElement('video');player.controls=true;player.preload='metadata';player.playsInline=true;player.src=item.url;player.poster='/assets/prayer/jesus-areia-v1.png';player.setAttribute('aria-label',title.textContent);player.style.width='100%';player.style.maxHeight='540px';player.style.aspectRatio='9 / 16';player.style.background='#192d23';player.style.borderRadius='16px';
       player.addEventListener('play',()=>{stopAudio();for(const other of list.querySelectorAll('video'))if(other!==player)other.pause();for(const frame of list.querySelectorAll('iframe')){const parent=frame.parentElement;frame.remove();parent.querySelector('button').hidden=false;}});
       const link=document.createElement('a');link.href=item.url;link.download=`oracao-${day}-${item.format}.mp4`;link.textContent='Baixar esta oração em vídeo';
       const note=document.createElement('p');note.className='video-author';note.textContent='Representação artística de Jesus. Imagem e voz criadas com inteligência artificial.';
@@ -102,5 +103,5 @@ if(typeof document!=='undefined'){
   const stopAudio=installPrayerAudio({document,window});
   const options={document,fetch:window.fetch.bind(window),stopAudio};
   installPrayerVideos(options).then(()=>installPreparedPrayerVideos(options));
-  document.getElementById('listenPrayer').addEventListener('click',()=>{for(const video of document.querySelectorAll('#prayerVideos video'))video.pause();});
+  document.getElementById('listenPrayer').addEventListener('click',()=>{for(const video of document.querySelectorAll('#prayerVideos video'))video.pause();for(const frame of document.querySelectorAll('#prayerVideos iframe')){const parent=frame.parentElement;frame.remove();parent.querySelector('button').hidden=false;}});
 }

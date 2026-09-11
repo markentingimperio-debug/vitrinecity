@@ -10,6 +10,8 @@ import {loadCredential,createApi,inspectLocalVideo,openJournal,run as runMeta} f
 
 export const PRAYER_SCHEDULE=Object.freeze({hour:7,minute:0,timeZone:'America/Sao_Paulo',startDay:'2026-09-12'});
 const PREFIX='prayer-v1:',API='/api/admin/prayer-sharing';
+// This destination is reserved for prayer, and remains excluded from commerce.
+export function isWhatsAppPrayerGroupAllowed(jid){return jid==='34685244692-1501704641@g.us'||isWhatsAppCommercialGroupAllowed(jid);}
 const safeError=error=>/^prayer_[a-z0-9_]+$/.test(error?.message)?error.message:'prayer_operation_needs_review';
 const fail=message=>Object.assign(Error(message),{campaignSafe:true,notSubmitted:true});
 const readJson=file=>{try{return JSON.parse(fs.readFileSync(file,'utf8'));}catch{return null;}};
@@ -41,14 +43,14 @@ export function setupPrayerSharing({app,db,dataDir,publicDir,requireAdmin,sameOr
     const state=whatsappQrData(await whatsappQrRequest('/session/status'));
     if(!(state?.connected||state?.Connected)||!(state?.loggedIn||state?.LoggedIn))throw fail('O WhatsApp está desconectado.');
     const data=whatsappQrData(await whatsappQrRequest('/group/list'));
-    return providerGroups(data).filter(g=>isWhatsAppCommercialGroupAllowed(g.JID||g.jid)&&whatsappGroupPermission(g,state).canPost).map(g=>({jid:g.JID||g.jid,name:String(g.Name||g.GroupName?.Name||'').trim()})).filter(g=>g.name);
+    return providerGroups(data).filter(g=>isWhatsAppPrayerGroupAllowed(g.JID||g.jid)&&whatsappGroupPermission(g,state).canPost).map(g=>({jid:g.JID||g.jid,name:String(g.Name||g.GroupName?.Name||'').trim()})).filter(g=>g.name);
   }
   function eligible(row,day,date=now()){return Boolean(row.enabled&&canRun()&&day>=row.start_day&&prayerPublicationWindow(day,date));}
   function queue(day){
     const row=settings();if(!row.enabled||!canRun()||day<row.start_day||day<prayerDayInBrazil(now())||!media(day,'short'))return;
     const m=verifiedMedia(day,'short');
     db.transaction(()=>{
-      row.groups.forEach((g,index)=>{if(!isWhatsAppCommercialGroupAllowed(g.jid))return;
+      row.groups.forEach((g,index)=>{if(!isWhatsAppPrayerGroupAllowed(g.jid))return;
         db.prepare(`INSERT OR IGNORE INTO whatsapp_qr_schedules(id,group_jid,group_name,sitemap_url,message,scheduled_at,campaign_id) VALUES(?,?,?,?,?,?,?)`)
           .run(prayerScheduleId(day,g.jid),g.jid,g.name,`https://vitrinecity.com/oracao-do-dia.html?dia=${day}#oracao`,m.caption,new Date(Date.parse(prayerScheduledAt(day))+index*2000).toISOString(),PREFIX+day);
       });
@@ -64,10 +66,10 @@ export function setupPrayerSharing({app,db,dataDir,publicDir,requireAdmin,sameOr
     const day=String(item.campaign_id||'').slice(PREFIX.length),row=settings();
     if(!validDay(day)||!eligible(row,day))throw fail('A rotina está pausada ou fora do horário desta oração.');
     const group=row.groups.find(g=>g.jid===item.group_jid);
-    if(!group||!isWhatsAppCommercialGroupAllowed(group.jid)||!(await currentGroups()).some(g=>g.jid===group.jid))throw fail('A permissão para enviar a este grupo mudou.');
+    if(!group||!isWhatsAppPrayerGroupAllowed(group.jid)||!(await currentGroups()).some(g=>g.jid===group.jid))throw fail('A permissão para enviar a este grupo mudou.');
     const m=verifiedMedia(day,'short');
     if(item.id!==prayerScheduleId(day,group.jid)||item.message!==m.caption||item.sitemap_url!==`https://vitrinecity.com/oracao-do-dia.html?dia=${day}#oracao`)throw fail('Este agendamento foi alterado e precisa de conferência.');
-    const beforeSubmit=()=>{const current=settings();return current.revision===row.revision&&eligible(current,day)&&current.groups.some(g=>g.jid===group.jid)&&isWhatsAppCommercialGroupAllowed(group.jid);};
+    const beforeSubmit=()=>{const current=settings();return current.revision===row.revision&&eligible(current,day)&&current.groups.some(g=>g.jid===group.jid)&&isWhatsAppPrayerGroupAllowed(group.jid);};
     if(!beforeSubmit())throw fail('A rotina mudou durante a preparação.');
     return {pathname:'/chat/send/video',body:{Phone:group.jid,Video:'data:video/mp4;base64,'+fs.readFileSync(m.videoPath).toString('base64'),Caption:m.caption,Id:item.id.toUpperCase()},beforeSubmit};
   }
