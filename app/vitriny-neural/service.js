@@ -9,6 +9,7 @@ import {createShadowObserver} from './shadow-observer.js';
 import {createNeuralBenchmarkManager} from './benchmark-manager.js';
 import {createNeuralWebResearchEngine} from './web-research-engine.js';
 import {createNeuralDatasetBuilder} from './dataset-builder.js';
+import {createSpatialEventProcessor} from './spatial-event-processor.js';
 
 function primaryProviderId(runtime){const providers=runtime.skills.status().providers||[];return providers.find(provider=>provider.policy?.enabled!==false)?.id||providers[0]?.id||null;}
 
@@ -19,6 +20,12 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
   const qualifications=createQualificationStore(db);
   const budget=createNeuralActionBudget({db,now,limit:config.maxDailyAutoActions});
   const observer=createShadowObserver({db,neural:runtime.neural,now,intervalMs:config.observerIntervalMs,logger});
+  const spatialEvents=createSpatialEventProcessor({db,enabled:config.spatialEventsEnabled,now,logger,canRun:()=>{
+    try{
+      const policy=db.prepare('SELECT enabled,paused FROM ecosystem_policy WHERE id=1').get();
+      return policy?.enabled===1&&policy?.paused===0;
+    }catch{return false;}
+  }});
 
   function applyQualificationPolicy(providerId,qualification,source='qualification'){
     if(!runtime.skills.setProviderPolicy||!qualification)return null;
@@ -69,11 +76,12 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
       qualification:qualification?{id:qualification.id,providerId:qualification.providerId,modelName:qualification.modelName,score:qualification.score,safetyScore:qualification.safetyScore,productionEligible:qualification.productionEligible,createdAt:qualification.createdAt}:null,
       actionBudget:budget.usage(),
       observer:observer.status(),
+      spatialEvents:spatialEvents.status(),
       webResearch:webResearch.status(),
       training:training.status(),
       benchmark:{activeId:benchmarks.status().activeId,recent:benchmarks.list(5).map(item=>({id:item.id,status:item.status,providerId:item.providerId,modelName:item.modelName,score:item.score,grade:item.grade,createdAt:item.createdAt,completedAt:item.completedAt}))}
     };
   }
 
-  return{runtime,config,qualifications,budget,observer,benchmarks,webResearch,training,execution,recordQualification,readiness,capture,authorize,commitAction,releaseAction,status};
+  return{runtime,config,qualifications,budget,observer,spatialEvents,benchmarks,webResearch,training,execution,recordQualification,readiness,capture,authorize,commitAction,releaseAction,status};
 }

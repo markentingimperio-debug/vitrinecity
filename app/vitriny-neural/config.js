@@ -14,6 +14,8 @@ export function createNeuralConfig({env=process.env}={}){
   const maxAutoWeightChange=number(env.VITRINY_NEURAL_MAX_AUTO_WEIGHT_CHANGE,0,.10,.02);
   const maxDailyAutoActions=Math.floor(number(env.VITRINY_NEURAL_MAX_DAILY_AUTO_ACTIONS,0,100000,100));
   const observerIntervalMs=Math.floor(number(env.VITRINY_NEURAL_OBSERVER_INTERVAL_MS,10000,15*60*1000,60000));
+  // Explicit opt-in: installation alone must not drain historical events.
+  const spatialEventsEnabled=enabled&&configuredMode!=='disabled'&&truthy(env.VITRINY_NEURAL_SPATIAL_EVENTS_ENABLED);
   return Object.freeze({
     enabled,
     mode:configuredMode,
@@ -23,6 +25,7 @@ export function createNeuralConfig({env=process.env}={}){
     maxAutoWeightChange,
     maxDailyAutoActions,
     observerIntervalMs,
+    spatialEventsEnabled,
     highRisk:[...HIGH_RISK],
     policy:Object.freeze({
       shadowNeverExecutes:true,
