@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import { classifySiteAssistantPath as classify, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS as DAY } from '../public/site-assistant-policy.js';
 import { injectSiteAssistant } from '../site-assistant-page.js';
 import { mountSiteAssistant } from '../public/site-assistant.js';
@@ -248,4 +249,87 @@ test('blocked browser storage leaves chat and history usable and the fallback gr
     widget.close(); assert.equal(h.find('.vc-assistant-panel').hidden, true);
     assert.deepEqual([...h.storage, ...h.sessionStorage], []);
   }
+});
+
+test('minimizing preserves the transcript and unfinished message without dismissing the assistant', async () => {
+  const h=harness(); const widget=h.mount(); await widget.ready; widget.open();
+  h.find('textarea').value='Preciso de uma forma'; h.find('form').fire('submit'); await flush();
+  const transcript=h.find('.vc-assistant-log').textContent;
+  h.find('textarea').value='Qual tamanho você sugere?'; const minimize=h.find('.vc-assistant-minimize'); minimize.focus(); minimize.fire('click');
+  assert.equal(h.find('.vc-assistant-panel').hidden,true); assert.equal(h.find('.vc-assistant-invite').hidden,true);
+  assert.equal(h.find('.vc-assistant-log').textContent,transcript); assert.equal(h.find('textarea').value,'Qual tamanho você sugere?');
+  assert.equal(h.find('.vc-assistant-log').getAttribute('aria-live'),'off'); assert.equal(h.doc.activeElement,widget.launcher);
+  assert.equal(widget.launcher.getAttribute('aria-expanded'),'false'); assert.equal(h.sessionStorage.has(PANEL_KEY),false);
+  assert.equal(h.storage.has('vc-assistant-dismiss-until-v1'),false); assert.equal(h.requests.filter(r=>r.body?.type==='dismiss').length,0);
+  h.advance(60000); assert.equal(h.find('.vc-assistant-invite').hidden,true); assert.equal(h.intervals,0);
+  widget.launcher.fire('click'); assert.equal(h.find('.vc-assistant-panel').hidden,false);
+  assert.equal(h.find('.vc-assistant-log').textContent,transcript); assert.equal(h.find('textarea').value,'Qual tamanho você sugere?');
+  assert.equal(h.doc.activeElement,h.find('textarea')); assert.equal(h.sessionStorage.has('vc-assistant-minimized-until-v1'),false);
+  assert.equal(h.count('/chat'),1);
+});
+
+test('a minimized conversation stays minimized on the next page and never stores its text', async () => {
+  const h=harness({context:{history:previousConversation}}); const first=h.mount(); await first.ready; first.open(); first.minimize();
+  h.win.dispatchEvent({type:'pagehide'}); first.destroy();
+  assert.deepEqual([...h.sessionStorage.keys()],['vc-assistant-minimized-until-v1']);
+  assert.match(h.sessionStorage.get('vc-assistant-minimized-until-v1'),/^\d+$/);
+  const next=harness({path:'/produto/13',sessionStorage:h.sessionStorage,context:{history:previousConversation}});
+  const widget=next.mount(); await widget.ready; next.advance(20000);
+  assert.equal(next.find('.vc-assistant-panel').hidden,true); assert.equal(next.find('.vc-assistant-invite').hidden,true);
+  assert.equal(next.doc.focusCalls,0); assert.equal(next.intervals,0); assert.equal(next.count('/chat'),0);
+  assert.equal(next.find('.vc-assistant-log').children.length,2);
+  widget.launcher.fire('click'); assert.equal(next.find('.vc-assistant-panel').hidden,false);
+  assert.equal(next.find('.vc-assistant-log').children.length,2);
+  next.find('.vc-assistant-panel-close').fire('click');
+  assert.equal(next.sessionStorage.has('vc-assistant-minimized-until-v1'),false);
+  assert.equal(next.storage.has('vc-assistant-dismiss-until-v1'),true);
+});
+
+test('a response arriving while minimized stays quiet and remains available when reopened', async () => {
+  let finish;const h=harness({chat:()=>new Promise(resolve=>{finish=resolve;})});const widget=h.mount();await widget.ready;widget.open();
+  h.find('textarea').value='Qual tamanho?';h.find('form').fire('submit');widget.minimize();
+  finish({ok:true,json:async()=>({reply:'Confira as medidas no produto.'})});await flush();
+  assert.equal(h.find('.vc-assistant-panel').hidden,true);assert.equal(h.find('.vc-assistant-log').getAttribute('aria-live'),'off');
+  assert.equal(h.count('/chat'),1);assert.match(h.find('.vc-assistant-log').textContent,/Confira as medidas/);
+  widget.launcher.fire('click');assert.match(h.find('.vc-assistant-log').textContent,/Confira as medidas/);
+});
+
+test('maximize toggles a labelled non-modal reading size without moving focus or changing conversation state', async () => {
+  const h=harness({context:{history:previousConversation}});const widget=h.mount();await widget.ready;widget.open();
+  const panel=h.find('.vc-assistant-panel'),expand=h.find('.vc-assistant-expand'),transcript=h.find('.vc-assistant-log').textContent;
+  expand.focus();const focusCalls=h.doc.focusCalls,storageBefore=[...h.sessionStorage];
+  assert.equal(expand.getAttribute('aria-label'),'Ampliar conversa');assert.equal(expand.getAttribute('aria-pressed'),'false');
+  expand.fire('click');assert.equal(panel.dataset.expanded,'true');assert.equal(expand.getAttribute('aria-label'),'Restaurar tamanho');
+  assert.equal(expand.getAttribute('aria-pressed'),'true');assert.equal(expand.textContent,'Restaurar');
+  assert.equal(h.doc.activeElement,expand);assert.equal(h.doc.focusCalls,focusCalls);assert.equal(panel.getAttribute('aria-modal'),null);
+  assert.equal(panel.getAttribute('role'),null);assert.equal(h.find('.vc-assistant-log').textContent,transcript);
+  assert.deepEqual([...h.sessionStorage],storageBefore);assert.equal(h.storage.size,0);
+  expand.fire('click');assert.equal(panel.dataset.expanded,'false');assert.equal(expand.getAttribute('aria-pressed'),'false');
+  assert.equal(expand.textContent,'Ampliar');assert.equal(h.doc.focusCalls,focusCalls);assert.equal(h.count('/chat'),0);
+});
+
+test('window controls retain visible labels and work with blocked storage; invalid minimized markers expire', async () => {
+  const h=harness({storageFails:true});const widget=h.mount();await widget.ready;widget.open();
+  const controls=h.find('.vc-assistant-window-controls').querySelectorAll('button');
+  assert.deepEqual(controls.map(control=>control.textContent),['Minimizar','Ampliar','Fechar']);
+  for(const control of controls){assert.equal(control.type,'button');assert.ok(control.getAttribute('aria-label'));assert.equal(control.getAttribute('tabindex'),null);}
+  widget.toggleExpanded();widget.minimize();assert.equal(h.find('.vc-assistant-panel').hidden,true);widget.launcher.fire('click');
+  assert.equal(h.find('.vc-assistant-panel').hidden,false);assert.equal(h.find('.vc-assistant-panel').dataset.expanded,'true');
+  assert.deepEqual([...h.storage,...h.sessionStorage],[]);
+  for(const marker of ['garbage','100000',String(100000+PANEL_KEEP_MS+1)]){
+    const next=harness({sessionStorage:new Map([['vc-assistant-minimized-until-v1',marker]]),context:{history:previousConversation}});await next.mount().ready;
+    assert.equal(next.sessionStorage.has('vc-assistant-minimized-until-v1'),false);next.advance(10000);assert.equal(next.find('.vc-assistant-invite').hidden,false);
+  }
+});
+
+test('expanded layout stays within desktop and mobile viewports and controls can shrink and wrap at zoom', () => {
+  const css=readFileSync(new URL('../public/site-assistant.css',import.meta.url),'utf8');
+  const expanded=css.match(/\.vc-assistant-panel\[data-expanded="true"\]\{([^}]+)\}/)?.[1];assert.ok(expanded);
+  assert.match(expanded,/width:min\(720px,calc\(100vw - 36px\)\)/);
+  assert.match(expanded,/max-height:calc\(100dvh - 112px\)/);
+  assert.match(css,/@media\(max-width:600px\)\{\.vc-assistant-panel\[data-expanded="true"\]\{width:calc\(100vw - 16px\);/);
+  assert.match(css,/\.vc-assistant-window-controls\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)[^}]*min-width:0/);
+  assert.match(css,/\.vc-assistant-window-control\{[^}]*min-height:48px[^}]*max-width:100%[^}]*white-space:normal[^}]*overflow-wrap:anywhere/);
+  assert.match(css,/\.vc-assistant-panel\{[^}]*overflow-y:auto/);
+  assert.match(css,/@media\(max-height:560px\)\{\.vc-assistant-panel\[data-expanded="true"\]\{height:auto;max-height:calc\(100dvh - 16px\)/);
 });

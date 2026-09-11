@@ -20,9 +20,16 @@
 .vc-assistant .vc-assistant-quiet{border:1px solid transparent;background:transparent;color:#355e51;border-radius:10px;padding:10px 14px;text-decoration:underline;text-underline-offset:3px}
 .vc-assistant .vc-assistant-close{flex:none;display:grid;place-items:center;min-width:48px;min-height:48px;padding:0;border:1px solid transparent;border-radius:50%;background:transparent;color:#264e42;font-size:30px;line-height:1}
 .vc-assistant .vc-assistant-close:hover{background:#e7eee4}
-.vc-assistant-panel{display:flex;flex-direction:column;max-height:min(720px,calc(100dvh - 112px))}
-.vc-assistant-heading{display:flex;justify-content:space-between;align-items:start;gap:8px;padding:19px 15px 17px 22px;background:#edf2e8;border-bottom:1px solid #d1ded0;flex:none}
+.vc-assistant-panel{display:flex;flex-direction:column;max-height:min(720px,calc(100dvh - 112px));overflow-y:auto}
+.vc-assistant-panel[data-expanded="true"]{width:min(720px,calc(100vw - 36px));height:min(820px,calc(100dvh - 112px));max-height:calc(100dvh - 112px)}
+.vc-assistant-panel[data-expanded="true"] .vc-assistant-scroll{flex:1 1 auto}
+.vc-assistant-heading{display:flex;flex-direction:column;gap:10px;padding:14px 18px;background:#edf2e8;border-bottom:1px solid #d1ded0;flex:none;min-width:0}
+.vc-assistant-heading-copy{min-width:0;max-width:100%;overflow-wrap:anywhere}
+.vc-assistant-window-controls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;width:100%;min-width:0}
+.vc-assistant .vc-assistant-window-control{min-width:0;min-height:48px;max-width:100%;padding:8px 6px;border:1px solid #b6c7b6;border-radius:9px;background:#fffdf6;color:#264e42;font-size:16px;font-weight:650;line-height:1.3;white-space:normal;overflow-wrap:anywhere}
+.vc-assistant .vc-assistant-window-control:hover,.vc-assistant .vc-assistant-window-control[aria-pressed="true"]{background:#dce8db;border-color:#728f76}
 .vc-assistant h2{font:650 24px/1.2 system-ui,sans-serif;color:#183c35;margin:7px 0 0}
+.vc-assistant-heading h2{font-size:20px;margin-top:3px}
 .vc-assistant-scroll{padding:20px;overflow-y:auto;overscroll-behavior:contain;min-height:65px;scrollbar-gutter:stable}
 .vc-assistant .vc-assistant-intro{margin:0 0 16px;white-space:pre-line;color:#183c35;font-size:18px;line-height:1.55}
 .vc-assistant-quick{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 18px}
@@ -61,5 +68,7 @@
 .vc-assistant-city-launcher{position:static;z-index:auto;display:flex;margin-top:9px;margin-bottom:8px;width:100%;max-width:100%;padding:10px 12px;border-radius:10px;font-size:16px;min-height:48px;box-shadow:none}
 .vc-assistant[data-kind="city"] .vc-assistant-invite,.vc-assistant[data-kind="city"] .vc-assistant-panel{right:auto;left:max(18px,env(safe-area-inset-left));bottom:78px;max-height:calc(100dvh - 190px)}
 @media(max-width:600px){.vc-assistant-panel{bottom:max(8px,env(safe-area-inset-bottom));right:8px;width:calc(100vw - 16px);max-height:calc(100dvh - max(16px,env(safe-area-inset-top)));border-radius:16px}.vc-assistant-scroll{padding:15px}.vc-assistant-heading{padding:14px 12px 13px 17px}.vc-assistant-form{padding:12px 15px}.vc-assistant .vc-assistant-note{margin-top:8px}.vc-assistant[data-kind="city"] .vc-assistant-panel{left:8px;bottom:max(8px,env(safe-area-inset-bottom));max-height:calc(100dvh - max(16px,env(safe-area-inset-top)))}.vc-assistant[data-kind="city"] .vc-assistant-invite{left:10px;bottom:190px;max-height:calc(100dvh - 300px)}}
+@media(max-width:600px){.vc-assistant-panel[data-expanded="true"]{width:calc(100vw - 16px);height:calc(100dvh - max(16px,env(safe-area-inset-top)));max-height:calc(100dvh - max(16px,env(safe-area-inset-top)))}.vc-assistant-window-controls{gap:4px}}
 @media(max-height:560px){.vc-assistant-panel{top:8px;bottom:8px;max-height:none}.vc-assistant .vc-assistant-note{display:none}.vc-assistant textarea{min-height:48px;height:48px}.vc-assistant-form{padding:8px 15px}.vc-assistant-heading{padding:8px 12px}.vc-assistant[data-kind="city"] .vc-assistant-panel{top:8px;bottom:8px;max-height:none}}
+@media(max-height:560px){.vc-assistant-panel[data-expanded="true"]{height:auto;max-height:calc(100dvh - 16px)}}
 @media(prefers-reduced-motion:reduce){.vc-assistant *,.vc-assistant-launcher{animation:none!important;transition:none!important;scroll-behavior:auto!important}}

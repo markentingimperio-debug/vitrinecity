@@ -2,6 +2,7 @@ import { classifySiteAssistantPath, safeSiteAssistantUrl, siteAssistantDismissed
 
 const DISMISS_KEY = 'vc-assistant-dismiss-until-v1';
 const PANEL_KEY = 'vc-assistant-panel-until-v1';
+const MINIMIZED_KEY = 'vc-assistant-minimized-until-v1';
 const PANEL_KEEP_MS = 30 * 60 * 1000;
 const SINGLETON = '__vcSiteAssistant';
 const COPY = 'Lia · Assistente com IA';
@@ -48,11 +49,16 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   const panel = make('section', 'vc-assistant-panel'); panel.id = 'vc-assistant-panel'; panel.hidden = true;
   panel.setAttribute('aria-labelledby', 'vc-assistant-title');
   const heading = make('header', 'vc-assistant-heading');
-  const headingCopy = make('div');
+  const headingCopy = make('div', 'vc-assistant-heading-copy');
   const title = make('h2', '', 'Como posso ajudar?'); title.id = 'vc-assistant-title';
   headingCopy.append(make('p', 'vc-assistant-eyebrow', COPY), title);
-  const panelClose = button('×', 'vc-assistant-close', () => close()); panelClose.setAttribute('aria-label', 'Fechar conversa');
-  heading.append(headingCopy, panelClose);
+  const panelControls = make('div', 'vc-assistant-window-controls'); panelControls.setAttribute('role', 'group'); panelControls.setAttribute('aria-label', 'Controles da conversa');
+  const panelMinimize = button('Minimizar', 'vc-assistant-window-control vc-assistant-minimize', () => minimize());
+  panelMinimize.setAttribute('aria-label', 'Minimizar conversa'); panelMinimize.setAttribute('aria-controls', panel.id);
+  const panelExpand = button('Ampliar', 'vc-assistant-window-control vc-assistant-expand', () => toggleExpanded());
+  panelExpand.setAttribute('aria-label', 'Ampliar conversa'); panelExpand.setAttribute('aria-pressed', 'false'); panelExpand.setAttribute('aria-controls', panel.id);
+  const panelClose = button('Fechar', 'vc-assistant-window-control vc-assistant-panel-close', () => close()); panelClose.setAttribute('aria-label', 'Fechar conversa');
+  panelControls.append(panelMinimize, panelExpand, panelClose); heading.append(headingCopy, panelControls);
   const scroll = make('div', 'vc-assistant-scroll');
   const intro = make('p', 'vc-assistant-intro');
   const quick = make('div', 'vc-assistant-quick'); quick.setAttribute('aria-label', 'Sugestões para começar');
@@ -90,7 +96,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   let dismissedUntil = 0;
   try { dismissedUntil = Number(win.localStorage.getItem(DISMISS_KEY)) || 0; } catch {}
 
-  // Only the panel's expiring open state stays in this tab. Conversation text
+  // Only the panel's expiring open/minimized state stays in this tab. Conversation text
   // comes from the server session; it is never copied into browser storage.
   function rememberPanel() {
     try { win.sessionStorage.setItem(PANEL_KEY, String(now() + PANEL_KEEP_MS)); } catch {}
@@ -98,9 +104,12 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   function forgetPanel() {
     try { win.sessionStorage.removeItem(PANEL_KEY); } catch {}
   }
-  function panelWasOpen() {
+  function forgetMinimized() {
+    try { win.sessionStorage.removeItem(MINIMIZED_KEY); } catch {}
+  }
+  function uiStateActive(key) {
     try {
-      const until = Number(win.sessionStorage.getItem(PANEL_KEY));
+      const until = Number(win.sessionStorage.getItem(key));
       return Number.isFinite(until) && until > now() && until <= now() + PANEL_KEEP_MS;
     } catch { return false; }
   }
@@ -142,6 +151,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   }
   function open({ restore = false } = {}) {
     if (disposed || !context) return;
+    forgetMinimized();
     if (!panel.hidden) { if (!restore) input.focus({ preventScroll: true }); return; }
     returnFocus = doc.activeElement?.isConnected ? doc.activeElement : launcher;
     if (invite.contains(returnFocus)) returnFocus = launcher;
@@ -150,8 +160,26 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     win.dispatchEvent(new win.CustomEvent('vitriny:assistant-open'));
     if (!restore) { track('open'); input.focus({ preventScroll: true }); }
   }
-  function close() {
+  function minimize() {
+    if (disposed || !context || panel.hidden) return;
+    const hadFocus = panel.contains(doc.activeElement);
     forgetPanel();
+    try { win.sessionStorage.setItem(MINIMIZED_KEY, String(now() + PANEL_KEEP_MS)); } catch {}
+    panel.hidden = true; invite.hidden = true; shown = true; stopTimer();
+    launcher.setAttribute('aria-expanded', 'false'); launcher.textContent = 'Continuar conversa';
+    launcher.setAttribute('aria-label', 'Continuar conversa com a Lia'); log.setAttribute('aria-live', 'off');
+    if (hadFocus) launcher.focus({ preventScroll: true });
+  }
+  function toggleExpanded() {
+    if (disposed || !context || panel.hidden) return;
+    const expanded = panel.dataset.expanded !== 'true';
+    panel.dataset.expanded = String(expanded);
+    panelExpand.textContent = expanded ? 'Restaurar' : 'Ampliar';
+    panelExpand.setAttribute('aria-label', expanded ? 'Restaurar tamanho' : 'Ampliar conversa');
+    panelExpand.setAttribute('aria-pressed', String(expanded));
+  }
+  function close() {
+    forgetPanel(); forgetMinimized();
     if (panel.hidden) return;
     panel.hidden = true; launcher.setAttribute('aria-expanded', 'false'); log.setAttribute('aria-live', 'off'); silence();
     track('dismiss');
@@ -282,7 +310,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   win.addEventListener('storage', onStorage);
   const onPageHide = () => { invite.hidden = true; if (!panel.hidden) rememberPanel(); };
   win.addEventListener('pagehide', onPageHide);
-  const controller = { open, close, dismiss, root, launcher, destroy() {
+  const controller = { open, close, minimize, toggleExpanded, dismiss, root, launcher, destroy() {
     disposed = true; stopTimer(); root.remove(); launcher.remove();
     doc.removeEventListener('visibilitychange', onVisibility); win.removeEventListener('storage', onStorage); win.removeEventListener('pagehide', onPageHide);
     delete win[SINGLETON];
@@ -311,9 +339,12 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
       }
     }
     renderOffers(data.offers); renderActions(data.actions); launcher.hidden = false;
-    if (history.length && panelWasOpen()) open({ restore: true });
+    if (uiStateActive(MINIMIZED_KEY)) {
+      forgetPanel(); shown = true; invite.hidden = true;
+      launcher.textContent = 'Continuar conversa'; launcher.setAttribute('aria-label', 'Continuar conversa com a Lia');
+    } else if (history.length && uiStateActive(PANEL_KEY)) open({ restore: true });
     else {
-      forgetPanel();
+      forgetPanel(); forgetMinimized();
       if (policy.proactive && !siteAssistantDismissed(dismissedUntil, now())) { lastTick = now(); wasEligible = !blockedByActivity(); timer = win.setInterval(tick, 1000); }
     }
   }).catch(() => { controller.destroy(); });
