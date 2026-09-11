@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import express from 'express';
 import Database from 'better-sqlite3';
-import {setupCityRewards,rewardDiscount,REWARD_TERMS} from '../city-rewards.js';
+import {setupCityRewards,rewardDiscount,rewardDayWindow,REWARD_TERMS} from '../city-rewards.js';
 import {creditExpiryForOrder,ADS_TERMS_VERSION} from '../credits-policy.js';
 const DAY=86400000;
 for(const price of [1,3,99,1000,2399,19900])for(const points of [0,1,3,100,300,100000])for(const rate of [1,100,237]){const q=rewardDiscount(price,points,rate);assert.ok(q.discountCents<=Math.floor(price*.3));assert.ok(q.points<=points);assert.ok(q.payCents>=Math.ceil(price*.7));}
@@ -15,6 +15,17 @@ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listeni
 const request=(path,{id=2,method='GET',body,foreign=false}={})=>fetch(base+'/api/rewards'+path,{method,headers:{user:String(id),origin:foreign?'https://evil.test':'https://vitrinecity.com','Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
 let seq=0;async function checkout(kind='avatar',id=2,usePoints=true){const q=await (await request('/quote?'+new URLSearchParams({kind,slug:kind==='course'?'curso':'',usePoints:String(usePoints)}),{id})).json();const body={kind,slug:q.slug,key:'checkout-test-'+(++seq),termsAccepted:true,termsVersion:REWARD_TERMS,usePoints,payCents:q.payCents,points:q.points};return {response:await request('/checkout',{id,method:'POST',body}),body,q};}
 try{
+  const originalTime=time;db.prepare('UPDATE city_reward_settings SET daily_limit=3').run();
+  time=Date.parse('2026-09-10T23:59:59Z');
+  assert.deepEqual(rewardDayWindow(time),{day:'2026-09-10',startsAt:Date.parse('2026-09-10T03:00:00Z'),endsAt:Date.parse('2026-09-11T03:00:00Z')});
+  assert.equal(rewards.grantGame(1,2,'farm:daily-window'),2);assert.equal(rewards.grantGame(1,1,'exploration:daily-window'),1);
+  time=Date.parse('2026-09-11T00:00:00Z');assert.equal(rewards.grantGame(1,1,'utc-midnight'),0,'UTC midnight does not reset the shared Brasília allowance');
+  time=Date.parse('2026-09-11T02:59:59Z');assert.deepEqual(rewards.dailyAllowance(1),{limit:3,earned:3,remaining:0,day:'2026-09-10',resetsAt:'2026-09-11T03:00:00.000Z',timeZone:'America/Sao_Paulo'});
+  time=Date.parse('2026-09-11T03:00:00Z');assert.equal(rewards.dailyAllowance(1).remaining,3);assert.equal(rewards.dailyAllowance(1).earned,0);
+  assert.equal(rewards.grantGame(1,2,'farm:daily-window'),0,'A new day never duplicates an existing source key');
+  assert.equal(rewards.grantGame(1,4,'exploration:next-day'),3);assert.equal(rewards.dailyAllowance(1).remaining,0);
+  assert.equal(rewards.dailyAllowance(1,Date.parse('2026-09-10T23:59:59Z')).earned,3,'Future-day grants stay outside the queried day');
+  time=originalTime;db.prepare('UPDATE city_reward_settings SET daily_limit=1000').run();
   assert.equal((await request('/me',{id:0})).status,401);assert.equal((await request('/checkout',{method:'POST',foreign:true,body:{}})).status,403);
   assert.equal(rewards.grantGame(2,900,'test-earned'),900);assert.equal(rewards.grantGame(2,900,'test-earned'),0);assert.equal(rewards.grantGame(2,900,'test-cap'),100);assert.equal(rewards.available(2).points,1000);
   const first=await checkout();assert.equal(first.response.status,201,await first.response.clone().text());const reference=(await first.response.json()).reference;assert.equal(first.q.payCents,700);assert.equal(rewards.available(2).points,700);

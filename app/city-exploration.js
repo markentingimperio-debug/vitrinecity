@@ -1,9 +1,10 @@
 import {randomUUID} from 'node:crypto';
+import {rewardDay,REWARD_TIME_ZONE} from './city-rewards.js';
 
 export const EXPLORATION_VIEW_MS=10000;
 const SESSION_MS=30*60*1000;
-const dayFormat=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'});
-export function explorationDay(time){const parts=Object.fromEntries(dayFormat.formatToParts(new Date(time)).map(p=>[p.type,p.value]));return `${parts.year}-${parts.month}-${parts.day}`;}
+const DAILY_GOAL_STORES=3;
+export function explorationDay(time){return rewardDay(time);}
 export function explorationLevel(xp){const level=Math.floor(xp/100)+1,names=['Visitante','Explorador','Conhecedor','Especialista','Embaixador'];return {level,name:names[Math.min(level-1,names.length-1)],xp,progress:xp%100,nextLevelXp:level*100};}
 export function decorateExplorationPage(html,{storeReference,productId=''}){
   const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -25,13 +26,22 @@ export function setupCityExploration({app,db,requireUser,sameOriginOnly,rewards,
   const eligibleProduct=(id,reference)=>db.prepare(`SELECT p.id FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
     WHERE p.id=? AND p.store_reference=? AND p.active=1 AND p.marketplace_enabled=1 AND p.stock_quantity>0 AND p.price_cents>0 AND s.review_status='published'`).get(id,reference);
   function summary(id){
-    const day=explorationDay(now()),visits=db.prepare('SELECT store_reference,claimed_ms FROM city_exploration_visits WHERE user_id=? AND claimed_ms IS NOT NULL ORDER BY claimed_ms DESC').all(id);
+    const time=now(),day=explorationDay(time),visits=db.prepare('SELECT store_reference,claimed_ms FROM city_exploration_visits WHERE user_id=? AND claimed_ms IS NOT NULL ORDER BY claimed_ms DESC').all(id);
     const days=db.prepare('SELECT reward_day FROM city_exploration_checkins WHERE user_id=? ORDER BY reward_day DESC').all(id).map(r=>r.reward_day);
     let cursor=Date.parse(day+'T12:00:00Z'),streak=0;if(days[0]!==day)cursor-=86400000;
     const checkins=new Set(days);while(checkins.has(explorationDay(cursor))){streak++;cursor-=86400000;}
+    const visitedToday=visits.filter(v=>explorationDay(v.claimed_ms)===day).map(v=>v.store_reference);
+    const eligibleStores=db.prepare(`SELECT COUNT(*) n FROM store_profiles s WHERE s.review_status='published'
+      AND EXISTS(SELECT 1 FROM store_products p WHERE p.store_reference=s.order_reference AND p.active=1 AND p.marketplace_enabled=1 AND p.stock_quantity>0 AND p.price_cents>0)`).get().n;
+    const target=Math.min(DAILY_GOAL_STORES,eligibleStores),completed=Math.min(target,visitedToday.length);
+    const dailyStores=db.prepare(`SELECT s.order_reference reference,s.business_name name FROM store_profiles s WHERE s.review_status='published'
+      AND EXISTS(SELECT 1 FROM store_products p WHERE p.store_reference=s.order_reference AND p.active=1 AND p.marketplace_enabled=1 AND p.stock_quantity>0 AND p.price_cents>0)
+      ORDER BY EXISTS(SELECT 1 FROM city_exploration_visits v WHERE v.user_id=? AND v.store_reference=s.order_reference AND v.reward_day=? AND v.claimed_ms IS NOT NULL),s.business_name LIMIT 6`).all(id,day).map(store=>({...store,completed:visitedToday.includes(store.reference)}));
     return {...explorationLevel(visits.length*10+days.length*5),streak,checkedIn:checkins.has(day),totalVisits:visits.length,
-      visitedToday:visits.filter(v=>explorationDay(v.claimed_ms)===day).map(v=>v.store_reference),day,timeZone:'America/Sao_Paulo',balance:rewards.available(id).points,
-      rules:{coinsPerStore:1,viewSeconds:EXPLORATION_VIEW_MS/1000,visitXp:10,checkinXp:5,validityDays:60},enabled:Boolean(rewards.settings().enabled)};
+      visitedToday,dailyStores,day,serverNow:time,timeZone:REWARD_TIME_ZONE,balance:rewards.available(id).points,
+      dailyGoal:{target,completed,remaining:target-completed,achieved:target>0&&completed>=target,available:target>0,rewardCoinsPerStore:1,bonusCoins:0},
+      dailyRewards:rewards.dailyAllowance(id,time),
+      rules:{coinsPerStore:1,viewSeconds:EXPLORATION_VIEW_MS/1000,visitXp:10,checkinXp:5,validityDays:60,dailyGoalStores:DAILY_GOAL_STORES},enabled:Boolean(rewards.settings().enabled)};
   }
   const error=(message,status=409,code='invalid_visit')=>Object.assign(new Error(message),{status,code});
   function session(req){

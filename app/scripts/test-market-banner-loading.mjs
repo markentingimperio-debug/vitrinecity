@@ -58,7 +58,7 @@ function runLoader(pathname, search = '') {
 }
 
 const settle = () => new Promise(resolve => setImmediate(resolve));
-for (const pathname of ['/oracao-do-dia', '/oracao-do-dia/', '/oracao-do-dia.html', '/oracao-do-dia.html/', '/course-checkout.html', '/course-checkout.html/', '/presente.html']) {
+for (const pathname of ['/oracao-do-dia', '/oracao-do-dia/', '/oracao-do-dia.html', '/oracao-do-dia.html/', '/course-checkout.html', '/course-checkout.html/', '/presente.html','/vitriny-mini-fazenda.html','/vitriny-blocks.html','/vitriny-merge.html','/vitriny-blocks/']) {
   const result = runLoader(pathname, '?curso=canva-para-lojas&utm_source=facebook');
   await settle();
   assert.deepEqual(result.effects, [], `${pathname}: não deve importar módulos, consultar/alterar o DOM, buscar anúncios ou criar estado global.`);

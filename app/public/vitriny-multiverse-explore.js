@@ -16,6 +16,7 @@ import {mountPromenadeGardens} from './vitriny-promenade-gardens.js';
 import {createArchitectureKit} from './vitriny-premium-architecture.js';
 import {mountCityHeadquarters,installHeadquartersDirectory} from './vitriny-city-headquarters.js';
 import {mountSpatialBillboards} from './vitriny-spatial-billboards.js';
+import {mountBuildingBrands} from './vitriny-building-brands.js';
 import {arrangeStoreBuildings,intersectsStoreBuilding} from './vitriny-store-building-core.js';
 import {mountDeliveryBase} from './vitriny-delivery-base.js';
 import {mountVisitorAvatar} from './vitriny-visitor-avatar.js';
@@ -174,6 +175,7 @@ function createCityLandmark(identity){
 const cityLandmark=createCityLandmark(cityIdentity);
 const headquarters=mountCityHeadquarters({scene,architecture,facade:facades[0],shadows:profile.shadows});
 const billboards=mountSpatialBillboards({scene,architecture,active:isActiveCity,cityName:cityContext.name});
+const buildingBrands=mountBuildingBrands({scene,lite:profile.id==='LITE'});buildingBrands.register(headquarters);
 const storefronts=mountStorefrontDisplays({architecture,directory:$('storefrontProducts'),onVisit(store,{building=false}={}){
   $('storefrontDirectory').close();$('cityTools').open=false;releaseControls();
   if(building){const offset=innerWidth<=760?60:48;avatarMode=false;position.set(store.position.x-38,16,store.position.z+offset);yaw=-Math.PI/2-Math.atan2(offset,38);pitch=-.035;}
@@ -191,6 +193,7 @@ const cinemaBuilding=mountCinemaBuilding({scene,architecture});storeTargets.push
 const emissoraBuilding=isActiveCity?mountEmissoraBuilding({scene,architecture}):null;
 if(emissoraBuilding)storeTargets.push(emissoraBuilding);
 const creditsBuilding=mountCreditsBuilding({scene,architecture});storeTargets.push(creditsBuilding);
+for(const building of [...storeTargets,deliveryBase].filter(Boolean))buildingBrands.register(building);
 for(const [group,z,x=0]of [[cinemaBuilding,24],[musicArena,16],[creditsBuilding,18],[deliveryBase,12,-15],...(emissoraBuilding?[[emissoraBuilding,EMISSORA_BUILDING.entrance.z]]:[])]){const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=group.userData.href;entry.textContent='Entrar em '+group.userData.label;entry.addEventListener('click',()=>saveSpatialContext());entranceLayer.append(entry);const anchor=group.localToWorld(new THREE.Vector3(x,2,z));storeEntrances.push({element:entry,anchor,normal:new THREE.Vector3(0,0,1).transformDirection(group.matrixWorld),href:group.userData.href,reference:group.userData.reference});}
 $('openCredits').addEventListener('click',()=>{saveSpatialContext();location.assign('/meus-creditos');});
 $('openCinema').addEventListener('click',()=>{saveSpatialContext();location.assign('/sala-de-cinema');});
@@ -207,6 +210,7 @@ if(isActiveCity)for(let i=0;i<3;i++){
   architecture.boutique(building,{label:'SEU ESPAÇO AQUI',width:22,depth:16,height:9,subtitle:'TENHA SEU PRÉDIO DIGITAL',catalog:true});
   billboards.registerVenue(building,{name:'DISPONÍVEL',description:'Conheça os planos para ter seu espaço na VitrineCity.',href:'/para-empresas.html',roof:9});
   scene.add(building);storeTargets.push(building);
+  buildingBrands.register(building,{name:'Seu espaço aqui'});
 }
 const deliveryDialog=$('deliveryBaseDirectory');deliveryDialog.querySelector('small').textContent=`VC ENTREGAS · ${cityContext.name}`;
 deliveryDialog.querySelector('p').textContent=deliveryAvailabilityMessage(null,cityId);
@@ -226,6 +230,7 @@ for(let i=0;i<districtIds.length;i++){
   architecture.boutique(portal,{label:experience.label,width:i%2?20:24,depth:14,variant:i,subtitle:isActiveCity?'VITRINE CITY':'DISTRITO EM PREPARAÇÃO'});
   billboards.registerVenue(portal,{name:experience.label,description:isActiveCity?experience.description:'Distrito em preparação.',href:isActiveCity?experience.href:'/vitriny-multiverse-worlds.html',roof:8.8});
   plaza.add(portal);portalTargets.push(portal);
+  buildingBrands.register(portal,{name:experience.label});
 }
 for(let i=0;i<20;i++){const a=i/20*Math.PI*2+.12;architecture.tree(plaza,Math.cos(a)*43,Math.sin(a)*43,1.05);}
 function addCityPortal(destination,index){
@@ -273,7 +278,8 @@ function addLiveStore(entity){
   const updateDisplay=storefronts.registerStore(g,entity);
   const storeBillboard=billboards.registerStore(g,entity,{roof:9,onPlaylist:updateDisplay});
   liveStoreGroup.add(g);storeTargets.push(g);
-  modeledBuildings.mountStore(g,entity,fallback,{onReady:layout=>storeBillboard.setLayout(layout)});
+  buildingBrands.register(g,{name:entity.name});
+  modeledBuildings.mountStore(g,entity,fallback,{onReady:layout=>storeBillboard.setLayout(layout)}).then(()=>{if(!disposed)buildingBrands.refresh(g);});
   const isPlantStore=entity.reference==='official_agrotecnica';
   const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=entity.href;entry.setAttribute('aria-label',isPlantStore?'Ver adubos para plantas da Agrotécnica':`Visitar ${entity.name}`);
   const name=document.createElement('small');name.textContent=entity.name;const action=document.createElement('strong');action.textContent=isPlantStore?'Ver adubos →':'Ver produtos →';entry.append(name,action);
@@ -448,7 +454,7 @@ function animate(now){
   const fieldOfView=avatarMode||position.y<10?58:innerWidth<=760?50:44;
   if(camera.fov!==fieldOfView){camera.fov=fieldOfView;camera.updateProjectionMatrix();}
   camera.lookAt(lookTarget);avatar.tick(dt,{position,yaw,moving:velocity.lengthSq()>0,visible:avatarMode});
-  if(!animationPaused)neuralCore.rotation.y+=dt*.45;premiumAtmosphere.tick(dt,{paused:animationPaused});cityLife.tick(dt,{paused:animationPaused});billboards.tick(dt,{paused:animationPaused});storefronts.tick(dt,{paused:animationPaused});
+  if(!animationPaused)neuralCore.rotation.y+=dt*.45;premiumAtmosphere.tick(dt,{paused:animationPaused});cityLife.tick(dt,{paused:animationPaused});billboards.tick(dt,{paused:animationPaused});storefronts.tick(dt,{paused:animationPaused});buildingBrands.tick(dt,{camera,paused:animationPaused});
   updatePortal();syncChunks();renderer.render(scene,camera);updateStoreEntrances();
   if(firstFrame){firstFrame=false;$('loading').classList.add('hide');document.documentElement.dataset.cityGuideReady=isActiveCity?'true':'preview';dispatchEvent(new CustomEvent('vitriny:city-ready'));}
 }
@@ -459,6 +465,6 @@ addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updat
 addEventListener('pagehide',event=>{
   if(!navigating)saveSpatialContext();releaseControls();
   if(event.persisted)return;
-  disposed=true;cancelAnimationFrame(raf);billboards.dispose();storefronts.dispose();modeledBuildings.dispose();cityLife.dispose?.();architecture.dispose();cityEnvironmentMount?.dispose();cityEnvironmentMount=null;architecturalLighting.dispose();disposeGroup(scene,{keepShared:false});disposeReflections();renderer.dispose();
+  disposed=true;cancelAnimationFrame(raf);buildingBrands.dispose();billboards.dispose();storefronts.dispose();modeledBuildings.dispose();cityLife.dispose?.();architecture.dispose();cityEnvironmentMount?.dispose();cityEnvironmentMount=null;architecturalLighting.dispose();disposeGroup(scene,{keepShared:false});disposeReflections();renderer.dispose();
 });
 addEventListener('pageshow',()=>{doorEntry.reset();navigating=false;last=performance.now();fpsClock=last;frames=0;});

@@ -52,28 +52,55 @@ export function mountStoreReward({storeReference,productId=null,container=null}=
   return banner;
 }
 
-export function mountExplorationProgress(container,{compact=false,checkIn=true}={}){
+export function mountExplorationProgress(container,{compact=false,checkIn=true,onSummary=()=>{},refreshOn=null}={}){
   if(!container)return;style();const box=document.createElement('section');box.className=compact?'exploration-progress compact':'exploration-progress';
   const heading=document.createElement('strong'),copy=document.createElement('p'),progress=document.createElement('progress'),detail=document.createElement('p'),link=document.createElement('a');
   heading.textContent='Suas conquistas na cidade';copy.setAttribute('role','status');copy.textContent='Conferindo suas moedas…';progress.max=100;progress.value=0;progress.hidden=true;progress.style.display='none';progress.setAttribute('aria-label','Progresso para a próxima fase');
   link.href='/central-creditos.html';link.textContent='Usar moedas e ver benefícios';box.append(heading,copy,progress,detail,link);container.append(box);
-  let hasSummary=false;
+  const goal=document.createElement('div'),goalTitle=document.createElement('strong'),goalProgress=document.createElement('progress'),goalCopy=document.createElement('p'),goalRules=document.createElement('p');
+  goal.className='exploration-daily-goal';goal.hidden=true;goalProgress.setAttribute('aria-label','Lojas visitadas na meta diária');goalCopy.setAttribute('role','status');goalRules.className='exploration-goal-rules';goal.append(goalTitle,goalProgress,goalCopy,goalRules);box.append(goal);
+  const dailyStores=document.createElement('div');dailyStores.className='exploration-daily-stores';goal.append(dailyStores);
+  let hasSummary=false,dayTimer=null,active=true;
   const show=data=>{
     // Validate the complete snapshot before changing any visible element. Events
     // and successful HTTP responses can both arrive without a usable summary.
     const summary=progressSummary(data);if(!summary)return false;
+    clearTimeout(dayTimer);dayTimer=null;
+    const reset=Date.parse(data.dailyRewards?.resetsAt),wait=reset-data.serverNow;
+    if(Number.isSafeInteger(data.serverNow)&&wait>0&&wait<=86401000)dayTimer=setTimeout(()=>{
+      hasSummary=false;goal.hidden=true;progress.hidden=true;progress.style.display='none';detail.textContent='';copy.textContent='Começou um novo dia. Atualizando suas conquistas…';onSummary(null);
+      if(active&&document.visibilityState!=='hidden')refresh();
+    },wait+100);
     heading.textContent=`Fase ${summary.level} · ${summary.name}`;copy.textContent=`${summary.balance} ${summary.balance===1?'moeda':'moedas'} · ${summary.visits} ${summary.visits===1?'loja descoberta':'lojas descobertas'} hoje`;
     progress.value=summary.progress;progress.hidden=false;progress.style.display='';detail.textContent=`${summary.streak} ${summary.streak===1?'dia seguido':'dias seguidos'} · ${summary.remainingXp} XP para a próxima fase`;
+    const daily=summary.dailyGoal;goal.hidden=!daily;
+    if(daily){
+      const paused=summary.enabled===false,limited=summary.dailyRewards?.remaining===0;
+      goalTitle.textContent=daily.achieved?'Meta de hoje concluída':daily.available?'Sua meta de hoje':'Novas descobertas em breve';
+      goalProgress.hidden=!daily.available;goalProgress.max=Math.max(1,daily.target);goalProgress.value=daily.completed;
+      goalCopy.textContent=paused?'As recompensas estão pausadas. Suas moedas já conquistadas continuam no saldo.':!daily.available?'Ainda não há lojas com produtos disponíveis para esta meta.':daily.achieved?`${daily.completed} de ${daily.target} lojas. Parabéns pelas descobertas!`:limited?'Você atingiu o limite de moedas de hoje entre visitas e fazenda. Volte amanhã para continuar.':`${daily.completed} de ${daily.target} lojas · ${daily.remaining===1?'falta 1 loja':`faltam ${daily.remaining} lojas`}`;
+      goalRules.textContent='Entre na loja e veja um produto por 10 segundos. Ganhe 1 moeda por loja diferente, por dia, dentro do limite diário. A meta não acrescenta moedas extras. Novo dia à meia-noite de Brasília.';
+      dailyStores.textContent='';for(const store of summary.dailyStores){const a=document.createElement('a');a.href='/loja/'+encodeURIComponent(store.reference);a.textContent=(store.completed?'✓ ':'Visitar ')+store.name+(store.completed?' · concluída hoje':' →');dailyStores.append(a);}
+    }
+    onSummary(summary);
     link.href='/central-creditos.html';link.textContent='Usar moedas e ver benefícios';hasSummary=true;return true;
   };
   const unavailable=error=>{
-    if(hasSummary)return;
+    if(hasSummary&&error?.status!==401)return;
+    hasSummary=false;goal.hidden=true;dailyStores.textContent='';clearTimeout(dayTimer);dayTimer=null;onSummary(null);
     heading.textContent='Suas conquistas na cidade';progress.hidden=true;progress.style.display='none';detail.textContent='Visitas completas: +1 moeda e +10 XP. Entrada diária: +5 XP.';
     copy.textContent=error?.status===401?'Entre na sua conta para participar.':UNAVAILABLE;
     if(error?.status===401){const login=loginLink();link.href=login.href;link.textContent=login.textContent;}
   };
-  api(checkIn?'/check-in':'',checkIn?{}:undefined).then(data=>{if(!show(data))unavailable();}).catch(unavailable);
-  addEventListener('vitrinecity:reward-earned',event=>show(event.detail));return box;
+  let revision=0,lastRefresh=0;
+  const refresh=()=>{if(!active)return;lastRefresh=Date.now();const current=++revision;api(checkIn?'/check-in':'',checkIn?{}:undefined).then(data=>{if(current===revision&&!show(data))unavailable();}).catch(error=>{if(current===revision)unavailable(error);});};
+  refresh();
+  addEventListener('vitrinecity:reward-earned',event=>{if(show(event.detail))revision++;});
+  refreshOn?.addEventListener('click',refresh);
+  addEventListener('pagehide',()=>{active=false;revision++;clearTimeout(dayTimer);});
+  addEventListener('pageshow',event=>{active=true;if(event.persisted)refresh();});
+  document.addEventListener?.('visibilitychange',()=>{if(document.visibilityState==='visible'&&Date.now()-lastRefresh>10000)refresh();});
+  return box;
 }
 
 function progressSummary(data){
@@ -82,11 +109,26 @@ function progressSummary(data){
     const {level,name,balance,visitedToday,progress,streak,xp,nextLevelXp}=data;
     if(![level,balance,progress,streak,xp,nextLevelXp].every(Number.isSafeInteger)||level<1||balance<0||streak<0||xp<0||progress<0||progress>=100||nextLevelXp<=xp)return null;
     if(typeof name!=='string'||!name.trim()||name.length>100||!Array.isArray(visitedToday)||!visitedToday.every(reference=>typeof reference==='string'&&reference.length>0&&reference.length<=120))return null;
-    return {level,name:name.trim(),balance,visits:visitedToday.length,progress,streak,remainingXp:nextLevelXp-xp};
+    if(new Set(visitedToday).size!==visitedToday.length)return null;
+    let dailyGoal=null,dailyRewards=null;
+    const g=data.dailyGoal,r=data.dailyRewards;
+    if(g&&[g.target,g.completed,g.remaining].every(Number.isSafeInteger)&&g.target>=0&&g.target<=3&&g.completed===Math.min(g.target,visitedToday.length)&&g.remaining===g.target-g.completed&&g.available===(g.target>0)&&g.achieved===(g.target>0&&g.completed===g.target)&&g.rewardCoinsPerStore===1&&g.bonusCoins===0)dailyGoal=g;
+    if(r&&[r.limit,r.earned,r.remaining].every(Number.isSafeInteger)&&r.limit>=0&&r.earned>=0&&r.remaining===Math.max(0,r.limit-r.earned))dailyRewards=r;
+    const dailyStores=Array.isArray(data.dailyStores)?data.dailyStores.filter(s=>s&&typeof s.name==='string'&&s.name.trim()&&s.name.length<=200&&typeof s.reference==='string'&&/^[a-zA-Z0-9_-]{1,120}$/.test(s.reference)&&s.completed===visitedToday.includes(s.reference)).slice(0,6):[];
+    return {level,name:name.trim(),balance,visits:visitedToday.length,progress,streak,remainingXp:nextLevelXp-xp,dailyGoal,dailyRewards,dailyStores,enabled:data.enabled};
   }catch{return null;}
 }
 
 const rewardContext=document.querySelector('[data-reward-store]');
 if(rewardContext)mountStoreReward({storeReference:rewardContext.dataset.rewardStore,productId:Number(rewardContext.dataset.rewardProduct)||null});
-if(document.getElementById('cityTools'))mountExplorationProgress(document.getElementById('cityTools'),{compact:true});
+const goalButton=document.getElementById('openExplorationGoal'),goalDialog=document.getElementById('explorationGoalDialog');
+if(goalButton&&goalDialog){
+  mountExplorationProgress(goalDialog.querySelector('[data-goal-content]'),{refreshOn:goalButton,onSummary:summary=>{
+    if(!summary){goalButton.textContent='Moedas e meta diária';return;}
+    const daily=summary.dailyGoal;goalButton.textContent=summary.enabled===false?`${summary.balance} moedas · conquistas`:daily?.available?`${daily.achieved?'✓ ':''}Meta ${daily.completed}/${daily.target} · ${summary.balance} moedas`:`${summary.balance} moedas · minhas conquistas`;
+  }});
+  goalButton.addEventListener('click',()=>goalDialog.showModal());
+  goalDialog.querySelector('[data-close]').addEventListener('click',()=>goalDialog.close());
+  goalDialog.querySelector('[data-find-stores]').addEventListener('click',()=>{goalDialog.close();document.getElementById('openCityGuide')?.click();});
+}else if(document.getElementById('cityTools'))mountExplorationProgress(document.getElementById('cityTools'),{compact:true});
 if(document.getElementById('explorationProgress'))mountExplorationProgress(document.getElementById('explorationProgress'));

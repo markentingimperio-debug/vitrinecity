@@ -1,0 +1,7 @@
+.visitor-preview{margin:20px 0 24px;border:1px solid #8ea9a655;border-radius:14px;overflow:hidden;background:radial-gradient(ellipse at 50% 40%,#345059,#162b32 75%)}
+.visitor-preview-stage{height:320px;min-height:240px;width:100%;touch-action:pan-y}.visitor-preview-stage canvas{display:block;width:100%;height:100%}
+.visitor-preview-controls{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;padding:8px 12px}
+.visitor-preview-controls button{font:inherit;font-size:13px;min-height:42px;padding:8px 12px;color:#f0f4ee;background:#24424b;border:1px solid #90aaa677;border-radius:7px;cursor:pointer}
+.visitor-preview-controls button[aria-pressed=true]{background:#e9cd93;color:#173538}.visitor-preview-controls button:focus-visible{outline:3px solid #e9cd93;outline-offset:3px}
+.visitor-preview-status{font-size:12px!important;line-height:1.5!important;color:#c2d4d5!important;margin:8px 16px 16px!important}
+@media(max-width:600px){.visitor-preview-stage{height:275px}.visitor-preview-controls{gap:6px}.visitor-preview-controls button{font-size:12px}}
