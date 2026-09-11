@@ -1,8 +1,10 @@
 import { classifySiteAssistantPath, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS } from './site-assistant-policy.js';
 
 const DISMISS_KEY = 'vc-assistant-dismiss-until-v1';
+const PANEL_KEY = 'vc-assistant-panel-until-v1';
+const PANEL_KEEP_MS = 30 * 60 * 1000;
 const SINGLETON = '__vcSiteAssistant';
-const COPY = 'Assistente virtual com IA · VitrineCity';
+const COPY = 'Lia · Assistente com IA';
 const text = (value, max = 3000) => typeof value === 'string' ? value.slice(0, max) : '';
 
 // Dependency injection also lets the interaction tests run without a network.
@@ -28,7 +30,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   root.dataset.kind = policy.kind;
   root.setAttribute('aria-label', COPY);
   const launcher = button('Falar com a Lia', 'vc-assistant-launcher', () => open());
-  launcher.setAttribute('aria-label', 'Falar com a Lia, assistente virtual da VitrineCity');
+  launcher.setAttribute('aria-label', 'Falar com a Lia, assistente com IA da VitrineCity');
   launcher.setAttribute('aria-controls', 'vc-assistant-panel');
   launcher.setAttribute('aria-expanded', 'false');
   launcher.hidden = true;
@@ -47,7 +49,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   panel.setAttribute('aria-labelledby', 'vc-assistant-title');
   const heading = make('header', 'vc-assistant-heading');
   const headingCopy = make('div');
-  const title = make('h2', '', 'Converse com a Lia'); title.id = 'vc-assistant-title';
+  const title = make('h2', '', 'Como posso ajudar?'); title.id = 'vc-assistant-title';
   headingCopy.append(make('p', 'vc-assistant-eyebrow', COPY), title);
   const panelClose = button('×', 'vc-assistant-close', () => close()); panelClose.setAttribute('aria-label', 'Fechar conversa');
   heading.append(headingCopy, panelClose);
@@ -88,6 +90,21 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   let dismissedUntil = 0;
   try { dismissedUntil = Number(win.localStorage.getItem(DISMISS_KEY)) || 0; } catch {}
 
+  // Only the panel's expiring open state stays in this tab. Conversation text
+  // comes from the server session; it is never copied into browser storage.
+  function rememberPanel() {
+    try { win.sessionStorage.setItem(PANEL_KEY, String(now() + PANEL_KEEP_MS)); } catch {}
+  }
+  function forgetPanel() {
+    try { win.sessionStorage.removeItem(PANEL_KEY); } catch {}
+  }
+  function panelWasOpen() {
+    try {
+      const until = Number(win.sessionStorage.getItem(PANEL_KEY));
+      return Number.isFinite(until) && until > now() && until <= now() + PANEL_KEEP_MS;
+    } catch { return false; }
+  }
+
   async function api(path, body, timeoutMs = 12000) {
     const controller = new AbortController();
     const timeout = win.setTimeout(() => controller.abort(), timeoutMs);
@@ -123,17 +140,18 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     silence(); track('dismiss');
     if (hadFocus) launcher.focus({ preventScroll: true });
   }
-  function open() {
+  function open({ restore = false } = {}) {
     if (disposed || !context) return;
-    if (!panel.hidden) { input.focus({ preventScroll: true }); return; }
+    if (!panel.hidden) { if (!restore) input.focus({ preventScroll: true }); return; }
     returnFocus = doc.activeElement?.isConnected ? doc.activeElement : launcher;
     if (invite.contains(returnFocus)) returnFocus = launcher;
     invite.hidden = true; shown = true; stopTimer();
-    panel.hidden = false; launcher.setAttribute('aria-expanded', 'true'); log.setAttribute('aria-live', 'polite');
+    panel.hidden = false; launcher.setAttribute('aria-expanded', 'true'); log.setAttribute('aria-live', restore ? 'off' : 'polite'); rememberPanel();
     win.dispatchEvent(new win.CustomEvent('vitriny:assistant-open'));
-    track('open'); input.focus({ preventScroll: true });
+    if (!restore) { track('open'); input.focus({ preventScroll: true }); }
   }
   function close() {
+    forgetPanel();
     if (panel.hidden) return;
     panel.hidden = true; launcher.setAttribute('aria-expanded', 'false'); log.setAttribute('aria-live', 'off'); silence();
     track('dismiss');
@@ -157,7 +175,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   }
   function messageBubble(role, body) {
     const row = make('div', 'vc-assistant-message vc-assistant-message-' + role);
-    row.append(make('strong', '', role === 'user' ? 'Você' : 'Lia · assistente virtual'), make('p', '', text(body)));
+    row.append(make('strong', '', role === 'user' ? 'Você' : 'Lia'), make('p', '', text(body)));
     log.append(row);
     while (log.children.length > 20) log.firstElementChild.remove();
     scroll.scrollTop = scroll.scrollHeight;
@@ -238,6 +256,8 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     const value = text(message, 600).trim();
     if (disposed || busy || !context || !value) return;
     busy = true; send.disabled = true; quick.querySelectorAll('button').forEach(node => { node.disabled = true; });
+    intro.hidden = true; quick.hidden = true; log.setAttribute('aria-live', 'polite');
+    if (!panel.hidden) rememberPanel();
     status.textContent = 'Preparando sua resposta…'; panel.setAttribute('aria-busy', 'true');
     messageBubble('user', value); input.value = '';
     try {
@@ -260,7 +280,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   doc.addEventListener('visibilitychange', onVisibility);
   const onStorage = event => { if (event.key === DISMISS_KEY) { dismissedUntil = Number(event.newValue) || 0; if (siteAssistantDismissed(dismissedUntil, now())) { invite.hidden = true; stopTimer(); } } };
   win.addEventListener('storage', onStorage);
-  const onPageHide = () => { invite.hidden = true; };
+  const onPageHide = () => { invite.hidden = true; if (!panel.hidden) rememberPanel(); };
   win.addEventListener('pagehide', onPageHide);
   const controller = { open, close, dismiss, root, launcher, destroy() {
     disposed = true; stopTimer(); root.remove(); launcher.remove();
@@ -273,13 +293,29 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     if (!data?.enabled || !data.context || data.context.path !== policy.path) { controller.destroy(); return; }
     context = data.context;
     // Personalization belongs to the backend; never derive a name from the DOM.
-    const greeting = text(data.greeting, 700) || 'Olá! Posso ajudar você a encontrar o que procura na VitrineCity.';
-    intro.textContent = greeting; inviteText.textContent = greeting;
-    for (const item of (Array.isArray(data.quickActions) ? data.quickActions : []).slice(0, 3)) {
-      if (text(item?.label, 100) && text(item?.message, 1200)) quick.append(button(text(item.label, 100), 'vc-assistant-suggestion', () => { input.value = text(item.message, 1200); input.focus({ preventScroll: true }); }));
+    const history = (Array.isArray(data.history) ? data.history : []).filter(item =>
+      item && ['user', 'assistant'].includes(item.role) && text(item.content).trim()).slice(-8);
+    if (history.length) {
+      for (const item of history) messageBubble(item.role, item.content);
+      intro.hidden = true; quick.hidden = true;
+      inviteTitle.textContent = 'Sua conversa continua aqui';
+      inviteText.textContent = 'Podemos continuar de onde paramos. Como posso ajudar agora?';
+      inviteOpen.textContent = 'Continuar conversa'; launcher.textContent = 'Continuar conversa';
+      launcher.setAttribute('aria-label', 'Continuar conversa com a Lia');
+    } else {
+      forgetPanel();
+      const greeting = text(data.greeting, 700) || 'Oi! Eu sou a Lia 😊 Estou aqui para ajudar você. O que está procurando?';
+      intro.textContent = greeting; inviteText.textContent = greeting;
+      for (const item of (Array.isArray(data.quickActions) ? data.quickActions : []).slice(0, 3)) {
+        if (text(item?.label, 100) && text(item?.message, 1200)) quick.append(button(text(item.label, 100), 'vc-assistant-suggestion', () => { input.value = text(item.message, 1200); input.focus({ preventScroll: true }); }));
+      }
     }
     renderOffers(data.offers); renderActions(data.actions); launcher.hidden = false;
-    if (policy.proactive && !siteAssistantDismissed(dismissedUntil, now())) { lastTick = now(); wasEligible = !blockedByActivity(); timer = win.setInterval(tick, 1000); }
+    if (history.length && panelWasOpen()) open({ restore: true });
+    else {
+      forgetPanel();
+      if (policy.proactive && !siteAssistantDismissed(dismissedUntil, now())) { lastTick = now(); wasEligible = !blockedByActivity(); timer = win.setInterval(tick, 1000); }
+    }
   }).catch(() => { controller.destroy(); });
   return controller;
 }

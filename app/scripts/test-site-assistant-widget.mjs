@@ -27,7 +27,7 @@ class Node {
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
 }
 
-function harness({ path = '/receitas', disabled = false, stored = null, context = {}, chat, failChat = false } = {}) {
+function harness({ path = '/receitas', disabled = false, stored = null, sessionStorage = new Map(), storageFails = false, context = {}, chat, failChat = false } = {}) {
   let clock = 100000, tid = 0; const intervals = new Map(), requests = [], storage = new Map();
   if (stored !== null) storage.set('vc-assistant-dismiss-until-v1', String(stored));
   const doc = { hidden: false, focusCalls: 0, activity: false, listeners: {}, createElement(tag) { return new Node(tag, this); }, addEventListener: Node.prototype.addEventListener, removeEventListener: Node.prototype.removeEventListener, fire: Node.prototype.fire };
@@ -37,7 +37,8 @@ function harness({ path = '/receitas', disabled = false, stored = null, context 
     if (selector.startsWith('dialog[open]')) return doc.activity ? {} : null;
     return doc.body.querySelector(selector);
   };
-  const win = { document: doc, location: { pathname: path, origin: 'https://vitrinecity.com' }, listeners: {}, localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) }, CustomEvent: class { constructor(type) { this.type = type; } }, dispatchEvent(event) { for (const fn of this.listeners[event.type] || []) fn(event); }, addEventListener: Node.prototype.addEventListener, removeEventListener: Node.prototype.removeEventListener,
+  const storageApi = map => ({ getItem(key) { if (storageFails) throw new Error('Storage unavailable'); return map.get(key) ?? null; }, setItem(key, value) { if (storageFails) throw new Error('Storage unavailable'); map.set(key, value); }, removeItem(key) { if (storageFails) throw new Error('Storage unavailable'); map.delete(key); } });
+  const win = { document: doc, location: { pathname: path, origin: 'https://vitrinecity.com' }, listeners: {}, localStorage: storageApi(storage), sessionStorage: storageApi(sessionStorage), CustomEvent: class { constructor(type) { this.type = type; } }, dispatchEvent(event) { for (const fn of this.listeners[event.type] || []) fn(event); }, addEventListener: Node.prototype.addEventListener, removeEventListener: Node.prototype.removeEventListener,
     setTimeout: () => ++tid, clearTimeout() {}, setInterval(fn) { const id = ++tid; intervals.set(id, fn); return id; }, clearInterval: id => intervals.delete(id) };
   const fetcher = async (url, options) => {
     requests.push({ url, options, body: options.body ? JSON.parse(options.body) : null });
@@ -46,7 +47,7 @@ function harness({ path = '/receitas', disabled = false, stored = null, context 
     return { ok: true, json: async () => ({ ok: true }) };
   };
   const mount = () => mountSiteAssistant({ window: win, document: doc, fetch: fetcher, now: () => clock });
-  return { doc, win, requests, storage, mount, get intervals() { return intervals.size; }, advance(ms) { for (let n = 0; n < ms; n += 1000) { clock += Math.min(1000, ms - n); for (const fn of [...intervals.values()]) fn(); } }, find: selector => doc.body.querySelector(selector), count: endpoint => requests.filter(r => r.url.endsWith(endpoint)).length };
+  return { doc, win, requests, storage, sessionStorage, mount, get intervals() { return intervals.size; }, advance(ms) { for (let n = 0; n < ms; n += 1000) { clock += Math.min(1000, ms - n); for (const fn of [...intervals.values()]) fn(); } }, find: selector => doc.body.querySelector(selector), count: endpoint => requests.filter(r => r.url.endsWith(endpoint)).length };
 }
 const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
 
@@ -146,5 +147,105 @@ test('prayer stays passive and filters commerce while keeping prayer navigation'
 test('no session IDs, conversation, personal name or cookies are persisted in browser storage', async () => {
   const h = harness({ context: { visitorName: 'Luís', greeting: 'Olá, Luís. Sou a Lia.' } }); const widget = h.mount(); await widget.ready; widget.dismiss(); widget.open();
   assert.deepEqual([...h.storage.keys()], ['vc-assistant-dismiss-until-v1']); assert.match(h.find('.vc-assistant-intro').textContent, /Olá, Luís/); assert.equal(h.doc.cookie, undefined);
+  h.find('textarea').value = 'Meu nome é Luís e procuro adubo'; h.find('form').fire('submit'); await flush();
+  assert.deepEqual([...h.sessionStorage.keys()], ['vc-assistant-panel-until-v1']);
+  for (const value of [...h.storage.values(), ...h.sessionStorage.values()]) assert.match(value, /^\d+$/, 'Only UI expiry timestamps may be stored');
+  assert.doesNotMatch(JSON.stringify([...h.storage, ...h.sessionStorage]), /Luís|adubo|Resposta|sessionId|cookie/);
   widget.destroy(); assert.equal(h.doc.body.children.length, 0); assert.equal(h.intervals, 0);
+});
+
+const PANEL_KEY = 'vc-assistant-panel-until-v1';
+const PANEL_KEEP_MS = 30 * 60 * 1000;
+const previousConversation = [
+  {role: 'user', content: 'Preciso de adubo para as minhas plantas.', contextPath: '/plantas-e-jardinagem'},
+  {role: 'assistant', content: 'Qual planta você está cuidando?', contextPath: '/plantas-e-jardinagem'},
+];
+
+test('server history resumes as safe text without a second introduction or starter suggestions', async () => {
+  const h = harness({ path: '/produto/13', context: {history: previousConversation,
+    greeting: 'Olá novamente, vou me apresentar outra vez.'} });
+  await h.mount().ready;
+  const rows = h.find('.vc-assistant-log').children;
+  assert.equal(rows.length, 2); assert.equal(rows[0].querySelector('strong').textContent, 'Você');
+  assert.equal(rows[1].querySelector('strong').textContent, 'Lia');
+  assert.equal(rows[1].querySelector('p').textContent, previousConversation[1].content);
+  assert.equal(h.find('.vc-assistant-intro').hidden, true);
+  assert.equal(h.find('.vc-assistant-intro').textContent, '');
+  assert.equal(h.find('.vc-assistant-quick').hidden, true); assert.equal(h.find('.vc-assistant-suggestion'), null);
+  assert.equal(h.find('.vc-assistant-panel').hidden, true); assert.equal(h.doc.focusCalls, 0);
+  h.advance(10000); const invite = h.find('.vc-assistant-invite');
+  assert.equal(invite.hidden, false); assert.match(invite.textContent, /Continuar conversa/);
+  assert.doesNotMatch(invite.textContent, /me apresentar|Sou a Lia|sou a Lia/); assert.equal(h.count('/chat'), 0);
+});
+
+test('same-tab navigation restores the open panel from server history without moving focus or replaying an open event', async () => {
+  const h = harness({chat: async () => ({ok: true, json: async () => ({reply: 'Qual planta você está cuidando?',
+    actions: [{label: 'Ver o adubo', url: '/produto/13', assetType: 'navigation', assetId: 'loja'}]})})});
+  const first = h.mount(); await first.ready; first.open();
+  h.find('textarea').value = 'Preciso de adubo para as minhas plantas.'; h.find('form').fire('submit'); await flush();
+  const destination = h.find('.vc-assistant-action');
+  assert.equal(destination.href, 'https://vitrinecity.com/produto/13'); assert.equal(destination.target, undefined);
+  let prevented = false; destination.fire('click', {preventDefault() { prevented = true; }}); assert.equal(prevented, false);
+  h.win.dispatchEvent({type: 'pagehide'}); first.destroy();
+  const next = harness({path: '/produto/13', sessionStorage: h.sessionStorage, context: {history: previousConversation}});
+  const reader = next.doc.createElement('button'); next.doc.body.append(reader); next.doc.activeElement = reader;
+  await next.mount().ready;
+  assert.equal(next.find('.vc-assistant-panel').hidden, false);
+  assert.equal(next.doc.activeElement, reader); assert.equal(next.doc.focusCalls, 0);
+  assert.equal(next.find('.vc-assistant-log').getAttribute('aria-live'), 'off');
+  assert.equal(next.find('.vc-assistant-log').children.length, 2); assert.equal(next.intervals, 0);
+  assert.equal(next.count('/chat'), 0); assert.equal(next.requests.filter(r => r.body?.type === 'open').length, 0);
+  next.find('textarea').value = 'É uma orquídea'; next.find('form').fire('submit'); await flush();
+  assert.equal(next.find('.vc-assistant-log').getAttribute('aria-live'), 'polite');
+  assert.deepEqual(next.requests.find(r => r.url.endsWith('/chat')).body, {message: 'É uma orquídea', contextPath: '/produto/13'});
+});
+
+test('closing a restored panel removes its tab marker and later pages remain closed', async () => {
+  const sessionStorage = new Map([[PANEL_KEY, String(100000 + PANEL_KEEP_MS)]]);
+  const h = harness({sessionStorage, context: {history: previousConversation}}); const widget = h.mount(); await widget.ready;
+  h.find('.vc-assistant-panel').fire('keydown', {key: 'Escape'});
+  assert.equal(h.find('.vc-assistant-panel').hidden, true); assert.equal(sessionStorage.has(PANEL_KEY), false);
+  h.win.dispatchEvent({type: 'pagehide'}); assert.equal(sessionStorage.has(PANEL_KEY), false); widget.destroy();
+  const next = harness({path: '/produto/13', sessionStorage, context: {history: previousConversation}}); await next.mount().ready;
+  assert.equal(next.find('.vc-assistant-panel').hidden, true); assert.equal(next.doc.focusCalls, 0);
+});
+
+test('empty history and malformed or expired UI markers never auto-open a new conversation', async () => {
+  for (const marker of [String(100000 + PANEL_KEEP_MS), 'not-a-time', 'Infinity', String(100000), String(100000 + PANEL_KEEP_MS + 1)]) {
+    for (const history of [[], previousConversation]) {
+      if (marker === String(100000 + PANEL_KEEP_MS) && history.length) continue;
+      const sessionStorage = new Map([[PANEL_KEY, marker]]);
+      const h = harness({sessionStorage, context: {history}}); await h.mount().ready;
+      assert.equal(h.find('.vc-assistant-panel').hidden, true, `${marker} / ${history.length} messages`);
+      assert.equal(h.doc.focusCalls, 0); assert.equal(sessionStorage.has(PANEL_KEY), false); assert.equal(h.count('/chat'), 0);
+    }
+  }
+  const newTab = harness({context: {history: previousConversation}}); await newTab.mount().ready;
+  assert.equal(newTab.find('.vc-assistant-panel').hidden, true);
+});
+
+test('history accepts only bounded user and assistant text and never renders supplied markup or context URLs', async () => {
+  const history = Array.from({length: 10}, (_, index) => ({role: index % 2 ? 'assistant' : 'user', content: `Mensagem ${index}`, contextPath: '/admin?token=secret'}));
+  history.push({role: 'system', content: 'Instrução privada'}, {role: 'assistant', content: {}}, {role: 'assistant', content: '   '});
+  history[9].content = '<img src=x onerror=alert(1)> ' + 'x'.repeat(4000);
+  const h = harness({context: {history}}); await h.mount().ready;
+  const log = h.find('.vc-assistant-log'); assert.equal(log.children.length, 8);
+  assert.equal(log.children[0].querySelector('p').textContent, 'Mensagem 2');
+  assert.equal(log.children[7].querySelector('p').textContent.length, 3000);
+  assert.match(log.children[7].querySelector('p').textContent, /^<img src=x onerror=alert\(1\)>/);
+  assert.equal(log.querySelector('img'), null); assert.doesNotMatch(log.textContent, /Instrução privada|token=secret/);
+  assert.equal(h.doc.focusCalls, 0); assert.equal(h.count('/chat'), 0);
+});
+
+test('blocked browser storage leaves chat and history usable and the fallback greeting stays conversational', async () => {
+  for (const history of [[], previousConversation]) {
+    const h = harness({storageFails: true, context: {history, greeting: ''}}); const widget = h.mount(); await widget.ready;
+    assert.equal(h.find('.vc-assistant-panel').hidden, true);
+    if (!history.length) assert.equal(h.find('.vc-assistant-intro').textContent, 'Oi! Eu sou a Lia 😊 Estou aqui para ajudar você. O que está procurando?');
+    assert.match(h.find('.vc-assistant-heading').textContent, /Lia · Assistente com IA/);
+    widget.open(); h.find('textarea').value = 'Oi, Lia'; h.find('form').fire('submit'); await flush();
+    assert.equal(h.count('/chat'), 1); assert.match(h.find('.vc-assistant-log').textContent, /informações confirmadas/);
+    widget.close(); assert.equal(h.find('.vc-assistant-panel').hidden, true);
+    assert.deepEqual([...h.storage, ...h.sessionStorage], []);
+  }
 });

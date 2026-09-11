@@ -37,7 +37,7 @@ async function fixture(t,options={}){
 }
 test('anonymous context is free and selects only available pertinent catalog entries',async t=>{
   const f=await fixture(t),r=await f.call('/api/site-assistant/context?path='+page);
-  assert.equal(r.status,200);assert.equal(r.body.enabled,true);assert.match(r.body.greeting,/IA/);assert.equal(r.body.visitorName,undefined);assert.equal(f.seen.calls.length,0);
+  assert.equal(r.status,200);assert.equal(r.body.enabled,true);assert.match(r.body.identity,/IA/);assert.match(r.body.greeting,/Oi! Eu sou a Lia/);assert.doesNotMatch(r.body.greeting,/assistente virtual/);assert.equal(r.body.visitorName,undefined);assert.equal(f.seen.calls.length,0);
   assert.deepEqual(r.body.offers.map(o=>o.id),['affiliate:mixer-real','product:1']);assert.match(r.body.offers[0].disclosure,/comissão/);
   assert.deepEqual(r.body.offers.map(o=>o.assetType),['affiliate','product']);assert.equal(f.seen.offers.length,1);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM site_assistant_history').get().n,0);
 });
@@ -61,6 +61,47 @@ test('valid explicit chat uses bounded server history and validated card IDs',as
   assert.equal(f.seen.calls[0].store,false);assert.equal(f.seen.calls[0].max_output_tokens,400);assert.equal(f.seen.calls[0].tools,undefined);assert.equal(f.seen.calls[0].model,undefined);
   const input=JSON.parse(f.seen.calls[1].input[0].content);assert.equal(input.history.length,2);assert.equal(input.history[0].content,'Quero uma forma para bolo');
   assert.equal(f.db.prepare('SELECT COUNT(*) n FROM site_assistant_history').get().n,4);
+});
+test('the same real session restores a conversation at the course destination and continues its topic',async t=>{
+  const f=await fixture(t,{realExperience:true,request:()=>response('Podemos seguir com essa escolha. Qual dúvida você tem?',[])});
+  const first=await f.chat('Quero um curso para minha loja');
+  const destination=first.body.actions.find(a=>a.assetId==='courses').url;
+  const restored=await f.call('/api/site-assistant/context?path='+destination);
+  assert.equal(restored.status,200);assert.equal(restored.body.history.length,2);
+  assert.deepEqual(restored.body.history[0],{role:'user',content:'Quero um curso para minha loja',contextPath:page});
+  assert.deepEqual(restored.body.quickActions,[]);assert.doesNotMatch(restored.body.greeting,/sou a Lia/i);
+  assert.equal(f.seen.calls.length,0); // Restoring never generates another paid response.
+  const next=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Qual curso me ajuda a começar?',contextPath:destination}});
+  assert.equal(next.body.mode,'ai');assert.deepEqual(next.body.actions,[]);
+  const input=JSON.parse(f.seen.calls[0].input[0].content);
+  assert.equal(input.page.path,destination);assert.equal(input.history[0].content,'Quero um curso para minha loja');
+  assert.match(f.seen.calls[0].instructions,/não se reapresente/);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM site_sales_sessions').get().n,1);
+});
+test('product navigation keeps prior needs and never exposes a different visitor conversation',async t=>{
+  const f=await fixture(t);await f.chat('Preciso de uma forma pequena para bolo');
+  const restored=await f.call('/api/site-assistant/context?path=/produto/1');
+  assert.equal(restored.body.history[0].content,'Preciso de uma forma pequena para bolo');
+  await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Esse material serve?',contextPath:'/produto/1'}});
+  const input=JSON.parse(f.seen.calls.at(-1).input[0].content);
+  assert.equal(input.page.path,'/produto/1');assert.equal(input.history.length,2);
+  const stranger=await f.client()('/api/site-assistant/context?path=/produto/1');
+  assert.deepEqual(stranger.body.history,[]);assert.match(stranger.body.greeting,/Eu sou a Lia/);
+});
+test('restored history excludes expired or no longer public sources on both context and AI input',async t=>{
+  const f=await fixture(t);await f.chat('Preciso de uma forma pequena');
+  f.db.prepare("UPDATE editorial_articles SET status='draft' WHERE id='recipe'").run();
+  assert.deepEqual((await f.call('/api/site-assistant/context?path=/produto/1')).body.history,[]);
+  await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Qual material?',contextPath:'/produto/1'}});
+  assert.deepEqual(JSON.parse(f.seen.calls.at(-1).input[0].content).history,[]);
+  f.db.prepare('UPDATE site_assistant_history SET created_ms=0').run();
+  assert.deepEqual((await f.call('/api/site-assistant/context?path=/produto/1')).body.history,[]);
+});
+test('an expired real visitor session starts with no restored transcript',async t=>{
+  const f=await fixture(t,{realExperience:true});await f.chat();
+  f.db.prepare('UPDATE site_sales_sessions SET expires_at=0').run();
+  const restored=await f.call('/api/site-assistant/context?path=/produto/1');
+  assert.deepEqual(restored.body.history,[]);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM site_sales_sessions').get().n,2);
 });
 test('fabricated IDs, URLs, prices and invalid JSON use deterministic catalog fallback',async t=>{
   for(const generated of [response('Veja o produto',['inventado']),response('Compre em https://evil.test'),response('Custa R$ 9,99'),{output:[{type:'message',content:[{type:'output_text',text:'não é JSON'}]}]}]){
@@ -185,4 +226,17 @@ test('concurrent visitors share a worker pool without falling back merely becaus
 });
 test('uncertain interest measurement does not block the answer or retry the event',async t=>{
   const f=await fixture(t,{interestError:true}),r=await f.chat();assert.equal(r.status,200);assert.equal(r.body.mode,'ai');assert.equal(f.seen.calls.length,1);assert.equal(f.seen.events.filter(e=>e.type==='message').length,0);
+});
+test('queued visitors reuse a released AI slot and leave capacity for later arrivals',{timeout:5000},async t=>{
+  const previous=process.env.SITE_ASSISTANT_AI_CONCURRENCY;process.env.SITE_ASSISTANT_AI_CONCURRENCY='1';
+  const gate=deferred();let f;
+  try{f=await fixture(t,{request:()=>gate.promise});}
+  finally{if(previous===undefined)delete process.env.SITE_ASSISTANT_AI_CONCURRENCY;else process.env.SITE_ASSISTANT_AI_CONCURRENCY=previous;}
+  const send=()=>f.client()('/api/site-assistant/chat',{method:'POST',body:{message:'Qual material da forma?',contextPath:page}});
+  const first=send();while(!f.seen.calls.length)await new Promise(r=>setTimeout(r,5));
+  const second=send(),third=send();
+  while(f.seen.events.filter(e=>e.type==='message').length<3)await new Promise(r=>setTimeout(r,5));
+  assert.equal(f.seen.calls.length,1);gate.resolve(response());
+  assert.ok((await Promise.all([first,second,third])).every(r=>r.body.mode==='ai'));
+  assert.equal((await send()).body.mode,'ai');assert.equal(f.seen.calls.length,4);
 });
