@@ -16,7 +16,7 @@
       const data = await response.json();
       if (response.status === 401) {
         status.textContent = 'Entre ou crie sua conta. Você voltará a este curso para continuar a compra. ';
-        const link = document.createElement('a'); link.href = '/entrar.html?returnTo=' + encodeURIComponent(location.pathname); link.textContent = 'Acessar minha conta';
+        const link = document.createElement('a'); link.href = '/entrar.html?returnTo=' + encodeURIComponent(location.pathname + '#inscricao'); link.textContent = 'Entrar ou criar conta e continuar';
         status.appendChild(link); return;
       }
       if (!response.ok || !data.checkoutUrl) throw new Error(data.error || 'Não foi possível iniciar o pagamento.');

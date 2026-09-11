@@ -1,4 +1,5 @@
 import { GROWTH_COURSES } from './course-content-growth.js';
+import { demonstrationSections } from './course-demonstrations.js';
 
 export const ORIGINAL_COURSES = Object.freeze({
   'geladinhos-gourmet': Object.freeze({
@@ -369,7 +370,7 @@ const COURSE_COVERS = Object.freeze({
   'videos-curtos-que-vendem': '/assets/courses/videos-curtos-que-vendem.png'
 });
 
-function enrichLesson(lesson) {
+function enrichLesson(lesson, courseSlug) {
   const steps = (lesson.checklist || []).map((item, index) => ({
     title: `Passo ${index + 1}`,
     instruction: item,
@@ -379,6 +380,7 @@ function enrichLesson(lesson) {
   }));
   return {
     ...lesson,
+    sections: [...lesson.sections, ...demonstrationSections(courseSlug, lesson.slug)],
     steps,
     practicalExample: `Aplicação guiada: ${lesson.activity}`,
     completionCriteria: `A aula está concluída quando você executar os ${steps.length} passos e entregar a atividade prática.`,
@@ -393,6 +395,6 @@ export function originalCourse(slug) {
     ...course,
     coverUrl: COURSE_COVERS[slug] || '',
     methodology: 'Aprenda, execute o passo a passo, produza a atividade e marque a aula como concluída.',
-    lessons: course.lessons.map(enrichLesson)
+    lessons: course.lessons.map(lesson => enrichLesson(lesson, slug))
   };
 }
