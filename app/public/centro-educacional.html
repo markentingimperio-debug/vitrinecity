@@ -35,7 +35,7 @@
       try{
         const response=await fetch(`/api/courses/${encodeURIComponent(slug)}/checkout`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({termsAccepted:true})});
         const data=await response.json();
-        if(response.status===401){message.innerHTML='Entre ou crie sua conta para comprar. <a href="/carteira.html">Acessar conta</a>';return}
+        if(response.status===401){message.textContent='Entre ou crie sua conta para continuar neste curso. ';const link=document.createElement('a');link.href='/entrar.html?returnTo='+encodeURIComponent('/centro-educacional.html#'+slug);link.textContent='Entrar ou criar conta';message.appendChild(link);return}
         if(!response.ok)throw new Error(data.error||'Não foi possível iniciar o pagamento.');
         location.href=data.checkoutUrl;
       }catch(error){message.textContent=error.message||'Não foi possível iniciar o pagamento.'}
@@ -51,7 +51,7 @@
           const card=document.createElement('article');card.className='card';card.id=course.slug;
           const type=course.contentType==='original'?'CURSO ORIGINAL':'LICENÇA CONFERIDA';
           card.innerHTML=`${course.coverUrl?`<img src="${escapeHtml(course.coverUrl)}" alt="Capa de ${escapeHtml(course.title)}" style="width:100%;height:170px;object-fit:cover;border-radius:14px">`:''}<div class="icon">${icons[course.slug]||'📘'} <span class="tag ${course.contentType==='original'?'':'licensed'}">${type}</span></div><h3>${escapeHtml(course.title)}</h3><p>${escapeHtml(course.description||'Conteúdo prático disponível na área do aluno.')}</p><p class="audience"><b>Para quem:</b> ${escapeHtml(course.audience||'Alunos e empreendedores')}</p><div class="details"><span>${course.modules} módulos</span><span>Acesso individual</span></div><div class="price">${money(course.priceCents)}</div>`;
-          if (['canva-para-lojas','vendas-pelo-whatsapp','ia-para-pequenos-negocios'].includes(course.slug)) { const details=document.createElement('a'); details.href='/cursos/'+course.slug; details.textContent='Ver programa e detalhes do curso →'; card.appendChild(details); }
+          if (course.available && ['canva-para-lojas','vendas-pelo-whatsapp','ia-para-pequenos-negocios','logo-no-canva','geladinhos-gourmet','precificacao-e-lucro','shopee-do-zero','videos-curtos-que-vendem'].includes(course.slug)) { const details=document.createElement('a'); details.href='/cursos/'+course.slug+'#demonstracao'; details.textContent='Experimentar aula gratuita e ver o programa →';details.style.cssText='display:block;padding:14px 0;font-weight:750;color:#1259da'; card.appendChild(details); }
           const terms=document.createElement('label');terms.className='terms';terms.innerHTML='<input type="checkbox"> <span>Tenho mais de 18 anos e aceito a compra de conteúdo digital para uso individual.</span>';
           const button=document.createElement('button');button.className='button buy';button.textContent=course.available?'Comprar acesso':'Conteúdo sendo preparado';button.disabled=!course.available;
           const coinButton=document.createElement('button');coinButton.className='button buy';coinButton.style.background='#e8f2ff';coinButton.style.color='#1268ed';coinButton.textContent='Usar recompensas · até 30% de desconto';coinButton.disabled=!course.available;

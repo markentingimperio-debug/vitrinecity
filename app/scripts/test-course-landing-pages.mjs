@@ -4,8 +4,42 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {setupCourseLandingPages, renderCourseLanding, AD_COURSES} from '../course-landing-pages.js';
 import {originalCourse} from '../course-content.js';
+import {COURSE_DEMONSTRATIONS, COURSE_LANDING_SLUGS} from '../course-demonstrations.js';
 import {injectPublicMeasurement} from '../public-measurement.js';
 const fixture={slug:'canva-para-lojas',title:'Canva para Lojas',description:'Design para a loja',audience:'Lojistas',priceCents:2399,status:'active'};
+
+test('each public sample belongs to a real private lesson without exposing the full lesson',()=>{
+  for (const slug of COURSE_LANDING_SLUGS) {
+    const original=originalCourse(slug),demo=COURSE_DEMONSTRATIONS[slug];
+    const lesson=original.lessons.find(item=>item.slug===demo.lessonSlug);
+    assert.ok(lesson,slug+' has the matching private module');
+    assert.equal(lesson.sections.filter(s=>s.title.startsWith('Exemplo resolvido:')).length,demo.scenarios.length);
+    const html=renderCourseLanding({...fixture,slug},original,'https://vitrinecity.com');
+    assert.ok(html.includes('id="demonstracao"'));
+    assert.ok(html.includes('AULA GRATUITA · SEM CADASTRO'));
+    assert.ok(html.includes('href="/portfolio"'));
+    assert.ok(html.includes(encodeURIComponent('/cursos/'+slug+'#inscricao')));
+    for(const item of original.lessons) for(const section of item.sections) {
+      if(section.title.startsWith('Exemplo resolvido:'))continue;
+      assert.ok(!html.includes(section.paragraphs[0]),slug+' does not reveal a complete private section');
+    }
+    assert.deepEqual(originalCourse(slug).lessons,original.lessons,'rendering never duplicates private examples');
+  }
+});
+
+test('expanded catalog lists only active ready courses and keeps unavailable courses private',()=>{
+  const routes=new Map();
+  const unavailable='shopee-do-zero';
+  const api=setupCourseLandingPages({app:{get:(path,handler)=>routes.set(path,handler)},managedCourse:slug=>({...fixture,slug}),courseReady:slug=>slug!==unavailable,originalCourse,origin:'https://vitrinecity.com'});
+  assert.equal(api.sitemapPaths().length,COURSE_LANDING_SLUGS.length);
+  assert.ok(!api.sitemapPaths().includes('/cursos/'+unavailable));
+  let code,body;
+  const res={status(value){code=value;return this},type(){return this},set(){return this},send(value){body=value;return this}};
+  routes.get('/cursos/:slug')({params:{slug:unavailable}},res);
+  assert.equal(code,404);assert.ok(!body.includes('id="demonstracao"'));
+  routes.get('/cursos')({},res);
+  assert.ok(!body.includes('href="/cursos/'+unavailable+'"'));
+});
 test('course page uses current price, actual curriculum, correct format and safely escaped metadata',()=>{
   const html=renderCourseLanding({...fixture,title:'Canva <script> & loja'},originalCourse(fixture.slug),'https://vitrinecity.com');
   assert.ok(html.includes('R$&nbsp;') || /R\$\s*23,99/.test(html));
@@ -72,12 +106,13 @@ test('course measurement uses course ID and only a successful matching checkout 
   assert.ok(!f.calls().some(c=>c[1]==='order_created'));
 });
 test('course checkout never sends requests without valid terms or reports success on failure',async()=>{
-  let submit,valid=false,requests=0,redirect='',events=[];
-  const button={textContent:'Comprar',disabled:false},status={textContent:'',appendChild(){}},form={dataset:{courseCheckout:fixture.slug,coursePrice:'2399'},reportValidity:()=>valid,querySelector:s=>s.startsWith('button')?button:status,addEventListener:(_,fn)=>submit=fn};
-  const context={document:{querySelector:()=>form,createElement:()=>({}),dispatchEvent:event=>events.push(event)},CustomEvent:function(name,options){this.type=name;this.detail=options.detail},location:{assign:s=>redirect=s},fetch:async()=>{requests++;return{status:401,ok:false,json:async()=>({error:'Login'})}}};
+  let submit,valid=false,requests=0,redirect='',events=[],links=[];
+  const button={textContent:'Comprar',disabled:false},status={textContent:'',appendChild(link){links.push(link)}},form={dataset:{courseCheckout:fixture.slug,coursePrice:'2399'},reportValidity:()=>valid,querySelector:s=>s.startsWith('button')?button:status,addEventListener:(_,fn)=>submit=fn};
+  const context={document:{querySelector:()=>form,createElement:()=>({}),dispatchEvent:event=>events.push(event)},CustomEvent:function(name,options){this.type=name;this.detail=options.detail},location:{pathname:'/cursos/'+fixture.slug,assign:s=>redirect=s},fetch:async()=>{requests++;return{status:401,ok:false,json:async()=>({error:'Login'})}}};
   vm.runInNewContext(fs.readFileSync(new URL('../public/course-landing.js',import.meta.url),'utf8'),context);
   await submit({preventDefault(){}});assert.equal(requests,0);
   valid=true;await submit({preventDefault(){}});assert.equal(requests,1);assert.equal(events.length,0);assert.equal(redirect,'');assert.equal(button.disabled,false);
+  assert.equal(new URL(links[0].href,'https://vitrinecity.com').searchParams.get('returnTo'),'/cursos/'+fixture.slug+'#inscricao');
   context.fetch=async()=>({status:201,ok:true,json:async()=>({checkoutUrl:'https://www.mercadopago.com.br/checkout/test'})});
   await submit({preventDefault(){}});assert.equal(events[0].type,'vc:course-checkout');assert.equal(events[0].detail.amount,2399);assert.ok(redirect.startsWith('https://www.mercadopago.com.br/'));
 });
