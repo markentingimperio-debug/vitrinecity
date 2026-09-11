@@ -27,6 +27,31 @@ function dateList(start, end) {
   return result;
 }
 
+// Authorizing a subscription (including a free trial) is not a payment. Read
+// recurring revenue from verified receipts, retaining the original one-time
+// orders on older databases without manufacturing historical payment records.
+function revenueEntriesSql(db) {
+  const lotColumns = new Set(db.prepare('PRAGMA table_info(lot_orders)').all().map(row => row.name));
+  const recurring = [
+    lotColumns.has('billing_type') ? "COALESCE(billing_type,'')='recurring'" : '',
+    lotColumns.has('plan_code') ? "COALESCE(plan_code,'') IN ('basic_monthly','basic_monthly_trial')" : '',
+    lotColumns.has('mp_subscription_id') ? "COALESCE(mp_subscription_id,'')<>''" : '',
+  ].filter(Boolean).join(' OR ') || '0';
+  const receipts = new Set(db.prepare('PRAGMA table_info(building_subscription_receipts)').all().map(row => row.name));
+  const lotEntries = [`SELECT 'Lotes' asset,'lot' order_type,reference order_reference,amount_cents,updated_at paid_at
+    FROM lot_orders WHERE status='approved' AND NOT (${recurring})`];
+  if (receipts.size) {
+    const paidAt = receipts.has('approved_at') ? 'COALESCE(r.approved_at,r.created_at)' : 'r.created_at';
+    lotEntries.push(`SELECT 'Lotes','lot_subscription',r.order_reference,r.amount_cents,${paidAt}
+      FROM building_subscription_receipts r WHERE r.status='approved'
+      AND r.order_reference IN (SELECT reference FROM lot_orders WHERE ${recurring})`);
+  }
+  return `WITH revenue_entries AS (${lotEntries.join(' UNION ALL ')}
+    UNION ALL SELECT 'Cursos','course',reference,amount_cents,updated_at FROM course_orders WHERE status='approved'
+    UNION ALL SELECT 'Moedas','credits',reference,amount_cents,updated_at FROM credit_orders WHERE status='approved'
+    UNION ALL SELECT 'Vídeos','video_package',reference,amount_cents,updated_at FROM service_orders WHERE status='approved')`;
+}
+
 function upsertAdMetric(db, row) {
   db.prepare(`INSERT INTO ad_metrics_daily
     (platform,date,campaign_id,campaign_name,impressions,clicks,spend_cents,conversions,conversion_value_cents)
@@ -345,46 +370,38 @@ export function setupAdminAnalytics({ app, db, requireAdmin, publicDir }) {
   app.get('/api/admin/dashboard', requireAdmin, (req, res) => {
     const { start, end } = rangeFromQuery(req.query);
     const params = { start, end };
+    // Resolve the receipt schema at request time: the billing integration may
+    // initialize after analytics, and legacy test/install databases omit it.
+    const revenueEntries = revenueEntriesSql(db);
     const visitors = db.prepare(`SELECT COUNT(*) total FROM analytics_sessions
       WHERE date(first_seen_at) BETWEEN @start AND @end`).get(params).total;
     const leads = db.prepare(`SELECT COUNT(*) total FROM leads WHERE date(created_at) BETWEEN @start AND @end`).get(params).total;
     const users = db.prepare(`SELECT COUNT(*) total FROM users WHERE date(created_at) BETWEEN @start AND @end`).get(params).total;
     const affiliates = db.prepare(`SELECT COUNT(*) total FROM affiliates WHERE date(created_at) BETWEEN @start AND @end`).get(params).total;
-    const sales = db.prepare(`SELECT SUM(qty) qty,SUM(revenue) revenue FROM (
-      SELECT COUNT(*) qty,COALESCE(SUM(amount_cents),0) revenue FROM lot_orders WHERE status='approved' AND date(updated_at) BETWEEN @start AND @end
-      UNION ALL SELECT COUNT(*),COALESCE(SUM(amount_cents),0) FROM course_orders WHERE status='approved' AND date(updated_at) BETWEEN @start AND @end
-      UNION ALL SELECT COUNT(*),COALESCE(SUM(amount_cents),0) FROM credit_orders WHERE status='approved' AND date(updated_at) BETWEEN @start AND @end
-      UNION ALL SELECT COUNT(*),COALESCE(SUM(amount_cents),0) FROM service_orders WHERE status='approved' AND date(updated_at) BETWEEN @start AND @end)`).get(params);
+    const sales = db.prepare(`${revenueEntries} SELECT COUNT(*) qty,COALESCE(SUM(amount_cents),0) revenue
+      FROM revenue_entries WHERE date(paid_at) BETWEEN @start AND @end`).get(params);
     const ads = db.prepare(`SELECT COALESCE(SUM(spend_cents),0) spend,COALESCE(SUM(impressions),0) impressions,
       COALESCE(SUM(clicks),0) clicks,COALESCE(SUM(conversions),0) conversions,
       COALESCE(SUM(conversion_value_cents),0) conversion_value FROM ad_metrics_daily WHERE date BETWEEN @start AND @end`).get(params);
-    const assets = db.prepare(`SELECT * FROM (
-      SELECT 'Lotes' asset,COUNT(*) sales,COALESCE(SUM(amount_cents),0) revenue FROM lot_orders WHERE status='approved' AND date(updated_at) BETWEEN @start AND @end
-      UNION ALL SELECT 'Cursos',COUNT(*),COALESCE(SUM(amount_cents),0) FROM course_orders WHERE status='approved' AND date(updated_at) BETWEEN @start AND @end
-      UNION ALL SELECT 'Moedas',COUNT(*),COALESCE(SUM(amount_cents),0) FROM credit_orders WHERE status='approved' AND date(updated_at) BETWEEN @start AND @end
-      UNION ALL SELECT 'Vídeos',COUNT(*),COALESCE(SUM(amount_cents),0) FROM service_orders WHERE status='approved' AND date(updated_at) BETWEEN @start AND @end)`).all(params);
+    const assetTotals = db.prepare(`${revenueEntries} SELECT asset,COUNT(*) sales,COALESCE(SUM(amount_cents),0) revenue
+      FROM revenue_entries WHERE date(paid_at) BETWEEN @start AND @end GROUP BY asset`).all(params);
+    const assets = ['Lotes','Cursos','Moedas','Vídeos'].map(asset => assetTotals.find(row => row.asset === asset) || {asset,sales:0,revenue:0});
     const campaigns = db.prepare(`SELECT platform,campaign_id,campaign_name,SUM(impressions) impressions,SUM(clicks) clicks,
       SUM(spend_cents) spend_cents,SUM(conversions) conversions,SUM(conversion_value_cents) conversion_value_cents
       FROM ad_metrics_daily WHERE date BETWEEN @start AND @end GROUP BY platform,campaign_id,campaign_name ORDER BY spend_cents DESC LIMIT 100`).all(params);
-    const sources = db.prepare(`SELECT COALESCE(NULLIF(a.utm_source,''),'direto') source,
+    const sources = db.prepare(`${revenueEntries} SELECT COALESCE(NULLIF(a.utm_source,''),'direto') source,
       COALESCE(NULLIF(a.utm_medium,''),'sem mídia') medium,COALESCE(NULLIF(a.utm_campaign,''),'sem campanha') campaign,
-      COUNT(*) orders,SUM(CASE a.order_type
-        WHEN 'lot' THEN (SELECT amount_cents FROM lot_orders WHERE reference=a.order_reference AND status='approved')
-        WHEN 'course' THEN (SELECT amount_cents FROM course_orders WHERE reference=a.order_reference AND status='approved')
-        WHEN 'credits' THEN (SELECT amount_cents FROM credit_orders WHERE reference=a.order_reference AND status='approved')
-        WHEN 'video_package' THEN (SELECT amount_cents FROM service_orders WHERE reference=a.order_reference AND status='approved')
-        ELSE 0 END) revenue_cents
-      FROM analytics_order_attribution a WHERE date(a.created_at) BETWEEN @start AND @end
+      COUNT(*) orders,SUM(r.amount_cents) revenue_cents
+      FROM revenue_entries r JOIN analytics_order_attribution a ON a.order_reference=r.order_reference
+        AND (a.order_type=r.order_type OR (a.order_type='lot' AND r.order_type='lot_subscription'))
+      WHERE date(r.paid_at) BETWEEN @start AND @end
       GROUP BY source,medium,campaign ORDER BY revenue_cents DESC LIMIT 100`).all(params)
       .filter(item => Number(item.revenue_cents || 0) > 0);
     const funnelRows = db.prepare(`SELECT event_name,COUNT(*) total FROM analytics_events
       WHERE date(created_at) BETWEEN @start AND @end GROUP BY event_name`).all(params);
     const funnel = Object.fromEntries(funnelRows.map(item => [item.event_name, item.total]));
-    const revenueDaily = db.prepare(`SELECT day,SUM(revenue) revenue FROM (
-      SELECT date(updated_at) day,SUM(amount_cents) revenue FROM lot_orders WHERE status='approved' AND date(updated_at) BETWEEN @start AND @end GROUP BY day
-      UNION ALL SELECT date(updated_at),SUM(amount_cents) FROM course_orders WHERE status='approved' AND date(updated_at) BETWEEN @start AND @end GROUP BY date(updated_at)
-      UNION ALL SELECT date(updated_at),SUM(amount_cents) FROM credit_orders WHERE status='approved' AND date(updated_at) BETWEEN @start AND @end GROUP BY date(updated_at)
-      UNION ALL SELECT date(updated_at),SUM(amount_cents) FROM service_orders WHERE status='approved' AND date(updated_at) BETWEEN @start AND @end GROUP BY date(updated_at)) GROUP BY day`).all(params);
+    const revenueDaily = db.prepare(`${revenueEntries} SELECT date(paid_at) day,SUM(amount_cents) revenue
+      FROM revenue_entries WHERE date(paid_at) BETWEEN @start AND @end GROUP BY date(paid_at)`).all(params);
     const spendDaily = db.prepare(`SELECT date day,SUM(spend_cents) spend FROM ad_metrics_daily
       WHERE date BETWEEN @start AND @end GROUP BY date`).all(params);
     const revenueMap = Object.fromEntries(revenueDaily.map(item => [item.day, item.revenue]));

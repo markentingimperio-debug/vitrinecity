@@ -105,6 +105,7 @@ import { injectSiteAssistant } from './site-assistant-page.js';
 import { setupSiteSalesExperience } from './site-sales-experience.js';
 import { setupSiteSalesAssistant } from './site-sales-assistant.js';
 import { setupSiteSalesNeural } from './site-sales-neural.js';
+import { setupBuildingSubscriptions } from './building-subscriptions.js';
 import { SITE_ASSISTANT_GROUPS } from './site-assistant-groups.js';
 import { setupLiveStudio } from './live-studio.js';
 import { sendInstagramLiveDirect } from './instagram-live-direct.js';
@@ -1802,7 +1803,8 @@ db.prepare(`UPDATE omnichannel_automation_settings SET whatsapp_group_url=? WHER
 const LOT_PRICE_CENTS = 1500;
 const LOT_PLANS = Object.freeze({
   founder: Object.freeze({ code: 'founder', name: 'Prédio Fundador', amountCents: 1500, billingType: 'one_time' }),
-  basic_monthly: Object.freeze({ code: 'basic_monthly', name: 'Prédio Essencial Mensal', amountCents: 1000, billingType: 'recurring' })
+  basic_monthly: Object.freeze({ code: 'basic_monthly', name: 'Prédio Essencial Mensal', amountCents: 1000, billingType: 'recurring' }),
+  basic_monthly_trial: Object.freeze({ code: 'basic_monthly_trial', name: 'Prédio Essencial Mensal — 30 dias grátis', amountCents: 1000, billingType: 'recurring' })
 });
 const LOT_CATALOG = Object.freeze({
   'COUNTRY-041': Object.freeze({ code: 'COUNTRY-041', label: 'Lote Country 041', place: 'Avenida Country' }),
@@ -2132,13 +2134,7 @@ function requireUser(req, res, next) {
 }
 
 function lotOccupation(code) {
-  return db.prepare(`SELECT status,business_name,created_at FROM lot_orders
-    WHERE lot_code=? AND (
-      status='approved' OR
-      (status IN ('created','pending') AND datetime(created_at)>=datetime('now',?))
-    )
-    ORDER BY CASE WHEN status='approved' THEN 0 ELSE 1 END, datetime(created_at) DESC LIMIT 1`)
-    .get(code, `-${LOT_HOLD_MINUTES} minutes`);
+  return buildingSubscriptions.occupation(code);
 }
 
 function publicLot(code) {
@@ -2308,13 +2304,13 @@ function escapeXml(value) {
 
 function publicStoreProfile(reference) {
   const order = db.prepare(`SELECT reference,business_name,segment,lot_code,status,fulfillment_status,
-    plan_code,billing_type FROM lot_orders WHERE reference=?`).get(reference);
+    plan_code,billing_type,trial_version,trial_until,subscription_status,subscription_paid_cents,amount_cents FROM lot_orders WHERE reference=?`).get(reference);
   if (!order) return null;
   const profile = db.prepare('SELECT * FROM store_profiles WHERE order_reference=?').get(reference);
   return {
     order: { reference: order.reference, businessName: order.business_name, segment: order.segment,
       lotCode: order.lot_code, paymentStatus: order.status, fulfillmentStatus: order.fulfillment_status,
-      planCode: order.plan_code, billingType: order.billing_type },
+      planCode: order.plan_code, billingType: order.billing_type,...buildingSubscriptions.details(order) },
     profile: profile ? {
       businessName: profile.business_name, description: profile.description || '', logoUrl: profile.logo_url || '',
       facadeUrl: profile.facade_url || '', whatsapp: profile.whatsapp || '', websiteUrl: profile.website_url || '',
@@ -2418,7 +2414,7 @@ function storeMapLocation(body, current = {}) {
   };
 }
 
-function storePortalPrimaryAccess(req, res) {
+function storePortalPrimaryAccess(req, res, {allowInactive=false}={}) {
   const reference = String(req.params.reference || '');
   const token = String(req.query.token || req.body?.token || req.get('x-store-token') || '');
   if (!validStoreManagementToken(reference, token)) {
@@ -2430,7 +2426,7 @@ function storePortalPrimaryAccess(req, res) {
     res.status(404).json({ error: 'Pedido não encontrado.' });
     return null;
   }
-  if (order.status !== 'approved') {
+  if (!allowInactive && order.status !== 'approved') {
     res.status(409).json({ error: 'O painel será liberado após a confirmação do pagamento.' });
     return null;
   }
@@ -2467,12 +2463,15 @@ async function deliverLotConfirmation(reference) {
   const mapUrl = `${SITE_URL}/cidade?lote=${encodeURIComponent(order.lot_code)}`;
   const portalUrl = `${SITE_URL}/painel-lojista.html?ref=${encodeURIComponent(order.reference)}&token=${encodeURIComponent(storeManagementToken(order.reference))}`;
   const replyEmail = LOT_ADMIN_EMAIL || SMTP_USER;
-  const customerText = `Olá, ${order.name}!\n\nPagamento aprovado e lote reservado na VitrineCity.\n\n` +
+  const billing=buildingSubscriptions.details(order);
+  const billingNotice=billing.trialActive?`Seu período gratuito está ativo. Primeira cobrança de R$ 10,00 prevista para ${new Date(billing.trialUntil).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'})}; depois, R$ 10,00 por mês. Cancele no painel antes dessa data para evitar a cobrança.`:
+    order.billing_type==='recurring'&&!billing.paymentReceived?'Sua assinatura foi autorizada e o lote está reservado. A confirmação da cobrança aparecerá no painel.':'Pagamento aprovado e lote reservado na VitrineCity.';
+  const customerText = `Olá, ${order.name}!\n\n${billingNotice}\n\n` +
     `Loja: ${order.business_name}\nLote: ${lot.label}\nLocalização: ${lot.place}\nReferência: ${order.reference}\n` +
     `Ver no mapa: ${mapUrl}\nConfigurar minha loja: ${portalUrl}\n\nPróxima etapa: acesse seu painel e envie logotipo, fachada, descrição, WhatsApp, Instagram, TikTok, site, Google Maps e promoção. ` +
     `Nossa equipe revisará o material antes da publicação.\n\nVitrineCity`;
   const customerHtml = `<h2>Seu lote está reservado!</h2><p>Olá, ${escapeHtml(order.name)}.</p>` +
-    `<p>Recebemos seu pagamento e reservamos o endereço digital da <strong>${escapeHtml(order.business_name)}</strong>.</p>` +
+    `<p>${escapeHtml(billingNotice)}</p><p>Reservamos o endereço digital da <strong>${escapeHtml(order.business_name)}</strong>.</p>` +
     `<ul><li><strong>Lote:</strong> ${escapeHtml(lot.label)}</li><li><strong>Localização:</strong> ${escapeHtml(lot.place)}</li>` +
     `<li><strong>Referência:</strong> ${escapeHtml(order.reference)}</li></ul>` +
     `<p><a href="${escapeHtml(mapUrl)}">Ver meu lote no mapa da VitrineCity</a></p>` +
@@ -2817,6 +2816,25 @@ const siteSalesNeural = setupSiteSalesNeural({
   app, db, requireAdmin,
   neural: jarvisCore?.neural?.service?.runtime?.neural || null,
   canRun: () => ['1','true','yes','on'].includes(String(process.env.VITRINY_NEURAL_ENABLED || '').trim().toLowerCase()) && process.env.SITE_ASSISTANT_ENABLED !== 'false'
+});
+
+const buildingSubscriptions = setupBuildingSubscriptions({db,siteUrl:SITE_URL,schedule:true,
+  trialEnabled:()=>String(process.env.LOT_TRIAL_ENABLED||'true').toLowerCase()!=='false',
+  request:async (apiPath,{method='GET',body,idempotencyKey}={})=>{
+    const response=await fetch(`https://api.mercadopago.com${apiPath}`,{method,
+      headers:{...mpHeaders(),...(idempotencyKey?{'X-Idempotency-Key':idempotencyKey}:{})},
+      ...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(12000)});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw Object.assign(new Error('subscription_provider_unavailable'),{providerStatus:response.status});
+    return data;
+  },
+  onActivation:order=>scheduleLotConfirmation(order.reference),
+  onPayment:(order,payment)=>{
+    if(payment.status==='approved')adminAnalytics.recordPurchase(order.reference,'lot_subscription',order.amount_cents);
+    const firstReceipt=db.prepare('SELECT payment_id FROM building_subscription_receipts WHERE order_reference=? ORDER BY created_at,payment_id LIMIT 1').get(order.reference);
+    if(firstReceipt?.payment_id===String(payment.id))syncAffiliateCommission({affiliateId:order.affiliate_id,orderType:'lot',orderReference:order.reference,
+      grossAmountCents:order.amount_cents,rateBps:REFERRAL_RATE_BPS,payment});
+  }
 });
 // Sales measurement must never prevent account creation, checkout or payment settlement.
 function recordSiteSales(method,...args) {
@@ -5221,8 +5239,9 @@ function aiOperationalSnapshot() {
     FROM lot_orders GROUP BY status`).all();
   const creditRevenue = db.prepare(`SELECT COUNT(*) AS orders,COALESCE(SUM(amount_cents),0) AS value_cents
     FROM credit_orders WHERE status='approved'`).get();
-  const lotRevenue = db.prepare(`SELECT COUNT(*) AS orders,COALESCE(SUM(amount_cents),0) AS value_cents
-    FROM lot_orders WHERE status='approved'`).get();
+  const lotRevenue = db.prepare(`SELECT COUNT(*) AS orders,COALESCE(SUM(value_cents),0) AS value_cents FROM (
+    SELECT amount_cents value_cents FROM lot_orders WHERE status='approved' AND billing_type<>'recurring'
+    UNION ALL SELECT amount_cents value_cents FROM building_subscription_receipts WHERE status='approved')`).get();
   const wallet = db.prepare('SELECT COUNT(*) AS wallets,COALESCE(SUM(balance_units),0) AS credits FROM wallets').get();
   return {
     generatedAt: new Date().toISOString(),
@@ -6554,7 +6573,7 @@ function mercadoPagoPayer(reqBody, name, email) {
 
 app.get('/api/payments/mercadopago/config', (req, res) => {
   res.set('Cache-Control', 'no-store');
-  return res.json({ publicKey: String(process.env.MERCADOPAGO_PUBLIC_KEY || '').trim() });
+  return res.json({ publicKey: String(process.env.MERCADOPAGO_PUBLIC_KEY || '').trim(),buildingTrial:buildingSubscriptions.config() });
 });
 
 app.post('/api/payments/mercadopago/checkout', async (req, res) => {
@@ -6627,7 +6646,7 @@ app.post('/api/payments/mercadopago/checkout', async (req, res) => {
 });
 
 app.post('/api/payments/mercadopago/subscription', async (req, res) => {
-  const { name, email, whatsapp = '', businessName, segment, lotCode, consent } = req.body || {};
+  const { name, email, whatsapp = '', businessName, segment, lotCode, consent,planCode='basic_monthly',trialConsent,trialConsentVersion } = req.body || {};
   const plan = LOT_PLANS.basic_monthly;
   if (!consent || typeof name !== 'string' || name.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(email || '') ||
       typeof businessName !== 'string' || businessName.trim().length < 2 || typeof segment !== 'string' || segment.trim().length < 2 ||
@@ -6638,46 +6657,31 @@ app.post('/api/payments/mercadopago/subscription', async (req, res) => {
   if (!token || !process.env.MERCADOPAGO_WEBHOOK_SECRET || !managementSecret()) {
     return res.status(503).json({ error: 'A assinatura ainda não está disponível no servidor.' });
   }
-  if (!lotIsAvailable(String(lotCode))) return res.status(409).json({ error: 'Este prédio já foi reservado.' });
   if (!allowAttempt(checkoutAttempts, `subscription:${req.ip}`, 5, 10 * 60 * 1000)) {
     return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
   }
-  const reference = `sub_${randomUUID()}`;
   const order = { name: name.trim().slice(0, 100), email: email.trim().toLowerCase().slice(0, 160),
     whatsapp: String(whatsapp).trim().slice(0, 30), businessName: businessName.trim().slice(0, 100),
     segment: segment.trim().slice(0, 80), lotCode: String(lotCode) };
   const affiliate = referralAffiliate(req, order.email);
   try {
-    const response = await fetch('https://api.mercadopago.com/preapproval', {
-      method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
-      body: JSON.stringify({ reason: `${plan.name} — ${order.businessName}`, external_reference: reference,
-        payer_email: order.email, back_url: `${SITE_URL}/pagamento.html?resultado=pendente&ref=${encodeURIComponent(reference)}`,
-        auto_recurring: { frequency: 1, frequency_type: 'months', transaction_amount: plan.amountCents / 100,
-          currency_id: 'BRL' }, status: 'pending' }), signal: AbortSignal.timeout(12000)
-    });
-    const data = await response.json();
-    if (!response.ok || !data.id || !data.init_point) {
-      console.error('Mercado Pago subscription error', response.status, data?.message || 'unknown');
-      return res.status(502).json({ error: 'Não foi possível iniciar a assinatura agora.' });
-    }
-    db.prepare(`INSERT INTO lot_orders
-      (reference,name,email,whatsapp,lot_code,business_name,segment,amount_cents,affiliate_id,status,
-       mp_subscription_id,plan_code,billing_type)
-      VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?,?)`).run(reference, order.name, order.email, order.whatsapp,
-      order.lotCode, order.businessName, order.segment, plan.amountCents, affiliate?.id || null,
-      String(data.id), plan.code, plan.billingType);
-    adminAnalytics.recordOrderAttribution(req, reference, 'lot_subscription');
-    adminAnalytics.recordCheckout(req, reference, 'lot_subscription', plan.amountCents);
-    return res.status(201).json({ checkoutUrl: data.init_point, reference, manageToken: storeManagementToken(reference) });
+    const created=await buildingSubscriptions.create({...order,affiliateId:affiliate?.id||null,planCode,trialConsent,trialConsentVersion,
+      canResume:previous=>validStoreManagementToken(previous.reference,String(req.body?.resumeToken||parseCookies(req).vc_building_reservation||'')),
+      onReserved:reserved=>{res.append('Set-Cookie',`vc_building_reservation=${encodeURIComponent(storeManagementToken(reserved.reference))}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2700${SITE_URL.startsWith('https:')?'; Secure':''}`);
+        adminAnalytics.recordOrderAttribution(req,reserved.reference,'lot_subscription');
+        adminAnalytics.recordCheckout(req,reserved.reference,'lot_subscription',planCode==='basic_monthly_trial'?0:plan.amountCents);}});
+    const reference=created.order.reference;
+    return res.status(created.replayed?200:201).json({ checkoutUrl: created.order.mp_checkout_url, reference,
+      manageToken: storeManagementToken(reference),replayed:created.replayed,...buildingSubscriptions.details(created.order) });
   } catch (error) {
     console.error('Mercado Pago subscription unavailable', error?.message || 'unknown');
-    return res.status(502).json({ error: 'Não foi possível conectar ao serviço de assinatura.' });
+    return res.status(error.status||502).json({ error: error.status?error.message:'Não foi possível conectar ao serviço de assinatura.',code:error.code||'subscription_unavailable' });
   }
 });
 
 app.post('/api/payments/mercadopago/pix', async (req, res) => {
   const { name, email, whatsapp = '', businessName, segment, lotCode, consent, planCode = 'founder' } = req.body || {};
-  if (planCode === 'basic_monthly') return res.status(400).json({ error: 'A assinatura mensal deve ser feita pelo botão de assinatura.' });
+  if (['basic_monthly','basic_monthly_trial'].includes(planCode)) return res.status(400).json({ error: 'A assinatura mensal deve ser feita pelo botão de assinatura.' });
   if (!consent || typeof name !== 'string' || name.trim().length < 2 || !/^\S+@\S+\.\S+$/.test(email || '') ||
       typeof businessName !== 'string' || businessName.trim().length < 2 || typeof segment !== 'string' || segment.trim().length < 2 ||
       !AVAILABLE_LOTS.has(String(lotCode || ''))) {
@@ -7169,18 +7173,11 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       const reference = String(subscription.external_reference || '');
       const order = db.prepare("SELECT * FROM lot_orders WHERE reference=? AND billing_type='recurring'").get(reference);
       if (!order) return res.sendStatus(200);
-      const mappedStatus = subscription.status === 'authorized' ? 'approved' :
-        subscription.status === 'cancelled' ? 'cancelled' :
-        subscription.status === 'paused' ? 'paused' : 'pending';
-      db.prepare(`UPDATE lot_orders SET status=?,mp_subscription_id=?,
-        fulfillment_status=CASE WHEN ?='approved' THEN 'awaiting_assets' ELSE fulfillment_status END,
-        reserved_at=CASE WHEN ?='approved' THEN COALESCE(reserved_at,CURRENT_TIMESTAMP) ELSE reserved_at END,
-        updated_at=CURRENT_TIMESTAMP WHERE reference=?`)
-        .run(mappedStatus, String(subscription.id || dataId), mappedStatus, mappedStatus, reference);
-      if (mappedStatus === 'approved' && order.status !== 'approved') {
-        adminAnalytics.recordPurchase(reference, 'lot_subscription', order.amount_cents);
-        scheduleLotConfirmation(reference);
-      }
+      await buildingSubscriptions.reconcile(reference,subscription);
+      return res.sendStatus(200);
+    }
+    if(eventType==='subscription_authorized_payment'){
+      await buildingSubscriptions.reconcileInvoice(dataId);
       return res.sendStatus(200);
     }
     if (eventType !== 'payment') return res.sendStatus(200);
@@ -7320,6 +7317,11 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
     const order = db.prepare('SELECT * FROM lot_orders WHERE reference=?').get(reference);
     if (!order) return res.sendStatus(200);
     if (amountCents !== order.amount_cents || payment.currency_id !== 'BRL') return res.sendStatus(400);
+    if(order.billing_type==='recurring'){
+      buildingSubscriptions.recordPayment(payment);
+      await buildingSubscriptions.reconcile(reference);
+      return res.sendStatus(200);
+    }
     const status = String(payment.status || 'unknown');
     db.prepare(`UPDATE lot_orders SET status=?,mp_payment_id=?,
       fulfillment_status=CASE WHEN ?='approved' THEN 'awaiting_assets' ELSE fulfillment_status END,
@@ -7342,23 +7344,11 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
 app.get('/api/orders/:reference', async (req, res) => {
   let order = db.prepare('SELECT * FROM lot_orders WHERE reference=?').get(req.params.reference);
   if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
-  if (order.billing_type === 'recurring' && order.status === 'pending' && order.mp_subscription_id) {
+  if (order.billing_type === 'recurring' && order.mp_subscription_id) {
     try {
-      const response = await fetch(`https://api.mercadopago.com/preapproval/${encodeURIComponent(order.mp_subscription_id)}`, {
-        headers: mpHeaders(), signal: AbortSignal.timeout(8000)
-      });
-      if (response.ok) {
-        const subscription = await response.json();
-        const status = subscription.status === 'authorized' ? 'approved' :
-          subscription.status === 'cancelled' ? 'cancelled' :
-          subscription.status === 'paused' ? 'paused' : 'pending';
-        db.prepare(`UPDATE lot_orders SET status=?,fulfillment_status=CASE WHEN ?='approved' THEN 'awaiting_assets'
-          ELSE fulfillment_status END,reserved_at=CASE WHEN ?='approved' THEN COALESCE(reserved_at,CURRENT_TIMESTAMP)
-          ELSE reserved_at END,updated_at=CURRENT_TIMESTAMP WHERE reference=?`)
-          .run(status, status, status, order.reference);
-        order = db.prepare('SELECT * FROM lot_orders WHERE reference=?').get(order.reference);
-      }
+      order=await buildingSubscriptions.reconcile(order.reference)||order;
     } catch (error) {
+      order=buildingSubscriptions.get(order.reference)||order;
       console.error('Mercado Pago subscription status unavailable', error?.message || 'unknown');
     }
   }
@@ -7384,6 +7374,7 @@ app.get('/api/orders/:reference', async (req, res) => {
     confirmationStatus: order.confirmation_status,
     billingType: order.billing_type,
     planCode: order.plan_code,
+    ...buildingSubscriptions.details(order),
     created_at: order.created_at,
     updated_at: order.updated_at
   });
@@ -7711,20 +7702,16 @@ app.put('/api/store-portal/:reference', async (req, res) => {
 });
 
 app.post('/api/store-portal/:reference/cancel-subscription', async (req, res) => {
-  const access = storePortalAccess(req, res);
+  const access = storePortalPrimaryAccess(req, res,{allowInactive:true});
   if (!access) return;
+  const mfa=db.prepare('SELECT totp_enabled FROM marketplace_seller_profiles WHERE store_reference=?').get(access.order.reference);
+  if(mfa?.totp_enabled&&!sellerMfaAuthenticated(req,access.order.reference))return res.status(428).json({error:'Confirme o segundo fator do lojista.',mfaRequired:true});
   if (access.order.billing_type !== 'recurring' || !access.order.mp_subscription_id) {
     return res.status(409).json({ error: 'Este pedido não possui assinatura recorrente.' });
   }
   try {
-    const response = await fetch(`https://api.mercadopago.com/preapproval/${encodeURIComponent(access.order.mp_subscription_id)}`, {
-      method: 'PUT', headers: mpHeaders(), body: JSON.stringify({ status: 'cancelled' }),
-      signal: AbortSignal.timeout(10000)
-    });
-    if (!response.ok) throw new Error(`status_${response.status}`);
-    db.prepare("UPDATE lot_orders SET status='cancelled',fulfillment_status='subscription_cancelled',updated_at=CURRENT_TIMESTAMP WHERE reference=?")
-      .run(access.order.reference);
-    return res.json({ ok: true, message: 'Assinatura cancelada. Não haverá nova cobrança.' });
+    const order=await buildingSubscriptions.cancel(access.order.reference);
+    return res.json({ ok: true,status:order.status,...buildingSubscriptions.details(order), message: 'Assinatura cancelada e loja desativada. Não haverá nova cobrança.' });
   } catch (error) {
     console.error('Subscription cancellation error', error?.message || 'unknown');
     return res.status(502).json({ error: 'Não foi possível cancelar automaticamente. Fale com o suporte.' });
@@ -7804,9 +7791,13 @@ app.patch('/api/admin/marketplace/sellers/:reference', requireAdmin, sameOriginO
 app.patch('/api/admin/store-submissions/:reference', requireAdmin, async (req, res) => {
   const action = String(req.body?.action || '');
   if (!['approve', 'request_changes', 'publish'].includes(action)) return res.status(400).json({ error: 'Ação inválida.' });
-  const profile = db.prepare(`SELECT p.*,o.email,o.lot_code FROM store_profiles p JOIN lot_orders o
+  const profile = db.prepare(`SELECT p.*,o.email,o.lot_code,o.billing_type FROM store_profiles p JOIN lot_orders o
     ON o.reference=p.order_reference WHERE p.order_reference=?`).get(req.params.reference);
   if (!profile) return res.status(404).json({ error: 'Loja não encontrada.' });
+  if(action==='publish'&&profile.billing_type==='recurring'){
+    try{const order=await buildingSubscriptions.reconcile(profile.order_reference);if(order?.status!=='approved')return res.status(409).json({error:'A assinatura precisa estar ativa para publicar a loja.'});}
+    catch{return res.status(503).json({error:'Não foi possível confirmar a assinatura desta loja.'});}
+  }
   const reviewStatus = action === 'approve' ? 'approved' : action === 'publish' ? 'published' : 'changes_requested';
   const fulfillmentStatus = action === 'publish' ? 'published' : action === 'approve' ? 'approved' : 'changes_requested';
   const notes = String(req.body?.notes || '').trim().slice(0, 1000);
