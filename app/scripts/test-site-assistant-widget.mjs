@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import { classifySiteAssistantPath as classify, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS as DAY } from '../public/site-assistant-policy.js';
+import { classifySiteAssistantPath as classify, siteAssistantContextPath, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS as DAY } from '../public/site-assistant-policy.js';
 import { injectSiteAssistant } from '../site-assistant-page.js';
 import { mountSiteAssistant } from '../public/site-assistant.js';
 
@@ -28,7 +28,7 @@ class Node {
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
 }
 
-function harness({ path = '/receitas', disabled = false, stored = null, sessionStorage = new Map(), storageFails = false, context = {}, chat, failChat = false } = {}) {
+function harness({ path = '/receitas', search = '', disabled = false, stored = null, sessionStorage = new Map(), storageFails = false, context = {}, chat, failChat = false } = {}) {
   let clock = 100000, tid = 0; const intervals = new Map(), requests = [], storage = new Map();
   if (stored !== null) storage.set('vc-assistant-dismiss-until-v1', String(stored));
   const doc = { hidden: false, focusCalls: 0, activity: false, listeners: {}, createElement(tag) { return new Node(tag, this); }, addEventListener: Node.prototype.addEventListener, removeEventListener: Node.prototype.removeEventListener, fire: Node.prototype.fire };
@@ -39,11 +39,11 @@ function harness({ path = '/receitas', disabled = false, stored = null, sessionS
     return doc.body.querySelector(selector);
   };
   const storageApi = map => ({ getItem(key) { if (storageFails) throw new Error('Storage unavailable'); return map.get(key) ?? null; }, setItem(key, value) { if (storageFails) throw new Error('Storage unavailable'); map.set(key, value); }, removeItem(key) { if (storageFails) throw new Error('Storage unavailable'); map.delete(key); } });
-  const win = { document: doc, location: { pathname: path, origin: 'https://vitrinecity.com' }, listeners: {}, localStorage: storageApi(storage), sessionStorage: storageApi(sessionStorage), CustomEvent: class { constructor(type) { this.type = type; } }, dispatchEvent(event) { for (const fn of this.listeners[event.type] || []) fn(event); }, addEventListener: Node.prototype.addEventListener, removeEventListener: Node.prototype.removeEventListener,
+  const win = { document: doc, location: { pathname: path, search, origin: 'https://vitrinecity.com' }, listeners: {}, localStorage: storageApi(storage), sessionStorage: storageApi(sessionStorage), CustomEvent: class { constructor(type) { this.type = type; } }, dispatchEvent(event) { for (const fn of this.listeners[event.type] || []) fn(event); }, addEventListener: Node.prototype.addEventListener, removeEventListener: Node.prototype.removeEventListener,
     setTimeout: () => ++tid, clearTimeout() {}, setInterval(fn) { const id = ++tid; intervals.set(id, fn); return id; }, clearInterval: id => intervals.delete(id) };
   const fetcher = async (url, options) => {
     requests.push({ url, options, body: options.body ? JSON.parse(options.body) : null });
-    if (url.includes('/context?')) return { ok: true, json: async () => ({ enabled: !disabled, context: { path: classify(path).path, kind: 'recipe' }, greeting: 'Olá! Sou a Lia. Posso ajudar?', quickActions: [{ label: 'Como comprar', message: 'Como faço para comprar?' }], offers: [], ...context }) };
+    if (url.includes('/context?')) return { ok: true, json: async () => ({ enabled: !disabled, context: { path: new URL(url,'https://vitrinecity.com').searchParams.get('path'), kind: 'recipe' }, greeting: 'Olá! Sou a Lia. Posso ajudar?', quickActions: [{ label: 'Como comprar', message: 'Como faço para comprar?' }], offers: [], ...context }) };
     if (url.endsWith('/chat')) { if (chat) return chat(); return { ok: !failChat, json: async () => ({ reply: 'Veja as informações confirmadas do produto.', offers: [] }) }; }
     return { ok: true, json: async () => ({ ok: true }) };
   };
@@ -332,4 +332,107 @@ test('expanded layout stays within desktop and mobile viewports and controls can
   assert.match(css,/\.vc-assistant-window-control\{[^}]*min-height:48px[^}]*max-width:100%[^}]*white-space:normal[^}]*overflow-wrap:anywhere/);
   assert.match(css,/\.vc-assistant-panel\{[^}]*overflow-y:auto/);
   assert.match(css,/@media\(max-height:560px\)\{\.vc-assistant-panel\[data-expanded="true"\]\{height:auto;max-height:calc\(100dvh - 16px\)/);
+});
+
+test('public course checkout allows only manual course help and derives a canonical context from its slug', () => {
+  assert.deepEqual(classify('/course-checkout.html'),{enabled:true,kind:'course_checkout',proactive:false,commercial:true,path:'/course-checkout.html'});
+  assert.equal(siteAssistantContextPath('/course-checkout.html','?curso=canva-para-lojas&utm_source=facebook'),'/cursos/canva-para-lojas');
+  assert.equal(siteAssistantContextPath('/produto/13','?curso=ignored&email=private@example.test'),'/produto/13');
+  assert.equal(siteAssistantContextPath('/checkout','?curso=canva-para-lojas'),'');
+  const html='<html><body><form id="course-payment-form"></form></body></html>';
+  assert.match(injectSiteAssistant(html,{path:'/course-checkout.html'}),/site-assistant\.js/);
+  assert.equal(injectSiteAssistant(html,{path:'/pagamento.html'}),html);
+});
+
+test('missing, duplicate or malformed course slugs create no widget, request or timers', async () => {
+  for(const search of ['', '?curso=', '?curso=../admin', '?curso=%2Fadmin', '?curso=canva&curso=canva', '?curso=canva&curso=other',
+    '?curso=canva%00lojas', '?curso=Canva', '?curso=canva--lojas', '?curso=canva-', '?curso='+('a'.repeat(102)), '?Curso=canva']){
+    const h=harness({path:'/course-checkout.html',search});assert.equal(h.mount(),null,search);
+    assert.equal(h.requests.length,0);assert.equal(h.doc.body.children.length,0);assert.equal(h.intervals,0);
+  }
+  const unavailable=harness({path:'/course-checkout.html',search:'?curso=curso-retirado',disabled:true});await unavailable.mount().ready;
+  assert.equal(unavailable.doc.body.children.length,0);assert.equal(unavailable.count('/chat'),0);
+  const mismatch=harness({path:'/course-checkout.html',search:'?curso=canva-para-lojas',context:{context:{path:'/cursos/outro',kind:'course'}}});await mismatch.mount().ready;
+  assert.equal(mismatch.doc.body.children.length,0);assert.equal(mismatch.count('/chat'),0);
+});
+
+test('checkout leaves registration fields and focus untouched, never auto-opens, and sends only course context plus explicit chat', async () => {
+  const h=harness({path:'/course-checkout.html',search:'?curso=canva-para-lojas&email=private@example.test&nome=Maria&token=private-token',
+    sessionStorage:new Map([[PANEL_KEY,String(100000+PANEL_KEEP_MS)]]),context:{history:previousConversation}});
+  const paymentForm=h.doc.createElement('form');paymentForm.id='course-payment-form';
+  const email=h.doc.createElement('input');email.name='email';email.value='personal@example.test';paymentForm.append(email);h.doc.body.append(paymentForm);h.doc.activeElement=email;
+  const widget=h.mount();await widget.ready;h.advance(60000);
+  assert.equal(h.find('.vc-assistant-panel').hidden,true);assert.equal(h.find('.vc-assistant-invite').hidden,true);
+  assert.equal(h.doc.activeElement,email);assert.equal(h.doc.focusCalls,0);assert.equal(h.intervals,0);
+  assert.equal(h.requests.length,1);assert.equal(h.requests[0].url,'/api/site-assistant/context?path=%2Fcursos%2Fcanva-para-lojas');
+  assert.equal(h.find('.vc-assistant-log').children.length,2);assert.equal(paymentForm.listeners.submit,undefined);
+  widget.launcher.fire('click');h.find('textarea').value='Como acesso o curso depois da compra?';h.find('.vc-assistant-form').fire('submit');await flush();
+  assert.deepEqual(h.requests.find(r=>r.url.endsWith('/chat')).body,{message:'Como acesso o curso depois da compra?',contextPath:'/cursos/canva-para-lojas'});
+  assert.doesNotMatch(JSON.stringify(h.requests),/private@example|personal@example|private-token|Maria|utm_source/);
+  assert.equal(email.value,'personal@example.test');assert.equal(paymentForm.listeners.submit,undefined);
+});
+
+test('a minimized course conversation remains available on checkout with working reading-size controls', async () => {
+  const h=harness({path:'/cursos/canva-para-lojas',context:{history:previousConversation}});const first=h.mount();await first.ready;first.open();first.minimize();
+  h.win.dispatchEvent({type:'pagehide'});first.destroy();
+  const checkout=harness({path:'/course-checkout.html',search:'?curso=canva-para-lojas',sessionStorage:h.sessionStorage,context:{history:previousConversation}});
+  const widget=checkout.mount();await widget.ready;checkout.advance(60000);
+  assert.equal(checkout.find('.vc-assistant-panel').hidden,true);assert.equal(checkout.find('.vc-assistant-invite').hidden,true);
+  assert.equal(checkout.doc.focusCalls,0);widget.launcher.fire('click');const transcript=checkout.find('.vc-assistant-log').textContent;
+  const expand=checkout.find('.vc-assistant-expand');expand.focus();const focusCalls=checkout.doc.focusCalls;expand.fire('click');
+  assert.equal(checkout.find('.vc-assistant-panel').dataset.expanded,'true');assert.equal(checkout.doc.focusCalls,focusCalls);
+  widget.minimize();widget.launcher.fire('click');
+  assert.equal(checkout.find('.vc-assistant-log').textContent,transcript);assert.equal(checkout.find('.vc-assistant-panel').dataset.expanded,'true');
+  assert.equal(checkout.count('/chat'),0);assert.equal(checkout.storage.size,0);
+});
+
+test('checkout hides only its own course checkout action so a helpful link cannot reset the registration form', async () => {
+  const actions=[
+    {label:'Abrir resumo deste curso',url:'/course-checkout.html?curso=canva-para-lojas'},
+    {label:'Outro curso',url:'/course-checkout.html?curso=marketing-digital'},
+    {label:'Conteúdo deste curso',url:'/cursos/canva-para-lojas'},
+    {label:'Referência externa',url:'https://example.test/course-checkout.html?curso=canva-para-lojas'}
+  ];
+  const h=harness({path:'/course-checkout.html',search:'?curso=canva-para-lojas',
+    chat:async()=>({ok:true,json:async()=>({reply:'Use as opções de cadastro e acesso no resumo deste curso.',actions})})});
+  const widget=h.mount();await widget.ready;widget.open();
+  h.find('textarea').value='Preciso criar uma conta?';h.find('.vc-assistant-form').fire('submit');await flush();
+  assert.deepEqual(h.find('.vc-assistant-actions').children.map(node=>node.textContent),['Outro curso','Conteúdo deste curso','Referência externa']);
+  assert.equal(h.find('.vc-assistant-actions').children[0].href,'https://vitrinecity.com/course-checkout.html?curso=marketing-digital');
+  const landing=harness({path:'/cursos/canva-para-lojas',context:{actions}});await landing.mount().ready;
+  assert.equal(landing.find('.vc-assistant-actions').children[0].textContent,'Abrir resumo deste curso');
+});
+
+test('Lia header owns its natural height instead of inheriting the education page fixed header dimensions', () => {
+  const host=readFileSync(new URL('../public/centro-educacional.html',import.meta.url),'utf8');
+  const css=readFileSync(new URL('../public/site-assistant.css',import.meta.url),'utf8');
+  assert.match(host,/header\{height:74px/);
+  assert.match(host,/@media\(max-width:760px\)\{header\{height:66px/);
+  const heading=css.match(/\.vc-assistant \.vc-assistant-heading\{([^}]+)\}/)?.[1];
+  assert.ok(heading);
+  // Both fixed host heights must lose to this scoped rule. Natural height
+  // includes the controls row; flex cannot shrink that row behind the log.
+  for(const declaration of ['height:auto','min-height:0','max-height:none','flex:0 0 auto','flex-shrink:0','position:static','margin:0']){
+    assert.ok(heading.split(';').includes(declaration),declaration);
+  }
+  assert.match(css,/\.vc-assistant-window-controls\{[^}]*display:grid/);
+  assert.match(css,/@media\(max-width:600px\)\{[^\n]*\.vc-assistant \.vc-assistant-heading\{padding:14px 12px 13px 17px\}/);
+  assert.match(css,/@media\(max-height:560px\)\{[^\n]*\.vc-assistant \.vc-assistant-heading\{padding:8px 12px\}/);
+  assert.doesNotMatch(css,/\.vc-assistant(?: \.vc-assistant)?-heading\{[^}]*height:\d+px/);
+});
+
+test('Lia can direct a learner to their courses without mounting on that private page or exposing session query strings', async () => {
+  const origin='https://vitrinecity.com';
+  assert.equal(classify('/meus-cursos.html').enabled,false);
+  assert.equal(siteAssistantContextPath('/meus-cursos.html',''),'');
+  assert.equal(safeSiteAssistantUrl('/meus-cursos.html',origin),origin+'/meus-cursos.html');
+  for(const query of ['token=private','sessionId=private','password=private','auth=private','secret=private']){
+    assert.equal(safeSiteAssistantUrl('/meus-cursos.html?'+query,origin),'');
+  }
+  const privatePage=harness({path:'/meus-cursos.html'});
+  assert.equal(privatePage.mount(),null);assert.equal(privatePage.requests.length,0);assert.equal(privatePage.intervals,0);
+  const actions=[{label:'Ver meus cursos',url:'/meus-cursos.html',kind:'internal',assetType:'navigation',assetId:'courses'}];
+  const h=harness({path:'/course-checkout.html',search:'?curso=canva-para-lojas',context:{actions}});await h.mount().ready;
+  const link=h.find('.vc-assistant-actions').children[0];
+  assert.equal(link.textContent,'Ver meus cursos');assert.equal(link.href,origin+'/meus-cursos.html');
 });

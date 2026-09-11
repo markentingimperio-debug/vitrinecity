@@ -142,6 +142,32 @@ test('only injected ready courses enter the catalog',async t=>{
   const f=await fixture(t,{courses:[{slug:'cozinha-basica',title:'Cozinha básica',available:true},{slug:'cozinha-incompleta',title:'Cozinha incompleta',available:false}]});
   const r=await f.call('/api/site-assistant/context?path='+page);assert.ok(r.body.offers.some(o=>o.id==='course:cozinha-basica'));assert.ok(!r.body.offers.some(o=>o.id==='course:cozinha-incompleta'));
 });
+test('course signup, login and payment help stay in the exact course checkout without an AI call',async t=>{
+  const slug='vendas-pelo-whatsapp',courses=[{slug,title:'Vendas pelo WhatsApp',description:'Aulas em texto.',priceCents:2399,available:true}];
+  const f=await fixture(t,{courses});
+  for(const [message,expected] of [['Como criar conta?',/Sou novo por aqui/],['Como pago?',/Mercado Pago/],['Já tenho conta',/Já tenho conta/],['Como comprar o curso de WhatsApp?',/resumo e o preço/],['Qual o valor?',/resumo e o preço/]]){
+    const r=await f.call('/api/site-assistant/chat',{method:'POST',body:{message,contextPath:'/cursos/'+slug}});
+    assert.equal(r.status,200);assert.equal(r.body.mode,'fallback');assert.match(r.body.reply,expected);
+    assert.deepEqual(r.body.actions,[{label:'Ver resumo e pagamento do curso',url:'/course-checkout.html?curso='+slug,kind:'internal',assetType:'course',assetId:slug}]);
+    assert.deepEqual(r.body.offers,[]);assert.equal(r.body.contactOffer,null);
+    assert.doesNotMatch(JSON.stringify(r.body),/entrar-cidade|detalhes do produto|R\$|pagamento recebido/);
+  }
+  assert.equal(f.seen.calls.length,0);
+  const restored=await f.call('/api/site-assistant/context?path=/cursos/'+slug);assert.equal(restored.body.history.length,8);assert.match(restored.body.history.at(-1).content,/resumo e o preço/);
+  assert.ok(f.seen.offers.some(row=>row.offers.some(item=>item.assetType==='course'&&item.assetId===slug)));
+});
+test('a claimed course payment points to the real access page without claiming confirmation',async t=>{
+  const f=await fixture(t,{courses:[{slug:'cozinha-basica',title:'Cozinha básica',available:true}]});
+  const r=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Já paguei, e agora?',contextPath:'/cursos/cozinha-basica'}});
+  assert.equal(r.status,200);assert.equal(r.body.actions[0].url,'/meus-cursos.html');assert.match(r.body.reply,/não consigo confirmar/);assert.equal(f.seen.calls.length,0);assert.deepEqual(r.body.offers,[]);
+});
+test('course guidance for follow-up AI uses the checkout flow without exposing fields or changing limits',async t=>{
+  const f=await fixture(t,{courses:[{slug:'cozinha-basica',title:'Cozinha básica',available:true}],request:()=>response('Posso explicar essa etapa sem pedir seus dados.',[])});
+  await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Como criar conta?',contextPath:'/cursos/cozinha-basica'}});
+  await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Pode explicar essa etapa melhor?',contextPath:'/cursos/cozinha-basica'}});
+  assert.equal(f.seen.calls.length,1);assert.match(f.seen.calls[0].instructions,/não mande sair para o cadastro geral/);assert.match(f.seen.calls[0].instructions,/nem peça nome, e-mail ou senha/);assert.equal(f.seen.calls[0].store,false);assert.equal(f.seen.calls[0].max_output_tokens,400);
+  const history=JSON.parse(f.seen.calls[0].input[0].content).history;assert.equal(history.length,2);assert.match(history[1].content,/Sou novo por aqui/);
+});
 test('history is capped, expired rows are excluded and IP addresses are never stored raw',async t=>{
   const f=await fixture(t);for(let i=0;i<6;i++)await f.chat('Ajude com a forma '+i);
   assert.equal(f.db.prepare('SELECT COUNT(*) n FROM site_assistant_history').get().n,8);

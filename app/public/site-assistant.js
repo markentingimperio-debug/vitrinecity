@@ -1,4 +1,4 @@
-import { classifySiteAssistantPath, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS } from './site-assistant-policy.js';
+import { classifySiteAssistantPath, siteAssistantContextPath, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS } from './site-assistant-policy.js';
 
 const DISMISS_KEY = 'vc-assistant-dismiss-until-v1';
 const PANEL_KEY = 'vc-assistant-panel-until-v1';
@@ -12,7 +12,8 @@ const text = (value, max = 3000) => typeof value === 'string' ? value.slice(0, m
 export function mountSiteAssistant({ window: win = globalThis.window, document: doc = win?.document, fetch: fetcher = win?.fetch?.bind(win), now = Date.now } = {}) {
   if (!win || !doc || !fetcher) return null;
   const policy = classifySiteAssistantPath(win.location.pathname);
-  if (!policy.enabled || doc.documentElement.hasAttribute('amp') || doc.documentElement.hasAttribute('⚡')) return null;
+  const contextPath = siteAssistantContextPath(win.location.pathname, win.location.search);
+  if (!contextPath || doc.documentElement.hasAttribute('amp') || doc.documentElement.hasAttribute('⚡')) return null;
   if (win[SINGLETON]) return win[SINGLETON];
   if (doc.querySelector('[data-vc-assistant]')) return null;
 
@@ -236,6 +237,13 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     actions.replaceChildren();
     for (const action of (Array.isArray(list) ? list : []).slice(0, 4)) {
       if (!action || !text(action.label, 120)) continue;
+      if (policy.kind === 'course_checkout') {
+        const safe = safeSiteAssistantUrl(action.url, win.location.origin);
+        if (!safe) continue;
+        const target = new URL(safe);
+        // Reloading this checkout would discard fields the visitor is filling.
+        if (target.origin === win.location.origin && target.pathname === '/course-checkout.html' && siteAssistantContextPath(target.pathname, target.search) === contextPath) continue;
+      }
       if (!policy.commercial) {
         const safe = safeSiteAssistantUrl(action.url, win.location.origin);
         if (!safe) continue;
@@ -266,7 +274,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     if (busy || !contactOfferState || !contactInput.value.trim() || !contactCheck.checked) return;
     contactSubmit.disabled = true; contactStatus.textContent = 'Registrando seu consentimento…';
     try {
-      const data = await api('contact', { phone: contactInput.value.trim(), consent: true, purpose: contactOfferState.purpose, groupId: contactOfferState.groupId, contextPath: policy.path }, 15000);
+      const data = await api('contact', { phone: contactInput.value.trim(), consent: true, purpose: contactOfferState.purpose, groupId: contactOfferState.groupId, contextPath }, 15000);
       contactInput.value = ''; contactCheck.checked = false; contactForm.hidden = true;
       contactStatus.textContent = text(data.message, 500) || 'Seu atendimento VIP foi registrado.';
       if (data.group?.url) {
@@ -289,7 +297,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     status.textContent = 'Preparando sua resposta…'; panel.setAttribute('aria-busy', 'true');
     messageBubble('user', value); input.value = '';
     try {
-      const data = await api('chat', { message: value, contextPath: policy.path }, 65000);
+      const data = await api('chat', { message: value, contextPath }, 65000);
       if (disposed) return;
       if (!text(data.reply).trim()) throw new Error('assistant_invalid_reply');
       messageBubble('assistant', data.reply); renderOffers(data.offers); renderActions(data.actions); renderContact(data.contactOffer);
@@ -316,9 +324,9 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     delete win[SINGLETON];
   } };
   win[SINGLETON] = controller;
-  controller.ready = api('context?path=' + encodeURIComponent(policy.path)).then(data => {
+  controller.ready = api('context?path=' + encodeURIComponent(contextPath)).then(data => {
     if (disposed) return;
-    if (!data?.enabled || !data.context || data.context.path !== policy.path) { controller.destroy(); return; }
+    if (!data?.enabled || !data.context || data.context.path !== contextPath) { controller.destroy(); return; }
     context = data.context;
     // Personalization belongs to the backend; never derive a name from the DOM.
     const history = (Array.isArray(data.history) ? data.history : []).filter(item =>
@@ -342,7 +350,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     if (uiStateActive(MINIMIZED_KEY)) {
       forgetPanel(); shown = true; invite.hidden = true;
       launcher.textContent = 'Continuar conversa'; launcher.setAttribute('aria-label', 'Continuar conversa com a Lia');
-    } else if (history.length && uiStateActive(PANEL_KEY)) open({ restore: true });
+    } else if (policy.kind !== 'course_checkout' && history.length && uiStateActive(PANEL_KEY)) open({ restore: true });
     else {
       forgetPanel(); forgetMinimized();
       if (policy.proactive && !siteAssistantDismissed(dismissedUntil, now())) { lastTick = now(); wasEligible = !blockedByActivity(); timer = win.setInterval(tick, 1000); }

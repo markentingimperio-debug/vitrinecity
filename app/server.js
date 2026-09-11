@@ -6907,6 +6907,10 @@ app.post('/api/credits/checkout', requireUser, sameOriginOnly, async (req, res) 
 app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
   const course = managedCourse(String(req.params.slug || ''));
   if (!course || course.status !== 'active') return res.status(404).json({ error: 'Curso não encontrado.' });
+  if (activeEnrollment(req.user.id, course.slug)) return res.status(409).json({
+    error: 'Você já possui acesso a este curso.', code: 'course_already_enrolled',
+    alreadyEnrolled: true, nextUrl: '/meus-cursos.html'
+  });
   if (!courseReady(course.slug)) return res.status(409).json({ error: 'Este curso está em preparação. A compra será liberada quando as aulas estiverem na área privada.' });
   if (!req.body?.termsAccepted) return res.status(400).json({ error: 'Aceite os termos da compra para continuar.' });
   recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'course_purchase_terms',version:'course-purchase-2026-08-22',source:'course_checkout',evidence:{course:course.slug}});

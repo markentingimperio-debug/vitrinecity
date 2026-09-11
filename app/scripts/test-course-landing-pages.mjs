@@ -18,7 +18,9 @@ test('each public sample belongs to a real private lesson without exposing the f
     assert.ok(html.includes('id="demonstracao"'));
     assert.ok(html.includes('AULA GRATUITA · SEM CADASTRO'));
     assert.ok(html.includes('href="/portfolio"'));
-    assert.ok(html.includes(encodeURIComponent('/cursos/'+slug+'#inscricao')));
+    assert.ok(html.includes('/course-checkout.html?curso='+encodeURIComponent(slug)));
+    assert.ok(!html.includes('account-link'));
+    assert.ok(!html.includes('form data-course-checkout'));
     for(const item of original.lessons) for(const section of item.sections) {
       if(section.title.startsWith('Exemplo resolvido:'))continue;
       assert.ok(!html.includes(section.paragraphs[0]),slug+' does not reveal a complete private section');
@@ -105,14 +107,14 @@ test('course measurement uses course ID and only a successful matching checkout 
   assert.equal(f.calls().at(-1)[1],'checkout_started');assert.equal(f.calls().at(-1)[2].amount,2399);
   assert.ok(!f.calls().some(c=>c[1]==='order_created'));
 });
-test('course checkout never sends requests without valid terms or reports success on failure',async()=>{
-  let submit,valid=false,requests=0,redirect='',events=[],links=[];
-  const button={textContent:'Comprar',disabled:false},status={textContent:'',appendChild(link){links.push(link)}},form={dataset:{courseCheckout:fixture.slug,coursePrice:'2399'},reportValidity:()=>valid,querySelector:s=>s.startsWith('button')?button:status,addEventListener:(_,fn)=>submit=fn};
-  const context={document:{querySelector:()=>form,createElement:()=>({}),dispatchEvent:event=>events.push(event)},CustomEvent:function(name,options){this.type=name;this.detail=options.detail},location:{pathname:'/cursos/'+fixture.slug,assign:s=>redirect=s},fetch:async()=>{requests++;return{status:401,ok:false,json:async()=>({error:'Login'})}}};
+test('cached course landing forms navigate to summary without authentication or payment requests',async()=>{
+  let submit,requests=0,redirect='';
+  const form={dataset:{courseCheckout:fixture.slug},addEventListener:(_,fn)=>submit=fn};
+  const context={document:{querySelector:()=>form},location:{assign:value=>redirect=value},fetch:async()=>{requests++;throw new Error('No network on landing');}};
   vm.runInNewContext(fs.readFileSync(new URL('../public/course-landing.js',import.meta.url),'utf8'),context);
-  await submit({preventDefault(){}});assert.equal(requests,0);
-  valid=true;await submit({preventDefault(){}});assert.equal(requests,1);assert.equal(events.length,0);assert.equal(redirect,'');assert.equal(button.disabled,false);
-  assert.equal(new URL(links[0].href,'https://vitrinecity.com').searchParams.get('returnTo'),'/cursos/'+fixture.slug+'#inscricao');
-  context.fetch=async()=>({status:201,ok:true,json:async()=>({checkoutUrl:'https://www.mercadopago.com.br/checkout/test'})});
-  await submit({preventDefault(){}});assert.equal(events[0].type,'vc:course-checkout');assert.equal(events[0].detail.amount,2399);assert.ok(redirect.startsWith('https://www.mercadopago.com.br/'));
+  await submit({preventDefault(){}});
+  assert.equal(form.noValidate,true);
+  assert.equal(requests,0);
+  assert.equal(redirect,'/course-checkout.html?curso='+fixture.slug);
+  form.dataset.courseCheckout='../admin';redirect='';await submit({preventDefault(){}});assert.equal(redirect,'');
 });

@@ -8,6 +8,7 @@ export function classifySiteAssistantPath(value) {
   const path = value.length > 1 ? value.replace(/\/$/, '') : value;
   const legacy = toLegacyPublicPath(path);
   const allow = (kind, proactive = true, commercial = true) => ({ enabled: true, kind, proactive, commercial, path });
+  if (path === '/course-checkout.html') return allow('course_checkout', false);
   if (['/oracao-do-dia', '/oracao-do-dia.html'].includes(path)) return allow('prayer', false, false);
   if (['/', '/index.html'].includes(path)) return allow('home');
   if (legacy === '/vitriny-multiverse-explore.html') return allow('city');
@@ -20,6 +21,19 @@ export function classifySiteAssistantPath(value) {
   if (/^\/cursos(?:\/[a-z0-9-]+)?$/.test(path) || legacy === '/centro-educacional.html') return allow('course');
   if (['/sobre.html', '/contato.html', '/como-funciona.html', '/porque-vitrinecity.html', '/solucoes.html', '/para-empresas.html', '/pesquisar.html'].includes(legacy)) return allow('info');
   return { ...blocked, path };
+}
+
+// A public course checkout can offer manual help about one published course.
+// Only its canonical slug becomes assistant context; form data and other query
+// parameters never enter a chat request.
+export function siteAssistantContextPath(pathname, search = '') {
+  const policy = classifySiteAssistantPath(pathname);
+  if (!policy.enabled) return '';
+  if (policy.kind !== 'course_checkout') return policy.path;
+  if (typeof search !== 'string') return '';
+  const slugs = new URLSearchParams(search).getAll('curso');
+  if (slugs.length !== 1 || slugs[0].length > 101 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slugs[0])) return '';
+  return '/cursos/' + slugs[0];
 }
 
 export const SITE_ASSISTANT_DISMISS_MS = 24 * 60 * 60 * 1000;
@@ -38,7 +52,7 @@ export function safeSiteAssistantUrl(value, origin, { image = false } = {}) {
     if (url.username || url.password || !['http:', 'https:'].includes(url.protocol)) return '';
     if (url.origin !== base.origin && url.protocol !== 'https:') return '';
     if (!image && url.origin === base.origin) {
-      if (!classifySiteAssistantPath(url.pathname).enabled && url.pathname !== '/entrar-cidade.html' && !/^\/ir\/[a-zA-Z0-9_-]+$/.test(url.pathname)) return '';
+      if (!classifySiteAssistantPath(url.pathname).enabled && !['/entrar-cidade.html', '/meus-cursos.html'].includes(url.pathname) && !/^\/ir\/[a-zA-Z0-9_-]+$/.test(url.pathname)) return '';
       if ([...url.searchParams.keys()].some(key => /token|session|password|secret|auth/i.test(key))) return '';
     }
     return url.href;

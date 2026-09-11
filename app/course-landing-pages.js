@@ -4,7 +4,7 @@ export const AD_COURSES = Object.freeze(['canva-para-lojas', 'vendas-pelo-whatsa
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = cents => (cents / 100).toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
 const json = value => JSON.stringify(value).replace(/</g, '\\u003c');
-const assetVersion = '20260911-demonstrations';
+const assetVersion = '20260911-course-checkout';
 
 function shell({title, description, url, image, body, schema}) {
   return `<!doctype html><html lang="pt-BR"><head>
@@ -46,7 +46,7 @@ function faq(demo) {
   const questions = [
     ['Posso experimentar antes de comprar?', demo ? 'Sim. A aula de demonstração desta página é gratuita e não exige cadastro. Os exemplos também fazem parte do módulo correspondente no curso completo.' : 'Confira o programa e fale com a equipe para esclarecer suas dúvidas.'],
     ['O curso tem videoaulas?', 'Este curso é composto por aulas em texto, atividades práticas e checklists na área do aluno. A oferta não inclui uma série de videoaulas.'],
-    ['Como recebo o acesso?', 'Entre ou crie sua conta na VitrineCity, aceite as condições da compra e conclua o pagamento pelo Mercado Pago. Após a aprovação, abra “Meus cursos” com a mesma conta.'],
+    ['Como recebo o acesso?', 'Ao clicar em Comprar, confira o resumo e o preço. Na etapa de pagamento, entre ou crie sua conta, aceite as condições e continue no Mercado Pago. Após a aprovação, abra “Meus cursos” com a mesma conta.'],
     ['Existe certificado?', 'Ao concluir todas as aulas, você pode emitir um certificado nominal de curso livre com código público de validação. Não equivale a diploma de formação técnica ou superior.'],
     ['Preciso pagar pelas ferramentas mencionadas?', 'A inscrição inclui o conteúdo educacional da VitrineCity. Assinaturas, planos pagos ou recursos de ferramentas externas, quando necessários à sua atividade, são contratados separadamente. O curso não representa vínculo oficial com essas marcas.'],
     ['Há garantia de vendas ou renda?', 'Não. O curso oferece orientações e atividades para praticar. Os resultados dependem da aplicação, do negócio e de outros fatores.']
@@ -59,7 +59,7 @@ export function renderCourseLanding(course, original, origin) {
   const image = new URL(original.coverUrl, origin).href;
   const demo = COURSE_DEMONSTRATIONS[course.slug];
   const price = money(course.priceCents);
-  const loginUrl = '/entrar.html?returnTo=' + encodeURIComponent(`/cursos/${course.slug}#inscricao`);
+  const checkoutUrl = '/course-checkout.html?curso=' + encodeURIComponent(course.slug);
   const curriculum = original.lessons.map(lesson => `<li><h3>${esc(lesson.title)}</h3><p>${esc(lesson.objective)}</p><p class="curriculum-task"><strong>Na prática:</strong> ${esc(lesson.activity)}</p></li>`).join('');
   const outcomes = demo ? `<ul class="learning-outcomes">${demo.outcomes.map(outcome => `<li>${esc(outcome)}</li>`).join('')}</ul>` : '';
   const body = `<main id="conteudo"><div class="breadcrumbs"><a href="/cursos">Cursos para seu negócio</a><span aria-hidden="true">/</span><span>${esc(course.title)}</span></div>
@@ -70,11 +70,8 @@ export function renderCourseLanding(course, original, origin) {
     <aside class="enrollment" aria-label="Inscrição no curso"><img src="${esc(original.coverUrl)}" alt="Capa do curso ${esc(course.title)}" width="640" height="420" fetchpriority="high">
     <div class="enrollment-content" id="inscricao"><p class="eyebrow">ACESSO AO CURSO COMPLETO</p><p class="price">${esc(price)}</p><p>Pagamento único pelo Mercado Pago.</p>
     <p class="small">${original.lessons.length} módulos em texto, atividades e checklists. Liberação em “Meus cursos” após a aprovação do pagamento.</p>
-    <a class="text-link account-link" href="${esc(loginUrl)}">Entrar ou criar conta para comprar →</a>
-    <form data-course-checkout="${esc(course.slug)}" data-course-price="${course.priceCents}">
-    <label class="terms"><input type="checkbox" name="termsAccepted" required> <span>Tenho mais de 18 anos e aceito a compra de conteúdo digital para uso individual.</span></label>
-    <button class="button" type="submit" data-course-purchase data-asset-type="course" data-asset-id="${esc(course.slug)}">Comprar acesso · ${esc(price)}</button>
-    <p role="status" class="checkout-status" aria-live="polite"></p></form><a class="text-link" href="/central-creditos.html?curso=${esc(course.slug)}">Consultar uso de recompensas</a></div></aside></section>
+    <a class="button" href="${esc(checkoutUrl)}" data-course-purchase data-asset-type="course" data-asset-id="${esc(course.slug)}">Comprar acesso · ${esc(price)}</a>
+    <p class="small">Você verá o resumo e o preço antes de entrar ou criar sua conta, na própria etapa de pagamento.</p><a class="text-link" href="/central-creditos.html?curso=${esc(course.slug)}">Consultar uso de recompensas</a></div></aside></section>
     ${renderDemonstration(demo)}
     <section class="audience"><p class="eyebrow">PARA QUEM É</p><h2>Aprendizado para a rotina do seu negócio</h2><p>${esc(course.audience)}.</p>${outcomes}
     <div class="benefits"><article><span>01</span><h3>Estude</h3><p>Leia as aulas e consulte os exemplos na área do aluno.</p></article>
