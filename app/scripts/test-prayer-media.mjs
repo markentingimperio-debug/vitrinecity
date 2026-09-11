@@ -8,7 +8,8 @@ test('social selection excludes drafts, removed and unrelated media and honors d
  const rows=[base,{...base,id:'draft',status:'pending_review'},{...base,id:'removed',status:'removed'},{...base,id:'image',media_type:'image'},{...base,id:'bad',video_uid:'javascript:bad'},{...base,id:'product',caption:'Melhore a decoração'},{...base,id:'friday',caption:'Oração de sexta-feira'},{...base,id:'saturday',caption:'Oração de sábado'},{...base,id:'dated',caption:'#oracao20260912'},{...base,id:'other-date',caption:'#oracao20260913'}];
  assert.deepEqual(selectPrayerVideos(rows,'2026-09-12').map(v=>v.id),['dated','public','saturday']);
  assert.deepEqual(selectPrayerVideos(rows,'2026-09-11').map(v=>v.id),['public','friday']);
- assert.match(selectPrayerVideos(rows,'2026-09-12')[0].playerUrl,/autoplay=false&muted=false&controls=true/);
+ const player=new URL(selectPrayerVideos(rows,'2026-09-12')[0].playerUrl);
+ assert.equal(player.searchParams.has('autoplay'),false);assert.equal(player.searchParams.has('muted'),false);assert.equal(player.searchParams.get('controls'),'true');
 });
 
 test('video URLs only permit the expected Stream player',()=>{

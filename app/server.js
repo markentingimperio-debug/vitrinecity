@@ -16,6 +16,7 @@ import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.js';
 import { createWhatsAppScheduleProcessor, whatsappScheduleState, countWhatsAppSchedules, validWhatsAppReceiptId } from './whatsapp-schedule-worker.js';
 import { isWhatsAppCommercialGroupAllowed, WHATSAPP_COMMERCIAL_EXCLUDED_REASON } from './whatsapp-commercial-policy.js';
+import { setupPrayerSharing } from './prayer-sharing.js';
 import { setupWhatsAppThematicGroups } from './whatsapp-thematic-groups.js';
 import { registerSocialCommentCampaigns } from './social-comment-campaigns.js';
 import { createEcosystemOrchestrator, registerEcosystemRoutes, ecosystemLocalWindow } from './ecosystem-orchestrator.js';
@@ -4272,8 +4273,9 @@ const whatsappProductCampaigns = registerWhatsAppProductCampaigns({
   app, db, requireAdmin, sameOriginOnly, siteUrl: SITE_URL, dataDir,
   whatsappQrRequest, whatsappQrData
 });
+const prayerSharing = setupPrayerSharing({app,db,dataDir,publicDir:path.join(dir,'public'),requireAdmin,sameOriginOnly,whatsappQrRequest,whatsappQrData,canRun:ecosystemCanRun});
 const processWhatsAppQrSchedules = createWhatsAppScheduleProcessor({
-  db, canRun:ecosystemCanRun, prepareScheduledMessage: item=>String(item.campaign_id||'').startsWith('thematic-v1:')?whatsappThematicGroups.prepareScheduledMessage(item):whatsappProductCampaigns.prepareScheduledMessage(item),
+  db, canRun:ecosystemCanRun, prepareScheduledMessage: item=>String(item.campaign_id||'').startsWith('prayer-v1:')?prayerSharing.prepareScheduledMessage(item):String(item.campaign_id||'').startsWith('thematic-v1:')?whatsappThematicGroups.prepareScheduledMessage(item):whatsappProductCampaigns.prepareScheduledMessage(item),
   whatsappQrRequest, whatsappQrData
 });
 function enqueueOmnichannelJob(channel,externalId,destination,sourceText,accountId=null,sourceKind='',mediaId=''){
@@ -9985,6 +9987,8 @@ function scheduleOfficialMetricsSync(){
 app.listen(process.env.PORT || 3000, () => {
   console.log('VitrineCity online');
   scheduleOfficialMetricsSync();
+  const prayerTimer=setInterval(()=>prayerSharing.tick().catch(()=>console.error('Prayer sharing tick failed.')),30000);prayerTimer.unref();
+  const prayerInitial=setTimeout(()=>prayerSharing.tick().catch(()=>console.error('Prayer sharing initial tick failed.')),20000);prayerInitial.unref();
   const runWhatsAppSchedules=async()=>{await whatsappThematicGroups.scheduleDue().catch(()=>{});await processWhatsAppQrSchedules();};
   const whatsappScheduleInitial=setTimeout(()=>runWhatsAppSchedules().catch(()=>{}),15000);whatsappScheduleInitial.unref();
   const whatsappScheduleTimer=setInterval(()=>runWhatsAppSchedules().catch(()=>{}),30000);whatsappScheduleTimer.unref();
