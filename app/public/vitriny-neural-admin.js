@@ -50,8 +50,11 @@
   function renderLearning(){
     const store=snapshot?.neural?.store||{},target=$('learning');target.replaceChildren();
     const queue=Array.isArray(store.queue)?store.queue:[],lessons=Array.isArray(store.lessons)?store.lessons:[];
-    const rows=[['Eventos na fila',queue.reduce((n,x)=>n+Number(x.total||0),0)],['Lições registradas',lessons.reduce((n,x)=>n+Number(x.total||0),0)],['Sinais',Number(store.signals?.total||0)],['Dead letters',Number(store.deadLetters||0)]];
+    const rows=[['Eventos registrados',queue.reduce((n,x)=>n+Number(x.total||0),0)],['Eventos pendentes',Number(queue.find(x=>x.status==='pending')?.total||0)],['Lições registradas',lessons.reduce((n,x)=>n+Number(x.total||0),0)],['Sinais',Number(store.signals?.total||0)],['Dead letters',Number(store.deadLetters||0)]];
     for(const [label,value] of rows){const r=node('div',null,'learn-row'),top=node('div',null,'item-top');top.append(node('strong',label),node('span',String(value),'tag'));r.append(top);target.append(r);}
+    const processor=snapshot?.spatialEvents;
+    target.append(node('p',processor?.paused?'Análise espacial pausada pela Central ou com política indisponível.':processor?.running?'Análise espacial ativa: grava somente observações agregadas.':processor?.enabled?'Análise espacial habilitada, mas parada.':'Análise espacial desativada: ativação depende de revisão e aprovação.','fine'));
+    target.append(node('p','Observações de navegação não são aprendizados aprovados, visitantes únicos ou vendas.','fine'));
     const actions=$('actions');actions.replaceChildren();const b=snapshot?.actionBudget||{};actions.append(node('p',`${b.used||0} de ${b.limit??0} ações autônomas de baixo risco usadas/reservadas hoje.`));actions.append(node('p',snapshot?.service?.mode==='shadow'?'Em shadow, o Policy Gate não executa essas ações.':'A execução continua sujeita ao Policy Gate.','fine'));
   }
   function categoryRows(categories,target){target.replaceChildren();const entries=Object.entries(categories||{});if(!entries.length){target.append(node('p','Sem notas por categoria.','muted'));return;}for(const [name,value] of entries){const score=Number(value?.score||0),row=node('div',null,'category-row'),top=node('div',null,'category-top'),bar=node('div',null,'bar');top.append(node('strong',name),node('span',pct(score),scoreClass(score)));bar.append(Object.assign(node('span'),{style:`width:${Math.round(score*100)}%`}));row.append(top,bar);target.append(row);}}

@@ -14,7 +14,7 @@ export function setupVitrinyNeural({app,db,requireAdmin,sameOriginOnly,env=proce
   try{
     const service=createVitrinyNeuralService({db,env,fetchImpl,nodeId,pseudonymSalt:pseudonymSalt(env),logger});
     mountVitrinyNeuralAdmin({app,service,requireAdmin,sameOriginOnly});
-    if(service.config.enabled){service.observer.start();service.webResearch?.schedule?.();}
+    if(service.config.enabled){service.observer.start();service.webResearch?.schedule?.();service.spatialEvents.start();}
     const capture=(event)=>{
       try{return service.capture(event);}catch(error){logger?.warn?.('[vitriny-neural] event rejected',String(error?.message||error));return{accepted:false,reason:'capture_failed'};}
     };
@@ -26,7 +26,7 @@ export function setupVitrinyNeural({app,db,requireAdmin,sameOriginOnly,env=proce
     logger?.info?.(`[vitriny-neural] initialized mode=${service.config.mode} enabled=${service.config.enabled} webResearch=${service.webResearch?.status?.().enabled===true} spatialBridge=${Boolean(spatialBridge)}`);
     return{
       enabled:service.config.enabled,service,capture,spatialBridge,status:()=>service.status(),
-      stop:()=>{spatialBridge?.stop?.();service.observer.stop();service.webResearch?.stop?.();return true;}
+      stop:()=>{spatialBridge?.stop?.();service.observer.stop();service.webResearch?.stop?.();service.spatialEvents.stop();return true;}
     };
   }catch(error){
     logger?.error?.('[vitriny-neural] initialization failed',String(error?.message||error));

@@ -37,3 +37,4 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - run: npm ci
       - run: npm run test:neural
+      - run: npm run test:neural:spatial-events
