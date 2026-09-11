@@ -171,6 +171,109 @@ test('course guidance for follow-up AI uses the checkout flow without exposing f
   assert.equal(f.seen.calls.length,1);assert.match(f.seen.calls[0].instructions,/não mande sair para o cadastro geral/);assert.match(f.seen.calls[0].instructions,/nem peça nome, e-mail ou senha/);assert.equal(f.seen.calls[0].store,false);assert.equal(f.seen.calls[0].max_output_tokens,400);
   const history=JSON.parse(f.seen.calls[0].input[0].content).history;assert.equal(history.length,2);assert.match(history[1].content,/Sou novo por aqui/);
 });
+
+test('a platform question escapes the open course and describes only public sections with diverse cards',async t=>{
+  const f=await fixture(t,{courses:[{slug:'cozinha-basica',title:'Cozinha básica',available:true},{slug:'oculto',title:'Curso privado',available:false}],services:[{slug:'site-profissional',title:'Site profissional',description:'Criação de site.',available:true}]});
+  f.db.prepare("INSERT INTO store_profiles VALUES('official_agrotecnica','Agrotécnica','Produtos para plantas','published')").run();
+  for(const contextPath of ['/cursos/cozinha-basica','/centro-educacional.html']){
+    const r=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'O que tem na VitrineCity?',contextPath}});
+    assert.equal(r.status,200);assert.equal(r.body.mode,'fallback');
+    for(const phrase of ['cidade virtual','Agrotécnica','afiliado','cursos digitais','receitas publicadas','oração do dia','serviços digitais','VitrineSocial'])assert.ok(r.body.reply.includes(phrase),phrase);
+    assert.match(r.body.reply,/sem escolher uma loja antes/);
+    assert.deepEqual(r.body.offers.map(o=>o.assetType),['product','affiliate','course']);
+    assert.deepEqual(r.body.actions.map(a=>a.url),['/multiverso','/receitas','/oracao-do-dia.html']);
+    assert.doesNotMatch(JSON.stringify(r.body),/Curso privado|Panela indisponível|Panela privada|mixer-unknown|entrar-cidade|course-checkout/);
+    assert.ok(r.body.reply.length<=600);assert.equal(r.body.contactOffer,null);
+  }
+  assert.equal(f.seen.calls.length,0);
+  assert.ok(f.seen.offers.some(entry=>entry.offers.some(o=>o.assetType==='navigation'&&o.assetId==='city')));
+});
+
+test('natural overview phrasings never fall into current-course purchase guidance',async t=>{
+  const f=await fixture(t,{courses:[{slug:'cozinha-basica',title:'Cozinha básica',available:true}]});
+  for(const message of ['O que a VitrineCity oferece?','O que posso comprar no site?','Tem só cursos ou algo além na VitrineCity?','Quero conhecer a plataforma inteira','O que tem por aqui?']){
+    const r=await f.call('/api/site-assistant/chat',{method:'POST',body:{message,contextPath:'/cursos/cozinha-basica'}});
+    assert.equal(r.status,200);assert.match(r.body.reply,/cidade virtual/);assert.doesNotMatch(r.body.reply,/resumo deste curso|Mercado Pago/);
+  }
+  assert.equal(f.seen.calls.length,0);
+});
+
+test('overview immediately stops claiming sections whose last eligible content disappears',async t=>{
+  const f=await fixture(t);
+  f.db.exec("UPDATE store_products SET stock_quantity=0; UPDATE affiliate_catalog SET health='unchecked'; UPDATE editorial_articles SET status='draft';");
+  const r=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'O que tem na VitrineCity?',contextPath:'/'}});
+  assert.equal(r.status,200);assert.deepEqual(r.body.offers,[]);
+  assert.deepEqual(r.body.actions.map(a=>a.url),['/multiverso','/oracao-do-dia.html']);
+  assert.doesNotMatch(r.body.reply,/cursos digitais|receitas publicadas|serviços digitais|ofertas de parceiros|produtos de lojas/);
+  assert.equal(f.seen.calls.length,0);
+});
+
+test('an explicit plant need overrides both a course catalog and a particular cooking course',async t=>{
+  const f=await fixture(t,{courses:[{slug:'cozinha-basica',title:'Cozinha básica',description:'Curso de cozinha.',available:true}],request:body=>response('Posso explicar as informações deste produto.',JSON.parse(body.input[0].content).candidateOffers.map(o=>o.id))});
+  for(const contextPath of ['/centro-educacional.html','/cursos/cozinha-basica']){
+    const r=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Quero comprar adubo para plantas',contextPath}});
+    assert.equal(r.status,200);assert.equal(r.body.mode,'ai');assert.deepEqual(r.body.offers.map(o=>o.id),['product:2']);assert.deepEqual(r.body.actions,[]);
+    const input=JSON.parse(f.seen.calls.at(-1).input[0].content);assert.equal(input.requestedScope,'plants');assert.match(f.seen.calls.at(-1).instructions,/página atual é contexto, não um limite/);
+    assert.doesNotMatch(f.seen.calls.at(-1).instructions,/Neste curso, Comprar/);
+    assert.doesNotMatch(r.body.reply,/curso|Mercado Pago/);
+  }
+  assert.equal(f.seen.calls.length,2);
+  const targeted=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Quero conhecer adubos na VitrineCity',contextPath:'/cursos/cozinha-basica'}});
+  assert.deepEqual(targeted.body.offers.map(o=>o.id),['product:2']);assert.equal(targeted.body.mode,'ai');assert.doesNotMatch(targeted.body.reply,/cidade virtual/);
+});
+
+test('explicit services and partner offers override the open course using server catalog URLs',async t=>{
+  const f=await fixture(t,{courses:[{slug:'cozinha-basica',title:'Cozinha básica',available:true}],services:[{slug:'site-profissional',title:'Site profissional',available:true,url:'https://evil.test',checkoutUrl:'https://evil.test'}],request:body=>response('Posso explicar estas opções.',JSON.parse(body.input[0].content).candidateOffers.map(o=>o.id))});
+  for(const [message,id,url] of [['Quais serviços vocês têm?','service:site-profissional','/servicos-digitais.html?servico=site-profissional'],['Quero ofertas de parceiros','affiliate:mixer-real','/ofertas/mixer-real']]){
+    const r=await f.call('/api/site-assistant/chat',{method:'POST',body:{message,contextPath:'/cursos/cozinha-basica'}});
+    assert.equal(r.status,200);assert.equal(r.body.offers[0].id,id);assert.equal(r.body.offers[0].url,url);assert.doesNotMatch(JSON.stringify(r.body),/evil\.test/);
+  }
+});
+
+test('specific course references preserve the current course and existing conversation',async t=>{
+  const f=await fixture(t,{courses:[{slug:'cozinha-basica',title:'Cozinha básica',available:true},{slug:'cozinha-avancada',title:'Cozinha avançada',available:true}],request:body=>response('Posso explicar este conteúdo.',JSON.parse(body.input[0].content).candidateOffers.map(o=>o.id))});
+  await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'O que tem na VitrineCity?',contextPath:'/cursos/cozinha-basica'}});
+  const r=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Como é esse curso?',contextPath:'/cursos/cozinha-basica'}});
+  assert.deepEqual(r.body.offers.map(o=>o.id),['course:cozinha-basica']);
+  assert.equal(r.body.offers[0].url,'/cursos/cozinha-basica');
+  const input=JSON.parse(f.seen.calls[0].input[0].content);assert.equal(input.history.length,2);assert.equal(input.page.title,'Cozinha básica');assert.equal(input.requestedScope,'course');
+});
+
+test('published editorial portals appear in the platform overview and specific requests leave the course scope',async t=>{
+  const f=await fixture(t,{courses:[{slug:'cozinha-basica',title:'Cozinha básica',available:true}],services:[{slug:'site-profissional',title:'Site profissional',available:true}]});
+  const portals={esportes:'esportes',noticias:'notícias',curiosidades:'curiosidades',tecnologia:'tecnologia','plantas-e-jardinagem':'plantas e jardinagem','inteligencia-artificial':'inteligência artificial'};
+  const add=f.db.prepare('INSERT INTO editorial_articles VALUES(?,?,?,?,?,?,?,?)');
+  for(const [portal,label] of Object.entries(portals))add.run(portal,portal,'Conteúdo de '+label,'','Texto público de teste.',portal,'2026-09-11','published');
+  add.run('unmapped','unmapped','Não publicar','','Fonte interna','privado','2026-09-11','published');
+  const overview=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'O que tem na VitrineCity?',contextPath:'/cursos/cozinha-basica'}});
+  assert.ok(overview.body.reply.length<=600);for(const label of Object.values(portals))assert.ok(overview.body.reply.includes(label),label);assert.doesNotMatch(overview.body.reply,/privado|Não publicar/);
+  for(const [portal,label] of Object.entries(portals)){
+    const message=portal==='plantas-e-jardinagem'?'Quero conteúdos de plantas e jardinagem':'Quero ver '+label;
+    const r=await f.call('/api/site-assistant/chat',{method:'POST',body:{message,contextPath:'/cursos/cozinha-basica'}});
+    assert.equal(r.status,200);assert.equal(r.body.actions[0].url,'/'+portal);assert.deepEqual(r.body.offers,[]);assert.match(r.body.reply,/conteúdos publicados/);
+  }
+  f.db.prepare("UPDATE editorial_articles SET status='draft' WHERE portal='esportes'").run();
+  const unpublished=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Quero esportes',contextPath:'/cursos/cozinha-basica'}});
+  assert.deepEqual(unpublished.body.actions,[]);assert.match(unpublished.body.reply,/Ainda não encontrei/);assert.equal(f.seen.calls.length,0);
+});
+
+test('social discovery provides only the existing explicit social link without posting or requiring signup',async t=>{
+  const f=await fixture(t),r=await f.chat('Quero conhecer a rede social');
+  assert.equal(r.body.actions[0].url,'/social');assert.equal(r.body.actions[0].assetId,'social');assert.deepEqual(r.body.offers,[]);assert.equal(r.body.contactOffer,null);assert.equal(f.seen.calls.length,0);
+});
+
+test('buying this course for a shop keeps the exact course checkout identity',async t=>{
+  const f=await fixture(t,{courses:[{slug:'vendas-para-lojas',title:'Vendas para lojas',available:true}]}),r=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Quero comprar esse curso para loja',contextPath:'/cursos/vendas-para-lojas'}});
+  assert.equal(r.body.actions[0].url,'/course-checkout.html?curso=vendas-para-lojas');assert.match(r.body.reply,/resumo e o preço deste curso/);assert.equal(f.seen.calls.length,0);
+});
+
+test('broad discovery respects an explicit refusal and keeps prayer pages free of product cards',async t=>{
+  const f=await fixture(t);
+  const refused=await f.chat('Não quero ofertas, só estou olhando o que tem na VitrineCity');
+  assert.deepEqual(refused.body.offers,[]);assert.deepEqual(refused.body.actions,[]);assert.match(refused.body.reply,/fique à vontade/);
+  const prayer=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'O que tem na VitrineCity?',contextPath:'/oracao-do-dia.html'}});
+  assert.deepEqual(prayer.body.offers,[]);assert.equal(prayer.body.contactOffer,null);assert.equal(f.seen.calls.length,0);
+});
 test('history is capped, expired rows are excluded and IP addresses are never stored raw',async t=>{
   const f=await fixture(t);for(let i=0;i<6;i++)await f.chat('Ajude com a forma '+i);
   assert.equal(f.db.prepare('SELECT COUNT(*) n FROM site_assistant_history').get().n,8);

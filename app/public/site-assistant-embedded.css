@@ -1,0 +1,10 @@
+html[data-lia-embedded] { scroll-behavior: auto; }
+html[data-lia-embedded] body { min-width: 0; overflow-x: hidden; }
+html[data-lia-embedded] body > header { height: auto; min-height: 48px; padding: 10px 14px; flex-wrap: wrap; gap: 8px; }
+html[data-lia-embedded] main { max-width: 100%; margin-top: 16px; padding-top: 16px; }
+html[data-lia-embedded] h1 { font-size: clamp(24px, 6vw, 34px); overflow-wrap: anywhere; }
+html[data-lia-embedded] img { max-width: 100%; }
+html[data-lia-embedded] input:not([type=checkbox]):not([type=radio]),
+html[data-lia-embedded] select, html[data-lia-embedded] textarea { font-size: 16px; }
+html[data-lia-embedded] [data-vc-assistant],
+html[data-lia-embedded] #vc-paid-sponsor-strip { display: none !important; }

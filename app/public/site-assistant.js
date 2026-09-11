@@ -1,4 +1,5 @@
 import { classifySiteAssistantPath, siteAssistantContextPath, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS } from './site-assistant-policy.js';
+import { createSiteAssistantContent, siteAssistantDestination } from './site-assistant-content.js';
 
 const DISMISS_KEY = 'vc-assistant-dismiss-until-v1';
 const PANEL_KEY = 'vc-assistant-panel-until-v1';
@@ -11,8 +12,9 @@ const text = (value, max = 3000) => typeof value === 'string' ? value.slice(0, m
 // Dependency injection also lets the interaction tests run without a network.
 export function mountSiteAssistant({ window: win = globalThis.window, document: doc = win?.document, fetch: fetcher = win?.fetch?.bind(win), now = Date.now } = {}) {
   if (!win || !doc || !fetcher) return null;
+  try { if (win.top !== win.self) return null; } catch { return null; }
   const policy = classifySiteAssistantPath(win.location.pathname);
-  const contextPath = siteAssistantContextPath(win.location.pathname, win.location.search);
+  let contextPath = siteAssistantContextPath(win.location.pathname, win.location.search), conversationPolicy = policy;
   if (!contextPath || doc.documentElement.hasAttribute('amp') || doc.documentElement.hasAttribute('⚡')) return null;
   if (win[SINGLETON]) return win[SINGLETON];
   if (doc.querySelector('[data-vc-assistant]')) return null;
@@ -62,7 +64,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   panelControls.append(panelMinimize, panelExpand, panelClose); heading.append(headingCopy, panelControls);
   const scroll = make('div', 'vc-assistant-scroll');
   const intro = make('p', 'vc-assistant-intro');
-  const quick = make('div', 'vc-assistant-quick'); quick.setAttribute('aria-label', 'Sugestões para começar');
+  const quick = make('div', 'vc-assistant-quick'); quick.hidden = true;
   const log = make('div', 'vc-assistant-log'); log.setAttribute('role', 'log'); log.setAttribute('aria-live', 'off'); log.setAttribute('aria-relevant', 'additions'); log.setAttribute('aria-label', 'Conversa com o assistente');
   const offers = make('div', 'vc-assistant-offers');
   const actions = make('nav', 'vc-assistant-actions'); actions.setAttribute('aria-label', 'Links úteis');
@@ -86,7 +88,11 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   const send = make('button', 'vc-assistant-primary', 'Enviar mensagem'); send.type = 'submit';
   const status = make('p', 'vc-assistant-status'); status.setAttribute('role', 'status');
   const privacy = make('p', 'vc-assistant-note', 'Não envie senhas, CPF ou dados de pagamento.');
-  form.append(label, input, send, status, privacy); panel.append(heading, scroll, form);
+  const content = createSiteAssistantContent({window:win, document:doc,
+    onContext(path) { contextPath = path; conversationPolicy = classifySiteAssistantPath(path); },
+    onView(visible) { panel.dataset.view = visible ? 'content' : 'conversation'; scroll.hidden = visible; form.hidden = visible; if (!visible && !panel.hidden) input.focus({preventScroll:true}); }
+  });
+  form.append(label, input, send, status, privacy); panel.append(heading, content.resume, content.root, scroll, form);
   root.append(launcher, invite, panel); doc.body.append(root);
   if (policy.kind === 'city') {
     const brand = doc.querySelector('.hud .brand');
@@ -153,13 +159,14 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   function open({ restore = false } = {}) {
     if (disposed || !context) return;
     forgetMinimized();
-    if (!panel.hidden) { if (!restore) input.focus({ preventScroll: true }); return; }
+    const focusTarget = () => content.root.hidden ? input : content.root.querySelector('.vc-assistant-content-back');
+    if (!panel.hidden) { if (!restore) focusTarget().focus({ preventScroll: true }); return; }
     returnFocus = doc.activeElement?.isConnected ? doc.activeElement : launcher;
     if (invite.contains(returnFocus)) returnFocus = launcher;
     invite.hidden = true; shown = true; stopTimer();
     panel.hidden = false; launcher.setAttribute('aria-expanded', 'true'); log.setAttribute('aria-live', restore ? 'off' : 'polite'); rememberPanel();
     win.dispatchEvent(new win.CustomEvent('vitriny:assistant-open'));
-    if (!restore) { track('open'); input.focus({ preventScroll: true }); }
+    if (!restore) { track('open'); focusTarget().focus({ preventScroll: true }); }
   }
   function minimize() {
     if (disposed || !context || panel.hidden) return;
@@ -213,13 +220,19 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     const url = safeSiteAssistantUrl(rawUrl, win.location.origin);
     if (!url) return null;
     const node = make('a', className, label); node.href = url;
-    if (new URL(url).origin !== win.location.origin) { node.target = '_blank'; node.rel = 'noopener noreferrer'; node.setAttribute('aria-label', label + ' (abre em nova aba)'); }
+    const destination = siteAssistantDestination(url, win.location.origin);
+    if (destination?.kind === 'embedded') node.addEventListener('click', event => { event.preventDefault(); content.open(url); content.root.querySelector('.vc-assistant-content-back').focus({preventScroll:true}); });
+    else {
+      if (destination?.payment) node.textContent = 'Continuar pagamento';
+      else if (destination?.partner) node.textContent = label + ' (site parceiro, nova aba)';
+      node.target = '_blank'; node.rel = 'noopener noreferrer'; node.setAttribute('aria-label', node.textContent + ' (abre em nova aba)');
+    }
     if (offer) node.addEventListener('click', () => track('offer_click', offer));
     return node;
   }
   function renderOffers(list) {
     offers.replaceChildren();
-    if (!policy.commercial) return;
+    if (!conversationPolicy.commercial) return;
     for (const offer of (Array.isArray(list) ? list : []).slice(0, 3)) {
       if (!offer || !text(offer.title, 160)) continue;
       const cta = link('Conhecer ' + text(offer.title, 160), offer.url, 'vc-assistant-offer-link', offer);
@@ -237,14 +250,14 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     actions.replaceChildren();
     for (const action of (Array.isArray(list) ? list : []).slice(0, 4)) {
       if (!action || !text(action.label, 120)) continue;
-      if (policy.kind === 'course_checkout') {
+      if (policy.kind === 'course_checkout' && !content.hasContent) {
         const safe = safeSiteAssistantUrl(action.url, win.location.origin);
         if (!safe) continue;
         const target = new URL(safe);
         // Reloading this checkout would discard fields the visitor is filling.
         if (target.origin === win.location.origin && target.pathname === '/course-checkout.html' && siteAssistantContextPath(target.pathname, target.search) === contextPath) continue;
       }
-      if (!policy.commercial) {
+      if (!conversationPolicy.commercial) {
         const safe = safeSiteAssistantUrl(action.url, win.location.origin);
         if (!safe) continue;
         const target = new URL(safe);
@@ -319,7 +332,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   const onPageHide = () => { invite.hidden = true; if (!panel.hidden) rememberPanel(); };
   win.addEventListener('pagehide', onPageHide);
   const controller = { open, close, minimize, toggleExpanded, dismiss, root, launcher, destroy() {
-    disposed = true; stopTimer(); root.remove(); launcher.remove();
+    disposed = true; stopTimer(); content.destroy(); root.remove(); launcher.remove();
     doc.removeEventListener('visibilitychange', onVisibility); win.removeEventListener('storage', onStorage); win.removeEventListener('pagehide', onPageHide);
     delete win[SINGLETON];
   } };
@@ -342,11 +355,9 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
       forgetPanel();
       const greeting = text(data.greeting, 700) || 'Oi! Eu sou a Lia 😊 Estou aqui para ajudar você. O que está procurando?';
       intro.textContent = greeting; inviteText.textContent = greeting;
-      for (const item of (Array.isArray(data.quickActions) ? data.quickActions : []).slice(0, 3)) {
-        if (text(item?.label, 100) && text(item?.message, 1200)) quick.append(button(text(item.label, 100), 'vc-assistant-suggestion', () => { input.value = text(item.message, 1200); input.focus({ preventScroll: true }); }));
-      }
     }
-    renderOffers(data.offers); renderActions(data.actions); launcher.hidden = false;
+    // Start as a conversation. Results appear only after the visitor asks.
+    launcher.hidden = false;
     if (uiStateActive(MINIMIZED_KEY)) {
       forgetPanel(); shown = true; invite.hidden = true;
       launcher.textContent = 'Continuar conversa'; launcher.setAttribute('aria-label', 'Continuar conversa com a Lia');

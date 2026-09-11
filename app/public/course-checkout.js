@@ -126,11 +126,13 @@ export function mountCourseCheckout({ doc = document, win = window, fetchImpl = 
       if (response.status === 409 && data.code === 'course_already_enrolled' && data.alreadyEnrolled === true) { owned = true; message.textContent = 'Este curso já está na sua conta. Acesse sem comprar novamente.'; return; }
       if (!response.ok) throw new Error(data.error || 'Não foi possível iniciar o pagamento.');
       const url = safeCoursePaymentUrl(data.checkoutUrl);
-      if (!url || !data.reference) throw new Error('Não foi possível verificar o endereço de pagamento.');
+      if (!url || typeof data.reference !== 'string' || !data.reference.trim()) throw new Error('Não foi possível verificar o endereço de pagamento.');
       // This event represents a provider checkout, never a payment or enrollment.
       doc.dispatchEvent(new win.CustomEvent('vc:course-checkout', { detail: { slug, amount: course.priceCents } }));
       uncertain = true; // Keep the button locked while the browser leaves this page.
-      win.location.assign(url);
+      if (typeof win.vcLiaNavigate === 'function' && win.vcLiaNavigate(url) === true) {
+        message.textContent = 'Seu link de pagamento está pronto. Continue pelo link de pagamento na conversa com a Lia.';
+      } else win.location.assign(url);
     } catch (error) {
       uncertain = checkoutStarted;
       message.textContent = uncertain ? 'Não foi possível confirmar a abertura do pagamento. Não repita a solicitação agora; confira “Meus cursos” ou fale com a equipe.' : error.message || 'Não foi possível continuar. Confira os dados.';

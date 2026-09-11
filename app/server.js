@@ -101,7 +101,7 @@ import {
 import { buildLegalReviewDossier } from './legal-review.js';
 import { setupBusinessProspecting } from './business-prospecting.js';
 import { setupSalesAgentEngine } from './sales-agent-engine.js';
-import { injectSiteAssistant } from './site-assistant-page.js';
+import { injectSiteAssistant, injectSiteAssistantContent } from './site-assistant-page.js';
 import { setupSiteSalesExperience } from './site-sales-experience.js';
 import { setupSiteSalesAssistant } from './site-sales-assistant.js';
 import { setupSiteSalesNeural } from './site-sales-neural.js';
@@ -2618,6 +2618,12 @@ app.use((req, res, next) => {
     if (res.locals.vcAmpStory === true || req.method !== 'GET' || req.path.startsWith('/admin') || req.path.startsWith('/recompra') || (!type.includes('text/html') && !looksLikeHtml)) return send(body);
     const wasBuffer = Buffer.isBuffer(body);
     let page = injectPublicMeasurement(candidate, req.path);
+    if (req.query.lia === '1') {
+      page = injectSiteAssistantContent(page, {path:req.path,embedded:true});
+      if (typeof page !== 'string') return send(body);
+      if (wasBuffer) res.setHeader('Content-Length', Buffer.byteLength(page));
+      return send(wasBuffer ? Buffer.from(page) : page);
+    }
     page = injectSiteAssistant(page, {path:req.path});
     if (typeof page !== 'string') return send(body);
     if (page.includes('</head>') && !page.includes('rel="manifest"')) {
@@ -9794,7 +9800,12 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
   const reviewPageCount = Math.max(1, Math.ceil(product.rating_count / 12));
   const reviewPage = Math.min(reviewPageCount, Math.max(1, requestedReviewPage));
   const reviewPath = `/produto/${product.id}/${slug}`;
-  if (req.params.slug !== slug) return res.redirect(301, `${reviewPath}${reviewPage > 1 ? `?avaliacoes=${reviewPage}#avaliacoes` : ''}`);
+  if (req.params.slug !== slug) {
+    const reviewQuery = new URLSearchParams();
+    if (reviewPage > 1) reviewQuery.set('avaliacoes', String(reviewPage));
+    if (req.query.lia === '1') reviewQuery.set('lia', '1');
+    return res.redirect(301, reviewPath + (reviewQuery.size ? '?' + reviewQuery : '') + (reviewPage > 1 ? '#avaliacoes' : ''));
+  }
   const origin = new URL(SITE_URL).origin;
   const canonical = `${origin}/produto/${product.id}/${slug}`;
   const productImagePath = product.image_url || PRODUCT_FALLBACK_PATH;
@@ -9850,7 +9861,7 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
     <div class="actions">${product.product_url?`<a class="button" href="${escapeHtml(product.product_url)}"${isDigital?'':` target="_blank" rel="noopener sponsored"`}>${isDigital?'Comprar acesso':'Comprar'}</a>`:'<button id="add">Adicionar ao carrinho</button>'}<a class="button alt" href="${escapeHtml(storePath)}">Ver a vitrine da loja</a></div><div class="status" id="status"></div></section>
     <section class="reviews" id="avaliacoes"><h2>Avaliações de clientes</h2>${reviews.length?`<div class="review-grid">${reviews.map(review=>`<article class="review"><div class="rating">${'★'.repeat(review.rating)}${'☆'.repeat(5-review.rating)}</div><h3>${escapeHtml(review.title||'Avaliação do produto')}</h3><p>${escapeHtml(review.body)}</p><small>${escapeHtml(review.author_name)} · ${new Date(`${review.created_at.replace(' ', 'T')}Z`).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</small>${renderReviewPhotos(review,escapeHtml)}${renderImportedReviewSource(review,escapeHtml)}${review.verified_purchase&&!review.source?'<div class="verified">✓ Compra verificada</div>':''}</article>`).join('')}</div>`:'<p class="description">Este produto ainda não recebeu avaliações. As avaliações publicadas aparecerão aqui.</p>'}${reviewPageCount > 1 ? `<nav class="review-pagination" aria-label="Páginas de avaliações">${reviewPage > 1 ? `<a class="button alt" rel="prev" href="${reviewPath}?avaliacoes=${reviewPage - 1}#avaliacoes">← Anteriores</a>` : ''}<span>Página ${reviewPage} de ${reviewPageCount} · ${product.rating_count} avaliações</span>${reviewPage < reviewPageCount ? `<a class="button alt" rel="next" href="${reviewPath}?avaliacoes=${reviewPage + 1}#avaliacoes">Próximas →</a>` : ''}</nav>` : ''}</section>
     </main>
-    <script>const product=${publicProduct},add=document.getElementById('add');if(add)add.onclick=()=>{let cart=[];try{cart=JSON.parse(localStorage.getItem('vc_shop_cart')||'[]')}catch{}if(cart.length&&cart[0].store_reference!==product.store_reference){document.getElementById('status').textContent='Finalize primeiro os produtos da outra loja.';return}const old=cart.find(item=>item.id===product.id);if(old)old.quantity=Math.min(product.stock_quantity,old.quantity+1);else cart.push({...product,quantity:1});localStorage.setItem('vc_shop_cart',JSON.stringify(cart));location.href='/loja?carrinho=1'};</script>
+    <script>const product=${publicProduct},add=document.getElementById('add');if(add)add.onclick=()=>{let cart=[];try{cart=JSON.parse(localStorage.getItem('vc_shop_cart')||'[]')}catch{}if(cart.length&&cart[0].store_reference!==product.store_reference){document.getElementById('status').textContent='Finalize primeiro os produtos da outra loja.';return}const old=cart.find(item=>item.id===product.id);if(old)old.quantity=Math.min(product.stock_quantity,old.quantity+1);else cart.push({...product,quantity:1});localStorage.setItem('vc_shop_cart',JSON.stringify(cart));if(window.vcLiaNavigate?.('/loja?carrinho=1'))return;location.href='/loja?carrinho=1'};</script>
     </body></html>`,{storeReference:product.store_reference,productId:product.id}));
 });
 

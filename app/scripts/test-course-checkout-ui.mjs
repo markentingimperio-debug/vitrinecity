@@ -86,6 +86,31 @@ test('a second click while submitting or leaving the page cannot create another 
   let release; const h = harness({ logged: true, checkoutPost: () => new Promise(resolve => { release = resolve; }) }); await mountCourseCheckout(h).ready; await accept(h);
   const first = h.get('course-payment-form').fire('submit'); await new Promise(resolve => setTimeout(resolve, 0)); await h.get('course-payment-form').fire('submit'); assert.equal(h.purchases().length, 1); release(ok({ reference: 'course_test', checkoutUrl: 'https://www.mercadopago.com.br/checkout/test' }, 201)); await first; await h.get('course-payment-form').fire('submit'); assert.equal(h.purchases().length, 1);
 });
+
+test('embedded checkout hands the verified payment URL to Lia once and stays locked', async () => {
+  const h = harness({ logged: true }), handoffs = [];
+  h.win.vcLiaNavigate = url => { handoffs.push(url); return true; };
+  await mountCourseCheckout(h).ready; await accept(h); await h.get('course-payment-form').fire('submit');
+  await h.get('course-payment-form').fire('submit');
+  assert.deepEqual(handoffs, ['https://www.mercadopago.com.br/checkout/test']);
+  assert.equal(h.redirects.length, 0); assert.equal(h.purchases().length, 1); assert.equal(h.get('pay-button').disabled, true);
+  assert.match(h.get('checkout-message').textContent, /Continue pelo link de pagamento na conversa/);
+});
+
+test('normal checkout still redirects when the Lia bridge returns false', async () => {
+  const h = harness({ logged: true }); h.win.vcLiaNavigate = () => false;
+  await mountCourseCheckout(h).ready; await accept(h); await h.get('course-payment-form').fire('submit');
+  assert.deepEqual(h.redirects, ['https://www.mercadopago.com.br/checkout/test']); assert.equal(h.get('pay-button').disabled, true);
+});
+
+test('invalid payment reference or failed handoff cannot generate a second preference', async () => {
+  for (const brokenReference of [true, false]) {
+    const h = harness({ logged: true, ...(brokenReference ? { checkoutPost: () => ok({ reference: {}, checkoutUrl: 'https://www.mercadopago.com.br/checkout/test' }, 201) } : {}) });
+    let handoffs = 0; h.win.vcLiaNavigate = () => { handoffs++; throw Error('bridge unavailable'); };
+    await mountCourseCheckout(h).ready; await accept(h); await h.get('course-payment-form').fire('submit'); await h.get('course-payment-form').fire('submit');
+    assert.equal(handoffs, brokenReference ? 0 : 1); assert.equal(h.purchases().length, 1); assert.equal(h.redirects.length, 0); assert.equal(h.get('pay-button').disabled, true);
+  }
+});
 test('uncertain or invalid payment response cannot redirect, announce success or retry automatically', async () => {
   for (const checkoutPost of [async () => { throw Error('network'); }, async () => ok({ reference: 'ref', checkoutUrl: 'https://evil.test' }), async () => ({ ...ok({}), json: async () => { throw Error('bad-json'); } })]) {
     const h = harness({ logged: true, checkoutPost }); await mountCourseCheckout(h).ready; await accept(h); await h.get('course-payment-form').fire('submit'); await h.get('course-payment-form').fire('submit'); assert.equal(h.purchases().length, 1); assert.equal(h.redirects.length, 0); assert.equal(h.events.length, 0); assert.equal(h.get('pay-button').disabled, true);

@@ -1,4 +1,5 @@
 (() => {
+  if(window.top !== window.self && new URLSearchParams(location.search).get('lia') === '1') return;
   // The 3D city has its own building billboards; page-wide banners cover its controls.
   // Course payment keeps attention on the selected course and its form.
   if(window.__vcGlobalMarketBannerLoaded || location.pathname.startsWith('/admin') || location.pathname==='/recuperar-acesso-entregador.html' || location.pathname==='/multiverso' || /^\/vitriny-multiverse-(?:explore|district)(?:\.html)?\/?$/.test(location.pathname) || /^\/oracao-do-dia(?:\.html)?\/?$/.test(location.pathname) || /^\/course-checkout\.html\/?$/.test(location.pathname))return;

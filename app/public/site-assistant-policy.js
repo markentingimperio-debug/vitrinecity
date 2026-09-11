@@ -52,8 +52,34 @@ export function safeSiteAssistantUrl(value, origin, { image = false } = {}) {
     if (url.username || url.password || !['http:', 'https:'].includes(url.protocol)) return '';
     if (url.origin !== base.origin && url.protocol !== 'https:') return '';
     if (!image && url.origin === base.origin) {
-      if (!classifySiteAssistantPath(url.pathname).enabled && !['/entrar-cidade.html', '/meus-cursos.html'].includes(url.pathname) && !/^\/ir\/[a-zA-Z0-9_-]+$/.test(url.pathname)) return '';
+      if (!classifySiteAssistantPath(url.pathname).enabled && !['/entrar-cidade.html', '/meus-cursos.html', '/social'].includes(url.pathname) && !/^\/ir\/[a-zA-Z0-9_-]+$/.test(url.pathname)) return '';
       if ([...url.searchParams.keys()].some(key => /token|session|password|secret|auth/i.test(key))) return '';
+    }
+    return url.href;
+  } catch { return ''; }
+}
+
+// The viewer may host these two existing customer forms, but their contents and
+// URLs never become AI context. This does not enable the assistant on them.
+const EMBEDDED_CUSTOMER_FORMS = ['/entrar.html', '/minha-conta.html'];
+const CONTENT_LINKS = ['/entrar-cidade.html', '/meus-cursos.html', '/pedidos.html', '/social', '/entregas', '/recuperar-acesso.html', '/termos-creditos.html', '/termos-marketplace.html', '/privacy.html'];
+export function siteAssistantEmbeddedPath(path) {
+  return classifySiteAssistantPath(path).enabled || EMBEDDED_CUSTOMER_FORMS.includes(path);
+}
+
+export function safeSiteAssistantContentUrl(value, origin) {
+  if (typeof value !== 'string' || value.length > 2048 || /[\\\u0000-\u0020\u007f]/.test(value) || value.startsWith('//')) return '';
+  try {
+    const base = new URL(origin), url = new URL(value, base);
+    if (url.username || url.password || !['http:', 'https:'].includes(url.protocol)) return '';
+    if (url.origin !== base.origin) return url.protocol === 'https:' ? url.href : '';
+    if (!siteAssistantEmbeddedPath(url.pathname) && !CONTENT_LINKS.includes(url.pathname) && !/^\/ir\/[a-zA-Z0-9_-]+$/.test(url.pathname)) return '';
+    if ([...url.searchParams.keys()].some(key => /token|session|password|secret|auth/i.test(key))) return '';
+    if (url.searchParams.has('returnTo')) {
+      const returns = url.searchParams.getAll('returnTo');
+      if (returns.length !== 1 || !returns[0].startsWith('/') || returns[0].startsWith('//') || /[\\\u0000-\u0020\u007f]/.test(returns[0])) return '';
+      const destination = new URL(returns[0], base);
+      if (destination.origin !== base.origin || !siteAssistantEmbeddedPath(destination.pathname) || [...destination.searchParams.keys()].some(key => /returnTo|token|session|password|secret|auth/i.test(key))) return '';
     }
     return url.href;
   } catch { return ''; }
