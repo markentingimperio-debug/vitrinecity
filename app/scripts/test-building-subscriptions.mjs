@@ -67,9 +67,18 @@ test('provider silently dropping or changing trial conditions is cancelled witho
     const order=f.db.prepare('SELECT * FROM lot_orders').get();assert.equal(order.status,'cancelled');assert.equal(order.mp_checkout_url,null);assert.equal([...f.remote.values()][0].status,'cancelled');
   }
 });
-test('provider date precision is accepted and actual first charge date is returned',async t=>{
+test('provider date precision is accepted and agreed first charge date remains immutable',async t=>{
   const f=fixture(t,{mutate:s=>{s.auto_recurring.start_date='2026-10-11T16:15:13Z';}});
-  const {order}=await f.service.create(input);assert.equal(f.service.details(order).trialUntil,'2026-10-11T16:15:13Z');
+  const {order}=await f.service.create(input);assert.equal(f.service.details(order).trialUntil,'2026-10-11T16:15:12.000Z');
+  await f.authorize(order);f.remote.get(order.mp_subscription_id).next_payment_date='2026-11-11T16:15:13Z';await f.service.reconcile(order.reference);
+  assert.equal(f.service.get(order.reference).trial_until,'2026-10-11T16:15:12.000Z');
+});
+test('provider cannot extend the agreed trial to 31 days or a future year',async t=>{
+  for(const date of ['2026-10-12T16:15:12Z','2027-10-11T16:15:12Z']){
+    const f=fixture(t,{mutate:s=>{s.auto_recurring.start_date=date;}});
+    await assert.rejects(f.service.create(input),e=>e.code==='provider_mismatch');
+    const order=f.db.prepare('SELECT * FROM lot_orders').get();assert.equal(order.status,'cancelled');assert.equal(order.mp_checkout_url,null);assert.equal(order.trial_until,'2026-10-11T16:15:12.000Z');
+  }
 });
 test('ambiguous network creation retains reservation and never blindly repeats POST',async t=>{
   const f=fixture(t,{postError:Error('timeout')});await assert.rejects(f.service.create(input),e=>e.code==='creation_uncertain');

@@ -42,7 +42,7 @@ export function setupBuildingSubscriptions({db,request,siteUrl,now=Date.now,onAc
     const recurring=subscription?.auto_recurring;
     return String(subscription?.id||'')===String(order.mp_subscription_id||'')&&String(subscription?.external_reference||'')===order.reference&&
       recurring?.currency_id==='BRL'&&Number(recurring.transaction_amount)*100===order.amount_cents&&Number(recurring.frequency)===1&&recurring.frequency_type==='months'&&
-      (!order.trial_version||(Number.isFinite(stamp(recurring.start_date))&&stamp(recurring.start_date)>=stamp(order.trial_until)-1000&&
+      (!order.trial_version||(Number.isFinite(stamp(recurring.start_date))&&Math.abs(stamp(recurring.start_date)-stamp(order.trial_until))<=1000&&
         (subscription.next_payment_date==null||(Number.isFinite(stamp(subscription.next_payment_date))&&stamp(subscription.next_payment_date)>=stamp(order.trial_until)-1000))));
   };
   async function stopProvider(order,reason='cancelled'){
@@ -91,7 +91,7 @@ export function setupBuildingSubscriptions({db,request,siteUrl,now=Date.now,onAc
     if(remote.status==='pending'&&!order.mp_checkout_url){
       let checkout;try{checkout=new URL(remote.init_point);}catch{}
       if(!checkout||checkout.protocol!=='https:'||!/(^|\.)mercadopago\.com(?:\.br)?$/.test(checkout.hostname))throw error('O endereço de autorização ainda não foi confirmado.',502,'verification_pending');
-      db.prepare('UPDATE lot_orders SET mp_checkout_url=?,trial_until=CASE WHEN trial_version<>\'\' THEN ? ELSE trial_until END,updated_at=? WHERE reference=?').run(checkout.toString(),remote.auto_recurring.start_date||null,iso(),reference);
+      db.prepare('UPDATE lot_orders SET mp_checkout_url=?,updated_at=? WHERE reference=?').run(checkout.toString(),iso(),reference);
     }
     return accept(remote,reference);
   }
@@ -141,7 +141,7 @@ export function setupBuildingSubscriptions({db,request,siteUrl,now=Date.now,onAc
     if(!providerValid(verified,order)||!validUrl||verified.status!=='pending'){
       await stopProvider(order,'provider_mismatch');throw error('O período de cobrança não foi confirmado. Esta solicitação foi cancelada.',502,'provider_mismatch');
     }
-    db.prepare("UPDATE lot_orders SET mp_checkout_url=?,subscription_status='pending',trial_until=CASE WHEN trial_version<>'' THEN ? ELSE trial_until END,updated_at=? WHERE reference=?").run(verified.init_point||remote.init_point,verified.auto_recurring.start_date||null,iso(),order.reference);
+    db.prepare("UPDATE lot_orders SET mp_checkout_url=?,subscription_status='pending',updated_at=? WHERE reference=?").run(verified.init_point||remote.init_point,iso(),order.reference);
     return {order:get(order.reference),replayed:false};
   }
   function recordPayment(payment){
