@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import path from 'node:path';
 import { injectPublicMeasurement } from '../public-measurement.js';
 import { injectSiteAssistant } from '../site-assistant-page.js';
+import { isGamesAppPath } from '../games-app-routes.js';
 
 const loader = fs.readFileSync(new URL('../public/global-market-banner.js', import.meta.url), 'utf8');
 const outdoor = fs.readFileSync(new URL('../public/market-outdoor.js', import.meta.url), 'utf8');
@@ -125,7 +126,7 @@ function serveFixture(pathname, prepared) {
   const context = {
     app: { use: handler => handlers.push(handler) }, dir: '/fixture', path: path.posix,
     fs: { existsSync: file => files.has(file), readFileSync: file => files.get(file) },
-    Buffer, injectPublicMeasurement, injectSiteAssistant
+    Buffer, injectPublicMeasurement, injectSiteAssistant, isGamesAppPath
   };
   vm.runInNewContext(sendWrapper + '\n' + staticMiddleware, context);
   const req = { method: 'GET', path: pathname, query: {} };

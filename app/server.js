@@ -1,6 +1,7 @@
 import { setupOpenAIProductFeed } from './openai-product-feed.js';
 import { setupProductionHardening } from './production-hardening.js';
 import {cleanPublicRoutes} from './clean-public-routes.js';
+import {setupGamesAppRoutes,isGamesAppPath} from './games-app-routes.js';
 import { setupCatalogProductImages } from './catalog-product-images.js';
 import {setupCityMembership} from './city-membership.js';
 import {setupCampaignPreferences} from './campaign-preferences.js';
@@ -2632,7 +2633,7 @@ app.use((req, res, next) => {
     const type = String(res.getHeader('content-type') || '');
     const candidate = Buffer.isBuffer(body) ? body.toString('utf8') : body;
     const looksLikeHtml = typeof candidate === 'string' && /^\s*(?:<!doctype\s+html|<html\b)/i.test(candidate);
-    if (res.locals.vcAmpStory === true || req.method !== 'GET' || req.path.startsWith('/admin') || req.path.startsWith('/recompra') || (!type.includes('text/html') && !looksLikeHtml)) return send(body);
+    if (res.locals.vcAmpStory === true || isGamesAppPath(req.path) || req.method !== 'GET' || req.path.startsWith('/admin') || req.path.startsWith('/recompra') || (!type.includes('text/html') && !looksLikeHtml)) return send(body);
     const wasBuffer = Buffer.isBuffer(body);
     let page = injectPublicMeasurement(candidate, req.path);
     if (req.query.lia === '1') {
@@ -2646,7 +2647,7 @@ app.use((req, res, next) => {
     if (page.includes('</head>') && !page.includes('rel="manifest"')) {
       page = page.replace('</head>', '<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#071f4b"><link rel="apple-touch-icon" href="/assets/pwa-icon-192.png"></head>');
     }
-    if (page.includes('</body>') && !page.includes('/pwa-install.js')) {
+    if (page.includes('</body>') && !page.includes('/pwa-install.js') && !page.includes('/games/install.js')) {
       page = page.replace('</body>', '<script src="/pwa-install.js?v=2" defer></script></body>');
     }
     if (!['/course-checkout.html','/presente.html'].includes(req.path) && page.includes('</body>') && !page.includes('/global-market-banner.js')) {
@@ -2669,6 +2670,7 @@ app.use((req, res, next) => {
   if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });
+setupGamesAppRoutes(app,{publicDir:path.join(dir,'public'),currentUser,isAdministrativeUser});
 const cityRewards=setupCityRewards({app,db,requireUser,requireAdmin,sameOriginOnly,publicDir:path.join(dir,'public'),
   affiliateFor:req=>referralAffiliate(req,req.user.email,req.user.id)?.id||null,
   getCourse:slug=>{const c=managedCourse(slug);return c?.status==='active'&&courseReady(slug)?c:null;},
@@ -3132,7 +3134,7 @@ app.post('/api/contact', sameOriginOnly, (req, res) => {
     (name,email,whatsapp,subject,priority,account_reference,details) VALUES (?,?,?,?,?,?,?)`)
     .run(name, email, whatsapp, subject, priority, accountReference, details);
   recordConsent(req,{email,purpose:'contact_request_processing',version:'privacy-2026-08-22',source:'contact_form',evidence:{subject}});
-  adminAnalytics.recordLead(req, `Contato: ${subject}`);
+  if(body.accountContext!=='games')adminAnalytics.recordLead(req, `Contato: ${subject}`);
   if (['Cadastrar minha empresa', 'VitrineCity Ads', 'Cursos', 'Parceria'].includes(subject)) conversionHeader(req, res, 'generate_lead');
   return res.status(201).json({ ok: true, protocol: `VC-${String(result.lastInsertRowid).padStart(6,'0')}` });
 });
@@ -3263,13 +3265,16 @@ app.post('/api/auth/register', sameOriginOnly, (req, res) => {
       return Number(result.lastInsertRowid);
     });
     const userId = create();
-    recordConsent(req,{userId,email:normalizedEmail,purpose:'account_terms',version:req.body?.accountContext==='city'?'city-account-2026-09-08':'terms-2026-08-22',source:'account_registration'});
+    const gamesAccount=req.body?.accountContext==='games';
+    recordConsent(req,{userId,email:normalizedEmail,purpose:'account_terms',version:gamesAccount?'cultiva-account-2026-09-11':req.body?.accountContext==='city'?'city-account-2026-09-08':'terms-2026-08-22',source:'account_registration'});
     recordConsent(req,{userId,email:normalizedEmail,purpose:'adult_declaration',version:'adult-2026-08-22',source:'account_registration'});
     campaignPreferences.record(req,{id:userId,email:normalizedEmail,whatsapp:String(whatsapp).trim().slice(0,30)},req.body?.communications||{},'account_registration');
     setSession(res, userId);
-    recordAcquisitionSignup(db, req, userId);
-    recordSiteSales('recordSignup',req,userId);
-    conversionHeader(req, res, 'sign_up');
+    if(!gamesAccount){
+      recordAcquisitionSignup(db, req, userId);
+      recordSiteSales('recordSignup',req,userId);
+      conversionHeader(req, res, 'sign_up');
+    }
     return res.status(201).json({ ok: true });
   } catch (error) {
     if (String(error?.message || '').includes('UNIQUE')) return res.status(409).json({ error: 'Este e-mail já possui uma conta.' });

@@ -13,6 +13,7 @@ function visit(dir) {
     if(!entry.name.endsWith('.html'))continue;
     const original=fs.readFileSync(file,'utf8');
     const pathname='/'+path.relative(publicRoot,file).split(path.sep).join('/');
+    if(pathname.startsWith('/games/'))continue;
     let html=injectPublicMeasurement(original,pathname);
     html=injectSiteAssistant(html,{path:pathname});
     if(!['/course-checkout.html','/presente.html'].includes(pathname)&&/<\/body>/i.test(html)&&!html.includes('/global-market-banner.js'))html=html.replace(/<\/body>/i,'<script src="/global-market-banner.js?v=9" defer></script></body>');

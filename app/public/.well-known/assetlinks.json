@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.vitrinecity.cultiva",
+      "sha256_cert_fingerprints": ["C4:FD:7D:67:EF:0E:AA:B9:28:14:09:C9:3D:2C:CD:86:1D:78:D6:2D:77:07:F7:1C:FC:95:31:35:54:A3:8C:D6"]
+    }
+  }
+]

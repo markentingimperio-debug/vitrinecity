@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import {classifySiteAssistantPath,siteAssistantContextPath,siteAssistantEmbeddedPath,safeSiteAssistantContentUrl} from '../public/site-assistant-policy.js';
 import {siteAssistantDestination} from '../public/site-assistant-content.js';
 import {injectSiteAssistant,injectSiteAssistantContent} from '../site-assistant-page.js';
+import {isGamesAppPath} from '../games-app-routes.js';
 
 const origin='https://vitrinecity.com';
 const bridgeSource=readFileSync(new URL('../public/site-assistant-bridge.js',import.meta.url),'utf8');
@@ -100,7 +101,7 @@ test('normal, unknown and AMP HTML stay unchanged by the content injector',()=>{
 test('production response wrapper applies embed suppression before normal PWA/banner injection and leaves normal navigation intact',()=>{
   const server=readFileSync(new URL('../server.js',import.meta.url),'utf8').replace(/\r\n/g,'\n'),start=server.indexOf('app.use((req, res, next) => {\n  const send = res.send.bind(res);'),end=server.indexOf("app.set('trust proxy'",start);
   assert.ok(start>0&&end>start);let middleware;
-  vm.runInNewContext(server.slice(start,end),{app:{use(fn){middleware=fn;}},Buffer,injectPublicMeasurement:page=>page,injectSiteAssistant,injectSiteAssistantContent});
+  vm.runInNewContext(server.slice(start,end),{app:{use(fn){middleware=fn;}},Buffer,isGamesAppPath,injectPublicMeasurement:page=>page,injectSiteAssistant,injectSiteAssistantContent});
   function render({embedded=false,buffer=false,method='GET',path='/loja',amp=false}={}){
     let output;const headers={'content-type':'text/html'},req={method,path,query:embedded?{lia:'1'}:{}};
     const res={locals:{vcAmpStory:amp},getHeader:key=>headers[key],setHeader(key,value){headers[key]=value;},send(body){output=body;return this;}};
