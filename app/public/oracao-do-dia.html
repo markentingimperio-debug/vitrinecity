@@ -7,7 +7,8 @@
   <title>Orações e Esperança · Oração do dia | VitrineCity</title>
   <meta name="description" content="Reserve um momento para a oração, encontre uma palavra de esperança e compartilhe uma mensagem de carinho. Um espaço de fé da VitrineCity.">
   <meta name="robots" content="noindex,follow">
-  <link rel="stylesheet" href="/oracao-do-dia.css">
+  <link rel="stylesheet" href="/oracao-do-dia.css?v=20260911-calendar">
+  <script type="module" src="/oracao-do-dia-media.js?v=20260911-calendar"></script>
   <script type="module" src="/oracao-do-dia.js?v=20260910-daily-edition"></script>
   <script type="module" src="/oracao-do-dia-apoio.js?v=20260911-lia-support"></script>
 </head>
@@ -15,7 +16,7 @@
   <a class="skip-link" href="#oracao">Pular para a oração</a>
   <header class="site-header">
     <a class="brand" href="/" aria-label="VitrineCity, página inicial">Vitrine<span>City</span><small>ORAÇÕES E ESPERANÇA</small></a>
-    <nav aria-label="Navegação principal"><a href="#oracao">A oração</a><a href="#palavra">A palavra</a><a class="header-city" href="/vitriny-multiverse-explore.html?city=vitrine-city">Conheça a cidade <span aria-hidden="true">↗</span></a></nav>
+    <nav aria-label="Navegação principal"><a href="#oracao">A oração</a><a href="#calendario">Os dias</a><a href="#videos">Vídeos</a><a class="header-city" href="/vitriny-multiverse-explore.html?city=vitrine-city">Conheça a cidade <span aria-hidden="true">↗</span></a></nav>
   </header>
 
   <main>
@@ -33,8 +34,10 @@
       </figure>
     </section>
 
+    <section class="prayer-calendar section-width" id="calendario" aria-labelledby="calendarTitle"><!-- prayer:calendar:start --><h2 id="calendarTitle">Uma oração para cada dia.</h2><!-- prayer:calendar:end --></section>
+
     <section class="prayer-section section-width" id="oracao" aria-labelledby="prayerTitle">
-      <div class="section-intro"><span class="section-number" aria-hidden="true">01</span><p class="eyebrow">ORAÇÃO DO DIA</p><p class="edition">Edição de <!-- prayer:edition:start --><time id="prayerEdition" datetime="2026-09-10">10 de setembro de 2026</time><!-- prayer:edition:end --></p><p class="reading-time">Cerca de 1 minuto de leitura</p><p class="availability-detail">Uma oração diferente a cada dia, pelo horário de Brasília. Nossa coleção de 31 orações e reflexões se repete em um novo ciclo.</p></div>
+      <div class="section-intro"><span class="section-number" aria-hidden="true">01</span><p class="eyebrow"><!-- prayer:weekday:start -->ORAÇÃO DO DIA<!-- prayer:weekday:end --></p><p class="edition-state"><!-- prayer:edition-state:start -->Para hoje<!-- prayer:edition-state:end --></p><p class="edition">Edição de <!-- prayer:edition:start --><time id="prayerEdition" datetime="2026-09-10">10 de setembro de 2026</time><!-- prayer:edition:end --></p><p class="reading-time">Cerca de 1 minuto de leitura</p><p class="availability-detail">Uma oração diferente a cada dia, pelo horário de Brasília. Nossa coleção de <!-- prayer:collection-count:start -->66<!-- prayer:collection-count:end --> orações e reflexões se repete em ciclos. Escolha um dia ou volte para a oração de hoje.</p></div>
       <article class="prayer-text" id="prayerText">
         <!-- prayer:text:start --><h2 id="prayerTitle">Para seguir com um <br>coração mais tranquilo.</h2>
         <p class="salutation" data-prayer-paragraph>Senhor, neste momento eu me coloco em tua presença.</p>
@@ -43,10 +46,13 @@
         <p data-prayer-paragraph>Ensina-me a enxergar as pequenas dádivas de hoje: uma conversa sincera, o alimento à mesa, a mão estendida, a chance de recomeçar. Que a gratidão não apague as minhas dores, mas abra espaço para a esperança.</p>
         <p data-prayer-paragraph>Guia minhas escolhas. Que minhas palavras sejam cuidadosas e minhas atitudes levem paz. Ao fim deste dia, ajuda-me a descansar, confiando em teu amor e no caminho que ainda podemos construir.</p>
         <p class="prayer-ending" data-prayer-paragraph>Em nome de Jesus, amém.</p><!-- prayer:text:end -->
+        <div class="prayer-audio"><div class="audio-buttons"><button class="button button-primary" type="button" id="listenPrayer" hidden>Ouvir oração</button><button class="button button-quiet" type="button" id="pausePrayer" hidden>Pausar</button><button class="text-button" type="button" id="stopPrayer" hidden>Parar</button></div><p id="audioStatus" role="status" aria-live="polite">Leitura em voz alta com a voz do seu aparelho. Ative o JavaScript para ouvir.</p></div>
         <div class="prayer-actions"><button type="button" class="button button-primary" id="sharePrayer"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 15V3m-4 4 4-4 4 4M5 12v8h14v-8"/></svg>Compartilhar oração</button><button type="button" class="button button-quiet" id="copyPrayer"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M15 8V4H4v11h4"/></svg>Copiar texto</button><button type="button" class="text-button" id="copyPrayerLink">Copiar link</button></div>
         <p class="action-status" id="shareStatus" role="status" aria-live="polite"></p>
       </article>
     </section>
+
+    <section class="prayer-video-section section-width" id="videos" aria-labelledby="videosTitle"><p class="eyebrow">ORAÇÕES NA VITRINY SOCIAL</p><h2 id="videosTitle">Uma mensagem para ver e ouvir.</h2><p>Vídeos de oração publicados na nossa rede, para acompanhar este momento de fé.</p><p id="videoStatus" class="availability-detail" role="status" aria-live="polite">Ative o JavaScript para carregar os vídeos de oração.</p><button type="button" class="text-button" id="retryPrayerVideos" hidden>Tentar carregar os vídeos novamente</button><div id="prayerVideos" class="prayer-videos"></div><a class="text-button" href="/social">Conhecer a Vitriny Social ↗</a></section>
 
     <section class="word-section" id="palavra" aria-labelledby="wordTitle">
       <div class="word-inner"><div class="word-label"><span class="section-number" aria-hidden="true">02</span><p class="eyebrow" id="wordTitle">UMA PALAVRA PARA GUARDAR</p></div><blockquote><p id="dailyVerse">“O Senhor é o meu pastor; nada me faltará.”</p><footer><cite>Salmos 23:1</cite><a href="https://www.sbb.org.br/biblia/ARA/PSA.23" target="_blank" rel="noopener noreferrer">Ler na Bíblia <span aria-hidden="true">↗</span><span class="sr-only"> (abre em nova aba)</span></a></footer></blockquote></div>
