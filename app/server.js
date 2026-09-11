@@ -36,6 +36,7 @@ import {setupCityExploration,decorateExplorationPage} from './city-exploration.j
 import {setupCityRewards} from './city-rewards.js';
 import {setupPrayerSupport} from './prayer-support.js';
 import {createPrayerDailyHandler} from './prayer-daily.js';
+import {createPrayerVideoHandler} from './prayer-videos.js';
 import {viralQueueCapacity,distinctViralThemes,CURATED_VIDEO_TOPICS,viralThemeKey} from './viral-factory-policy.js';
 import {setupCourierAccount} from './courier-account.js';
 import { setupMediaCatalog } from './media-catalog.js';
@@ -8319,6 +8320,8 @@ app.get('/api/social/profile-suggestions', (req, res) => {
     .all(viewerId,viewerId,viewerId,viewerId,viewerId,viewerId,viewerId,viewerId,viewerCity,viewerCity);
   return res.json({ authenticated: Boolean(viewer), suggestions });
 });
+
+app.get('/api/prayer/videos', createPrayerVideoHandler({db,currentUser}));
 
 app.get('/api/social/discover', (req,res) => {
   const viewer=currentUser(req),viewerId=viewer?.id||0,q=String(req.query.q||'').trim().toLowerCase().slice(0,60).replace(/^[@#]/,'');

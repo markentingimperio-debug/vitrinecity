@@ -1,3 +1,5 @@
+import {NEW_PRAYERS} from './prayer-collection-v2.js';
+
 // Original editorial collection, version 1. Keep its order stable: dated share
 // links refer to this 31-day cycle, anchored to the collection's launch date.
 export const PRAYER_COLLECTION_START = '2026-09-10';
@@ -44,7 +46,15 @@ export const DAILY_PRAYERS = Object.freeze(entries.map(([title, greeting, first,
   reflectionTitle, reflection, prompt,
 })));
 
-function validDay(value) {
+// Dated versions preserve archived links when the editorial collection grows.
+export const PRAYER_COLLECTIONS = Object.freeze([
+  Object.freeze({from:PRAYER_COLLECTION_START, prayers:DAILY_PRAYERS}),
+  Object.freeze({from:'2026-09-12', prayers:Object.freeze([...NEW_PRAYERS,...DAILY_PRAYERS])}),
+]);
+export const PRAYER_COUNT = PRAYER_COLLECTIONS.at(-1).prayers.length;
+export const PRAYER_PREVIEW_DAYS = 366;
+
+export function validDay(value) {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
     && Number.isFinite(Date.parse(`${value}T00:00:00Z`))
     && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
@@ -60,11 +70,30 @@ export function prayerDayInBrazil(now = new Date()) {
 
 export function getDailyPrayer(day) {
   if (!validDay(day) || day < PRAYER_COLLECTION_START) throw new RangeError('Edição de oração indisponível.');
-  const offset = Math.round((Date.parse(`${day}T00:00:00Z`) - Date.parse(`${PRAYER_COLLECTION_START}T00:00:00Z`)) / 86400000);
+  const collection = [...PRAYER_COLLECTIONS].reverse().find(item=>day>=item.from);
+  const offset = Math.round((Date.parse(`${day}T00:00:00Z`) - Date.parse(`${collection.from}T00:00:00Z`)) / 86400000);
   return {
-    ...DAILY_PRAYERS[offset % DAILY_PRAYERS.length], day,
+    ...collection.prayers[offset % collection.prayers.length], day,
+    weekday: new Intl.DateTimeFormat('pt-BR',{timeZone:'UTC',weekday:'long'}).format(new Date(`${day}T12:00:00Z`)),
     edition: new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${day}T12:00:00Z`)),
   };
+}
+
+export function shiftPrayerDay(day,offset){
+  return new Date(Date.parse(`${day}T12:00:00Z`)+offset*86400000).toISOString().slice(0,10);
+}
+
+export function renderPrayerCalendar(day,today){
+  const last=shiftPrayerDay(today,PRAYER_PREVIEW_DAYS);
+  const date=new Date(`${day}T12:00:00Z`), monday=shiftPrayerDay(day,-((date.getUTCDay()+6)%7));
+  const link=(value,label,extra='')=>`<a href="/oracao-do-dia.html?dia=${value}#oracao" ${extra}>${label}</a>`;
+  const names=['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
+  const days=names.map((name,i)=>{
+    const value=shiftPrayerDay(monday,i),num=Number(value.slice(8));
+    const label=`<span>${name}</span><strong>${num}</strong>${value===today?'<small>Hoje</small>':''}`;
+    return value<PRAYER_COLLECTION_START||value>last?`<span class="calendar-unavailable">${label}</span>`:link(value,label,`aria-label="${name}, ${value.slice(8)}/${value.slice(5,7)}"${value===day?' aria-current="date"':''}`);
+  }).join('');
+  return `<div class="calendar-heading"><div><p class="eyebrow">UM ENCONTRO A CADA DIA</p><h2 id="calendarTitle">Escolha seu momento de oração.</h2></div><a class="button button-quiet" href="/oracao-do-dia.html#oracao">Oração de hoje</a></div><nav class="prayer-week" aria-label="Orações da semana">${days}</nav><div class="calendar-controls"><nav aria-label="Navegar entre os dias">${day>PRAYER_COLLECTION_START?link(shiftPrayerDay(day,-1),'← Dia anterior','class="text-button"'):''}${day<last?link(shiftPrayerDay(day,1),'Próximo dia →','class="text-button"'):''}</nav><form action="/oracao-do-dia.html#oracao" method="get"><label for="prayerDate">Escolher uma data</label><div><input type="date" id="prayerDate" name="dia" value="${day}" min="${PRAYER_COLLECTION_START}" max="${last}" required><button class="button button-quiet" type="submit">Abrir oração</button></div></form></div>`;
 }
 
 const escapeHtml = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -78,11 +107,16 @@ function replaceSlot(template, slot, html) {
   return `${template.slice(0, from + start.length)}${html}${template.slice(to)}`;
 }
 
-export function renderDailyPrayer(template, prayer) {
+export function renderDailyPrayer(template, prayer, {today=prayerDayInBrazil()}={}) {
   let html = replaceSlot(String(template), 'edition', `<time id="prayerEdition" datetime="${escapeHtml(prayer.day)}">${escapeHtml(prayer.edition)}</time>`);
   html = replaceSlot(html, 'text', `<h2 id="prayerTitle">${escapeHtml(prayer.title)}</h2>\n${prayer.paragraphs.map((text, i) => `<p${i === 0 ? ' class="salutation"' : i === prayer.paragraphs.length - 1 ? ' class="prayer-ending"' : ''} data-prayer-paragraph>${escapeHtml(text)}</p>`).join('\n')}`);
   html = replaceSlot(html, 'reflection', `<h2 id="reflectionTitle">${escapeHtml(prayer.reflectionTitle)}</h2><p>${escapeHtml(prayer.reflection)}</p><p class="reflection-prompt">${escapeHtml(prayer.prompt)}</p>`);
-  return replaceSlot(html, 'footer-edition', escapeHtml(prayer.edition));
+  html = replaceSlot(html, 'footer-edition', escapeHtml(prayer.edition));
+  html = replaceSlot(html, 'calendar', renderPrayerCalendar(prayer.day,today));
+  html = replaceSlot(html, 'weekday', `Oração de ${escapeHtml(prayer.weekday)}`);
+  html = replaceSlot(html, 'edition-state', prayer.day===today?'Para hoje':prayer.day>today?'Oração programada':'Oração de um dia anterior');
+  html = replaceSlot(html, 'collection-count', String(PRAYER_COUNT));
+  return html.replace('<title>Orações e Esperança · Oração do dia | VitrineCity</title>',`<title>Oração de ${escapeHtml(prayer.weekday)} · ${escapeHtml(prayer.edition)} | VitrineCity</title>`);
 }
 
 export function createPrayerDailyHandler({ readTemplate, now = () => new Date() } = {}) {
@@ -92,10 +126,10 @@ export function createPrayerDailyHandler({ readTemplate, now = () => new Date() 
       const today = prayerDayInBrazil(now());
       const day = req.query?.dia === undefined ? today : req.query.dia;
       res.set('Cache-Control', 'no-store');
-      if (!validDay(day) || day < PRAYER_COLLECTION_START || day > today) {
+      if (!validDay(day) || day < PRAYER_COLLECTION_START || day > shiftPrayerDay(today,PRAYER_PREVIEW_DAYS)) {
         return res.status(400).type('html').send('<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Edição indisponível</title><main><h1>Esta edição não está disponível.</h1><p>Escolha a oração de hoje para continuar.</p><a href="/oracao-do-dia#oracao">Ler a oração de hoje</a></main></html>');
       }
-      return res.type('html').send(renderDailyPrayer(readTemplate(), getDailyPrayer(day)));
+      return res.type('html').send(renderDailyPrayer(readTemplate(), getDailyPrayer(day),{today}));
     } catch (error) {
       return next(error);
     }

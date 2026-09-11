@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {once} from 'node:events';
 import {runInNewContext} from 'node:vm';
 import express from 'express';
-import {DAILY_PRAYERS, prayerDayInBrazil, getDailyPrayer, renderDailyPrayer, createPrayerDailyHandler} from '../prayer-daily.js';
+import {DAILY_PRAYERS, PRAYER_COLLECTIONS, PRAYER_COUNT, prayerDayInBrazil, getDailyPrayer, renderDailyPrayer, createPrayerDailyHandler} from '../prayer-daily.js';
 import {prayerShareUrl} from '../public/oracao-do-dia.js';
 
 const template=readFileSync(new URL('../public/oracao-do-dia.html',import.meta.url),'utf8');
@@ -25,11 +25,13 @@ test('Brazil date changes at its midnight, independently from the UTC calendar',
   assert.throws(()=>prayerDayInBrazil(new Date('invalid')));
 });
 
-test('the stable collection supplies 31 complete distinct prayers and repeats after 31 days',()=>{
+test('dated collections preserve the original entries and supply 66 complete distinct prayers',()=>{
   assert.equal(DAILY_PRAYERS.length,31);
   assert.equal(new Set(DAILY_PRAYERS.map(p=>p.id)).size,31);
   assert.equal(new Set(DAILY_PRAYERS.map(p=>p.title)).size,31);
-  for(const prayer of DAILY_PRAYERS){
+  assert.equal(PRAYER_COUNT,66);
+  assert.equal(new Set(PRAYER_COLLECTIONS.at(-1).prayers.map(p=>p.title)).size,66);
+  for(const prayer of PRAYER_COLLECTIONS.at(-1).prayers){
     assert.equal(prayer.paragraphs.length,4);
     assert.ok(prayer.paragraphs.join(' ').length>480);
     assert.ok(prayer.reflection.length>70);
@@ -37,7 +39,10 @@ test('the stable collection supplies 31 complete distinct prayers and repeats af
     assert.equal(prayer.paragraphs.at(-1),'Em nome de Jesus, amém.');
     assert.ok(Object.isFrozen(prayer.paragraphs));
   }
-  assert.equal(getDailyPrayer('2026-09-10').id,getDailyPrayer('2026-10-11').id);
+  assert.equal(getDailyPrayer('2026-09-12').id,getDailyPrayer('2026-11-17').id);
+  assert.equal(getDailyPrayer('2026-09-10').id,'prayer-v1-01');
+  assert.equal(getDailyPrayer('2026-09-11').id,'prayer-v1-02');
+  assert.equal(getDailyPrayer('2026-09-12').id,'prayer-v2-01');
   assert.notEqual(getDailyPrayer('2026-09-10').id,getDailyPrayer('2026-09-11').id);
   assert.equal(getDailyPrayer('2028-02-29').day,'2028-02-29');
   for(const day of ['2026-09-09','2026-02-30','2027-02-29','2026-9-10','bad',null])assert.throws(()=>getDailyPrayer(day));
@@ -53,7 +58,9 @@ test('SSR provides the entire edition, reflection, dates and unchanged support c
   assert.ok(!result.html.includes('10 de setembro de 2026'));
   assert.ok(result.html.includes('id="sharePrayer"'));
   assert.ok(result.html.includes('A oração continuará aberta a todos.'));
-  assert.ok(result.html.includes('coleção de 31 orações'));
+  assert.match(result.html,/collection-count:start -->66<!--/);
+  assert.match(result.html,/Oração de sexta-feira/);
+  assert.match(result.html,/aria-current="date"/);
 });
 
 test('dated sharing preserves the exact edition later and removes unrelated payment identifiers',()=>{
@@ -66,8 +73,8 @@ test('dated sharing preserves the exact edition later and removes unrelated paym
   assert.ok(!prayerShareUrl(url,'2026-02-30').includes('?'));
 });
 
-test('future, duplicate, injected and impossible query dates cannot impersonate an edition',()=>{
-  for(const dia of ['2026-09-12','2026-09-09','2026-02-30',['2026-09-10','2026-09-11'],{},'<script>alert(1)</script>','']){
+test('out-of-range, duplicate, injected and impossible query dates cannot impersonate an edition',()=>{
+  for(const dia of ['2028-09-12','2026-09-09','2026-02-30',['2026-09-10','2026-09-11'],{},'<script>alert(1)</script>','']){
     const result=invoke({dia});assert.equal(result.status,400);
     assert.ok(result.html.includes('Ler a oração de hoje'));
     assert.ok(!result.html.includes('<script>'));
@@ -133,7 +140,7 @@ test('actual server route order returns daily and archived editions over HTTP be
     const archive=await request(`${route}?dia=2026-09-10&utm_source=test`);
     assert.equal(archive.status,200);assert.equal(archive.cache,'no-store');
     assert.match(archive.html,/datetime="2026-09-10"/);assert.match(archive.html,/Um coração mais tranquilo/);
-    for(const query of ['dia=2026-09-12','dia=2026-02-30','dia=2026-09-10&dia=2026-09-11']){
+    for(const query of ['dia=2028-09-12','dia=2026-02-30','dia=2026-09-10&dia=2026-09-11']){
       const invalid=await request(`${route}?${query}`);
       assert.equal(invalid.status,400,`${route}?${query}`);assert.equal(invalid.cache,'no-store');
       assert.match(invalid.html,/Ler a oração de hoje/);
@@ -153,4 +160,10 @@ test('regression control: moving the daily handler after the real HTML catchall 
     const invalid=await request(`${route}?dia=impossivel`);
     assert.equal(invalid.status,200,'The old catchall incorrectly ignored the invalid edition.');
   }
+});
+
+ test('the calendar browses upcoming weekdays, leap days and month boundaries',()=>{
+for(const [day,weekday] of [['2026-09-12','sábado'],['2026-09-13','domingo'],['2026-09-14','segunda-feira'],['2027-01-01','sexta-feira']]){const result=invoke({dia:day});assert.equal(result.status,200);assert.ok(result.html.includes('Oração de '+weekday));assert.match(result.html,/Oração programada/);assert.ok(result.html.includes('name="dia"'));}
+assert.equal(getDailyPrayer('2028-02-29').weekday,'terça-feira');
+const start=invoke({dia:'2026-09-10'});assert.ok(!start.html.includes('← Dia anterior'));
 });
