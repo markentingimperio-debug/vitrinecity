@@ -3,6 +3,7 @@ export function installPrayerAudio({document,window}){
   const synth=window.speechSynthesis;
   if(!synth||!window.SpeechSynthesisUtterance){status.textContent='A leitura em voz alta não está disponível neste navegador. Você pode ler a oração ou assistir aos vídeos abaixo.';return;}
   play.hidden=false;
+  status.textContent='Toque em Ouvir oração. A leitura usa a voz do seu aparelho.';
   let run=0,active=false,paused=false;
   function reset(){active=false;paused=false;play.disabled=false;pause.hidden=true;stop.hidden=true;pause.textContent='Pausar';}
   function cancel(){run++;synth.cancel();reset();}
@@ -81,3 +82,4 @@ if(typeof document!=='undefined'){
   const stopAudio=installPrayerAudio({document,window});
   installPrayerVideos({document,fetch:window.fetch.bind(window),stopAudio});
 }
+
