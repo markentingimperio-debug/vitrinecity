@@ -25,12 +25,15 @@ if(deliveryParams.get('delivery')==='local'){quoteButton.hidden=true;total.inser
 document.getElementById('close').onclick=()=>cartPanel.classList.remove('open');
 const vcCheckoutButton=document.getElementById('checkout');
 let vcCheckoutBusy=false,vcCheckoutUncertain=false,vcCheckoutLeaving=false;
+let liaShopDiscount=null;
 vcCheckoutButton.onclick=async event=>{
   event.preventDefault();
   if(vcCheckoutBusy||vcCheckoutUncertain||vcCheckoutLeaving)return;
   const checkoutStatus=document.getElementById('status'),terms=document.getElementById('marketplaceTerms');
   if(!cart.length){checkoutStatus.textContent='Adicione um produto ao carrinho para continuar.';return}
   if(!terms.checked){checkoutStatus.textContent='Aceite os Termos do Marketplace para continuar.';terms.focus();return}
+  const displayedQuote=liaShopDiscount?.current(),displayedShipping=shippingQuote?.shippingCents;
+  if(!displayedQuote){await liaShopDiscount?.refresh();checkoutStatus.textContent='Confira o total atualizado e confirme os termos antes de continuar.';terms.checked=false;return}
   vcCheckoutBusy=true;vcCheckoutButton.disabled=true;checkoutStatus.textContent='Preparando pagamento...';
   let checkoutStarted=false;
   const navigate=url=>{
@@ -46,10 +49,14 @@ vcCheckoutButton.onclick=async event=>{
     if(!address){navigate('/minha-conta.html?returnTo='+returnTo);return}
     const quote=await calculateShipping(address);
     if(!quote){checkoutStatus.textContent='Não foi possível calcular a entrega para este endereço.';return}
+    const priced=await liaShopDiscount.refresh();
+    if(!priced)throw new Error('Não foi possível confirmar o total do carrinho. Consulte novamente.');
+    if(priced.amountCents!==displayedQuote.amountCents||priced.originalAmountCents!==displayedQuote.originalAmountCents||priced.couponCode!==displayedQuote.couponCode||quote.shippingCents!==displayedShipping){terms.checked=false;throw new Error('O total foi atualizado. Confira o desconto e a entrega no resumo e aceite novamente antes de pagar.');}
     checkoutStarted=true;
-    const response=await fetch('/api/marketplace/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({addressId:address.id,items:cartItems(),deliveryMode:deliveryMode.value,termsAccepted:true})});
+    const response=await fetch('/api/marketplace/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({addressId:address.id,items:cartItems(),deliveryMode:deliveryMode.value,termsAccepted:true,couponCode:priced.couponCode,expectedAmountCents:priced.amountCents+quote.shippingCents})});
     if([400,401,403,404,409,429,503].includes(response.status))checkoutStarted=false;
     const payload=await response.json();
+    if(response.status===409&&payload.code==='lia_quote_changed'){terms.checked=false;await liaShopDiscount.refresh();if(Number.isSafeInteger(payload.shippingCents)&&shippingQuote)shippingQuote.shippingCents=payload.shippingCents;liaShopDiscount.render();}
     if(!response.ok)throw new Error(payload.error||'Não foi possível abrir o pagamento.');
     const url=new URL(payload.checkoutUrl);
     if(response.status!==201||typeof payload.reference!=='string'||!payload.reference.trim()||url.protocol!=='https:'||!['www.mercadopago.com.br','mercadopago.com.br','www.mercadopago.com','mercadopago.com'].includes(url.hostname)||url.username||url.password||url.port)throw new Error('Não foi possível verificar o endereço de pagamento.');
@@ -77,4 +84,11 @@ import {applyExternalPhysicalProductLinks} from '/vitriny-external-product-purch
 const baseExternalProductRender=render;
 render=(...args)=>{baseExternalProductRender(...args);applyExternalPhysicalProductLinks(productsBox,products,{origin:location.origin});};
 render();
+</script><script type="module">
+import {mountLiaShopDiscount} from '/lia-shop-discount.js?v=20260911-lia5';
+liaShopDiscount=mountLiaShopDiscount({getItems:()=>cartItems(),getShippingCents:()=>shippingQuote?.shippingCents});
+const beforeLiaCartRender=renderCart;
+renderCart=(...args)=>{beforeLiaCartRender(...args);liaShopDiscount.changed();};
+cartButton.addEventListener('click',()=>liaShopDiscount.refresh());
+renderCart();
 </script></body></html>

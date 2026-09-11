@@ -262,6 +262,42 @@ test('social discovery provides only the existing explicit social link without p
   assert.equal(r.body.actions[0].url,'/social');assert.equal(r.body.actions[0].assetId,'social');assert.deepEqual(r.body.offers,[]);assert.equal(r.body.contactOffer,null);assert.equal(f.seen.calls.length,0);
 });
 
+test('store discovery lists only published shops and entertainment stays with actual platform destinations',async t=>{
+  const f=await fixture(t,{courses:[{slug:'cozinha-basica',title:'Cozinha básica',available:true}]});
+  const shops=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Quero conhecer as lojas da plataforma',contextPath:'/cursos/cozinha-basica'}});
+  assert.deepEqual(shops.body.actions.map(a=>a.url),['/loja/official/loja-oficial']);
+  assert.deepEqual(shops.body.offers,[]);assert.doesNotMatch(JSON.stringify(shops.body),/Loja privada/);
+  const leisure=await f.chat('Quero entretenimento, o que posso fazer?');
+  assert.deepEqual(leisure.body.actions.map(a=>a.url),['/multiverso','/social']);assert.deepEqual(leisure.body.offers,[]);
+  assert.doesNotMatch(leisure.body.reply,/jogos|cinema|prêmios|conteúdos publicados/);
+  f.db.prepare('INSERT INTO editorial_articles VALUES(?,?,?,?,?,?,?,?)').run('leisure','leitura','Leitura no fim de semana','','Conteúdo público.','entretenimento','2026-09-11','published');
+  const published=await f.chat('Quero sugestões de diversão');
+  assert.equal(published.body.actions[0].url,'/entretenimento');assert.match(published.body.reply,/conteúdos publicados de entretenimento/);
+  f.db.prepare("UPDATE editorial_articles SET status='draft' WHERE id='leisure'").run();
+  const removed=await f.chat('Quero entretenimento');assert.ok(removed.body.actions.every(a=>a.url!=='/entretenimento'));
+  f.db.exec("CREATE TABLE digital_books(id TEXT,slug TEXT,status TEXT); INSERT INTO digital_books VALUES('book','livro-publico','published')");
+  const books=await f.chat('Quero ver os livros');assert.equal(books.body.actions[0].url,'/livros');
+  f.db.prepare("UPDATE digital_books SET status='review'").run();
+  const privateBook=await f.chat('Quero livros');assert.deepEqual(privateBook.body.actions,[]);
+  assert.equal(f.seen.calls.length,0);
+});
+
+test('LIA5 is a server-confirmed benefit for own purchases after a real interaction, never a welcome or affiliate claim',async t=>{
+  const f=await fixture(t,{realExperience:true,courses:[{slug:'cozinha-basica',title:'Cozinha básica',available:true}]});
+  const welcome=await f.call('/api/site-assistant/context?path=/cursos/cozinha-basica');assert.equal(welcome.body.discountOffer,undefined);
+  const course=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Como comprar esse curso?',contextPath:'/cursos/cozinha-basica'}});
+  assert.equal(course.body.discountOffer.code,'LIA5');assert.equal(course.body.discountOffer.percent,5);assert.match(course.body.discountOffer.description,/Não inclui frete/);
+  const unrelated=await f.chat('Quero ofertas de parceiros');assert.equal(unrelated.body.discountOffer,null);
+  const otherStore=await f.chat('Quero uma forma para bolo');assert.equal(otherStore.body.discountOffer,null);
+  f.db.prepare("INSERT INTO store_profiles VALUES('official_agrotecnica','Agrotecnica','Plantas','published')").run();
+  f.db.prepare("UPDATE store_products SET store_reference='official_agrotecnica' WHERE id=1").run();
+  const own=await f.chat('Quero uma forma para bolo');assert.equal(own.body.discountOffer.code,'LIA5');
+  f.db.exec("ALTER TABLE store_products ADD COLUMN product_url TEXT DEFAULT ''; UPDATE store_products SET product_url='https://partner.test/item' WHERE id=1");
+  const external=await f.chat('Quero uma forma para bolo');assert.equal(external.body.discountOffer,null);
+  const refused=await f.chat('Não quero ofertas');assert.equal(refused.body.discountOffer,null);
+  const prayer=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Quero uma oração',contextPath:'/oracao-do-dia.html'}});assert.equal(prayer.body.discountOffer,null);
+});
+
 test('buying this course for a shop keeps the exact course checkout identity',async t=>{
   const f=await fixture(t,{courses:[{slug:'vendas-para-lojas',title:'Vendas para lojas',available:true}]}),r=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Quero comprar esse curso para loja',contextPath:'/cursos/vendas-para-lojas'}});
   assert.equal(r.body.actions[0].url,'/course-checkout.html?curso=vendas-para-lojas');assert.match(r.body.reply,/resumo e o preço deste curso/);assert.equal(f.seen.calls.length,0);

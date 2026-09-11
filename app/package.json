@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node --import ./security-fetch-guard.js server.js",
     "pretest": "node --test scripts/test-integration-health.mjs && node scripts/test-market-banner-loading.mjs",
-    "test:whatsapp-products": "node --test scripts/test-whatsapp-product-campaigns.mjs scripts/test-whatsapp-schedule-worker.mjs scripts/test-admin-whatsapp-products.mjs",
+    "test:whatsapp-products": "node --test scripts/test-whatsapp-product-campaigns.mjs scripts/test-whatsapp-schedule-worker.mjs scripts/test-admin-whatsapp-products.mjs scripts/test-whatsapp-thematic-groups.mjs scripts/test-admin-whatsapp-thematic.mjs",
     "test:social-comment-campaigns": "node --test scripts/test-social-comment-campaigns.mjs scripts/test-meta-comment-api.mjs scripts/test-admin-social-comment-campaigns.mjs scripts/test-social-oauth-intent.mjs",
     "test:youtube-channel-scope": "node --test scripts/test-external-metrics-store.mjs scripts/test-admin-youtube-scope.mjs",
     "test:video-provider-receipts": "node --test scripts/test-video-provider-receipts.mjs scripts/test-viral-production-status.mjs",

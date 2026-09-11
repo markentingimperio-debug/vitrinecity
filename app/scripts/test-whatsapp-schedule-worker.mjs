@@ -60,6 +60,18 @@ test('an exclusion arriving during preparation stops a claimed message before pr
   } finally {db.close();}
 });
 
+test('a request-specific final guard prevents submission without creating an uncertain retry',async()=>{
+  for(const mode of ['false','throw']){
+    const {db,add,options}=fixture();let calls=0;
+    try{
+      add('boundary');
+      const run=createWhatsAppScheduleProcessor({...options,prepareScheduledMessage:async()=>({pathname:'/chat/send/text',body:{},beforeSubmit:()=>{if(mode==='throw')throw Error('configuration unavailable');return false;}}),whatsappQrRequest:async()=>{calls++;}});
+      await run();await run();const row=db.prepare('SELECT * FROM whatsapp_qr_schedules').get();
+      assert.equal(calls,0);assert.equal(row.status,'failed');assert.equal(row.confirmation_state,'not_submitted');
+    }finally{db.close();}
+  }
+});
+
 test('sends image plus caption and preserves text schedules without sending future or cancelled rows',async()=>{
   const {db,add,options}=fixture(),sent=[];
   try {

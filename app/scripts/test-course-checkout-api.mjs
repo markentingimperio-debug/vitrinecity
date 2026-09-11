@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import express from 'express';
 import Database from 'better-sqlite3';
+import {courseLiaQuote,publicLiaQuote,assertLiaQuoteAccepted} from '../lia-discount.js';
 
 const source = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
 function extract(start, end) {
@@ -39,6 +40,8 @@ async function fixture(t, { configured = true } = {}) {
     isAdministrativeUser: () => false,
     managedCourse: slug => courses.get(slug), courseReady: slug => slug !== 'preparacao',
     recordConsent: (...args) => calls.consent.push(args),
+    courseLiaQuote,publicLiaQuote,assertLiaQuoteAccepted,liaDiscountEligible:()=>false,
+    sendLiaQuoteError:(res,error)=>res.status(error.status||400).json({error:error.message,code:error.code,quote:error.quote}),
     process: { env: configured ? { MERCADOPAGO_ACCESS_TOKEN: 'fixture-only', MERCADOPAGO_WEBHOOK_SECRET: 'fixture-only' } : {} },
     checkoutAttempts: new Map(), allowAttempt: () => true, referralAffiliate: () => null,
     adminAnalytics: {

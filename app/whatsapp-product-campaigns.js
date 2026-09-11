@@ -6,6 +6,7 @@ import {rasterSize} from './web-story-assets.js';
 import {validAffiliateUrl} from './affiliate-catalog.js';
 import {ensureWhatsAppScheduleConfirmation,countWhatsAppSchedules} from './whatsapp-schedule-worker.js';
 import {isWhatsAppCommercialGroupAllowed,WHATSAPP_COMMERCIAL_EXCLUDED_REASON} from './whatsapp-commercial-policy.js';
+import {whatsappCampaignDirectory,WHATSAPP_THEMATIC_GROUPS} from './whatsapp-group-directory.js';
 
 const API = '/api/admin/whatsapp-qr/product-campaigns';
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -99,27 +100,16 @@ export function registerWhatsAppProductCampaigns({app,db,requireAdmin,sameOrigin
       groups,startAt:row.start_at,intervalMinutes:row.interval_minutes,total,counts,createdAt:row.created_at,publishedAt:row.published_at};
   }
   async function currentGroups() {
-    let history;
+    let history,state;
     try {
-      const state = whatsappQrData(await whatsappQrRequest('/session/status'));
+      state = whatsappQrData(await whatsappQrRequest('/session/status'));
       if(!(state.connected || state.Connected) || !(state.loggedIn || state.LoggedIn))throw fail('Conecte o WhatsApp no painel antes de preparar os envios.',409);
       history = whatsappQrData(await whatsappQrRequest('/chat/history?chat_jid=index'));
     } catch(error) { if(error.campaignSafe)throw error; throw fail('Não foi possível consultar os grupos da sessão conectada.',502); }
-    const groups = new Map();
-    for(const item of Object.values(history || {}).flatMap(value => Array.isArray(value) ? value : [])) {
-      const jid = String(item.chat_jid || item.ChatJID || '');
-      if(GROUP.test(jid)&&isGroupAllowed(jid))groups.set(jid,{jid,name:safeText(item.group_name || item.name || item.Name).slice(0,160) || jid.split('@')[0]});
-    }
-    // Names are optional. The history remains the recipient allowlist.
-    if(groups.size)try {
-      const data = whatsappQrData(await whatsappQrRequest('/group/list'));
-      const list = Array.isArray(data) ? data : Array.isArray(data?.Groups) ? data.Groups : Array.isArray(data?.groups) ? data.groups : [];
-      for(const item of list) {
-        const jid = String(item.JID || item.jid || item.group_jid || '');
-        if(groups.has(jid))groups.get(jid).name = safeText(item.Name || item.name || item.GroupName?.Name).slice(0,160) || groups.get(jid).name;
-      }
-    } catch { /* Do not replace recipient identity with a group-name lookup failure. */ }
-    return [...groups.values()].sort((a,b) => a.name.localeCompare(b.name,'pt-BR') || a.jid.localeCompare(b.jid));
+    // A failed canonical lookup cannot authorize additions. Historical choices
+    // retain their previous behavior; only four named destinations may be added.
+    let groupData;try{groupData=whatsappQrData(await whatsappQrRequest('/group/list'));}catch{}
+    return whatsappCampaignDirectory({history,groupData,state,isGroupAllowed});
   }
   async function imageBytes(fileName) {
     if(!IMAGE_NAME.test(fileName || ''))throw fail('A foto preparada precisa ser revisada.',409);
@@ -306,6 +296,8 @@ export function registerWhatsAppProductCampaigns({app,db,requireAdmin,sameOrigin
     if(!schedule)throw fail('Agendamento não encontrado.',409);
     if(!isGroupAllowed(schedule.group_jid))throw fail(WHATSAPP_COMMERCIAL_EXCLUDED_REASON,409);
     if(!schedule.product_slug && !schedule.image_path)return null;
+    if(WHATSAPP_THEMATIC_GROUPS.some(group=>group.jid===schedule.group_jid)&&!(await currentGroups()).some(group=>group.jid===schedule.group_jid))
+      throw fail('A permissão deste grupo mudou. Revise antes de continuar.',409);
     const campaign = getRow(schedule.campaign_id), product = campaign && JSON.parse(campaign.products_json).find(value => value.slug === schedule.product_slug);
     const group = campaign && JSON.parse(campaign.groups_json).find(value => value.jid === schedule.group_jid);
     if(!campaign || campaign.status !== 'queued' || schedule.status !== 'processing' || !product || !group ||

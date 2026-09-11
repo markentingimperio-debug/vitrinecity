@@ -95,9 +95,9 @@ test('singleton mounts once and disabled backend removes it without chat request
   const off = harness({ disabled: true }); await off.mount().ready; assert.equal(off.doc.body.children.length, 0); assert.equal(off.intervals, 0);
 });
 
-test('invitation waits for ten visible idle seconds and does not move focus or call AI', async () => {
+test('invitation waits for three visible idle seconds and does not move focus or call AI', async () => {
   const h = harness(); await h.mount().ready; const invitation = h.find('.vc-assistant-invite');
-  h.advance(9000); assert.equal(invitation.hidden, true); h.doc.hidden = true; h.doc.fire('visibilitychange'); h.advance(20000); assert.equal(invitation.hidden, true);
+  h.advance(2000); assert.equal(invitation.hidden, true); h.doc.hidden = true; h.doc.fire('visibilitychange'); h.advance(20000); assert.equal(invitation.hidden, true);
   h.doc.hidden = false; h.doc.fire('visibilitychange'); h.advance(1000); assert.equal(invitation.hidden, false);
   assert.equal(h.doc.focusCalls, 0); assert.equal(h.count('/chat'), 0);
   assert.equal(h.requests.filter(r => r.body?.type === 'invitation').length, 1);
@@ -105,8 +105,8 @@ test('invitation waits for ten visible idle seconds and does not move focus or c
 
 test('purchase forms pause invitation time and hide visible invitation until idle', async () => {
   const h = harness(); await h.mount().ready; const invitation = h.find('.vc-assistant-invite');
-  h.advance(5000); h.doc.activity = true; h.advance(30000); assert.equal(invitation.hidden, true);
-  h.doc.activity = false; h.advance(6000); assert.equal(invitation.hidden, false);
+  h.advance(1000); h.doc.activity = true; h.advance(30000); assert.equal(invitation.hidden, true);
+  h.doc.activity = false; h.advance(3000); assert.equal(invitation.hidden, false);
   h.doc.activity = true; h.advance(1000); assert.equal(invitation.hidden, true);
   h.doc.activity = false; h.advance(1000); assert.equal(invitation.hidden, false);
 });
@@ -133,6 +133,15 @@ test('free conversation starts without choices or automatic cards; explicit form
 test('failed chat never retries automatically and keeps message for explicit retry', async () => {
   const h = harness({ failChat: true }); const widget = h.mount(); await widget.ready; widget.open(); h.find('textarea').value = 'Quero comprar'; h.find('form').fire('submit'); await flush(); h.advance(90000);
   assert.equal(h.count('/chat'), 1); assert.equal(h.find('textarea').value, 'Quero comprar'); assert.match(h.find('.vc-assistant-status').textContent, /Não consegui confirmar/);
+});
+
+test('a verified LIA5 benefit is shown after a response and never as an initial prompt or arbitrary coupon', async () => {
+  for (const [offer,expected] of [[{code:'LIA5',percent:5,description:'5% na compra própria. Não inclui frete.'},true],[{code:'OTHER',percent:99,description:'<script>inventado</script>'},false],[null,false]]) {
+    const h = harness({answer:{discountOffer:offer}});const widget=h.mount();await widget.ready;
+    const note=h.find('.vc-assistant-discount');assert.equal(note.hidden,true);widget.open();
+    h.find('textarea').value='Como comprar?';h.find('form').fire('submit');await flush();
+    assert.equal(note.hidden,!expected);if(expected)assert.match(note.textContent,/LIA5.*Não inclui frete/);
+  }
 });
 
 test('offers are text nodes, unsafe links omitted and clicks use registered asset only', async () => {

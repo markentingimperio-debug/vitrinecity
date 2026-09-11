@@ -67,6 +67,8 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   const quick = make('div', 'vc-assistant-quick'); quick.hidden = true;
   const log = make('div', 'vc-assistant-log'); log.setAttribute('role', 'log'); log.setAttribute('aria-live', 'off'); log.setAttribute('aria-relevant', 'additions'); log.setAttribute('aria-label', 'Conversa com o assistente');
   const offers = make('div', 'vc-assistant-offers');
+  const discount = make('section', 'vc-assistant-offer vc-assistant-discount'); discount.hidden = true;
+  discount.setAttribute('aria-label', 'Benefício com a Lia');
   const actions = make('nav', 'vc-assistant-actions'); actions.setAttribute('aria-label', 'Links úteis');
   const contactBox = make('section', 'vc-assistant-contact'); contactBox.hidden = true;
   const contactTitle = make('h3', '', 'Receber atendimento VIP');
@@ -81,7 +83,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   const contactStatus = make('p', 'vc-assistant-contact-status'); contactStatus.setAttribute('role', 'status');
   contactForm.append(contactLabel, contactCheckLabel, contactSubmit, contactStatus);
   contactBox.append(contactTitle, contactText, contactForm);
-  scroll.append(intro, quick, log, offers, contactBox, actions);
+  scroll.append(intro, quick, log, offers, discount, contactBox, actions);
   const form = make('form', 'vc-assistant-form');
   const label = make('label', '', 'Como posso ajudar?'); label.htmlFor = 'vc-assistant-message';
   const input = make('textarea'); input.id = 'vc-assistant-message'; input.name = 'message'; input.rows = 2; input.maxLength = 600; input.required = true; input.placeholder = 'Escreva sua dúvida aqui…'; input.autocomplete = 'off';
@@ -89,7 +91,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   const status = make('p', 'vc-assistant-status'); status.setAttribute('role', 'status');
   const privacy = make('p', 'vc-assistant-note', 'Não envie senhas, CPF ou dados de pagamento.');
   const content = createSiteAssistantContent({window:win, document:doc,
-    onContext(path) { contextPath = path; conversationPolicy = classifySiteAssistantPath(path); },
+    onContext(path) { contextPath = path; conversationPolicy = classifySiteAssistantPath(path); if (!conversationPolicy.commercial) renderDiscount(null); },
     onView(visible) { panel.dataset.view = visible ? 'content' : 'conversation'; scroll.hidden = visible; form.hidden = visible; if (!visible && !panel.hidden) input.focus({preventScroll:true}); }
   });
   form.append(label, input, send, status, privacy); panel.append(heading, content.resume, content.root, scroll, form);
@@ -206,7 +208,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     lastTick = current; wasEligible = eligible;
     if (disposed || !policy.proactive || siteAssistantDismissed(dismissedUntil, current)) { invite.hidden = true; stopTimer(); return; }
     if (shown) { invite.hidden = !eligible || !panel.hidden; return; }
-    if (elapsed < 10000 || !eligible || !panel.hidden) return;
+    if (elapsed < 3000 || !eligible || !panel.hidden) return;
     shown = true; invite.hidden = false; track('invitation');
   }
   function messageBubble(role, body) {
@@ -267,6 +269,12 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
       if (node) actions.append(node);
     }
   }
+  function renderDiscount(offer) {
+    discount.replaceChildren(); discount.hidden = true;
+    if (!conversationPolicy.commercial || offer?.code !== 'LIA5' || offer?.percent !== 5 || !text(offer.description, 500)) return;
+    const copy = make('div'); copy.append(make('strong', '', 'Seu benefício: LIA5'), make('p', '', text(offer.description, 500)));
+    discount.append(copy); discount.hidden = false;
+  }
   let contactOfferState = null;
   function renderContact(offer) {
     if (offer && typeof offer === 'object' && ['group_invite', 'offers', 'group_and_offers'].includes(offer.purpose)) {
@@ -313,7 +321,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
       const data = await api('chat', { message: value, contextPath }, 65000);
       if (disposed) return;
       if (!text(data.reply).trim()) throw new Error('assistant_invalid_reply');
-      messageBubble('assistant', data.reply); renderOffers(data.offers); renderActions(data.actions); renderContact(data.contactOffer);
+      messageBubble('assistant', data.reply); renderOffers(data.offers); renderActions(data.actions); renderDiscount(data.discountOffer); renderContact(data.contactOffer);
       quick.hidden = true; status.textContent = '';
     } catch {
       if (!disposed) { input.value = value; status.textContent = 'Não consegui confirmar a resposta. Sua mensagem ficou no campo; se quiser, envie novamente.'; }

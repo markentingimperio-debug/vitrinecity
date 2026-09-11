@@ -16,7 +16,7 @@ export function classifySiteAssistantPath(value) {
   if (/^\/loja(?:\.html|\/[a-zA-Z0-9_-]+(?:\/[a-z0-9-]+)?)?$/.test(path)) return allow('store');
   if (/^\/ofertas(?:\/[a-z0-9-]+)?$/.test(path) || /^\/centros\/(?:mercadolivre|shopee|cakto|kiwify|tiktok)$/.test(path)) return allow('affiliate');
   if (/^\/artigo\/[a-z0-9-]+$/.test(path)) return allow('article');
-  if (['/receitas', '/esportes', '/noticias', '/curiosidades', '/tecnologia', '/plantas-e-jardinagem', '/inteligencia-artificial', '/stories'].includes(path)) return allow(path === '/receitas' ? 'recipe' : 'portal');
+  if (['/receitas', '/esportes', '/noticias', '/curiosidades', '/tecnologia', '/plantas-e-jardinagem', '/inteligencia-artificial', '/entretenimento', '/livros', '/stories'].includes(path)) return allow(path === '/receitas' ? 'recipe' : 'portal');
   if (['/servicos-digitais', '/servicos-digitais.html'].includes(path)) return allow('service');
   if (/^\/cursos(?:\/[a-z0-9-]+)?$/.test(path) || legacy === '/centro-educacional.html') return allow('course');
   if (['/sobre.html', '/contato.html', '/como-funciona.html', '/porque-vitrinecity.html', '/solucoes.html', '/para-empresas.html', '/pesquisar.html'].includes(legacy)) return allow('info');

@@ -27,12 +27,15 @@ function surface({ pathname = '/loja', search = '?carrinho=1&lia=1', bridge } = 
   return { context, get, redirects, handoffs, async submit(id) { const node = get(id); return node.listeners.submit({ preventDefault() {}, currentTarget: node, target: node }); } };
 }
 
-function shop({ bridge, customer = response({ address: { id: 7 } }), quote = { shippingCents: 100 }, checkout = payment, search } = {}) {
+function shop({ bridge, customer = response({ address: { id: 7 } }), quote = { shippingCents: 100 }, checkout = payment, search, priceQuote={originalAmountCents:1000,amountCents:1000,couponCode:''}, refreshedQuote=priceQuote } = {}) {
   const h = surface({ bridge, search }), requests = []; let quotes = 0;
   Object.assign(h.context, { cart: [{ id: 11, quantity: 2 }], cartItems: () => [{ productId: 11, quantity: 2 }], deliveryMode: { value: 'carrier' },
+    shippingQuote:quote,
     calculateShipping: async () => { quotes++; return quote; },
     fetch: async (url, opts = {}) => { requests.push({ url, ...opts }); if (url === '/api/checkout/customer') return customer; if (url === '/api/marketplace/checkout') return checkout(); throw Error('Unexpected request ' + url); } });
   vm.runInContext(shopSource, h.context);
+  Object.assign(h.context,{priceQuote,refreshedQuote});
+  vm.runInContext("liaShopDiscount={current:()=>priceQuote,refresh:async()=>refreshedQuote,render(){}};",h.context);
   return { ...h, requests, quotes: () => quotes, click: () => h.get('checkout').onclick({ preventDefault() {} }), purchases: () => requests.filter(item => item.method === 'POST') };
 }
 
@@ -40,10 +43,17 @@ test('marketplace payment navigates normally or hands the same validated link to
   for (const bridge of [undefined, false, true]) {
     const h = shop({ bridge }); await h.click(); await h.click();
     assert.equal(h.purchases().length, 1); assert.equal(h.get('checkout').disabled, true);
-    assert.deepEqual(JSON.parse(h.purchases()[0].body), { addressId: 7, items: [{ productId: 11, quantity: 2 }], deliveryMode: 'carrier', termsAccepted: true });
+    assert.deepEqual(JSON.parse(h.purchases()[0].body), { addressId: 7, items: [{ productId: 11, quantity: 2 }], deliveryMode: 'carrier', termsAccepted: true,couponCode:'',expectedAmountCents:1100 });
     if (bridge === true) { assert.equal(h.redirects.length, 0); assert.deepEqual(h.handoffs, ['https://www.mercadopago.com.br/checkout/test']); assert.match(h.get('status').textContent, /Continue pelo link de pagamento na conversa/); }
     else assert.deepEqual(h.redirects, ['https://www.mercadopago.com.br/checkout/test']);
   }
+});
+
+test('marketplace confirms the discounted products plus full shipping before the Lia handoff',async()=>{
+  const h=shop({bridge:true,priceQuote:{originalAmountCents:1000,amountCents:950,couponCode:'LIA5'}});await h.click();assert.equal(h.purchases().length,1);const body=JSON.parse(h.purchases()[0].body);assert.equal(body.expectedAmountCents,1050);assert.equal(body.couponCode,'LIA5');assert.equal(h.redirects.length,0);assert.equal(h.handoffs.length,1);
+});
+test('expired marketplace benefit requires a new explicit acceptance without starting payment',async()=>{
+  const h=shop({priceQuote:{originalAmountCents:1000,amountCents:950,couponCode:'LIA5'},refreshedQuote:{originalAmountCents:1000,amountCents:1000,couponCode:''}});await h.click();await h.click();assert.equal(h.purchases().length,0);assert.equal(h.get('marketplaceTerms').checked,false);assert.equal(h.redirects.length,0);
 });
 
 test('guest and missing-address navigation preserve the complete cart return URL', async () => {

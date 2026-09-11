@@ -1,3 +1,4 @@
+import { validLiaQuote, sameLiaQuote } from './lia-discount.js';
 const money = cents => (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 export function courseCheckoutPath(slug) { return /^[a-z0-9][a-z0-9-]{0,100}$/.test(String(slug || '')) ? '/course-checkout.html?curso=' + encodeURIComponent(slug) : ''; }
 export function selectedCourse(data, slug) {
@@ -12,7 +13,7 @@ const activeEnrollment = (data, slug) => data?.courses?.some(row => row.course_s
 export function mountCourseCheckout({ doc = document, win = window, fetchImpl = fetch } = {}) {
   const byId = id => doc.getElementById(id), form = byId('course-payment-form'), button = byId('pay-button'), message = byId('checkout-message');
   const slug = new URLSearchParams(win.location.search).get('curso') || '';
-  let course = null, user = null, mode = 'register', ready = false, busy = false, uncertain = false, owned = false;
+  let course = null, priceQuote = null, user = null, mode = 'register', ready = false, busy = false, uncertain = false, owned = false;
   const request = (url, body) => fetchImpl(url, body ? { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { cache: 'no-store', credentials: 'same-origin' });
   function update() {
     byId('register-fields').hidden = mode !== 'register'; byId('register-fields').disabled = mode !== 'register' || busy;
@@ -21,8 +22,8 @@ export function mountCourseCheckout({ doc = document, win = window, fetchImpl = 
     byId('choose-register').setAttribute('aria-pressed', String(mode === 'register')); byId('choose-login').setAttribute('aria-pressed', String(mode === 'login'));
     for (const id of ['choose-register', 'choose-login', 'other-account']) byId(id).disabled = busy;
     form.hidden = owned; byId('owned-course').hidden = !owned;
-    button.disabled = !ready || busy || uncertain || owned || course?.available !== true || !byId('purchase-consent').checked || (mode === 'register' && !byId('account-consent').checked);
-    button.textContent = busy ? 'Preparando seu pagamento…' : !ready ? 'Consultando curso e acesso…' : mode === 'signed' ? 'Ir ao pagamento · ' + money(course.priceCents) : mode === 'login' ? 'Entrar e ir ao pagamento' : 'Criar conta e ir ao pagamento';
+    button.disabled = !ready || !priceQuote || busy || uncertain || owned || course?.available !== true || !byId('purchase-consent').checked || (mode === 'register' && !byId('account-consent').checked);
+    button.textContent = busy ? 'Preparando seu pagamento…' : !ready ? 'Consultando curso e acesso…' : mode === 'signed' ? 'Ir ao pagamento · ' + money(priceQuote?.amountCents ?? course.priceCents) : mode === 'login' ? 'Entrar e ir ao pagamento' : 'Criar conta e ir ao pagamento';
   }
   function changeMode(next) {
     if (busy) return;
@@ -43,6 +44,19 @@ export function mountCourseCheckout({ doc = document, win = window, fetchImpl = 
   }
   function showUser(value) {
     user = value; mode = 'signed'; byId('account-name').textContent = value.name || 'Sua conta'; byId('account-email').textContent = value.email || '';
+  }
+  function renderQuote(value) {
+    priceQuote=value;
+    byId('course-price').textContent=value?money(value.amountCents):'Consultando…';
+    byId('lia-course-benefit').hidden=!value?.eligible;
+    byId('course-original-price').textContent=value?money(value.originalAmountCents):'';
+    byId('course-lia-discount').textContent=value?'− '+money(value.discountCents):'';
+  }
+  async function getQuote() {
+    const response=await request(`/api/courses/${encodeURIComponent(slug)}/quote`);
+    const data=await response.json(),quote=validLiaQuote(data.quote);
+    if(!response.ok||!quote)throw new Error(data.error||'Não foi possível confirmar o total desta compra. Consulte novamente antes de pagar.');
+    return quote;
   }
   async function getCourse() {
     const response = await request('/api/courses');
@@ -75,6 +89,7 @@ export function mountCourseCheckout({ doc = document, win = window, fetchImpl = 
     try {
       renderCourse(await getCourse());
       if (course.available !== true) { message.textContent = 'Este curso ainda não está disponível para compra. Nenhum pagamento foi iniciado.'; return; }
+      renderQuote(await getQuote());
       const current = await getUser();
       if (current) { showUser(current); await checkOwned(); } else { user = null; mode = 'register'; }
       ready = true;
@@ -94,7 +109,8 @@ export function mountCourseCheckout({ doc = document, win = window, fetchImpl = 
     try {
       const fresh = await getCourse();
       if (fresh.available !== true) { renderCourse(fresh); throw new Error('Este curso ficou indisponível. Nenhum pagamento foi iniciado.'); }
-      if (fresh.priceCents !== course.priceCents) { renderCourse(fresh); byId('purchase-consent').checked = false; throw new Error('O preço foi atualizado. Confira o novo total e aceite novamente antes de pagar.'); }
+      const freshQuote=await getQuote();
+      if (fresh.priceCents !== course.priceCents || !sameLiaQuote(freshQuote,priceQuote)) { renderCourse(fresh);renderQuote(freshQuote); byId('purchase-consent').checked = false; throw new Error('O preço ou o benefício foi atualizado. Confira o novo total e aceite novamente antes de pagar.'); }
       const expectedEmail = mode === 'signed' ? user.email : byId(mode === 'login' ? 'login-email' : 'register-email').value.trim().toLowerCase();
       if (mode !== 'signed') {
         const registering = mode === 'register', passwordInput = byId(registering ? 'register-password' : 'login-password');
@@ -115,20 +131,23 @@ export function mountCourseCheckout({ doc = document, win = window, fetchImpl = 
       if (await checkOwned()) return;
       const beforePayment = await getCourse();
       if (beforePayment.available !== true || beforePayment.priceCents !== course.priceCents) {
-        renderCourse(beforePayment); byId('purchase-consent').checked = false;
+        renderCourse(beforePayment);renderQuote(await getQuote()); byId('purchase-consent').checked = false;
         throw new Error('As condições do curso mudaram. Confira a disponibilidade e o total antes de continuar.');
       }
+      const finalQuote=await getQuote();
+      if(!sameLiaQuote(finalQuote,priceQuote)){renderQuote(finalQuote);byId('purchase-consent').checked=false;throw new Error('O benefício ou o total mudou. Confira o resumo e aceite novamente antes de pagar.');}
       checkoutStarted = true;
-      const response = await request(`/api/courses/${encodeURIComponent(slug)}/checkout`, { termsAccepted: true });
+      const response = await request(`/api/courses/${encodeURIComponent(slug)}/checkout`, { termsAccepted: true,couponCode:priceQuote.couponCode,expectedAmountCents:priceQuote.amountCents });
       if (response.status === 401) { checkoutStarted = false; user = null; mode = 'login'; throw new Error('Sua sessão expirou. Entre novamente para continuar neste curso.'); }
       if ([400, 404, 409, 429, 503].includes(response.status)) checkoutStarted = false;
       const data = await response.json();
+      if(response.status===409&&data.code==='lia_quote_changed'){const revised=validLiaQuote(data.quote);renderQuote(revised);byId('purchase-consent').checked=false;if(!revised){ready=false;byId('retry-load').hidden=false;}throw new Error(data.error||'Confira o novo total antes de continuar.');}
       if (response.status === 409 && data.code === 'course_already_enrolled' && data.alreadyEnrolled === true) { owned = true; message.textContent = 'Este curso já está na sua conta. Acesse sem comprar novamente.'; return; }
       if (!response.ok) throw new Error(data.error || 'Não foi possível iniciar o pagamento.');
       const url = safeCoursePaymentUrl(data.checkoutUrl);
       if (!url || typeof data.reference !== 'string' || !data.reference.trim()) throw new Error('Não foi possível verificar o endereço de pagamento.');
       // This event represents a provider checkout, never a payment or enrollment.
-      doc.dispatchEvent(new win.CustomEvent('vc:course-checkout', { detail: { slug, amount: course.priceCents } }));
+      doc.dispatchEvent(new win.CustomEvent('vc:course-checkout', { detail: { slug, amount: priceQuote.amountCents } }));
       uncertain = true; // Keep the button locked while the browser leaves this page.
       if (typeof win.vcLiaNavigate === 'function' && win.vcLiaNavigate(url) === true) {
         message.textContent = 'Seu link de pagamento está pronto. Continue pelo link de pagamento na conversa com a Lia.';

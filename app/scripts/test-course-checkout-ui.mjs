@@ -12,7 +12,7 @@ class Element {
   async fire(type) { for (const fn of this.listeners[type] || []) await fn({ preventDefault() {} }); }
   reportValidity() { return true; }
 }
-function harness({ logged = false, search = '?curso=geladinhos-gourmet', course = base, courses, enrollments = [], authPost, checkoutPost, accountGet, myCoursesGet } = {}) {
+function harness({ logged = false, search = '?curso=geladinhos-gourmet', course = base, courses, enrollments = [], authPost, checkoutPost, accountGet, myCoursesGet, quoteGet } = {}) {
   const nodes = new Map(), get = key => { if (!nodes.has(key)) nodes.set(key, new Element()); return nodes.get(key); };
   const requests = [], redirects = [], events = [];
   let connected = logged, user = { name: 'Aluno Teste', email: 'aluno@example.test' }, catalogCalls = 0;
@@ -23,6 +23,7 @@ function harness({ logged = false, search = '?curso=geladinhos-gourmet', course 
   const fetchImpl = async (path, opts = {}) => {
     requests.push({ path, ...opts });
     if (path === '/api/courses') { catalogCalls++; return ok({ courses: courses || [typeof course === 'function' ? course(catalogCalls) : course] }); }
+    if(path.endsWith('/quote')){const value=typeof course==='function'?course(catalogCalls):course;return quoteGet?quoteGet():ok({quote:{originalAmountCents:value.priceCents,discountCents:0,amountCents:value.priceCents,couponCode:'',eligible:false,percent:0}});}
     if (path === '/api/auth/me') return accountGet ? accountGet(connected, user) : connected ? ok({ authenticated: true, user }) : ok({ authenticated: false }, 401);
     if (path === '/api/my-courses') return myCoursesGet ? myCoursesGet() : ok({ courses: enrollments });
     if (path === '/api/auth/register' || path === '/api/auth/login') {
@@ -37,6 +38,23 @@ function harness({ logged = false, search = '?curso=geladinhos-gourmet', course 
   return { doc, win, fetchImpl, get, requests, redirects, events, posts: () => requests.filter(r => r.method === 'POST'), purchases: () => requests.filter(r => r.path.endsWith('/checkout')) };
 }
 async function accept(h) { h.get('account-consent').checked = true; h.get('purchase-consent').checked = true; await h.get('purchase-consent').fire('change'); }
+const liaQuote=(eligible=true)=>({originalAmountCents:2399,discountCents:eligible?120:0,amountCents:eligible?2279:2399,couponCode:eligible?'LIA5':'',eligible,percent:eligible?5:0});
+
+test('Lia benefit is visible before purchase and the confirmed discounted amount stays in the embedded handoff',async()=>{
+  const h=harness({logged:true,quoteGet:()=>ok({quote:liaQuote()})});h.win.vcLiaNavigate=()=>true;
+  await mountCourseCheckout(h).ready;assert.equal(h.get('lia-course-benefit').hidden,false);assert.match(h.get('course-original-price').textContent,/23,99/);assert.match(h.get('course-lia-discount').textContent,/1,20/);assert.match(h.get('course-price').textContent,/22,79/);
+  await accept(h);await h.get('course-payment-form').fire('submit');assert.deepEqual(JSON.parse(h.purchases()[0].body),{termsAccepted:true,couponCode:'LIA5',expectedAmountCents:2279});assert.equal(h.events[0].detail.amount,2279);assert.equal(h.redirects.length,0);
+});
+test('expired or newly available Lia benefit refreshes the price and requires consent before account or payment',async()=>{
+  for(const startsEligible of [true,false]){let calls=0;const h=harness({quoteGet:()=>ok({quote:liaQuote(++calls===1?startsEligible:!startsEligible)})});await mountCourseCheckout(h).ready;await accept(h);await h.get('course-payment-form').fire('submit');assert.equal(h.posts().length,0);assert.equal(h.get('purchase-consent').checked,false);assert.equal(h.get('lia-course-benefit').hidden,startsEligible);assert.match(h.get('checkout-message').textContent,/aceite novamente/);}
+});
+test('server-side coupon expiration cannot silently charge the original price or retry',async()=>{
+  const h=harness({logged:true,quoteGet:()=>ok({quote:liaQuote()}),checkoutPost:()=>ok({code:'lia_quote_changed',error:'Confira o novo total.',quote:liaQuote(false)},409)});
+  await mountCourseCheckout(h).ready;await accept(h);await h.get('course-payment-form').fire('submit');await h.get('course-payment-form').fire('submit');assert.equal(h.purchases().length,1);assert.equal(h.get('purchase-consent').checked,false);assert.match(h.get('course-price').textContent,/23,99/);assert.equal(h.get('lia-course-benefit').hidden,true);assert.equal(h.redirects.length,0);assert.equal(h.events.length,0);
+});
+test('missing or inconsistent authoritative quote prevents checkout instead of displaying an invented discount',async()=>{
+  for(const quote of [null,{...liaQuote(),amountCents:1}]){const h=harness({quoteGet:()=>ok({quote})});await mountCourseCheckout(h).ready;await accept(h);await h.get('course-payment-form').fire('submit');assert.equal(h.purchases().length,0);assert.equal(h.get('pay-button').disabled,true);assert.equal(h.get('retry-load').hidden,false);}
+});
 
 test('public summary loads before any auth mutation or checkout and ignores URL price', async () => {
   const h = harness({ search: '?curso=geladinhos-gourmet&priceCents=1' }); await mountCourseCheckout(h).ready;
@@ -51,7 +69,7 @@ test('new student registers in place using only the lightweight digital fields b
   const h = harness(); await mountCourseCheckout(h).ready; await accept(h); await h.get('course-payment-form').fire('submit');
   assert.deepEqual(h.posts().map(r => r.path), ['/api/auth/register', '/api/courses/geladinhos-gourmet/checkout']);
   assert.deepEqual(JSON.parse(h.posts()[0].body), { name: 'Aluno Teste', email: 'aluno@example.test', password: 'test-password-only', adultConfirmed: true, termsAccepted: true });
-  assert.deepEqual(JSON.parse(h.purchases()[0].body), { termsAccepted: true });
+  assert.deepEqual(JSON.parse(h.purchases()[0].body), { termsAccepted: true,couponCode:'',expectedAmountCents:2399 });
   assert.ok(h.requests.findIndex(r => r.path === '/api/my-courses') < h.requests.findIndex(r => r.path.endsWith('/checkout')));
   assert.equal(h.redirects[0], 'https://www.mercadopago.com.br/checkout/test'); assert.equal(h.events[0].type, 'vc:course-checkout'); assert.equal(h.get('register-password').value, '');
 });

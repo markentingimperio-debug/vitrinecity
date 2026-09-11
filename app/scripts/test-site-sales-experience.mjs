@@ -22,6 +22,38 @@ function setup(t,{file=':memory:',clock=Date.parse('2026-09-11T10:00:00Z')}={}){
   return {db,app,args,experience,newSession,browser,now:()=>time,advance:ms=>time+=ms,setTime:value=>time=value,pause:()=>allowed=false};
 }
 
+test('recent attributed orders show expected pending values and public titles without settling payments or exposing identity',t=>{
+  const x=setup(t),b=x.newSession();x.experience.markInterest(b.req(),b.res,'message');
+  x.db.exec(`ALTER TABLE course_orders ADD COLUMN course_title TEXT;ALTER TABLE service_orders ADD COLUMN name TEXT;
+    CREATE TABLE marketplace_order_items(id INTEGER PRIMARY KEY,order_reference TEXT,product_name TEXT);
+    INSERT INTO course_orders VALUES('course-visible',1,2399,'approved','PRIVATE_PAYMENT','Curso de plantas');
+    INSERT INTO service_orders VALUES('service-visible',5900,'pending','PRIVATE_PAYMENT','PRIVATE_PERSON');
+    INSERT INTO marketplace_orders VALUES('shop-visible',1,3100,'pending','PRIVATE_PAYMENT');
+    INSERT INTO marketplace_order_items VALUES(1,'shop-visible','Adubo para plantas');`);
+  for(const [orderType,orderReference] of [['course','course-visible'],['digital_service','service-visible'],['marketplace','shop-visible']]){
+    x.experience.captureOrder(b.req(),{orderType,orderReference});x.advance(1);
+  }
+  const before=x.db.prepare('SELECT * FROM site_sales_order_attribution').all(),state=x.experience.snapshot();
+  assert.deepEqual(state.recentOrders.map(row=>[row.title,row.amountCents,row.paymentStatus]),[['Adubo para plantas',3100,'pending'],['Serviço digital',5900,'pending'],['Curso de plantas',2399,'pending']]);
+  assert.equal(state.metrics.paidOrders,0);assert.equal(state.metrics.revenueCents,0);
+  assert.deepEqual(x.db.prepare('SELECT * FROM site_sales_order_attribution').all(),before);
+  for(const row of state.recentOrders)assert.deepEqual(Object.keys(row).sort(),['orderType','orderReference','title','paymentStatus','amountCents','createdAt','approvedAt','versionNumber'].sort());
+  assert.doesNotMatch(JSON.stringify(state.recentOrders),/PRIVATE|session|cookie|payment_id|user_id|email/);
+});
+
+test('recent attributed orders include previous versions, cap at twenty and keep safe metadata fallbacks',t=>{
+  const x=setup(t),b=x.newSession();x.experience.markInterest(b.req(),b.res,'message');
+  x.db.exec("INSERT INTO service_orders VALUES('old-service',500,'approved','pay-old')");
+  x.experience.captureOrder(b.req(),{orderType:'digital_service',orderReference:'old-service'});
+  x.experience.recordPayment({orderType:'digital_service',orderReference:'old-service',status:'approved',amountCents:500,paymentId:'pay-old'});
+  x.advance(DAY);x.experience.review();const traffic=x.newSession();x.experience.markInterest(traffic.req(),traffic.res,'message');x.advance(DAY);x.experience.review();
+  const newer=x.newSession();x.experience.markInterest(newer.req(),newer.res,'message');
+  for(let i=0;i<19;i++){x.advance(1);const ref='course-'+i;x.db.prepare("INSERT INTO course_orders VALUES(?,1,2399,'pending','')").run(ref);x.experience.captureOrder(newer.req(),{orderType:'course',orderReference:ref});}
+  let rows=x.experience.snapshot().recentOrders;assert.equal(rows.length,20);assert.equal(rows.at(-1).versionNumber,1);assert.equal(rows[0].versionNumber,2);assert.equal(rows[0].title,'Curso digital');
+  x.advance(1);x.db.exec("INSERT INTO service_orders VALUES('newest',8900,'pending','')");x.experience.captureOrder(newer.req(),{orderType:'video_package',orderReference:'newest'});
+  rows=x.experience.snapshot().recentOrders;assert.equal(rows.length,20);assert.equal(rows[0].title,'Pacote de vídeos');assert.equal(rows.some(row=>row.orderReference==='old-service'),false);
+});
+
 test('session uses an expiring opaque HttpOnly cookie independent from auth, and assigns a fixed version',t=>{
   const x=setup(t),b=x.newSession();assert.match(b.jar.vc_site_sales,/^[\w-]{32}$/);assert.notEqual(b.jar.vc_site_sales,b.session.id);
   assert.deepEqual(b.flags.vc_site_sales,{httpOnly:true,sameSite:'lax',secure:true,maxAge:DAY,path:'/'});
@@ -73,6 +105,14 @@ test('a repeated valid offer click renews the 24-hour interest window without du
   const detail={assetType:'product',assetId:'1'};x.experience.markInterest(b.req(),b.res,'offer_click',detail);const first=b.jar.vc_site_sales_interest;
   x.advance(23*3600000);assert.equal(x.experience.markInterest(b.req(),b.res,'offer_click',detail),true);assert.notEqual(b.jar.vc_site_sales_interest,first);assert.equal(x.experience.snapshot().metrics.offerClicks,1);
   x.advance(2*3600000);x.db.exec("INSERT INTO service_orders VALUES('return-click',500,'pending','')");assert.equal(x.experience.captureOrder(b.req(),{orderType:'digital_service',orderReference:'return-click'}),true);
+});
+
+test('discount eligibility is a server boolean requiring real Lia interest within 24h; forged cookies do not grant it',t=>{
+  const x=setup(t),b=x.newSession();assert.equal(x.experience.canApplyLiaDiscount(b.req()),false);
+  assert.equal(x.experience.canApplyLiaDiscount({headers:{cookie:'vc_site_sales_interest='+'A'.repeat(32)}}),false);
+  x.experience.markInterest(b.req(),b.res,'message');assert.equal(x.experience.canApplyLiaDiscount(b.req()),true);
+  x.advance(DAY-1);assert.equal(x.experience.canApplyLiaDiscount(b.req()),true);
+  x.advance(1);assert.equal(x.experience.canApplyLiaDiscount(b.req()),false);
 });
 
 test('funneled traffic chooses checkout help, while sufficient sample is still not claimed proven improvement',t=>{

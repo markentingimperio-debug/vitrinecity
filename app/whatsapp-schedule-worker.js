@@ -69,6 +69,7 @@ export function createWhatsAppScheduleProcessor({db,prepareScheduledMessage,what
             db.prepare("UPDATE whatsapp_qr_schedules SET status='cancelled',confirmation_state='not_submitted',error=? WHERE id=? AND status='processing' AND claimed_at=?").run(WHATSAPP_COMMERCIAL_EXCLUDED_REASON,item.id,claimTime);
             continue;
           }
+          if(typeof request.beforeSubmit==='function'&&request.beforeSubmit()!==true)throw Object.assign(Error('scheduled_state_changed'),{notSubmitted:true});
           submitted=true;
           const payload=await whatsappQrRequest(request.pathname,{method:'POST',body:JSON.stringify(request.body)});
           const data=whatsappQrData(payload),providerId=[data?.Id,data?.id].find(validWhatsAppReceiptId)?.trim();

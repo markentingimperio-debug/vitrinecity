@@ -119,6 +119,7 @@ export function setupSiteSalesExperience({app,db,requireAdmin,siteUrl='https://v
     const owner=orderType==='marketplace'?',buyer_user_id':orderType==='course'?',user_id':'';
     return db.prepare(`SELECT reference,${spec.status},${spec.amount},mp_payment_id${owner} FROM ${spec.table} WHERE reference=?`).get(reference);
   }
+  const canApplyLiaDiscount=req=>Boolean(interested(req));
   function captureOrder(req,{orderType,orderReference}={}){
     const current=interested(req),order=orderRow(orderType,orderReference);if(!current||!order)return false;
     if(orderType==='marketplace'&&(!Number.isSafeInteger(req.user?.id)||order.buyer_user_id!==req.user.id))return false;
@@ -136,11 +137,16 @@ export function setupSiteSalesExperience({app,db,requireAdmin,siteUrl='https://v
     if(typeof paymentId!=='string'||!paymentId||paymentId.length>160||String(order.mp_payment_id||'')!==paymentId)return false;
     if(!Number.isSafeInteger(amountCents)||amountCents<0||amountCents!==order[spec.amount])return false;
     if(orderType==='marketplace'&&!db.prepare('SELECT 1 FROM marketplace_payment_events WHERE order_reference=? AND payment_id=? AND payment_status=?').get(orderReference,paymentId,status))return false;
+    let approvedAt=null;
+    if(orderType==='course'&&status==='approved'&&db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='course_payment_receipts'").get()){
+      const receipt=db.prepare("SELECT approved_ms FROM course_payment_receipts WHERE order_reference=? AND payment_id=? AND status='approved' AND amount_cents=?").get(orderReference,paymentId,amountCents);
+      if(Number.isSafeInteger(receipt?.approved_ms)&&receipt.approved_ms>0&&receipt.approved_ms<=now())approvedAt=receipt.approved_ms;
+    }
     // Amount/status/id were first settled by the payment integration. A later
     // approved callback cannot overwrite a currently refunded order.
     return !!db.prepare(`UPDATE site_sales_order_attribution SET payment_status=?,amount_cents=?,payment_id_hash=?,
-      approved_at=CASE WHEN ?='approved' THEN COALESCE(approved_at,?) ELSE approved_at END,updated_at=? WHERE order_type=? AND order_reference=?`)
-      .run(status,amountCents,hash(paymentId),status,now(),now(),orderType,orderReference).changes;
+      approved_at=CASE WHEN ?='approved' THEN COALESCE(?,approved_at,?) ELSE approved_at END,updated_at=? WHERE order_type=? AND order_reference=?`)
+      .run(status,amountCents,hash(paymentId),status,approvedAt,now(),now(),orderType,orderReference).changes;
   }
   function metrics(versionId,start,end){
     const rows=db.prepare(`SELECT event_type,COUNT(*) events,COUNT(DISTINCT session_id) sessions FROM site_sales_events
@@ -154,12 +160,36 @@ export function setupSiteSalesExperience({app,db,requireAdmin,siteUrl='https://v
     return {windowStart:iso(start),windowEnd:iso(end),sessions,invitations:by.invitation?.sessions||0,opens:by.open?.sessions||0,dismissals:by.dismiss?.sessions||0,messages:by.message?.events||0,messagingSessions:by.message?.sessions||0,offerClicks:by.offer_click?.events||0,offerClickSessions:by.offer_click?.sessions||0,signups,paidOrders:paid.count,revenueCents:paid.revenue,pendingOrders:pending.count,responseOutcomes:Object.fromEntries(failures.map(x=>[x.outcome,x.count])),externalSales:'unknown'};
   }
   const versionDto=item=>({id:item.id,number:item.number,parentVersionId:item.parent_version_id,approach:item.approach,status:item.status,reasonCode:item.reason_code,confidence:item.confidence,createdAt:iso(item.created_at),activatedAt:iso(item.activated_at)});
+  function recentOrders(){
+    const columns=new Map(),has=(table,column)=>{
+      if(!columns.has(table))columns.set(table,new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(item=>item.name)));
+      return columns.get(table).has(column);
+    };
+    const titleText=value=>String(value||'').replace(/<[^>]*>/g,'').replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim().slice(0,160);
+    return db.prepare(`SELECT a.order_type,a.order_reference,a.payment_status,a.amount_cents,a.created_at,a.approved_at,v.number
+      FROM site_sales_order_attribution a JOIN site_sales_versions v ON v.id=a.version_id
+      WHERE a.order_type IN ('marketplace','course','digital_service','video_package')
+      ORDER BY a.created_at DESC,a.order_reference DESC LIMIT 20`).all().map(item=>{
+      const spec=ORDERS[item.order_type],hasTitle=item.order_type==='course'&&has(spec.table,'course_title');
+      const source=has(spec.table,spec.amount)?db.prepare(`SELECT ${spec.amount} amount${hasTitle?',course_title title':''} FROM ${spec.table} WHERE reference=?`).get(item.order_reference):null;
+      let title=titleText(source?.title)||({course:'Curso digital',marketplace:'Pedido de produtos',digital_service:'Serviço digital',video_package:'Pacote de vídeos'}[item.order_type]);
+      if(item.order_type==='marketplace'&&has('marketplace_order_items','product_name')&&has('marketplace_order_items','id')){
+        const products=db.prepare('SELECT product_name FROM marketplace_order_items WHERE order_reference=? ORDER BY id LIMIT 2').all(item.order_reference);
+        const first=titleText(products[0]?.product_name);if(first)title=first+(products.length>1?' e outros itens':'');
+      }
+      // Expected source value is useful while the attribution is pending (0).
+      // Reading an order does not settle its payment or change paid metrics.
+      const amount=source?.amount??item.amount_cents;
+      return {orderType:item.order_type,orderReference:item.order_reference,title,paymentStatus:item.payment_status,
+        amountCents:Number.isSafeInteger(amount)&&amount>=0?amount:0,createdAt:iso(item.created_at),approvedAt:iso(item.approved_at),versionNumber:item.number};
+    });
+  }
   function snapshot(){
     const state=policy(),stamp=now(),current=version(state.active_version_id);
     const versions=db.prepare(`SELECT v.*,(SELECT COUNT(*) FROM site_sales_order_attribution a WHERE a.version_id=v.id AND a.payment_status='approved') paid_orders,
       (SELECT COALESCE(SUM(amount_cents),0) FROM site_sales_order_attribution a WHERE a.version_id=v.id AND a.payment_status='approved') revenue_cents,
       (SELECT COUNT(*) FROM site_sales_signups s WHERE s.version_id=v.id) signups FROM site_sales_versions v ORDER BY number DESC LIMIT 50`).all();
-    return {revision:state.revision,current:versionDto(current),metrics:metrics(current.id,Math.max(current.activated_at,stamp-DAY),stamp+1),review:{lastAt:iso(state.last_review_at),nextAt:iso(Math.max(state.last_review_at,state.last_change_at)+DAY),status:state.last_status},versions:versions.map(item=>({...versionDto(item),paidOrders:item.paid_orders,revenueCents:item.revenue_cents,signups:item.signups})),history:db.prepare('SELECT version_id,window_start,window_end,status,metrics_json,new_version_id FROM site_sales_reviews ORDER BY id DESC LIMIT 30').all().map(item=>({versionId:item.version_id,windowStart:iso(item.window_start),windowEnd:iso(item.window_end),status:item.status,metrics:JSON.parse(item.metrics_json),newVersionId:item.new_version_id}))};
+    return {revision:state.revision,recentOrders:recentOrders(),current:versionDto(current),metrics:metrics(current.id,Math.max(current.activated_at,stamp-DAY),stamp+1),review:{lastAt:iso(state.last_review_at),nextAt:iso(Math.max(state.last_review_at,state.last_change_at)+DAY),status:state.last_status},versions:versions.map(item=>({...versionDto(item),paidOrders:item.paid_orders,revenueCents:item.revenue_cents,signups:item.signups})),history:db.prepare('SELECT version_id,window_start,window_end,status,metrics_json,new_version_id FROM site_sales_reviews ORDER BY id DESC LIMIT 30').all().map(item=>({versionId:item.version_id,windowStart:iso(item.window_start),windowEnd:iso(item.window_end),status:item.status,metrics:JSON.parse(item.metrics_json),newVersionId:item.new_version_id}))};
   }
   function addVersion(previous,approach,reason,confidence,stamp){
     db.prepare("UPDATE site_sales_versions SET status='superseded' WHERE id=? AND status='active'").run(previous.id);
@@ -228,5 +258,5 @@ export function setupSiteSalesExperience({app,db,requireAdmin,siteUrl='https://v
   app.get('/api/admin/site-assistant/experiments',requireAdmin,route((_req,res)=>res.json(snapshot())));
   app.post('/api/admin/site-assistant/experiments/rollback',requireAdmin,sameOrigin,route((req,res)=>res.json(rollback(req.body))));
   let timer=null;if(schedule){timer=setInterval(()=>{try{cleanup();review();}catch{/* A reporting failure must not affect checkout or conversation. */}},5*60*1000);timer.unref?.();}
-  return {session,existingSession,recordEvent,recordOutcome,markInterest,registerOffers,captureOrder,recordSignup,recordPayment,snapshot,review,rollback,cleanup,close(){clearInterval(timer);}};
+  return {session,existingSession,recordEvent,recordOutcome,markInterest,registerOffers,canApplyLiaDiscount,captureOrder,recordSignup,recordPayment,snapshot,review,rollback,cleanup,close(){clearInterval(timer);}};
 }

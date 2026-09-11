@@ -15,6 +15,7 @@ import { setupAffiliateCatalog } from './affiliate-catalog.js';
 import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.js';
 import { createWhatsAppScheduleProcessor, whatsappScheduleState, countWhatsAppSchedules, validWhatsAppReceiptId } from './whatsapp-schedule-worker.js';
 import { isWhatsAppCommercialGroupAllowed, WHATSAPP_COMMERCIAL_EXCLUDED_REASON } from './whatsapp-commercial-policy.js';
+import { setupWhatsAppThematicGroups } from './whatsapp-thematic-groups.js';
 import { registerSocialCommentCampaigns } from './social-comment-campaigns.js';
 import { createEcosystemOrchestrator, registerEcosystemRoutes, ecosystemLocalWindow } from './ecosystem-orchestrator.js';
 import { createEcosystemCatalog } from './ecosystem-catalog.js';
@@ -69,6 +70,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { originalCourse } from './course-content.js';
 import { setupCourseLandingPages } from './course-landing-pages.js';
+import {setupCoursePaymentReconciliation} from './course-payment-reconciliation.js';
 import { setupOpenAIPurchaseMeasurement } from './openai-purchase-measurement.js';
 import { setupAdminAnalytics } from './admin-analytics.js';
 import { setupOrganicAcquisition, recordAcquisitionSignup } from './organic-acquisition.js';
@@ -103,6 +105,7 @@ import { setupBusinessProspecting } from './business-prospecting.js';
 import { setupSalesAgentEngine } from './sales-agent-engine.js';
 import { injectSiteAssistant, injectSiteAssistantContent } from './site-assistant-page.js';
 import { setupSiteSalesExperience } from './site-sales-experience.js';
+import { courseLiaQuote, marketplaceLiaQuote, publicLiaQuote, assertLiaQuoteAccepted } from './lia-discount.js';
 import { setupSiteSalesAssistant } from './site-sales-assistant.js';
 import { setupSiteSalesNeural } from './site-sales-neural.js';
 import { setupBuildingSubscriptions } from './building-subscriptions.js';
@@ -322,6 +325,9 @@ CREATE TABLE IF NOT EXISTS course_orders (
   course_slug TEXT NOT NULL,
   course_title TEXT NOT NULL,
   amount_cents INTEGER NOT NULL,
+  original_amount_cents INTEGER,
+  lia_discount_cents INTEGER NOT NULL DEFAULT 0,
+  lia_coupon_code TEXT NOT NULL DEFAULT '',
   affiliate_id INTEGER REFERENCES affiliates(id),
   status TEXT NOT NULL DEFAULT 'created',
   mp_preference_id TEXT,
@@ -893,6 +899,9 @@ ensureColumn('store_profiles', 'gallery_2_url', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('store_profiles', 'gallery_3_url', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('store_profiles', 'wants_google_profile', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('store_profiles', 'latitude', 'REAL');
+ensureColumn('course_orders','original_amount_cents','INTEGER');
+ensureColumn('course_orders','lia_discount_cents','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('course_orders','lia_coupon_code',"TEXT NOT NULL DEFAULT ''");
 ensureColumn('store_profiles', 'longitude', 'REAL');
 ensureColumn('store_profiles', 'google_place_id', "TEXT NOT NULL DEFAULT ''");
 ensureColumn('store_profiles', 'show_on_real_map', 'INTEGER NOT NULL DEFAULT 0');
@@ -1450,6 +1459,9 @@ db.exec(`CREATE TABLE IF NOT EXISTS marketplace_orders (
   store_reference TEXT NOT NULL REFERENCES store_profiles(order_reference),
   address_id INTEGER NOT NULL REFERENCES customer_addresses(id),
   products_cents INTEGER NOT NULL,
+  original_products_cents INTEGER,
+  lia_discount_cents INTEGER NOT NULL DEFAULT 0,
+  lia_coupon_code TEXT NOT NULL DEFAULT '',
   shipping_cents INTEGER NOT NULL DEFAULT 0,
   platform_percent_cents INTEGER NOT NULL,
   platform_fixed_cents INTEGER NOT NULL DEFAULT 200,
@@ -1484,6 +1496,9 @@ CREATE INDEX IF NOT EXISTS idx_marketplace_orders_buyer ON marketplace_orders(bu
 CREATE INDEX IF NOT EXISTS idx_marketplace_orders_store ON marketplace_orders(store_reference,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_marketplace_items_order ON marketplace_order_items(order_reference,id);`);
 ensureColumn('marketplace_orders','ad_campaign_id','INTEGER');
+ensureColumn('marketplace_orders','original_products_cents','INTEGER');
+ensureColumn('marketplace_orders','lia_discount_cents','INTEGER NOT NULL DEFAULT 0');
+ensureColumn('marketplace_orders','lia_coupon_code',"TEXT NOT NULL DEFAULT ''");
 ensureColumn('marketplace_orders','ad_event_token','TEXT');
 ensureColumn('marketplace_orders','shipping_service_id',"TEXT NOT NULL DEFAULT ''");
 ensureColumn('marketplace_orders','shipping_service_name',"TEXT NOT NULL DEFAULT ''");
@@ -2847,6 +2862,22 @@ function recordSiteSales(method,...args) {
   try { return siteSalesExperience[method](...args); }
   catch { console.error('Site assistant measurement unavailable:',method); return null; }
 }
+const coursePayments = setupCoursePaymentReconciliation({db,
+  canRun:()=>Boolean(process.env.MERCADOPAGO_ACCESS_TOKEN&&process.env.MERCADOPAGO_WEBHOOK_SECRET),
+  request:async apiPath=>{
+    const response=await fetch(`https://api.mercadopago.com${apiPath}`,{headers:mpHeaders(),signal:AbortSignal.timeout(10000)});
+    if(!response.ok)throw new Error('course_payment_provider_unavailable');
+    return response.json();
+  },
+  onSettlement:(order,payment)=>{
+    syncAffiliateCommission({affiliateId:order.affiliate_id,orderType:'course',orderReference:order.reference,
+      grossAmountCents:order.amount_cents,rateBps:COURSE_REFERRAL_RATE_BPS,payment});
+    if(payment.status==='in_mediation')db.prepare("UPDATE affiliate_commissions SET status='reversed',updated_at=CURRENT_TIMESTAMP WHERE order_type='course' AND order_reference=? AND status!='paid'").run(order.reference);
+    if(payment.status==='approved')adminAnalytics.recordPurchase(order.reference,'course',order.amount_cents);
+    // The durable effects receipt retries reporting separately from enrollment.
+    siteSalesExperience.recordPayment({orderType:'course',orderReference:order.reference,status:payment.status,amountCents:order.amount_cents,paymentId:String(payment.id)});
+  }
+});
 app.get(['/admin-live.html','/admin-live'],requireAdmin,publicPage('admin-live.html'));
 setupLiveStudio({app,requireAdmin,sameOriginOnly});
 app.get('/admin-lojas.html',requireAdmin,publicPage('admin-lojas.html'));
@@ -4226,12 +4257,14 @@ app.post('/api/admin/whatsapp-qr/campaigns/sitemap',requireAdmin,sameOriginOnly,
 });
 app.get('/api/admin/whatsapp-qr/campaigns',requireAdmin,(_req,res)=>res.set('Cache-Control','no-store').json({campaigns:db.prepare(`SELECT id,name,days,interval_hours intervalHours,groups_count groupsCount,schedules_count schedulesCount,status,created_at createdAt FROM whatsapp_qr_campaigns ORDER BY created_at DESC LIMIT 20`).all().map(item=>({...item,...countWhatsAppSchedules(db.prepare('SELECT status,confirmation_state,claimed_at,provider_message_id FROM whatsapp_qr_schedules WHERE campaign_id=?').all(item.id))}))}));
 app.delete('/api/admin/whatsapp-qr/schedules/:id',requireAdmin,sameOriginOnly,(req,res)=>{const result=db.prepare(`UPDATE whatsapp_qr_schedules SET status='cancelled' WHERE id=? AND status='pending'`).run(String(req.params.id||''));if(!result.changes)return res.status(409).json({error:'Somente agendamentos pendentes podem ser cancelados.'});return res.json({ok:true})});
+const whatsappThematicGroups = setupWhatsAppThematicGroups({app,db,requireAdmin,sameOriginOnly,siteUrl:SITE_URL,
+  whatsappQrRequest,whatsappQrData,getSitemapLinks:whatsappQrSitemapLinks,canRun:ecosystemCanRun});
 const whatsappProductCampaigns = registerWhatsAppProductCampaigns({
   app, db, requireAdmin, sameOriginOnly, siteUrl: SITE_URL, dataDir,
   whatsappQrRequest, whatsappQrData
 });
 const processWhatsAppQrSchedules = createWhatsAppScheduleProcessor({
-  db, canRun:ecosystemCanRun, prepareScheduledMessage: item=>whatsappProductCampaigns.prepareScheduledMessage(item),
+  db, canRun:ecosystemCanRun, prepareScheduledMessage: item=>String(item.campaign_id||'').startsWith('thematic-v1:')?whatsappThematicGroups.prepareScheduledMessage(item):whatsappProductCampaigns.prepareScheduledMessage(item),
   whatsappQrRequest, whatsappQrData
 });
 function enqueueOmnichannelJob(channel,externalId,destination,sourceText,accountId=null,sourceKind='',mediaId=''){
@@ -4585,48 +4618,28 @@ app.post('/api/marketplace/orders/:reference/returns', requireUser, sameOriginOn
   }catch{return res.status(409).json({error:'Já existe uma devolução em andamento para este pedido.'});}
 });
 
+function liaDiscountEligible(req) {
+  try { return siteSalesExperience.canApplyLiaDiscount(req) === true; } catch { return false; }
+}
+function sendLiaQuoteError(res,error) {
+  return res.status(error.status||400).json({error:error.message,code:error.code,...(error.quote?{quote:error.quote}:{}),...(error.shippingCents!==undefined?{shippingCents:error.shippingCents}:{})});
+}
+app.post('/api/marketplace/checkout/quote',sameOriginOnly,(req,res)=>{
+  try { return res.set('Cache-Control','private,no-store').json({quote:publicLiaQuote(marketplaceLiaQuote(db,req.body?.items,liaDiscountEligible(req)))}); }
+  catch(error) { return sendLiaQuoteError(res,error); }
+});
 app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, res) => {
   if (req.body?.termsAccepted !== true) {
     return res.status(400).json({ error: 'Aceite os Termos do Marketplace para continuar.' });
   }
-  const requested = Array.isArray(req.body?.items) ? req.body.items.slice(0, 30) : [];
   const addressId = Number(req.body?.addressId);
   const address = db.prepare('SELECT * FROM customer_addresses WHERE id=? AND user_id=?').get(addressId, req.user.id);
-  if (!address || !requested.length) return res.status(400).json({ error: 'Selecione os produtos e um endereço de entrega.' });
-  const quantities = new Map();
-  const requestedOptions = new Map();
-  for (const item of requested) {
-    const id = Number(item?.productId), quantity = Math.floor(Number(item?.quantity));
-    if (!Number.isInteger(id) || !Number.isInteger(quantity) || quantity < 1 || quantity > 50) {
-      return res.status(400).json({ error: 'Quantidade inválida no carrinho.' });
-    }
-    quantities.set(id, Math.min(50, (quantities.get(id) || 0) + quantity));
-    const optionIds=Array.isArray(item?.optionIds)?[...new Set(item.optionIds.map(Number).filter(Number.isInteger))].slice(0,100):[];
-    if(requestedOptions.has(id)&&JSON.stringify(requestedOptions.get(id))!==JSON.stringify(optionIds))return res.status(400).json({error:'Separe itens com adicionais diferentes.'});
-    requestedOptions.set(id,optionIds);
-  }
-  const ids = [...quantities.keys()];
-  const placeholders = ids.map(() => '?').join(',');
-  const products = db.prepare(`SELECT p.*,s.business_name AS store_name FROM store_products p
-    JOIN store_profiles s ON s.order_reference=p.store_reference
-    WHERE p.id IN (${placeholders}) AND p.active=1 AND p.marketplace_enabled=1
-      AND p.price_cents>0 AND s.review_status='published'`).all(...ids);
-  if (products.length !== ids.length) return res.status(409).json({ error: 'Um produto não está mais disponível.' });
-  const storeReference = products[0].store_reference;
-  if (products.some(product => product.store_reference !== storeReference)) {
-    return res.status(400).json({ error: 'Nesta primeira versão, finalize produtos de uma loja por vez.' });
-  }
-  if (products.some(product => product.stock_quantity < quantities.get(product.id))) {
-    return res.status(409).json({ error: 'Estoque insuficiente para um dos produtos.' });
-  }
-  const optionSnapshots=new Map();
-  for(const product of products){const selected=requestedOptions.get(product.id)||[],groups=db.prepare('SELECT * FROM product_option_groups WHERE product_id=? ORDER BY id').all(product.id),chosen=[];
-    for(const group of groups){const options=db.prepare(`SELECT id,name,price_delta_cents FROM product_options WHERE group_id=? AND active=1 AND id IN (${selected.length?selected.map(()=>'?').join(','):'NULL'})`).all(group.id,...selected),count=options.length;
-      if(count<group.min_select||count>group.max_select)return res.status(400).json({error:`Revise as opções de ${product.name}.`});chosen.push(...options.map(option=>({id:option.id,groupId:group.id,group:group.name,name:option.name,priceDeltaCents:option.price_delta_cents})));
-    }
-    if(chosen.length!==selected.length)return res.status(400).json({error:`Um adicional de ${product.name} é inválido.`});optionSnapshots.set(product.id,chosen);
-  }
-  const productsCents = products.reduce((sum, product) => sum + (product.price_cents+(optionSnapshots.get(product.id)||[]).reduce((total,option)=>total+option.priceDeltaCents,0)) * quantities.get(product.id), 0);
+  if (!address) return res.status(400).json({ error: 'Selecione um endereço de entrega.' });
+  let priced;
+  try { priced=marketplaceLiaQuote(db,req.body?.items,liaDiscountEligible(req)); }
+  catch(error) { return sendLiaQuoteError(res,error); }
+  const { products, quantities, storeReference, optionSnapshots }=priced;
+  const productsCents=priced.amountCents;
   const platformPercentCents = Math.round(productsCents * MARKETPLACE_COMMISSION_BPS / 10000);
   const returnOperationCents = MARKETPLACE_RETURN_PROVISION_CENTS;
   const deliveryMode=req.body?.deliveryMode==='local'?'local':'carrier';
@@ -4637,6 +4650,12 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
   if(deliveryMode==='local')shippingQuote.shippingCents=shippingQuote.feeCents;
   const effectiveShippingCents=deliveryMode==='local'?shippingQuote.feeCents:shippingCents;
   const totalCents = productsCents + effectiveShippingCents;
+  try {
+    const currentQuote=marketplaceLiaQuote(db,req.body?.items,liaDiscountEligible(req));
+    if(JSON.stringify(publicLiaQuote(currentQuote))!==JSON.stringify(publicLiaQuote(priced))||JSON.stringify(currentQuote.lines)!==JSON.stringify(priced.lines))return res.status(409).json({error:'As condições da compra mudaram. Confira o novo total e confirme novamente.',code:'lia_quote_changed',quote:publicLiaQuote(currentQuote),shippingCents:effectiveShippingCents});
+    assertLiaQuoteAccepted(req.body,priced,effectiveShippingCents);
+  }
+  catch(error) { return sendLiaQuoteError(res,error); }
   let token=process.env.MERCADOPAGO_ACCESS_TOKEN,splitMode='central';
   const deliveryPlatformCents=deliveryMode==='local'?shippingQuote.platformCents:0;
   const deliveryCourierCents=deliveryMode==='local'?shippingQuote.courierCents:0;
@@ -4653,8 +4672,8 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST', headers: { ...mpHeaders(token), 'X-Idempotency-Key': reference },
       body: JSON.stringify({
-        items: [...products.map(product => ({ id: String(product.id), title: product.name.slice(0, 120),
-          quantity: quantities.get(product.id), currency_id: 'BRL', unit_price: (product.price_cents+(optionSnapshots.get(product.id)||[]).reduce((total,option)=>total+option.priceDeltaCents,0)) / 100 })),
+        items: [...priced.lines.filter(line=>line.unitPriceCents>0).map(line => ({ id: String(line.id), title: line.title.slice(0, 120),
+          quantity: line.quantity, currency_id: 'BRL', unit_price: line.unitPriceCents / 100 })),
           ...(effectiveShippingCents?[{id:'shipping',title:shippingQuote.service,quantity:1,currency_id:'BRL',unit_price:effectiveShippingCents/100}]:[])],
         payer: { name: req.user.name, email: req.user.email, address: { zip_code: address.postal_code,
           street_name: address.street, street_number: address.number } },
@@ -4663,7 +4682,7 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
           failure: `${SITE_URL}/loja?resultado=falha` }, auto_return: 'approved', statement_descriptor: 'VITRINYCITY',
         ...(splitMode==='marketplace'?{marketplace_fee:marketplaceFeeCents/100}:{}),
         metadata: { product: 'marketplace_order', store_reference: storeReference, split_mode:splitMode,
-          expected_marketplace_fee_cents:marketplaceFeeCents }
+          expected_marketplace_fee_cents:marketplaceFeeCents,lia_coupon_code:priced.couponCode,lia_discount_cents:priced.discountCents }
       }), signal: AbortSignal.timeout(12000)
     });
     const payment = await response.json();
@@ -4678,14 +4697,19 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
         effectiveShippingCents, shippingQuote.provider, shippingQuote.providerServiceId||'',shippingQuote.service||'',platformPercentCents, MARKETPLACE_FIXED_FEE_CENTS, returnOperationCents, totalCents, payment.id,
         adAttribution?.campaignId||null,adAttribution?.eventToken||null,deliveryMode,shippingQuote.distanceMeters||null,deliveryPlatformCents,deliveryCourierCents,
         Number(shippingQuote.preparationMinutes?.max)||0,Number(shippingQuote.routeDurationSeconds)||0,Number(shippingQuote.estimatedMinMinutes)||0,Number(shippingQuote.estimatedMaxMinutes)||0);
+      db.prepare('UPDATE marketplace_orders SET original_products_cents=?,lia_discount_cents=?,lia_coupon_code=? WHERE reference=?').run(priced.originalAmountCents,priced.discountCents,priced.couponCode,reference);
       const insertItem = db.prepare(`INSERT INTO marketplace_order_items
         (order_reference,product_id,product_name,sku,quantity,unit_price_cents,subtotal_cents,platform_percent_cents,return_operation_cents,options_snapshot_json,options_total_cents)
         VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
       let returnProvisionPending = MARKETPLACE_RETURN_PROVISION_CENTS;
-      for (const product of products) {
-        const quantity = quantities.get(product.id),options=optionSnapshots.get(product.id)||[],optionsTotal=options.reduce((total,option)=>total+option.priceDeltaCents,0),unitPrice=product.price_cents+optionsTotal,subtotal = unitPrice * quantity;
+      let percentPending=platformPercentCents,subtotalPending=productsCents;
+      for (const line of priced.lines) {
+        const product=products.find(item=>item.id===line.id);
+        const quantity = line.quantity,options=optionSnapshots.get(product.id)||[],optionsTotal=options.reduce((total,option)=>total+option.priceDeltaCents,0),unitPrice=line.unitPriceCents,subtotal = line.subtotalCents;
+        const linePercent=subtotalPending===subtotal?percentPending:Math.min(percentPending,Math.round(subtotal*MARKETPLACE_COMMISSION_BPS/10000));
         insertItem.run(reference, product.id, product.name, product.sku || '', quantity, unitPrice, subtotal,
-          Math.round(subtotal * MARKETPLACE_COMMISSION_BPS / 10000), returnProvisionPending,JSON.stringify(options),optionsTotal);
+          linePercent, returnProvisionPending,JSON.stringify(options),optionsTotal);
+        percentPending-=linePercent;subtotalPending-=subtotal;
         returnProvisionPending = 0;
       }
       db.prepare(`INSERT INTO marketplace_payment_reconciliation
@@ -4701,7 +4725,7 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
     adminAnalytics.recordCheckout(req, reference, 'marketplace', productsCents);
     recordSiteSales('captureOrder',req,{orderType:'marketplace',orderReference:reference});
     conversionHeader(req, res, 'begin_checkout', { value: productsCents / 100 });
-    return res.status(201).json({ reference, checkoutUrl: payment.init_point, shipping:shippingQuote });
+    return res.status(201).json({ reference, checkoutUrl: payment.init_point, shipping:shippingQuote,quote:publicLiaQuote(priced),totalCents });
   } catch (error) {
     console.error('Marketplace checkout error', error?.message || 'unknown');
     return res.status(502).json({ error: 'Não foi possível conectar ao Mercado Pago agora.' });
@@ -6911,6 +6935,13 @@ app.post('/api/credits/checkout', requireUser, sameOriginOnly, async (req, res) 
   }
 });
 
+app.get('/api/courses/:slug/quote',(req,res)=>{
+  const course=managedCourse(String(req.params.slug||''));
+  if(!course||course.status!=='active')return res.status(404).json({error:'Curso não encontrado.'});
+  if(!courseReady(course.slug))return res.status(409).json({error:'Este curso ainda não está disponível para compra.'});
+  try { return res.set('Cache-Control','private,no-store').json({quote:publicLiaQuote(courseLiaQuote(course,liaDiscountEligible(req)))}); }
+  catch(error) { return sendLiaQuoteError(res,error); }
+});
 app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
   const course = managedCourse(String(req.params.slug || ''));
   if (!course || course.status !== 'active') return res.status(404).json({ error: 'Curso não encontrado.' });
@@ -6920,6 +6951,9 @@ app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
   });
   if (!courseReady(course.slug)) return res.status(409).json({ error: 'Este curso está em preparação. A compra será liberada quando as aulas estiverem na área privada.' });
   if (!req.body?.termsAccepted) return res.status(400).json({ error: 'Aceite os termos da compra para continuar.' });
+  let priced;
+  try { priced=courseLiaQuote(course,liaDiscountEligible(req));assertLiaQuoteAccepted(req.body,priced); }
+  catch(error) { return sendLiaQuoteError(res,error); }
   recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'course_purchase_terms',version:'course-purchase-2026-08-22',source:'course_checkout',evidence:{course:course.slug}});
   if (!process.env.MERCADOPAGO_ACCESS_TOKEN || !process.env.MERCADOPAGO_WEBHOOK_SECRET) {
     return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
@@ -6930,18 +6964,18 @@ app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
   const affiliate = referralAffiliate(req, req.user.email, req.user.id);
   const reference = `course_${randomUUID()}`;
   db.prepare(`INSERT INTO course_orders
-    (reference,user_id,course_slug,course_title,amount_cents,affiliate_id,status)
-    VALUES (?,?,?,?,?,?,'created')`).run(reference, req.user.id, course.slug, course.title,
-      course.priceCents, affiliate?.id || null);
+    (reference,user_id,course_slug,course_title,amount_cents,affiliate_id,original_amount_cents,lia_discount_cents,lia_coupon_code,status)
+    VALUES (?,?,?,?,?,?,?,?,?,'created')`).run(reference, req.user.id, course.slug, course.title,
+      priced.amountCents, affiliate?.id || null,priced.originalAmountCents,priced.discountCents,priced.couponCode);
   adminAnalytics.recordOrderAttribution(req, reference, 'course');
-  adminAnalytics.recordCheckout(req, reference, 'course', course.priceCents);
+  adminAnalytics.recordCheckout(req, reference, 'course', priced.amountCents);
   try {
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
       body: JSON.stringify({
         items: [{ id: `vitrinecity-${course.slug}`, title: course.title,
           description: 'Curso digital com acesso individual na área do aluno', category_id: 'services',
-          quantity: 1, currency_id: 'BRL', unit_price: course.priceCents / 100 }],
+          quantity: 1, currency_id: 'BRL', unit_price: priced.amountCents / 100 }],
         payer: { name: req.user.name, email: req.user.email }, external_reference: reference,
         notification_url: `${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,
         back_urls: {
@@ -6950,7 +6984,7 @@ app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
           failure: `${SITE_URL}/centro-educacional.html?resultado=falha`
         },
         auto_return: 'approved', statement_descriptor: 'VITRINECITY',
-        metadata: { product: 'course', course_slug: course.slug, affiliate_code: affiliate?.code || '' }
+        metadata: { product: 'course', course_slug: course.slug, affiliate_code: affiliate?.code || '',lia_coupon_code:priced.couponCode,lia_discount_cents:priced.discountCents }
       }), signal: AbortSignal.timeout(12000)
     });
     const data = await response.json();
@@ -6958,7 +6992,7 @@ app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
     db.prepare("UPDATE course_orders SET status='pending',mp_preference_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?")
       .run(data.id, reference);
     recordSiteSales('captureOrder',req,{orderType:'course',orderReference:reference});
-    return res.status(201).json({ checkoutUrl: data.init_point, reference });
+    return res.status(201).json({ checkoutUrl: data.init_point, reference,quote:publicLiaQuote(priced) });
   } catch (error) {
     db.prepare("UPDATE course_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);
     console.error('Mercado Pago course preference error', error?.message || 'unknown');
@@ -7290,25 +7324,9 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
     if (reference.startsWith('course_')) {
-      const order = db.prepare('SELECT * FROM course_orders WHERE reference=?').get(reference);
-      if (!order) return res.sendStatus(200);
-      if (amountCents !== order.amount_cents || payment.currency_id !== 'BRL') return res.sendStatus(400);
-      const status = String(payment.status || 'unknown');
-      db.prepare(`UPDATE course_orders SET status=?,mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?`)
-        .run(status, String(payment.id), order.reference);
-      if (status === 'approved') {
-        db.prepare(`INSERT INTO course_enrollments (user_id,course_slug,order_reference,status)
-          VALUES (?,?,?,'active') ON CONFLICT(order_reference) DO UPDATE SET status='active',updated_at=CURRENT_TIMESTAMP`)
-          .run(order.user_id, order.course_slug, order.reference);
-      } else if (['refunded', 'charged_back', 'cancelled', 'rejected'].includes(status)) {
-        db.prepare("UPDATE course_enrollments SET status='revoked',updated_at=CURRENT_TIMESTAMP WHERE order_reference=?")
-          .run(order.reference);
-      }
-      syncAffiliateCommission({ affiliateId: order.affiliate_id, orderType: 'course', orderReference: order.reference,
-        grossAmountCents: order.amount_cents, rateBps: COURSE_REFERRAL_RATE_BPS, payment });
-      if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'course', order.amount_cents);
-      recordSiteSales('recordPayment',{orderType:'course',orderReference:order.reference,status,amountCents:order.amount_cents,paymentId:String(payment.id)});
-      return res.sendStatus(200);
+      if(String(payment.id)!==String(dataId))return res.sendStatus(400);
+      const result=coursePayments.settle(reference,payment);
+      return res.sendStatus(result.reason==='payment_mismatch'?400:200);
     }
     if (reference.startsWith('video_') || reference.startsWith('service_')) {
       const order = db.prepare('SELECT * FROM service_orders WHERE reference=?').get(reference);
@@ -9955,8 +9973,9 @@ function scheduleOfficialMetricsSync(){
 app.listen(process.env.PORT || 3000, () => {
   console.log('VitrineCity online');
   scheduleOfficialMetricsSync();
-  const whatsappScheduleInitial=setTimeout(()=>processWhatsAppQrSchedules().catch(()=>{}),15000);whatsappScheduleInitial.unref();
-  const whatsappScheduleTimer=setInterval(()=>processWhatsAppQrSchedules().catch(()=>{}),30000);whatsappScheduleTimer.unref();
+  const runWhatsAppSchedules=async()=>{await whatsappThematicGroups.scheduleDue().catch(()=>{});await processWhatsAppQrSchedules();};
+  const whatsappScheduleInitial=setTimeout(()=>runWhatsAppSchedules().catch(()=>{}),15000);whatsappScheduleInitial.unref();
+  const whatsappScheduleTimer=setInterval(()=>runWhatsAppSchedules().catch(()=>{}),30000);whatsappScheduleTimer.unref();
   const automationInitial=setTimeout(()=>processOmnichannelAutomation().catch(()=>{}),20000);automationInitial.unref();
   const automationTimer=setInterval(()=>processOmnichannelAutomation().catch(()=>{}),60000);automationTimer.unref();
   const runSocialCommentCampaigns=()=>socialCommentCampaigns.processPending().catch(()=>
