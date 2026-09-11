@@ -101,6 +101,11 @@ import {
 import { buildLegalReviewDossier } from './legal-review.js';
 import { setupBusinessProspecting } from './business-prospecting.js';
 import { setupSalesAgentEngine } from './sales-agent-engine.js';
+import { injectSiteAssistant } from './site-assistant-page.js';
+import { setupSiteSalesExperience } from './site-sales-experience.js';
+import { setupSiteSalesAssistant } from './site-sales-assistant.js';
+import { setupSiteSalesNeural } from './site-sales-neural.js';
+import { SITE_ASSISTANT_GROUPS } from './site-assistant-groups.js';
 import { setupLiveStudio } from './live-studio.js';
 import { sendInstagramLiveDirect } from './instagram-live-direct.js';
 
@@ -2614,6 +2619,7 @@ app.use((req, res, next) => {
     if (res.locals.vcAmpStory === true || req.method !== 'GET' || req.path.startsWith('/admin') || req.path.startsWith('/recompra') || (!type.includes('text/html') && !looksLikeHtml)) return send(body);
     const wasBuffer = Buffer.isBuffer(body);
     let page = injectPublicMeasurement(candidate, req.path);
+    page = injectSiteAssistant(page, {path:req.path});
     if (typeof page !== 'string') return send(body);
     if (page.includes('</head>') && !page.includes('rel="manifest"')) {
       page = page.replace('</head>', '<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#071f4b"><link rel="apple-touch-icon" href="/assets/pwa-icon-192.png"></head>');
@@ -2679,7 +2685,7 @@ setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, publicDir: path.joi
 const cryptoObservability = createCryptoObservability(db);
 cryptoObservability.seedLatest();
 mountCryptoObservability({ app, requireAdmin, observability: cryptoObservability });
-mountJarvis({ app, db, requireAdmin, sameOriginOnly, researchSchedule: true });
+const jarvisCore = mountJarvis({ app, db, requireAdmin, sameOriginOnly, researchSchedule: true });
 setupOrganicAcquisition({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly, allowAttempt });
 const affiliateCatalog = setupAffiliateCatalog({ app, db, requireAdmin, requireUser, sameOriginOnly, siteUrl: SITE_URL, publicDir: path.join(dir, 'public') });
@@ -2806,6 +2812,17 @@ app.get(['/admin-operacao','/admin-operacao.html'],requireAdmin,publicPage('admi
 app.get(['/admin-publicacoes','/admin-publicacoes.html'],requireAdmin,publicPage('admin-publicacoes.html'));
 app.get('/admin-tiktok.html',requireAdmin,publicPage('admin-tiktok.html'));
 setupSalesAgentEngine({app,db,requireAdmin});
+const siteSalesExperience = setupSiteSalesExperience({app,db,requireAdmin,siteUrl:SITE_URL,canRun:()=>process.env.SITE_ASSISTANT_ENABLED!=='false'});
+const siteSalesNeural = setupSiteSalesNeural({
+  app, db, requireAdmin,
+  neural: jarvisCore?.neural?.service?.runtime?.neural || null,
+  canRun: () => ['1','true','yes','on'].includes(String(process.env.VITRINY_NEURAL_ENABLED || '').trim().toLowerCase()) && process.env.SITE_ASSISTANT_ENABLED !== 'false'
+});
+// Sales measurement must never prevent account creation, checkout or payment settlement.
+function recordSiteSales(method,...args) {
+  try { return siteSalesExperience[method](...args); }
+  catch { console.error('Site assistant measurement unavailable:',method); return null; }
+}
 app.get(['/admin-live.html','/admin-live'],requireAdmin,publicPage('admin-live.html'));
 setupLiveStudio({app,requireAdmin,sameOriginOnly});
 app.get('/admin-lojas.html',requireAdmin,publicPage('admin-lojas.html'));
@@ -3192,6 +3209,7 @@ app.post('/api/auth/register', sameOriginOnly, (req, res) => {
     campaignPreferences.record(req,{id:userId,email:normalizedEmail,whatsapp:String(whatsapp).trim().slice(0,30)},req.body?.communications||{},'account_registration');
     setSession(res, userId);
     recordAcquisitionSignup(db, req, userId);
+    recordSiteSales('recordSignup',req,userId);
     conversionHeader(req, res, 'sign_up');
     return res.status(201).json({ ok: true });
   } catch (error) {
@@ -3209,7 +3227,7 @@ app.post('/api/customer/register', sameOriginOnly, (req, res) => {
   if(locationConsent&&!validLocation)return res.status(400).json({error:'A localização autorizada é inválida.'});
   const secret=managementSecret();if(secret.length<24)return res.status(503).json({error:'Cadastro seguro temporariamente indisponível.'});
   const fingerprint=createHmac('sha256',secret).update(`customer-cpf:${cpf}`).digest('hex');
-  try{const userId=db.transaction(()=>{const result=db.prepare(`INSERT INTO users(name,email,whatsapp,password_hash,adult_confirmed,cpf_fingerprint,cpf_last4) VALUES (?,?,?,?,1,?,?)`).run(name,normalizedEmail.slice(0,160),whatsapp,hashPassword(password),fingerprint,cpf.slice(-4));const id=Number(result.lastInsertRowid);db.prepare('INSERT INTO wallets(user_id,balance_units) VALUES (?,0)').run(id);db.prepare(`INSERT INTO customer_addresses(user_id,label,recipient_name,postal_code,street,number,complement,neighborhood,city,state,is_default,latitude,longitude,location_consent) VALUES (?,'Casa',?,?,?,?,?,?,?,?,1,?,?,?)`).run(id,name,address.postal,address.street,address.number,address.complement,address.neighborhood,address.city,address.state,locationConsent?latitude:null,locationConsent?longitude:null,locationConsent?1:0);return id;})();recordConsent(req,{userId,email:normalizedEmail,purpose:'account_terms',version:'terms-2026-08-22',source:'customer_registration'});recordConsent(req,{userId,email:normalizedEmail,purpose:'adult_declaration',version:'adult-2026-08-22',source:'customer_registration'});if(locationConsent)recordConsent(req,{userId,email:normalizedEmail,purpose:'customer_location',version:'privacy-2026-08-22',source:'customer_registration'});setSession(res,userId);recordAcquisitionSignup(db,req,userId);conversionHeader(req,res,'sign_up');return res.status(201).json({ok:true});}catch(error){if(String(error?.message||'').includes('cpf_fingerprint'))return res.status(409).json({error:'Este CPF já possui uma conta.'});if(String(error?.message||'').includes('UNIQUE'))return res.status(409).json({error:'Este e-mail já possui uma conta.'});return res.status(500).json({error:'Não foi possível criar sua conta agora.'});}
+  try{const userId=db.transaction(()=>{const result=db.prepare(`INSERT INTO users(name,email,whatsapp,password_hash,adult_confirmed,cpf_fingerprint,cpf_last4) VALUES (?,?,?,?,1,?,?)`).run(name,normalizedEmail.slice(0,160),whatsapp,hashPassword(password),fingerprint,cpf.slice(-4));const id=Number(result.lastInsertRowid);db.prepare('INSERT INTO wallets(user_id,balance_units) VALUES (?,0)').run(id);db.prepare(`INSERT INTO customer_addresses(user_id,label,recipient_name,postal_code,street,number,complement,neighborhood,city,state,is_default,latitude,longitude,location_consent) VALUES (?,'Casa',?,?,?,?,?,?,?,?,1,?,?,?)`).run(id,name,address.postal,address.street,address.number,address.complement,address.neighborhood,address.city,address.state,locationConsent?latitude:null,locationConsent?longitude:null,locationConsent?1:0);return id;})();recordConsent(req,{userId,email:normalizedEmail,purpose:'account_terms',version:'terms-2026-08-22',source:'customer_registration'});recordConsent(req,{userId,email:normalizedEmail,purpose:'adult_declaration',version:'adult-2026-08-22',source:'customer_registration'});if(locationConsent)recordConsent(req,{userId,email:normalizedEmail,purpose:'customer_location',version:'privacy-2026-08-22',source:'customer_registration'});setSession(res,userId);recordAcquisitionSignup(db,req,userId);recordSiteSales('recordSignup',req,userId);conversionHeader(req,res,'sign_up');return res.status(201).json({ok:true});}catch(error){if(String(error?.message||'').includes('cpf_fingerprint'))return res.status(409).json({error:'Este CPF já possui uma conta.'});if(String(error?.message||'').includes('UNIQUE'))return res.status(409).json({error:'Este e-mail já possui uma conta.'});return res.status(500).json({error:'Não foi possível criar sua conta agora.'});}
 });
 
 app.post('/api/auth/login', sameOriginOnly, (req, res) => {
@@ -4221,7 +4239,7 @@ async function discoverWhatsAppQrAutomationJobs(){
   const setting=db.prepare(`SELECT * FROM omnichannel_automation_settings WHERE channel='whatsapp_qr' AND enabled=1`).get();if(!setting)return;
   const index=whatsappQrData(await whatsappQrRequest('/chat/history?chat_jid=index')),
     chats=Object.values(index).flatMap(value=>Array.isArray(value)?value:[]).slice(0,60),cutoff=Date.now()-3*60*1000;
-  for(const chat of chats){if(!ecosystemCanRun())break;const jid=String(chat.chat_jid||'');if(!/@(s\.whatsapp\.net|lid)$/.test(jid))continue;const raw=whatsappQrData(await whatsappQrRequest('/chat/history?chat_jid='+encodeURIComponent(jid)+'&limit=3')),items=Array.isArray(raw)?raw:[];for(const item of items){const timestamp=Date.parse(String(item.timestamp||''));if(!timestamp||timestamp<cutoff)continue;let fromMe=String(item.sender_jid||'')==='me';try{fromMe=fromMe||Boolean(JSON.parse(item.datajson||'{}')?.Info?.IsFromMe)}catch{}if(!fromMe)enqueueOmnichannelJob('whatsapp_qr',String(item.message_id||''),jid,String(item.text_content||''))}}
+  for(const chat of chats){if(!ecosystemCanRun())break;const jid=String(chat.chat_jid||'');if(!/@(s\.whatsapp\.net|lid)$/.test(jid))continue;const raw=whatsappQrData(await whatsappQrRequest('/chat/history?chat_jid='+encodeURIComponent(jid)+'&limit=3')),items=Array.isArray(raw)?raw:[];for(const item of items){const timestamp=Date.parse(String(item.timestamp||''));if(!timestamp||timestamp<cutoff)continue;let fromMe=String(item.sender_jid||'')==='me';try{fromMe=fromMe||Boolean(JSON.parse(item.datajson||'{}')?.Info?.IsFromMe)}catch{}if(fromMe)continue;const text=String(item.text_content||'');const optOut=/^\s*(sair|parar|cancelar|stop|nao\s+quero\s+mais)\b/i.test(text);if(optOut&&/@s\.whatsapp\.net$/.test(jid)){siteSalesAssistant?.revokePhone?.(jid.split('@')[0]);continue;}enqueueOmnichannelJob('whatsapp_qr',String(item.message_id||''),jid,text)}}
 }
 async function processOmnichannelAutomation(){
   if(omnichannelAutomationRunning||!ecosystemCanRun())return;omnichannelAutomationRunning=true;
@@ -4657,6 +4675,7 @@ app.post('/api/marketplace/checkout', requireUser, sameOriginOnly, async (req, r
     insertOrder();
     adminAnalytics.recordOrderAttribution(req, reference, 'marketplace');
     adminAnalytics.recordCheckout(req, reference, 'marketplace', productsCents);
+    recordSiteSales('captureOrder',req,{orderType:'marketplace',orderReference:reference});
     conversionHeader(req, res, 'begin_checkout', { value: productsCents / 100 });
     return res.status(201).json({ reference, checkoutUrl: payment.init_point, shipping:shippingQuote });
   } catch (error) {
@@ -5839,6 +5858,22 @@ function videoGenerationIssue(project) {
   return '';
 }
 
+const siteSalesAssistant = typeof setupSiteSalesAssistant === 'function' ? setupSiteSalesAssistant({app,db,requireAdmin,getSessionUser:currentUser,publicOrigin:SITE_URL,
+  recipeVipUrl:process.env.RECIPE_VIP_WHATSAPP_URL || '',salesExperience:siteSalesExperience,
+  getGroups:()=>SITE_ASSISTANT_GROUPS,
+  getPublicCourses:()=>managedCourses(true).filter(course=>courseReady(course.slug)).map(course=>({...course,available:true})),
+  getPublicServices:()=>publicServiceCatalog().map(service=>({...service,available:true})),
+  sendWhatsApp:async({phone,message,idempotencyKey})=>{
+    if(!ecosystemCanRun())throw Error('messaging_paused');
+    if(!whatsappQrConfig().configured)throw Error('whatsapp_not_configured');
+    return whatsappQrRequest('/chat/send/text',{method:'POST',body:JSON.stringify({Phone:String(phone).replace(/\D/g,''),Body:String(message).slice(0,900),Id:String(idempotencyKey).slice(0,120).toUpperCase()})});
+  },
+  requestOpenAI:body=>{
+    if(AI_TEXT_CONFIG.provider!=='openai')throw new Error('site_assistant_provider_unavailable');
+    return requestOpenAI(body);
+  }
+}) : null;
+
 app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
   const projects = db.prepare(`SELECT m.*,t.title,t.instructions,t.priority,t.status AS task_status,a.name AS agent_name
     FROM admin_media_projects m JOIN admin_agent_tasks t ON t.id=m.task_id
@@ -6907,6 +6942,7 @@ app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
     if (!response.ok || !data.id || !data.init_point) throw new Error(data?.message || 'preference_failed');
     db.prepare("UPDATE course_orders SET status='pending',mp_preference_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?")
       .run(data.id, reference);
+    recordSiteSales('captureOrder',req,{orderType:'course',orderReference:reference});
     return res.status(201).json({ checkoutUrl: data.init_point, reference });
   } catch (error) {
     db.prepare("UPDATE course_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);
@@ -6988,6 +7024,7 @@ app.post('/api/services/videos/checkout', async (req, res) => {
     if (!response.ok || !data.id || !data.init_point) throw new Error(data?.message || 'preference_failed');
     db.prepare("UPDATE service_orders SET status='pending',mp_preference_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?")
       .run(data.id, reference);
+    recordSiteSales('captureOrder',req,{orderType:'video_package',orderReference:reference});
     return res.status(201).json({ checkoutUrl: data.init_point, reference });
   } catch (error) {
     db.prepare("UPDATE service_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);
@@ -7012,6 +7049,7 @@ app.post('/api/services/digital/:slug/checkout', sameOriginOnly, async (req,res)
     const response=await fetch('https://api.mercadopago.com/checkout/preferences',{method:'POST',headers:{...mpHeaders(),'X-Idempotency-Key':reference},body:JSON.stringify({items:[{id:`vitrinecity-${req.params.slug}`,title:service.title,description:service.description,category_id:'services',quantity:1,currency_id:'BRL',unit_price:service.amountCents/100}],payer:{name:String(name).trim().slice(0,100),email:normalizedEmail},external_reference:reference,notification_url:`${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,back_urls:{success:`${SITE_URL}/pagamento.html?resultado=sucesso&servico=${encodeURIComponent(req.params.slug)}`,pending:`${SITE_URL}/pagamento.html?resultado=pendente&servico=${encodeURIComponent(req.params.slug)}`,failure:`${SITE_URL}/centro-educacional.html?resultado=falha#consultoria`},auto_return:'approved',statement_descriptor:'VITRINECITY',metadata:{product:'digital_service',service_slug:req.params.slug}}),signal:AbortSignal.timeout(12000)});
     const data=await response.json();if(!response.ok||!data.id||!data.init_point)throw new Error(data?.message||'preference_failed');
     db.prepare("UPDATE service_orders SET status='pending',mp_preference_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(data.id,reference);
+    recordSiteSales('captureOrder',req,{orderType:'digital_service',orderReference:reference});
     return res.status(201).json({checkoutUrl:data.init_point,reference});
   }catch(error){db.prepare("UPDATE service_orders SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE reference=?").run(reference);console.error('Mercado Pago digital service error',error?.message||'unknown');return res.status(502).json({error:'Não foi possível iniciar o pagamento agora.'});}
 });
@@ -7223,6 +7261,7 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
         else if(reversed)db.prepare("DELETE FROM store_ad_events WHERE order_reference=? AND event_type='conversion'").run(reference);
       }
       if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'marketplace', order.total_cents);
+      recordSiteSales('recordPayment',{orderType:'marketplace',orderReference:order.reference,status,amountCents:order.total_cents,paymentId:String(payment.id)});
       return res.sendStatus(200);
     }
     if(reference.startsWith('cityperk_')){
@@ -7260,6 +7299,7 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       syncAffiliateCommission({ affiliateId: order.affiliate_id, orderType: 'course', orderReference: order.reference,
         grossAmountCents: order.amount_cents, rateBps: COURSE_REFERRAL_RATE_BPS, payment });
       if (status === 'approved') adminAnalytics.recordPurchase(order.reference, 'course', order.amount_cents);
+      recordSiteSales('recordPayment',{orderType:'course',orderReference:order.reference,status,amountCents:order.amount_cents,paymentId:String(payment.id)});
       return res.sendStatus(200);
     }
     if (reference.startsWith('video_') || reference.startsWith('service_')) {
@@ -7274,6 +7314,7 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       if(reference.startsWith('video_'))syncAffiliateCommission({ affiliateId: order.affiliate_id, orderType: 'video_package', orderReference: order.reference,
         grossAmountCents: order.amount_cents, rateBps: VIDEO_CREATOR_RATE_BPS, payment });
       if (status === 'approved') adminAnalytics.recordPurchase(order.reference, reference.startsWith('video_')?'video_package':'digital_service', order.amount_cents);
+      recordSiteSales('recordPayment',{orderType:reference.startsWith('video_')?'video_package':'digital_service',orderReference:order.reference,status,amountCents:order.amount_cents,paymentId:String(payment.id)});
       return res.sendStatus(200);
     }
     const order = db.prepare('SELECT * FROM lot_orders WHERE reference=?').get(reference);
