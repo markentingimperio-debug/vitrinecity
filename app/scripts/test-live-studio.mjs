@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { validateLiveConfig, setupLiveStudio, validateLiveServer, selectedPlatforms } from '../live-studio.js';
+import { validateLiveConfig, setupLiveStudio, createLiveStudioService, validateLiveServer, selectedPlatforms } from '../live-studio.js';
 const valid={title:'VitrineCity',media:'quiz.mp4',destination:'https://vitrinecity.com',repetitions:3,server:'',key:''};
 assert.deepEqual(selectedPlatforms({targets:['instagram','youtube','tiktok']}),['instagram','youtube','tiktok']);
 assert.deepEqual(selectedPlatforms({targets:['instagram','youtube','tiktok','facebook']}),['instagram','youtube','tiktok','facebook']);
@@ -106,4 +106,27 @@ try{
   assert.equal(fs.readFileSync(path.join(root,'command.json'),'utf8'),'concurrent Lia command');
   assert.equal(fs.readdirSync(root).filter(name=>name.endsWith('.tmp')).length,0);
 }finally{fs.linkSync=originalLink;}
+// The trusted operational core and protected HTTP route share all validation.
+fs.unlinkSync(path.join(root,'command.json'));
+const core=createLiveStudioService({root});
+for(const input of [{action:'invalid'},{action:'start'},{action:'start',confirm:'TRANSMITIR',durationSeconds:36000},{action:'stop-network',platform:'evil'}]){
+  const http=call('post/api/admin/live-studio/control',input);
+  assert.deepEqual(core.control(input,{actor:'authorized-maintenance'}),{status:http.code,body:http.result});
+  assert.ok(!fs.existsSync(path.join(root,'command.json')));
+}
+fs.writeFileSync(path.join(root,'status.json'),JSON.stringify({updatedAt:0,streaming:false,recording:false}));
+assert.equal(core.control({action:'start',confirm:'TRANSMITIR',durationSeconds:7200}).status,503);
+fs.writeFileSync(path.join(root,'status.json'),JSON.stringify({updatedAt:Date.now(),streaming:true,recording:false}));
+assert.equal(core.control({action:'start',confirm:'TRANSMITIR',durationSeconds:7200}).status,409);
+fs.writeFileSync(path.join(root,'status.json'),JSON.stringify({updatedAt:Date.now(),streaming:false,recording:false}));
+const coreConfig=fs.readFileSync(path.join(root,'config.json'));
+const coreAccepted=core.control({action:'start',confirm:'TRANSMITIR',durationSeconds:7200},{actor:'authorized-maintenance'});
+assert.equal(coreAccepted.status,202);
+const coreCommand=JSON.parse(fs.readFileSync(path.join(root,'command.json')));
+assert.equal(coreCommand.id,coreAccepted.body.commandId);assert.equal(coreCommand.actor,'authorized-maintenance');assert.equal(coreCommand.durationSeconds,7200);
+assert.deepEqual(fs.readFileSync(path.join(root,'config.json')),coreConfig);
+assert.ok(!JSON.stringify(coreCommand).includes('secret-'));
+assert.equal(createLiveStudioService({root}).control({action:'start',confirm:'TRANSMITIR',durationSeconds:7200}).status,409);
+assert.equal(call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR',durationSeconds:7200}).code,409);
+assert.equal(JSON.parse(fs.readFileSync(path.join(root,'command.json'))).id,coreCommand.id);
 console.log('Live Studio: validation, admin/CSRF middleware, secret redaction, offline/duplicate guards OK');
