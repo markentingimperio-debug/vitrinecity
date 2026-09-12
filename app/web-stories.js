@@ -6,9 +6,10 @@ import {renderWebStory,renderStoryDirectory,storyPageVisibleText,escapeStory as 
 import {createWebStorySources} from './web-story-sources.js';
 import {storySourceCta} from './web-story-cta.js';
 import {storyEditorialPortal} from './web-story-categories.js';
+import {createWebStoryPromotions} from './web-story-promotions.js';
 
 const fail=(message,status=400)=>Object.assign(Error(message),{status});
-const hashArticle=a=>createHash('sha256').update(JSON.stringify([a.title,a.summary,a.body,a.image_url,a.updated_at,...(a.commercial?[a.facts,a.sourcePath]:[])])).digest('hex');
+const hashArticle=a=>createHash('sha256').update(JSON.stringify([a.title,a.summary,a.body,a.image_url,a.updated_at,...(a.commercial?[a.facts,a.sourcePath]:[]),...(a.reuseBinding?[a.reuseBinding]:[])])).digest('hex');
 const companionHash=a=>createHash('sha256').update(JSON.stringify([a.title,a.summary,a.body,a.image_url,a.sources_json])).digest('hex');
 const text=(value,max,label,minimum=1)=>{
   if(typeof value!=='string'||value.trim().length<minimum||value.trim().length>max||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value))throw fail(`${label}: informe de ${minimum} a ${max} caracteres.`);
@@ -29,6 +30,8 @@ export function splitStoryText(body,max=130) {
 
 export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publicDir,dataDir,assets=createStoryAssets({publicDir,dataDir,siteUrl}),sourceCatalog=createWebStorySources({db}),generateStory=null,canRun=()=>true,automaticSourceAllowed=()=>true}) {
   const origin=new URL(siteUrl).origin,creating=new Set();
+  const promotionCatalog=createWebStoryPromotions({sourceCatalog,assets,origin});
+  const rendered=async(story,item,options={})=>renderWebStory(story,{origin,slug:item.slug,...options,promotions:await promotionCatalog.select(story,{slug:item.slug,sourceKey:item.article_id,fingerprint:options.preview?item.source_hash:item.published_source_hash})});
   db.exec(`CREATE TABLE IF NOT EXISTS editorial_web_stories(
     id TEXT PRIMARY KEY,slug TEXT NOT NULL UNIQUE,article_id TEXT NOT NULL UNIQUE,
     source_hash TEXT NOT NULL,draft_json TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1,
@@ -65,7 +68,7 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     if(source.body.trim().length<400)throw fail('O artigo deve conter pelo menos 400 caracteres de conteúdo completo.');
     const chunks=splitStoryText(source.body),image=await assets.image(source.image_url),logo=await assets.image('/assets/pwa-icon-192.png',{logo:true});
     const poster=await assets.poster(image),title=source.title.trim().slice(0,90),description=(source.summary||source.title).trim().slice(0,160);
-    return {title,description,category:source.portal.replace(/-/g,' ').slice(0,26),logo:logo.url,poster,sourcePath:source.sourcePath||'/artigo/'+encodeURIComponent(source.slug),sourceKind:source.kind||'article',commercial:!!source.commercial,sources:storySources(source),...storyButtons(source,previous),pages:[description.slice(0,130),...chunks].map(content=>({text:content,image:image.url,width:image.width,height:image.height,alt:source.title.slice(0,150)}))};
+    return {title,description,category:source.portal.replace(/-/g,' ').slice(0,26),logo:logo.url,poster,sourcePath:source.sourcePath||'/artigo/'+encodeURIComponent(source.slug),sourceKind:source.kind||'article',commercial:!!source.commercial,sources:storySources(source),...storyButtons(source,previous),...(source.reuseBinding?{reuseBinding:source.reuseBinding,reuseContentHash:source.facts?.reuseContentHash}:{}),pages:[description.slice(0,130),...chunks].map(content=>({text:content,image:image.url,width:image.width,height:image.height,alt:source.title.slice(0,150)}))};
   }
   async function validateDraft(input,original) {
     const draft={...original,title:text(input.title,90,'Título'),description:text(input.description,160,'Descrição',30),cta:button(input.cta,original.cta??storySourceCta(original),'Texto do botão'),homeCta:button(input.homeCta,original.homeCta??'','Convite final')};
@@ -78,7 +81,7 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     draft.poster=await assets.poster(unique.get(draft.pages[0].image));
     return draft;
   }
-  const isVisible=item=>{const source=article(item.article_id);if(!source||source.commercial&&hashArticle(source)!==item.published_source_hash)return false;const snapshot=JSON.parse(item.published_json);return !snapshot.companionHash||!!db.prepare("SELECT 1 FROM editorial_articles WHERE id=? AND status='published'").get('story-companion:'+item.article_id);};
+  const isVisible=item=>{const source=article(item.article_id);if(!source||(source.commercial||source.reuseBinding)&&hashArticle(source)!==item.published_source_hash)return false;const snapshot=JSON.parse(item.published_json);return !snapshot.companionHash||!!db.prepare("SELECT 1 FROM editorial_articles WHERE id=? AND status='published'").get('story-companion:'+item.article_id);};
   const published=()=>db.prepare("SELECT * FROM editorial_web_stories WHERE published_json IS NOT NULL ORDER BY published_at DESC,id LIMIT 10000").all().filter(isVisible);
   const visible=item=>{const draft=JSON.parse(item.published_json);return {...draft,slug:item.slug,modifiedAt:item.published_updated_at};};
 
@@ -86,7 +89,8 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
   // transaction cannot survive a pause, changed source or concurrent manual edit.
   // A curator may supply complete copy even when the public catalog blurb is
   // short. This path never calls AI, approves, previews or publishes anything.
-  async function createManualDraft(input,{actor:author='editorial-maintenance'}={}) {
+  async function createManualDraft(input,{actor:author='editorial-maintenance',isCurrent=()=>true}={}) {
+    if(isCurrent()!==true)throw fail('A preparação desta história foi pausada ou mudou.',409);
     if(!input||typeof input!=='object'||Array.isArray(input))throw fail('Informe a fonte e o rascunho editorial.');
     const key=text(input.sourceKey??input.articleId,300,'Fonte');
     if(input.sourceKey!==undefined&&input.articleId!==undefined&&input.sourceKey!==input.articleId)throw fail('As referências da fonte precisam ser iguais.');
@@ -105,12 +109,12 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     const unchanged=()=>{const fresh=article(key);return fresh&&!fresh.researchOnly&&JSON.stringify([hashArticle(fresh),fresh.sourcePath||(typeof fresh.slug==='string'?'/artigo/'+encodeURIComponent(fresh.slug):''),fresh.kind,fresh.portal,fresh.commercial,storySources(fresh)])===sourceState;};
     creating.add(key);
     try{
-      const original={title:source.title,description:source.summary,category:String(source.portal||'VitrineCity').replace(/-/g,' ').slice(0,26),logo:'/assets/pwa-icon-192.png',sourcePath,sourceKind:source.kind||'article',commercial:!!source.commercial,sources:storySources(source),...storyButtons(source),affiliateDisclosure:source.kind==='affiliate'?'Link de afiliado: podemos receber comissão.':'',generation:'manual',editorialMethod:'manual_curation',aiGenerated:false};
+      const original={title:source.title,description:source.summary,category:String(source.portal||'VitrineCity').replace(/-/g,' ').slice(0,26),logo:'/assets/pwa-icon-192.png',sourcePath,sourceKind:source.kind||'article',commercial:!!source.commercial,sources:storySources(source),...storyButtons(source),affiliateDisclosure:source.kind==='affiliate'?'Link de afiliado: podemos receber comissão.':'',generation:'manual',editorialMethod:'manual_curation',aiGenerated:false,...(source.reuseBinding?{reuseBinding:source.reuseBinding,reuseContentHash:source.facts?.reuseContentHash}:{})};
       const draft=await validateDraft(input.draft,original);
       if(draft.pages.some((_,index)=>[...storyPageVisibleText(draft,index)].length>180))throw fail('Há texto demais em uma página. Ajuste o rascunho antes de salvar.');
       const now=new Date().toISOString(),item={id:randomUUID(),slug:(source.slug||'historia').slice(0,90)+'-'+createHash('sha256').update(key).digest('hex').slice(0,8),article_id:key,source_hash:fingerprint,draft_json:JSON.stringify(draft),created_at:now,updated_at:now,created_by:editor};
       db.transaction(()=>{
-        ensureSpace();if(!unchanged())throw fail('A fonte mudou durante a preparação. Revise a versão atual antes de criar o rascunho.',409);
+        ensureSpace();if(isCurrent()!==true||!unchanged())throw fail('A fonte mudou ou a preparação foi pausada. Revise antes de criar o rascunho.',409);
         db.prepare('INSERT INTO editorial_web_stories(id,slug,article_id,source_hash,draft_json,created_at,updated_at,created_by) VALUES(@id,@slug,@article_id,@source_hash,@draft_json,@created_at,@updated_at,@created_by)').run(item);
         db.prepare("INSERT INTO editorial_web_story_events(story_id,event,revision,actor,created_at) VALUES(?,'manual_draft_created',1,?,?)").run(item.id,editor,now);
       }).immediate();
@@ -149,7 +153,7 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     const sourcePath=companionId?'/artigo/'+companionSlug:initial.sourcePath||'/artigo/'+encodeURIComponent(initial.slug);
     if(!sourcePath.startsWith('/')||sourcePath.startsWith('//')||/[\\\u0000-\u0020]/.test(sourcePath))throw fail('O destino da história não é uma página válida da plataforma.');
     const logo=await assets.image('/assets/pwa-icon-192.png',{logo:true});
-    const original={title:initial.title,description:initial.summary,category:String(initial.portal||'VitrineCity').replace(/-/g,' ').slice(0,26),logo:logo.url,sourcePath,sourceKind:initial.kind||'article',commercial:!!initial.commercial,...storyButtons(initial,previous),generation:'gestora',affiliateDisclosure:initial.kind==='affiliate'?'Link de afiliado: podemos receber comissão.':'',sources:storySources(initial)};
+    const original={title:initial.title,description:initial.summary,category:String(initial.portal||'VitrineCity').replace(/-/g,' ').slice(0,26),logo:logo.url,sourcePath,sourceKind:initial.kind||'article',commercial:!!initial.commercial,...storyButtons(initial,previous),generation:'gestora',affiliateDisclosure:initial.kind==='affiliate'?'Link de afiliado: podemos receber comissão.':'',sources:storySources(initial),...(initial.reuseBinding?{reuseBinding:initial.reuseBinding,reuseContentHash:initial.facts?.reuseContentHash}:{})};
     if(result.method==='local_editorial'){original.generation='editorial-local';original.aiGenerated=false;original.editorialMethod='source_preserved';}
     const draft=await validateDraft({...result.draft,...(Object.hasOwn(previous,'cta')?{cta:previous.cta}:{}),...(Object.hasOwn(previous,'homeCta')?{homeCta:previous.homeCta}:{})},original);
     const companion=companionId?{portal:storyEditorialPortal(initial),title:draft.title,summary:draft.description,body:text(result.draft.articleBody,3000,'Artigo relacionado',900),image_url:draft.pages[0].image,sources_json:JSON.stringify(draft.sources)}:null;
@@ -184,11 +188,12 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
   }
 
   app.get(['/admin-web-stories','/admin-web-stories.html'],requireAdmin,(_req,res)=>res.set('Cache-Control','no-store').sendFile(path.join(publicDir,'admin-web-stories.html')));
-  app.get('/admin-web-stories/preview/:id',requireAdmin,route((req,res)=>{
+  app.get('/admin-web-stories/preview/:id',requireAdmin,route(async(req,res)=>{
     const item=get(req.params.id);current(item,Number(req.query.revision));currentSource(item);
     if(item.previewed_revision!==item.revision)throw fail('Abra a prévia pelo editor primeiro.',409);
     res.locals.vcAmpStory=true;
-    res.set('X-Robots-Tag','noindex,nofollow').type('html').send(renderWebStory(JSON.parse(item.draft_json),{origin,slug:item.slug,preview:true}));
+    const html=await rendered(JSON.parse(item.draft_json),item,{preview:true});current(get(item.id),item.revision);currentSource(item);
+    res.set('X-Robots-Tag','noindex,nofollow').type('html').send(html);
   }));
   app.get('/api/admin/web-stories/sources',requireAdmin,route((req,res)=>{
     const q=typeof req.query.q==='string'?req.query.q.trim().slice(0,80):'';
@@ -232,7 +237,7 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     const item=get(req.params.id);current(item,req.body?.revision);currentSource(item);
     const draft=await validateDraft(JSON.parse(item.draft_json),JSON.parse(item.draft_json));
     current(get(item.id),item.revision);currentSource(item);
-    const html=renderWebStory(draft,{origin,slug:item.slug,preview:true});
+    const html=await rendered(draft,item,{preview:true});current(get(item.id),item.revision);currentSource(item);
     db.prepare('UPDATE editorial_web_stories SET previewed_revision=? WHERE id=?').run(item.revision,item.id);
     res.json({revision:item.revision,html,url:'/admin-web-stories/preview/'+item.id+'?revision='+item.revision});
   }));
@@ -261,7 +266,7 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     });
     res.type('html').set('Cache-Control','public,max-age=60').send(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fontes · ${esc(draft.title)} | VitrineCity</title><meta name="robots" content="noindex,follow"><link rel="stylesheet" href="/vitriny-web-stories.css"></head><body><header><a href="/">VITRINECITY</a><a href="/stories/${esc(item.slug)}">Voltar à história</a></header><main><h1>Conteúdo e fontes</h1><h2>${esc(draft.title)}</h2><p>A história apresenta uma síntese. Consulte os materiais de origem para conhecer o contexto.</p><ul>${links.map(source=>`<li><a href="${esc(source.url)}" rel="noopener noreferrer">${esc(source.title||'Fonte consultada')}</a>${source.checkedAt?` · Consultada em ${esc(new Date(source.checkedAt).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'}))}`:''}</li>`).join('')}</ul>${draft.affiliateDisclosure?`<p>${esc(draft.affiliateDisclosure)}</p>`:''}<p><a href="${esc(draft.sourcePath)}">Abrir a página na VitrineCity</a></p><p><a href="/">Explorar a VitrineCity →</a></p></main></body></html>`);
   });
-  app.get('/stories/:slug',(req,res)=>{
+  app.get('/stories/:slug',async(req,res)=>{
     const item=db.prepare('SELECT * FROM editorial_web_stories WHERE slug=? AND published_json IS NOT NULL').get(req.params.slug);
     if(!item||!isVisible(item))return res.status(404).set('Cache-Control','no-store').type('text').send('Esta história não está disponível. Explore /stories.');
     res.locals.vcAmpStory=true;
@@ -270,7 +275,10 @@ export function setupWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl,publ
     const policy=String(res.getHeader('Content-Security-Policy')||'').split(';').map(directive=>directive.trim())
       .filter(directive=>directive&&!/^frame-ancestors(?:\s|$)/i.test(directive)).join('; ');
     if(policy)res.set('Content-Security-Policy',policy);else res.removeHeader('Content-Security-Policy');
-    return res.type('html').set('Cache-Control','public,max-age=60').send(renderWebStory(JSON.parse(item.published_json),{origin,slug:item.slug,publishedAt:item.published_at,modifiedAt:item.published_updated_at}));
+    const html=await rendered(JSON.parse(item.published_json),item,{publishedAt:item.published_at,modifiedAt:item.published_updated_at});
+    const fresh=db.prepare('SELECT * FROM editorial_web_stories WHERE id=? AND published_json IS NOT NULL').get(item.id);
+    if(!fresh||!isVisible(fresh)||fresh.published_json!==item.published_json)return res.status(404).set('Cache-Control','no-store').type('text').send('Esta história foi atualizada. Abra novamente.');
+    return res.type('html').set('Cache-Control','public,max-age=60').send(html);
   });
   app.get('/sitemap-stories.xml',(_req,res)=>res.type('application/xml').set('Cache-Control','public,max-age=60').send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${published().map(item=>`<url><loc>${esc(origin+'/stories/'+item.slug)}</loc><lastmod>${esc(item.published_updated_at)}</lastmod></url>`).join('')}</urlset>`));
   app.get('/sitemap-index.xml',(_req,res)=>res.type('application/xml').set('Cache-Control','public,max-age=300').send(`<?xml version="1.0" encoding="UTF-8"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>${esc(origin)}/sitemap.xml</loc></sitemap><sitemap><loc>${esc(origin)}/sitemap-stories.xml</loc></sitemap></sitemapindex>`));

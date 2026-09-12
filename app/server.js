@@ -49,6 +49,7 @@ import { setupMediaCatalog } from './media-catalog.js';
 import { setupEmissora } from './emissora.js';
 import {editorialImage} from './editorial-image-policy.js';
 import { setupDailyWebStories } from './web-story-daily.js';
+import { createPrayerWebStoryBridge } from './prayer-web-story-bridge.js';
 import { createStoryImageProvider, createOpenAIStoryRequest } from './web-story-provider.js';
 import {createEditorialCoverGenerator} from './editorial-cover-generation.js';
 import {createEditorialSourceSearch} from './editorial-source-search.js';
@@ -2766,6 +2767,7 @@ const generateEditorialCover=createEditorialCoverGenerator({outputDir:generatedM
   openRouterConfigured:()=>storyImageProvider()==='openrouter'&&(AI_MEDIA_CONFIG.explicit?AI_MEDIA_CONFIG.imageConfigured:Boolean(String(process.env.OPENROUTER_API_KEY||'').trim())),
   openAIModel:storyImageModel,openRouterModel:()=>OPENROUTER_IMAGE_MODEL,onFailure:details=>console.error('Editorial cover pending',details)});
 const webStories = dailyStories = setupDailyWebStories({app,db,requireAdmin,sameOriginOnly,siteUrl:SITE_URL,publicDir:path.join(dir,'public'),dataDir,
+  additionalSources:createPrayerWebStoryBridge({db,dataDir,publicDir:path.join(dir,'public'),canRun:ecosystemCanRun}),
   searchSources:createEditorialSourceSearch(),
   services:()=>DIGITAL_SERVICE_PACKAGES,courses:()=>managedCourses(true).filter(course=>courseReady(course.slug)),
   requestText:requestEditorialText,requestImage:createStoryImageProvider({provider:storyImageProvider,request:(url,...args)=>url==='https://api.openai.com/v1/images/generations'?storyOpenAIRequest(url,...args):openRouterRequest(url,...args),model:storyImageModel,outputDir:generatedMediaDir}),

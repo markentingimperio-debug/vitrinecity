@@ -9,7 +9,7 @@ import { createMediaPublicationLifecycle } from '../media-publication-lifecycle.
 import { createPrayerVitrineSocial } from '../prayer-vitrine-social.js';
 
 const DAY = '2026-09-12', UID = 'a'.repeat(32), ACCOUNT = 'b'.repeat(32), hash = v => createHash('sha256').update(v).digest('hex');
-function fixture(t) {
+function fixture(t, mediaOptions={}) {
   const db = new Database(':memory:'), dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prayer-social-'));
   t.after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
   db.pragma('foreign_keys=ON');
@@ -24,10 +24,10 @@ function fixture(t) {
     CREATE TABLE social_account_restrictions(user_id INTEGER PRIMARY KEY,status TEXT,restricted_until TEXT);
     CREATE TABLE prayer_sharing_settings(id INTEGER PRIMARY KEY,enabled INTEGER,start_day TEXT,groups_json TEXT);
     INSERT INTO prayer_sharing_settings VALUES(1,1,'2026-09-12','[{"jid":"123@g.us"}]');`);
-  const folder = path.join(dir, 'prayer-media', DAY, 'short'); fs.mkdirSync(folder, { recursive: true });
+  const format=mediaOptions.format||'short',folder = path.join(dir, 'prayer-media', DAY, format); fs.mkdirSync(folder, { recursive: true });
   const file = path.join(folder, 'video.mp4'), readyFile = path.join(folder, 'ready.json'), bytes = Buffer.alloc(512, 1), script = { title: 'Oração de sábado', text: 'Que este dia tenha paz e esperança.' };
-  const manifest = { campaign: `oracao-${DAY}`, videoPath: file, publicVideoUrl: `https://vitrinecity.com/prayer-media/${DAY}/short.mp4`, title: script.title, caption: 'Oração de sábado. Imagem e voz criadas com inteligência artificial. #Oracao20260912' };
-  const ready = { day: DAY, format: 'short', durationSeconds: 30, bytes: bytes.length, sha256: hash(bytes), binding: hash(JSON.stringify(script)), script, caption: manifest.caption, videoPath: file, publicVideoUrl: manifest.publicVideoUrl };
+  const manifest = { campaign: `oracao-${DAY}`, videoPath: file, publicVideoUrl: `https://vitrinecity.com/prayer-media/${DAY}/${format}.mp4`, title: script.title, caption: 'Oração de sábado. Imagem e voz criadas com inteligência artificial. #Oracao20260912' };
+  const ready = { day: DAY, format, durationSeconds:mediaOptions.duration||(format==='short'?30:65), bytes: bytes.length, sha256: hash(bytes), binding: hash(JSON.stringify(script)), script, caption: manifest.caption, videoPath: file, publicVideoUrl: manifest.publicVideoUrl };
   fs.writeFileSync(file, bytes); fs.writeFileSync(readyFile, JSON.stringify(ready));
   const state = { calls: [], ready: [], allowed: true, paused: false, configured: true, moderation: '', time: new Date('2026-09-12T10:03:00Z'), handler: async () => ({ uid: UID, status: { state: 'inprogress' } }) };
   const lifecycle = createMediaPublicationLifecycle({ db, siteUrl: 'https://vitrinecity.com', canRun: () => !state.paused, now: () => state.time.getTime(), getConfig: () => ({ accountId: ACCOUNT, token: 'synthetic-token' }), onReady: p => state.ready.push(p.id), fetchImpl: async (url, options) => { state.calls.push({ url, method: options.method, body: options.body }); return { ok: true, status: 200, json: async () => ({ success: true, result: await state.handler(url, options) }) }; } });
@@ -45,6 +45,15 @@ test('real lifecycle imports one authorized dated project, waits for Stream then
   f.state.handler = async () => ({ uid: UID, readyToStream: true, duration: 30 });
   const done = await f.publish({ mode: 'status', canPublish: () => false }); assert.equal(done.state, 'published_verified'); assert.equal(done.permalink, `/social/post/${f.post().id}`); assert.equal(f.state.ready.length, 1);
   await f.publish(); assert.equal(f.posts().length, 1); assert.equal(f.db.prepare('SELECT COUNT(*) n FROM admin_media_projects').get().n, 1); assert.equal(f.db.prepare('SELECT COUNT(*) n FROM social_posts').get().n, 1);
+});
+
+test('only the dated prayer wrapper accepts its bounded master and reuses one Stream upload',async t=>{
+ for(const duration of [61,65]){const f=fixture(t,{format:'tiktok',duration});assert.equal(f.adapter.sourceFormat(DAY),null);assert.equal((await f.publish()).state,'processing');assert.equal(f.adapter.sourceFormat(DAY),'tiktok');const project=f.db.prepare('SELECT * FROM admin_media_projects').get();assert.equal(project.duration_seconds,duration);assert.equal(project.output_url,f.manifest.publicVideoUrl);f.state.handler=async()=>({uid:UID,readyToStream:true,duration});assert.equal((await f.publish({mode:'status',canPublish:()=>false})).state,'published_verified');assert.equal(f.posts().length,1);}
+ const invalid=fixture(t,{format:'tiktok',duration:90});await assert.rejects(invalid.publish(),/source_changed/);assert.equal(invalid.posts().length,0);
+});
+
+test('existing short Vitrine Social source is discovered without a second project or changed binding',async t=>{
+ const f=fixture(t);await f.publish();const row=f.row();assert.equal(f.adapter.sourceFormat(DAY),'short');f.db.prepare('DELETE FROM prayer_vitrine_social_runs').run();assert.equal(f.adapter.sourceFormat(DAY),'short');await f.publish();assert.equal(f.row().project_id,row.project_id);assert.equal(f.row().source_binding,row.source_binding);assert.equal(f.posts().length,1);
 });
 
 test('default callbacks are inactive and read-only status never creates a project or upload', async t => {

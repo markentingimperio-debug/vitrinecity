@@ -3,6 +3,7 @@ import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {validateManifest,inspectLocalVideo} from './prayer-meta-adapter.js';
 import {YOUTUBE_PRAYER_CHANNEL} from './youtube-oauth.js';
+import {prayerManifestFormat,prayerDurationAllowed} from './prayer-distribution-media.js';
 
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const validId=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{11}$/.test(value);
@@ -20,6 +21,7 @@ export function createPrayerYouTubeAdapter({db,dataDir,oauth,encrypt,decrypt,fet
     phase TEXT NOT NULL,session_encrypted TEXT,video_id TEXT,error TEXT,attempt_count INTEGER NOT NULL DEFAULT 0,next_check_at INTEGER NOT NULL DEFAULT 0,remote_json TEXT,
     claim_owner TEXT NOT NULL DEFAULT '',claim_until INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);`);
   const read=day=>db.prepare('SELECT * FROM prayer_youtube_uploads WHERE day=?').get(day);
+  const sourceFormat=day=>{const row=read(day);return row?prayerManifestFormat(JSON.parse(row.manifest_json),day,dataDir):null;};
   const connection=()=>oauth.status();
   function manual(day){
     if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='prayer_channel_runs'").get())return null;
@@ -50,9 +52,11 @@ export function createPrayerYouTubeAdapter({db,dataDir,oauth,encrypt,decrypt,fet
     if(!row&&(!canPublish()||!connection().connected))return {state:'paused',providerId:null,permalink:null,error:null};
     if(raw){
       manifest=validateManifest(raw);
-      const expected=path.resolve(dataDir,'prayer-media',day,'short','video.mp4');
+      let format;try{format=prayerManifestFormat(manifest,day,dataDir);}catch{throw fail('youtube_source_invalid');}
+      const expected=path.resolve(dataDir,'prayer-media',day,format,'video.mp4');
       if(manifest.campaign!=='oracao-'+day||manifest.videoPath!==expected||!fs.realpathSync(manifest.videoPath).startsWith(fs.realpathSync(dataDir)+path.sep))throw fail('youtube_source_invalid');
-      local=inspect(manifest);
+      local=inspect(manifest,undefined,{channel:'youtube'});
+      if(format==='tiktok'&&!prayerDurationAllowed(manifest,local.info?.durationSeconds,'youtube'))throw fail('youtube_source_invalid');
       if(!Buffer.isBuffer(local.buffer)||local.buffer.length!==local.info.bytes||hash(local.buffer)!==local.info.sha256)throw fail('youtube_source_changed');
       binding=hash(JSON.stringify({day,channel:YOUTUBE_PRAYER_CHANNEL,manifest,sha256:local.info.sha256,bytes:local.info.bytes}));
       if(row&&row.binding!==binding)throw fail('youtube_source_changed');
@@ -135,5 +139,5 @@ export function createPrayerYouTubeAdapter({db,dataDir,oauth,encrypt,decrypt,fet
       return snapshot(day);
     }finally{db.prepare("UPDATE prayer_youtube_uploads SET claim_owner='',claim_until=0 WHERE day=? AND claim_owner=?").run(day,owner);}
   }
-  return {publish,status:connection,snapshot,pendingDays:()=>db.prepare("SELECT day FROM prayer_youtube_uploads WHERE phase NOT IN ('published_verified','private_requires_review','failed','needs_review') ORDER BY day LIMIT 30").all().map(r=>r.day)};
+  return {publish,status:connection,snapshot,sourceFormat,pendingDays:()=>db.prepare("SELECT day FROM prayer_youtube_uploads WHERE phase NOT IN ('published_verified','private_requires_review','failed','needs_review') ORDER BY day LIMIT 30").all().map(r=>r.day)};
 }

@@ -50,7 +50,7 @@ export function createEcosystemCatalog({db,siteUrl,sourceCatalog,services=()=>[]
     if(published&&row.sourceKey&&!source)published=false;
     if(published&&row.type==='story') {
       const story=db.prepare('SELECT article_id,published_json,published_source_hash FROM editorial_web_stories WHERE id=?').get(row.rawId);
-      try {const draft=JSON.parse(story?.published_json);const currentHash=source&&createHash('sha256').update(JSON.stringify([source.title,source.summary,source.body,source.image_url,source.updated_at,...(source.commercial?[source.facts,source.sourcePath]:[])])).digest('hex');if(!source||(source.commercial&&currentHash!==story.published_source_hash)||(draft.companionHash&&!db.prepare("SELECT 1 FROM editorial_articles WHERE id=? AND status='published'").get('story-companion:'+story.article_id)))published=false;}catch{published=false;}
+      try {const draft=JSON.parse(story?.published_json);const currentHash=source&&createHash('sha256').update(JSON.stringify([source.title,source.summary,source.body,source.image_url,source.updated_at,...(source.commercial?[source.facts,source.sourcePath]:[]),...(source.reuseBinding?[source.reuseBinding]:[])])).digest('hex');if(!source||((source.commercial||source.reuseBinding)&&currentHash!==story.published_source_hash)||(draft.companionHash&&!db.prepare("SELECT 1 FROM editorial_articles WHERE id=? AND status='published'").get('story-companion:'+story.article_id)))published=false;}catch{published=false;}
     }
     if(status==='published'&&!published)status='pending';
     let url=row.url||source?.sourcePath||'';

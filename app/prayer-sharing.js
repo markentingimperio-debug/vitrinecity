@@ -7,6 +7,7 @@ import {providerGroups,whatsappGroupPermission} from './whatsapp-group-directory
 import {isWhatsAppCommercialGroupAllowed} from './whatsapp-commercial-policy.js';
 import {countWhatsAppSchedules} from './whatsapp-schedule-worker.js';
 import {loadCredential,createApi,inspectLocalVideo,openJournal,run as runMeta} from './prayer-meta-adapter.js';
+import {prayerChannelFormat,prayerManifestFormat} from './prayer-distribution-media.js';
 
 export const PRAYER_SCHEDULE=Object.freeze({hour:7,minute:0,timeZone:'America/Sao_Paulo',startDay:'2026-09-12'});
 export const PRAYER_SOCIAL_CHANNELS=Object.freeze(['instagram','facebook','instagram-stories','facebook-stories']);
@@ -109,13 +110,17 @@ export function setupPrayerSharing({app,db,dataDir,publicDir,requireAdmin,sameOr
     const receiptExists=fs.existsSync(path.join(receiptDirectory,`oracao-${day}-${channel}.json`));
     if(!active&&!receiptExists)return;
     if(previous?.state==='needs_review'&&!retryableReadError({message:previous.error}))return;
-    if(!media(day,'short'))return;
     let journal;
     try{
-      const m=verifiedMedia(day,'short'),manifest={campaign:'oracao-'+day,videoPath:m.videoPath,publicVideoUrl:m.publicVideoUrl,title:m.script.title,caption:m.caption};
-      const {credential,api}=metaFactory(),local=inspectVideo(manifest);
-      journal=openJournal(receiptDirectory,channel,manifest.campaign);
-      const stored=journal.load(),uncertain=previous?.state==='held_unknown'||stored?.phase==='held_unknown'||Object.values(stored?.attempts||{}).some(attempt=>attempt.state==='pending_unknown');
+      journal=openJournal(receiptDirectory,channel,'oracao-'+day);
+      const stored=journal.load();
+      // A saved receipt keeps its original video even after the default format changes.
+      if(!stored&&previous&&!['retry_pending','needs_review'].includes(previous.state))throw Error('prayer_distribution_receipt_missing');
+      const format=stored?prayerManifestFormat(stored.manifest,day,dataDir):prayerChannelFormat(channel);
+      if(!stored&&!media(day,format))return;
+      const m=verifiedMedia(day,format),manifest={campaign:'oracao-'+day,videoPath:m.videoPath,publicVideoUrl:m.publicVideoUrl,title:m.script.title,caption:m.caption};
+      const {credential,api}=metaFactory(),local=inspectVideo(manifest,undefined,{channel});
+      const uncertain=previous?.state==='held_unknown'||stored?.phase==='held_unknown'||Object.values(stored?.attempts||{}).some(attempt=>attempt.state==='pending_unknown');
       const canPublish=()=>{const latest=settings();return !uncertain&&latest.revision===row.revision&&channelEnabled(latest,channel)&&eligible(latest,day);};
       const mode=stored?(!active||uncertain?'status':'step'):'prepare';
       const result=await runMeta({mode,channel,manifest,credentialVersion:credential.credentialVersion,local,api,journal,canPublish});
@@ -142,10 +147,11 @@ export function setupPrayerSharing({app,db,dataDir,publicDir,requireAdmin,sameOr
     const active=Boolean(enabledFor(row)&&adapterStatus(adapter).connected&&eligible(row,day));
     const pending=adapterDays(adapter).includes(day);
     if(!active&&!pending&&!previous)return;
-    if(!media(day,'short'))return;
     const readOnly=!active||['held_unknown','private_requires_review','needs_review','failed'].includes(previous?.state);
     try{
-      const m=verifiedMedia(day,'short'),manifest={campaign:'oracao-'+day,videoPath:m.videoPath,publicVideoUrl:m.publicVideoUrl,title:m.script.title,caption:m.caption};
+      const savedFormat=adapter.sourceFormat?.(day),format=savedFormat||prayerChannelFormat(channel);
+      if(!savedFormat&&!media(day,format))return;
+      const m=verifiedMedia(day,format),manifest={campaign:'oracao-'+day,videoPath:m.videoPath,publicVideoUrl:m.publicVideoUrl,title:m.script.title,caption:m.caption};
       const canPublish=()=>{const latest=settings();return !readOnly&&latest.revision===row.revision&&enabledFor(latest)&&adapterStatus(adapter).connected&&eligible(latest,day);};
       const result=await adapter.publish({day,manifest,canPublish,mode:readOnly?'status':'step'});
       const state=previous?.state==='held_unknown'&&result.state!=='published_verified'?'held_unknown':result.state;
@@ -184,7 +190,7 @@ export function setupPrayerSharing({app,db,dataDir,publicDir,requireAdmin,sameOr
     const row=settings(),today=prayerDayInBrazil(now()),next=prayerLocalHour(now())<7?today:shiftPrayerDay(today,1);
     const active=Boolean(row.enabled&&canRun()),youtube=adapterStatus(youtubeAdapter),vitrineSocial=adapterStatus(vitrineSocialAdapter),names={instagram:'Instagram · Reel',facebook:'Facebook · Reel da página','instagram-stories':'Instagram · Stories','facebook-stories':'Facebook · Stories da página'};
     return {enabled:Boolean(row.enabled),globalPaused:!canRun(),schedule:PRAYER_SCHEDULE,nextAt:prayerScheduledAt(next<row.start_day?row.start_day:next),groups:row.groups,instagramEnabled:Boolean(row.instagram_enabled),socialEnabled:Boolean(row.social_enabled),youtubeEnabled:Boolean(row.youtube_enabled),
-      channels:[{id:'whatsapp',name:'WhatsApp',state:active?'scheduled':'paused',detail:`${row.groups.length} grupos selecionados`},...PRAYER_SOCIAL_CHANNELS.map(id=>({id,name:names[id],state:active&&channelEnabled(row,id)?'scheduled':'paused',detail:`${id.startsWith('instagram')?'@agrotecniica':'Campo & Conhecimento'} · permissões e recibo próprios; sem recuperar dias anteriores`})),{id:'vitrine_social',name:'Vitrine Social',state:vitrineSocial.connected?(active?'scheduled':'paused'):'needs_configuration',detail:'Vídeo no perfil da Agrotécnica · confirmação própria na VitrineCity.'},{id:'facebook-groups',name:'Grupos do Facebook',state:'manual',detail:'Baixe o vídeo e use o agendamento do próprio grupo.'},{id:'youtube',name:'YouTube',connected:Boolean(youtube.connected),state:youtube.connected?(active&&row.youtube_enabled?'scheduled':'paused'):'needs_connection',detail:youtube.connected?(row.youtube_enabled?'Canal confirmado · somente vídeos públicos conferidos contam como publicados.':'Canal conectado. Ative o YouTube abaixo para incluí-lo na rotina; conectar sozinho não inicia envios.'):'Conecte e confirme o canal para autorizar a rotina. Nenhum envio automático antes disso.'},{id:'tiktok',name:'TikTok',state:'needs_configuration',detail:'Versão de 61 segundos preparada. Falta concluir o aplicativo de publicação e as escolhas de privacidade.'}],
+      channels:[{id:'whatsapp',name:'WhatsApp',state:active?'scheduled':'paused',detail:`${row.groups.length} grupos selecionados`},...PRAYER_SOCIAL_CHANNELS.map(id=>({id,name:names[id],state:active&&channelEnabled(row,id)?'scheduled':'paused',detail:`${id.startsWith('instagram')?'@agrotecniica':'Campo & Conhecimento'} · permissões e recibo próprios; sem recuperar dias anteriores`})),{id:'vitrine_social',name:'Vitrine Social',state:vitrineSocial.connected?(active?'scheduled':'paused'):'needs_configuration',detail:'Vídeo no perfil da Agrotécnica · confirmação própria na VitrineCity.'},{id:'facebook-groups',name:'Grupos do Facebook',state:'manual',detail:'Baixe o vídeo e use o agendamento do próprio grupo.'},{id:'youtube',name:'YouTube',connected:Boolean(youtube.connected),state:youtube.connected?(active&&row.youtube_enabled?'scheduled':'paused'):'needs_connection',detail:youtube.connected?(row.youtube_enabled?'Canal confirmado · somente vídeos públicos conferidos contam como publicados.':'Canal conectado. Ative o YouTube abaixo para incluí-lo na rotina; conectar sozinho não inicia envios.'):'Conecte e confirme o canal para autorizar a rotina. Nenhum envio automático antes disso.'},{id:'tiktok',name:'TikTok',state:'needs_configuration',detail:'Versão longa preparada para o TikTok. Falta concluir o aplicativo de publicação e as escolhas de privacidade.'}],
       media:db.prepare('SELECT * FROM prayer_media_jobs ORDER BY day DESC,format LIMIT 20').all(),packages:[...new Set(db.prepare("SELECT day FROM prayer_media_jobs WHERE state='ready' ORDER BY day DESC LIMIT 20").all().map(r=>r.day))].map(day=>({day,videos:publicMedia(day)})),
       days:db.prepare("SELECT DISTINCT campaign_id FROM whatsapp_qr_schedules WHERE campaign_id LIKE 'prayer-v1:%' ORDER BY campaign_id DESC LIMIT 10").all().map(r=>({day:r.campaign_id.slice(PREFIX.length),...countWhatsAppSchedules(db.prepare('SELECT status,confirmation_state,claimed_at,provider_message_id FROM whatsapp_qr_schedules WHERE campaign_id=?').all(r.campaign_id))})),runs:db.prepare('SELECT * FROM prayer_channel_runs ORDER BY day DESC,channel LIMIT 40').all()};
   }

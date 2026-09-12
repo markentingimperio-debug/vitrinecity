@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { validDay } from './prayer-daily.js';
 import { validateManifest } from './prayer-meta-adapter.js';
+import {prayerManifestFormat,prayerDurationAllowed} from './prayer-distribution-media.js';
 
 const PUBLISHER = 4, HANDLE = 'agrotecnica', MAX_BYTES = 200 * 1024 * 1024;
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -24,6 +25,15 @@ export function createPrayerVitrineSocial({ db, dataDir, mediaPublications, isPu
   const project = id => db.prepare(`SELECT m.*,t.title,t.created_by_user_id,t.status AS task_status,a.code AS agent_code
     FROM admin_media_projects m JOIN admin_agent_tasks t ON t.id=m.task_id
     JOIN admin_specialist_agents a ON a.id=t.agent_id WHERE m.id=?`).get(id);
+  function sourceFormat(day){
+    const row=read(day);
+    const candidates=row?[project(row.project_id)]:db.prepare(`SELECT m.* FROM admin_media_projects m JOIN admin_agent_tasks t ON t.id=m.task_id
+      WHERE t.created_by_user_id=? AND m.output_url IN (?,?)`).all(PUBLISHER,...['short','tiktok'].map(format=>`https://vitrinecity.com/prayer-media/${day}/${format}.mp4`));
+    if(!candidates.length)return null;
+    if(candidates.length!==1||!candidates[0])throw failure('prayer_social_source_invalid');
+    const url=candidates[0].output_url,format=url.endsWith('/tiktok.mp4')?'tiktok':'short';
+    try{return prayerManifestFormat({campaign:'oracao-'+day,publicVideoUrl:url,videoPath:path.join(dataDir,'prayer-media',day,format,'video.mp4')},day,dataDir);}catch{throw failure('prayer_social_source_invalid');}
+  }
   function publisherAllowed() {
     const user = db.prepare('SELECT id,account_status FROM users WHERE id=?').get(PUBLISHER);
     const profile = db.prepare('SELECT handle FROM social_profiles WHERE user_id=?').get(PUBLISHER);
@@ -41,14 +51,14 @@ export function createPrayerVitrineSocial({ db, dataDir, mediaPublications, isPu
   }
   function source(day, raw) {
     if (!validDay(day)) throw failure('prayer_day_invalid');
-    const manifest = validateManifest(raw), directory = path.join(dataDir, 'prayer-media', day, 'short'), file = path.join(directory, 'video.mp4'), readyPath = path.join(directory, 'ready.json');
-    if (manifest.campaign !== `oracao-${day}` || manifest.videoPath !== file || manifest.publicVideoUrl !== `https://vitrinecity.com/prayer-media/${day}/short.mp4`) throw failure('prayer_social_source_invalid');
+    const manifest = validateManifest(raw);let format;try{format=prayerManifestFormat(manifest,day,dataDir);}catch{throw failure('prayer_social_source_invalid');}
+    const directory = path.join(dataDir, 'prayer-media', day, format), file = path.join(directory, 'video.mp4'), readyPath = path.join(directory, 'ready.json');
     // A ready file cannot redirect us outside this edition through symlinks or JSON paths.
     const realRoot = fs.realpathSync(dataDir);
-    if (fs.realpathSync(file) !== path.join(realRoot, 'prayer-media', day, 'short', 'video.mp4') || fs.realpathSync(readyPath) !== path.join(realRoot, 'prayer-media', day, 'short', 'ready.json')) throw failure('prayer_social_source_invalid');
+    if (fs.realpathSync(file) !== path.join(realRoot, 'prayer-media', day, format, 'video.mp4') || fs.realpathSync(readyPath) !== path.join(realRoot, 'prayer-media', day, format, 'ready.json')) throw failure('prayer_social_source_invalid');
     if (fs.statSync(readyPath).size > 1024 * 1024) throw failure('prayer_social_source_invalid');
     const ready = JSON.parse(fs.readFileSync(readyPath, 'utf8')), st = fs.statSync(file);
-    if (!st.isFile() || st.size < 32 || st.size > MAX_BYTES || ready.day !== day || ready.format !== 'short' || ready.videoPath !== file || ready.publicVideoUrl !== manifest.publicVideoUrl || ready.caption !== manifest.caption || ready.script?.title !== manifest.title || !Number.isFinite(ready.durationSeconds) || ready.durationSeconds < 3 || ready.durationSeconds > 60 || ready.bytes !== st.size || !/^[a-f0-9]{64}$/.test(ready.sha256 || '') || ready.binding !== hash(JSON.stringify(ready.script)) || hash(fs.readFileSync(file)) !== ready.sha256) throw failure('prayer_social_source_changed');
+    if (!st.isFile() || st.size < 32 || st.size > MAX_BYTES || ready.day !== day || ready.format !== format || ready.videoPath !== file || ready.publicVideoUrl !== manifest.publicVideoUrl || ready.caption !== manifest.caption || ready.script?.title !== manifest.title || !prayerDurationAllowed(manifest,ready.durationSeconds,'vitrine_social') || ready.bytes !== st.size || !/^[a-f0-9]{64}$/.test(ready.sha256 || '') || ready.binding !== hash(JSON.stringify(ready.script)) || hash(fs.readFileSync(file)) !== ready.sha256) throw failure('prayer_social_source_changed');
     const binding = hash(JSON.stringify({ day, manifest, sha256: ready.sha256, scriptBinding: ready.binding, publisher: PUBLISHER }));
     return { manifest, ready, binding };
   }
@@ -129,5 +139,5 @@ export function createPrayerVitrineSocial({ db, dataDir, mediaPublications, isPu
       throw failure(code);
     } finally { busy = false; }
   }
-  return { publish, status, pendingDays };
+  return { publish, status, pendingDays, sourceFormat };
 }

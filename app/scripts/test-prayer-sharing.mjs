@@ -3,7 +3,7 @@ import {setupPrayerSharing,prayerScheduledAt,prayerPublicationWindow,prayerSched
 import {isWhatsAppCommercialGroupAllowed} from '../whatsapp-commercial-policy.js';
 import {mediaHash,prayerVideoScript,validatePrayerMedia} from '../prayer-media.js';
 import {createWhatsAppScheduleProcessor} from '../whatsapp-schedule-worker.js';
-import {run as runMeta,validateManifest,TARGET} from '../prayer-meta-adapter.js';
+import {run as runMeta,validateManifest,openJournal,TARGET} from '../prayer-meta-adapter.js';
 const DAY='2026-09-12',JID='123456789@g.us';
 function fixture(t,extra={}){
  const db=new Database(':memory:'),dir=fs.mkdtempSync(path.join(os.tmpdir(),'prayer-sharing-')),routes=new Map();let date=new Date('2026-09-11T18:00:00Z'),permission=true,global=true,calls=0;
@@ -14,7 +14,7 @@ function fixture(t,extra={}){
  const service=setupPrayerSharing({app,db,dataDir:dir,publicDir:dir,requireAdmin(){},sameOriginOnly(){},whatsappQrRequest:request,whatsappQrData:x=>x,canRun:()=>global,now:()=>date,generate:async()=>{throw Error('No generation expected');},...extra});
  const initialSettings=service.snapshot();
  db.prepare('UPDATE prayer_sharing_settings SET enabled=1,instagram_enabled=0,social_enabled=0,groups_json=?').run(JSON.stringify([{jid:JID,name:'VitrineCity Oração'}]));
- function ready(day=DAY){const folder=path.join(dir,'prayer-media',day,'short');fs.mkdirSync(folder,{recursive:true});const videoPath=path.join(folder,'video.mp4'),bytes=Buffer.from('validated fixture media with adequate length');fs.writeFileSync(videoPath,bytes);fs.writeFileSync(path.join(folder,'ready.json'),JSON.stringify({day,format:'short',videoPath,publicVideoUrl:`https://vitrinecity.com/prayer-media/${day}/short.mp4`,caption:'Oração completa de teste. Imagem e voz criadas com inteligência artificial. Amém.',sha256:mediaHash(bytes),script:{title:'Oração de sábado'},durationSeconds:30}));}
+ function ready(day=DAY,onlyFormat){for(const format of onlyFormat?[onlyFormat]:['short','tiktok']){const folder=path.join(dir,'prayer-media',day,format);fs.mkdirSync(folder,{recursive:true});const videoPath=path.join(folder,'video.mp4'),bytes=Buffer.from('validated fixture media with adequate length '+format);fs.writeFileSync(videoPath,bytes);fs.writeFileSync(path.join(folder,'ready.json'),JSON.stringify({day,format,videoPath,publicVideoUrl:`https://vitrinecity.com/prayer-media/${day}/${format}.mp4`,caption:'Oração completa de teste. Imagem e voz criadas com inteligência artificial. Amém.',sha256:mediaHash(bytes),script:{title:'Oração de sábado'},durationSeconds:format==='short'?30:61}));}}
  t.after(()=>{db.close();fs.rmSync(dir,{recursive:true,force:true});});
  return {db,dir,service,routes,request,ready,initialSettings,now:()=>date,setDate:d=>date=new Date(d),setPermission:p=>permission=p,setGlobal:p=>global=p,calls:()=>calls};
 }
@@ -53,9 +53,9 @@ function socialFixture(t,hooks={}){
    throw Error('Unexpected fixture GET '+endpoint);
   }
  };
- const f=fixture(t,{metaFactory:()=>({credential:{credentialVersion:'fixture-v1'},api}),inspectVideo:manifest=>({buffer:fs.readFileSync(manifest.videoPath),info:{bytes:44,sha256:'fixture',durationSeconds:30,width:720,height:1280}})});
+ const f=fixture(t,{metaFactory:()=>({credential:{credentialVersion:'fixture-v1'},api}),inspectVideo:manifest=>({buffer:fs.readFileSync(manifest.videoPath),info:{bytes:44,sha256:'fixture',durationSeconds:manifest.publicVideoUrl.endsWith('/short.mp4')?30:61,width:720,height:1280}})});
  f.db.prepare('UPDATE prayer_sharing_settings SET instagram_enabled=1,social_enabled=1').run();f.ready();f.setDate('2026-09-12T10:00:00Z');
- return {...f,writes,reads,preflights,run:channel=>f.db.prepare('SELECT * FROM prayer_channel_runs WHERE day=? AND channel=?').get(DAY,channel),journal:channel=>JSON.parse(fs.readFileSync(path.join(f.dir,'prayer-publications',`oracao-${DAY}-${channel}.json`),'utf8'))};
+ return {...f,api,writes,reads,preflights,run:channel=>f.db.prepare('SELECT * FROM prayer_channel_runs WHERE day=? AND channel=?').get(DAY,channel),journal:channel=>JSON.parse(fs.readFileSync(path.join(f.dir,'prayer-publications',`oracao-${DAY}-${channel}.json`),'utf8'))};
 }
 
 test('new social setting migrates independently without activating a disabled routine or changing the Instagram target',t=>{
@@ -67,9 +67,36 @@ test('new social setting migrates independently without activating a disabled ro
 test('four independent social journals publish once and report only their own verified links',async t=>{
  const f=socialFixture(t);for(let i=0;i<6;i++)await f.service.tick();
  assert.equal(f.writes.length,10);assert.equal(new Set(f.preflights).size,4);
- for(const channel of PRAYER_SOCIAL_CHANNELS){assert.equal(f.run(channel).state,'published_verified',channel);assert.ok(f.run(channel).permalink);assert.equal(f.journal(channel).channel,channel);}
+ for(const channel of PRAYER_SOCIAL_CHANNELS){assert.equal(f.run(channel).state,'published_verified',channel);assert.ok(f.run(channel).permalink);assert.equal(f.journal(channel).channel,channel);assert.ok(f.journal(channel).manifest.publicVideoUrl.endsWith(channel.endsWith('-stories')?'/short.mp4':'/tiktok.mp4'));}
  const priorWrites=f.writes.length,priorReads=f.reads.length;f.setDate('2026-09-14T14:00:00Z');await f.service.tick();assert.equal(f.writes.length,priorWrites);assert.equal(f.reads.length,priorReads);
  assert.deepEqual(f.service.snapshot().channels.filter(c=>PRAYER_SOCIAL_CHANNELS.includes(c.id)).map(c=>c.id),PRAYER_SOCIAL_CHANNELS);
+});
+
+test('a saved short Reel receipt keeps its exact source and binding after master selection changes',async t=>{
+ const f=socialFixture(t),m=JSON.parse(fs.readFileSync(path.join(f.dir,'prayer-media',DAY,'short','ready.json'),'utf8'));
+ const manifest={campaign:'oracao-'+DAY,videoPath:m.videoPath,publicVideoUrl:m.publicVideoUrl,title:m.script.title,caption:m.caption};
+ const journal=openJournal(path.join(f.dir,'prayer-publications'),'instagram',manifest.campaign);
+ await runMeta({mode:'prepare',channel:'instagram',manifest,credentialVersion:'fixture-v1',local:{buffer:fs.readFileSync(m.videoPath),info:{bytes:44,sha256:'fixture',durationSeconds:30,width:720,height:1280}},api:f.api,journal,canPublish:()=>true});
+ const original=journal.load();journal.close();
+ for(let i=0;i<6;i++)await f.service.tick();
+ assert.equal(f.run('instagram').state,'published_verified');assert.equal(f.journal('instagram').binding,original.binding);assert.deepEqual(f.journal('instagram').manifest,original.manifest);
+ assert.equal(f.writes.filter(w=>w.endpoint===`${TARGET.instagramId}/media`&&w.params.media_type!=='STORIES').length,1);
+ assert.ok(f.journal('facebook').manifest.publicVideoUrl.endsWith('/tiktok.mp4'));
+ const count=f.writes.length;f.db.prepare("DELETE FROM prayer_channel_runs WHERE channel='instagram'").run();f.setGlobal(false);f.setDate('2026-09-13T04:00:00Z');await f.service.tick();
+ assert.equal(f.run('instagram').state,'published_verified');assert.equal(f.writes.length,count);assert.equal(f.journal('instagram').binding,original.binding);
+});
+
+test('a missing master does not fall back to short; a missing receipt cannot restart an uncertain Reel',async t=>{
+ const f=socialFixture(t);const master=path.join(f.dir,'prayer-media',DAY,'tiktok','ready.json');fs.renameSync(master,master+'.saved');
+ await f.service.tick();assert.equal(f.journal('instagram-stories').phase,'prepared');assert.equal(f.run('instagram'),undefined);assert.equal(f.preflights.includes('instagram'),false);
+ fs.renameSync(master+'.saved',master);f.db.prepare("INSERT INTO prayer_channel_runs(day,channel,state) VALUES(?,'instagram','held_unknown')").run(DAY);
+ await f.service.tick();assert.equal(f.run('instagram').state,'held_unknown');assert.equal(f.preflights.includes('instagram'),false);
+});
+
+test('adapter receipt format wins over the default master and new adapter work receives the master',async t=>{
+ const seen=[];let saved=null;const adapter={status:()=>({connected:true}),pendingDays:()=>[],sourceFormat:()=>saved,publish:async args=>{seen.push(args.manifest.publicVideoUrl);return {state:'processing'};}};
+ const f=fixture(t,{vitrineSocialAdapter:adapter});f.ready();f.setDate('2026-09-12T10:00:00Z');await f.service.tick();assert.ok(seen.at(-1).endsWith('/tiktok.mp4'));
+ saved='short';f.setGlobal(false);await f.service.tick();assert.ok(seen.at(-1).endsWith('/short.mp4'));
 });
 
 test('existing verified Instagram receipt and WhatsApp confirmation are preserved when new social destinations start',async t=>{

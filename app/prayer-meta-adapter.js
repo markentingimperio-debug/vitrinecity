@@ -5,6 +5,7 @@ import { createHash, createDecipheriv } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import {prayerDurationAllowed} from './prayer-distribution-media.js';
 
 export const TARGET = Object.freeze({ accountId: 7, userId: 4, pageId: '127910957075609', pageName: 'Campo & Conhecimento', instagramId: '17841461502665390', instagramUsername: 'agrotecniica' });
 export const PRAYER_META_CHANNELS = Object.freeze(['facebook', 'instagram', 'facebook-stories', 'instagram-stories']);
@@ -29,14 +30,15 @@ export function validateManifest(input) {
   return { campaign: input.campaign, videoPath: path.resolve(input.videoPath), publicVideoUrl: url.href, title, caption };
 }
 
-export function validateVideo(buffer, probe) {
+export function validateVideo(buffer, probe, distribution = {}) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 32 || buffer.length > MAX_BYTES || buffer.toString('ascii', 4, 8) !== 'ftyp') fail('prayer_mp4_invalid');
   const video = probe?.streams?.find(s => s.codec_type === 'video');
   const audio = probe?.streams?.find(s => s.codec_type === 'audio');
   const duration = Number(probe?.format?.duration);
   const fraction = String(video?.avg_frame_rate || '').split('/').map(Number);
   const fps = fraction[0] / fraction[1];
-  if (!video || video.codec_name !== 'h264' || video.pix_fmt !== 'yuv420p' || video.width < 540 || video.height < 960 || Math.abs(video.width / video.height - 9 / 16) > 0.001 || fps < 23 || fps > 60 || duration < 4 || duration > 60) fail('prayer_video_specs_invalid');
+  const durationAllowed=distribution.channel?prayerDurationAllowed(distribution.manifest,duration,distribution.channel):duration>=4&&duration<=60;
+  if (!video || video.codec_name !== 'h264' || video.pix_fmt !== 'yuv420p' || video.width < 540 || video.height < 960 || Math.abs(video.width / video.height - 9 / 16) > 0.001 || fps < 23 || fps > 60 || !durationAllowed) fail('prayer_video_specs_invalid');
   if (!audio || audio.codec_name !== 'aac' || Number(audio.sample_rate) > 48000 || ![1, 2].includes(audio.channels)) fail('prayer_audio_specs_invalid');
   // A real atom walk avoids matching an accidental "moov" sequence inside media bytes.
   let moov = -1, mdat = -1;
@@ -52,12 +54,12 @@ export function validateVideo(buffer, probe) {
   return { sha256: digest(buffer), bytes: buffer.length, durationSeconds: duration, width: video.width, height: video.height, fps, videoCodec: 'h264', audioCodec: 'aac' };
 }
 
-export function inspectLocalVideo(manifest, ffprobe = '/usr/bin/ffprobe') {
+export function inspectLocalVideo(manifest, ffprobe = '/usr/bin/ffprobe', distribution = {}) {
   const st = fs.statSync(manifest.videoPath);
   if (!st.isFile() || st.size > MAX_BYTES) fail('prayer_mp4_invalid');
   const buffer = fs.readFileSync(manifest.videoPath);
   let probe; try { probe = JSON.parse(execFileSync(ffprobe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', manifest.videoPath], { timeout: 15000, maxBuffer: 1024 * 1024, encoding: 'utf8', windowsHide: true, shell: false })); } catch { fail('prayer_probe_failed'); }
-  return { buffer, info: validateVideo(buffer, probe) };
+  return { buffer, info: validateVideo(buffer, probe, {...distribution,manifest}) };
 }
 
 export function loadCredential(env = process.env, Database) {
@@ -207,6 +209,7 @@ function storyPermalink(raw, channel) {
 export async function run({ mode, channel, manifest: raw, credentialVersion, local, api, journal, canPublish = () => true }) {
   if (!['prepare', 'step', 'status'].includes(mode) || !PRAYER_META_CHANNELS.includes(channel)) fail('prayer_command_invalid');
   const manifest = validateManifest(raw);
+  if (manifest.publicVideoUrl.endsWith('/tiktok.mp4')&&!prayerDurationAllowed(manifest,local.info?.durationSeconds,channel)) fail('prayer_distribution_video_specs_invalid');
   if (isStory(channel) && (!Number.isFinite(local.info?.durationSeconds) || local.info.durationSeconds < 3 || local.info.durationSeconds > 60 || !Number.isInteger(local.info.bytes) || local.info.bytes < 32 || local.info.bytes > (channel === 'instagram-stories' ? 100 * 1024 * 1024 : MAX_BYTES) || (channel === 'instagram-stories' && local.info.width > 1920))) fail('prayer_story_video_specs_invalid');
   // Do not add fields or reorder this payload: existing Reels journals bind its exact bytes.
   const binding = digest(JSON.stringify({ manifest, channel, info: local.info, account: TARGET }));
@@ -357,7 +360,7 @@ export async function cli(argv = process.argv.slice(2)) {
   const [mode, channel, manifestFile, ...extra] = argv;
   if (extra.length || !['prepare', 'step', 'status'].includes(mode) || !PRAYER_META_CHANNELS.includes(channel) || !manifestFile) fail('prayer_usage_prepare_step_status_channel_manifest');
   const manifest = validateManifest(JSON.parse(fs.readFileSync(manifestFile, 'utf8')));
-  const local = inspectLocalVideo(manifest, process.env.PRAYER_FFPROBE || '/usr/bin/ffprobe');
+  const local = inspectLocalVideo(manifest, process.env.PRAYER_FFPROBE || '/usr/bin/ffprobe', {channel});
   const credential = loadCredential();
   // Fixed persistent receipt root. Never use /tmp or switch folders to bypass a receipt.
   const journal = openJournal('/data/prayer-publications', channel, manifest.campaign);
