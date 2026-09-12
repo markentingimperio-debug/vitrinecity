@@ -45,7 +45,7 @@
 <button id="liveIgSave" disabled>Salvar atendimento do Instagram</button>
 </form>
 <a href="/api/social/login?intent=instagram_messages&amp;returnTo=admin">Autorizar mensagens do Instagram na Meta</a>
-<details><summary>Configuração avançada do login Instagram</summary><form id="liveIgLoginForm"><label for="liveIgLoginConfigId">ID da configuração criada na Meta</label><input id="liveIgLoginConfigId" inputmode="numeric" pattern="[0-9]{1,40}" maxlength="40" autocomplete="off" required><small>Este identificador não é uma chave de acesso. Salvar não autoriza a conta; depois use o link de autorização acima.</small><button id="liveIgLoginSave" disabled>Salvar configuração de login</button></form></details>
+<details><summary>Configuração avançada do login Instagram</summary><form id="liveIgLoginForm"><label for="liveIgLoginConfigId">ID da configuração criada na Meta</label><input id="liveIgLoginConfigId" inputmode="numeric" pattern="[1-9][0-9]{4,29}" maxlength="30" autocomplete="off" required><small>Este identificador não é uma chave de acesso. Salvar não autoriza a conta; depois use o link de autorização acima.</small><button id="liveIgLoginSave" disabled>Salvar configuração de login</button></form></details>
 <p id="liveIgReadiness" class="muted">As permissões e os eventos recebidos pela Meta precisam estar disponíveis para o atendimento funcionar.</p>
 <p><a href="/admin-chatbotx.html#automationJobs">Conferir fila e recibos do Direct</a></p>
 </section>

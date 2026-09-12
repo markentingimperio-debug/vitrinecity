@@ -68,7 +68,16 @@ test('Instagram OAuth saves an isolated encrypted credential without replacing F
 
 test('missing or identity-stale private credentials cannot fall back to a shared Facebook token',async t=>{
   for(const change of [f=>f.db.exec('DELETE FROM instagram_messaging_accounts WHERE account_id=7'),f=>f.db.exec("UPDATE instagram_messaging_accounts SET instagram_id='999' WHERE account_id=7"),f=>f.db.exec('UPDATE instagram_messaging_accounts SET user_id=43 WHERE account_id=7')]){
-    const f=fixture(t);change(f);const job=await f.ready();assert.equal(f.service.connectionStatus().find(item=>item.accountId===7).credentialSaved,false);await assert.rejects(f.service.send(job,job.reply_text),/token_unavailable/);assert.equal(f.state.posts.length,0);assert.equal(f.row(job).claimed_at,null);
+    const f=fixture(t);change(f);const [job]=f.enqueue();assert.equal(f.service.connectionStatus().find(item=>item.accountId===7).credentialSaved,false);await assert.rejects(f.service.generateReply(job),/token_unavailable/);await assert.rejects(f.service.send(job,''),/token_unavailable/);assert.equal(f.state.textCalls.length,0);assert.equal(f.state.requests.length,0);assert.equal(f.state.posts.length,0);assert.equal(f.row(job).claimed_at,null);
+  }
+});
+
+test('unreadable private credentials block AI and provider calls for Direct and live while pause stays available',async t=>{
+  for(const payload of [direct(),live()])for(const decryptToken of [()=>{throw Error('PRIVATE_DECRYPT_ERROR');},()=>undefined,()=>'',()=> 'invalid token']){
+    const f=fixture(t),service=createInstagramMessaging({...f.opts,decryptToken});const [job]=f.enqueue(payload);
+    await assert.rejects(service.generateReply(job),/^Error: instagram_token_unavailable$/);
+    assert.equal(f.state.textCalls.length,0);assert.equal(f.state.requests.length,0);assert.equal(f.row(job).state,'pending');assert.equal(f.row(job).claimed_at,null);
+    assert.equal(service.configure({enabled:false,autoReply:false}).enabled,false);
   }
 });
 

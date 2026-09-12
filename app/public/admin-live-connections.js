@@ -44,7 +44,7 @@
     el('liveYtBind').disabled = blocked || youtube?.oauth?.connected !== true || youtube?.connected === true || !sessionReady() || !el('liveYtAutoReply').checked;
     el('liveYtDisconnect').disabled = blocked || !(youtube?.connected === true || youtube?.state === 'connected' && youtube?.broadcastId);
     el('liveIgSave').disabled = blocked || !instagram;
-    el('liveIgLoginSave').disabled = blocked || !instagram || !/^\d{1,40}$/.test(el('liveIgLoginConfigId').value.trim());
+    el('liveIgLoginSave').disabled = blocked || !instagram || !/^[1-9]\d{4,29}$/.test(el('liveIgLoginConfigId').value.trim());
     for (const id of ['liveIgEnabled','liveIgAutoReply','liveIgLiveComments']) el(id).disabled = blocked;
     for (const input of choices.values()) input.disabled = blocked;
   }
@@ -83,7 +83,7 @@
       const label = document.createElement('label'), input = document.createElement('input');
       label.className = 'check'; input.type = 'checkbox'; input.checked = selected.has(account.id); input.value = String(account.id);
       input.addEventListener('change', () => { igDirty = true; });
-      label.append(input, document.createTextNode((typeof account.label === 'string' && account.label.trim() ? account.label : 'Conta ' + account.id) + ' · conexão ' + account.id + (account.connected ? '' : ' (indisponível)')));
+      label.append(input, document.createTextNode((typeof account.label === 'string' && account.label.trim() ? account.label : 'Conta ' + account.id) + ' · conexão ' + account.id + (account.connected ? account.credentialSaved === true ? ' · autorização de mensagens salva' : ' · falta conferir a autorização de mensagens' : ' (indisponível)')));
       el('liveIgAccounts').append(label); choices.set(account.id,input);
     }
     if (!accounts.size) el('liveIgAccounts').textContent = 'Nenhuma conta Instagram conectada. Use a autorização abaixo.';
