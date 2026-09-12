@@ -7,10 +7,10 @@
   <title>Orações e Esperança · Oração do dia | VitrineCity</title>
   <meta name="description" content="Reserve um momento para a oração, encontre uma palavra de esperança e compartilhe uma mensagem de carinho. Um espaço de fé da VitrineCity.">
   <meta name="robots" content="noindex,follow">
-  <link rel="stylesheet" href="/oracao-do-dia.css?v=20260912-mobile-intro">
+  <link rel="stylesheet" href="/oracao-do-dia.css?v=20260912-pix-layout">
   <script type="module" src="/oracao-do-dia-media.js?v=20260911-calendar"></script>
   <script type="module" src="/oracao-do-dia.js?v=20260910-daily-edition"></script>
-  <script type="module" src="/oracao-do-dia-apoio.js?v=20260911-lia-support"></script>
+  <script type="module" src="/oracao-do-dia-apoio.js?v=20260912-pix"></script>
 </head>
 <body>
   <a class="skip-link" href="#oracao">Pular para a oração</a>
@@ -46,6 +46,48 @@
         <p data-prayer-paragraph>Ensina-me a enxergar as pequenas dádivas de hoje: uma conversa sincera, o alimento à mesa, a mão estendida, a chance de recomeçar. Que a gratidão não apague as minhas dores, mas abra espaço para a esperança.</p>
         <p data-prayer-paragraph>Guia minhas escolhas. Que minhas palavras sejam cuidadosas e minhas atitudes levem paz. Ao fim deste dia, ajuda-me a descansar, confiando em teu amor e no caminho que ainda podemos construir.</p>
         <p class="prayer-ending" data-prayer-paragraph>Em nome de Jesus, amém.</p><!-- prayer:text:end -->
+        <aside class="support-note prayer-support" id="apoio" aria-labelledby="supportTitle">
+          <p class="eyebrow">APOIO VOLUNTÁRIO</p>
+          <h3 id="supportTitle">Contribua, se puder.</h3>
+          <p>Se estiver ao seu alcance e não fizer falta para você, pode apoiar este espaço. A oração é gratuita e continuará aberta a todos.</p>
+          <p id="supportBeneficiary" class="support-beneficiary" hidden></p>
+          <fieldset id="supportAmounts" class="support-amounts" disabled>
+            <legend>Escolha o valor</legend>
+            <div class="amount-options">
+              <label><input type="radio" name="supportAmount" value="50"><span>R$ 0,50</span></label>
+              <label><input type="radio" name="supportAmount" value="100"><span>R$ 1</span></label>
+              <label><input type="radio" name="supportAmount" value="200"><span>R$ 2</span></label>
+              <label><input type="radio" name="supportAmount" value="300"><span>R$ 3</span></label>
+              <label><input type="radio" name="supportAmount" value="500" checked><span>R$ 5</span></label>
+            </div>
+          </fieldset>
+          <div class="support-payer">
+            <label for="supportPayerEmail">E-mail para gerar o Pix</label>
+            <input id="supportPayerEmail" type="email" inputmode="email" autocomplete="email" maxlength="254" spellcheck="false" autocapitalize="none" aria-describedby="supportPayerEmailHelp" disabled>
+            <p id="supportPayerEmailHelp" class="availability-detail">Informe seu e-mail para identificar esta contribuição no Mercado Pago.</p>
+          </div>
+          <p class="support-terms">Contribuição única e opcional, sem assinatura. Confira o valor e o recebedor antes de confirmar no aplicativo do seu banco.</p>
+          <div class="support-payment-actions">
+            <button id="supportButton" class="button button-primary" type="button" disabled aria-describedby="supportStatus">Gerar Pix</button>
+            <button id="supportAlternative" class="button button-quiet" type="button" disabled aria-describedby="supportStatus">Outras formas no Mercado Pago</button>
+          </div>
+          <p id="supportStatus" class="availability-detail" role="status" aria-live="polite">Consultando a disponibilidade do apoio. Aguarde antes de gerar o Pix.</p>
+          <section id="supportPix" class="support-pix" aria-labelledby="supportPixTitle" hidden>
+            <h4 id="supportPixTitle">Pague no aplicativo do seu banco</h4>
+            <p class="support-pix-help">Escaneie o QR Code ou copie o código abaixo e use a opção Pix Copia e Cola.</p>
+            <div class="support-pix-content">
+              <div class="support-pix-image"><img id="supportPixQr" width="220" height="220" alt="QR Code do Pix para esta contribuição"></div>
+              <div class="support-pix-copy">
+                <label for="supportPixCode">Código Pix Copia e Cola</label>
+                <textarea id="supportPixCode" rows="4" readonly spellcheck="false" aria-describedby="supportPixExpiry"></textarea>
+                <button id="copySupportPix" class="button button-primary" type="button">Copiar código Pix</button>
+                <p id="supportPixCopyStatus" class="availability-detail" role="status" aria-live="polite"></p>
+              </div>
+            </div>
+            <p id="supportPixExpiry" class="availability-detail"></p>
+          </section>
+          <button id="refreshSupport" class="text-button" type="button" hidden>Verificar confirmação do apoio</button>
+        </aside>
         <div class="prayer-audio"><div class="audio-buttons"><button class="button button-primary" type="button" id="listenPrayer" hidden>Ouvir oração</button><button class="button button-quiet" type="button" id="pausePrayer" hidden>Pausar</button><button class="text-button" type="button" id="stopPrayer" hidden>Parar</button></div><p id="audioStatus" role="status" aria-live="polite">Leitura em voz alta com a voz do seu aparelho. Ative o JavaScript para ouvir.</p></div>
         <div class="prayer-actions"><button type="button" class="button button-primary" id="sharePrayer"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 15V3m-4 4 4-4 4 4M5 12v8h14v-8"/></svg>Compartilhar oração</button><button type="button" class="button button-quiet" id="copyPrayer"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M15 8V4H4v11h4"/></svg>Copiar texto</button><button type="button" class="text-button" id="copyPrayerLink">Copiar link</button></div>
         <p class="action-status" id="shareStatus" role="status" aria-live="polite"></p>
@@ -68,7 +110,6 @@
 
     <section class="continuity-section section-width" aria-labelledby="continuityTitle">
       <div class="daily-signup"><p class="eyebrow">ORAÇÕES E ESPERANÇA · VITRINECITY</p><h2 id="continuityTitle">Leve esse momento<br>com você.</h2><p>Um grupo no WhatsApp dedicado a orações e mensagens de esperança. A entrada é voluntária, e você pode sair quando quiser.</p><p class="availability-label" id="groupAvailability">Convite do grupo em preparação</p><a class="button button-primary" id="joinPrayerGroup" role="link" aria-disabled="true" tabindex="-1" aria-describedby="signupStatus groupPrivacy">Receber orações no WhatsApp</a><p id="signupStatus" class="availability-detail">O link do grupo ainda não está disponível. Nenhum dado é solicitado nesta página.</p><p id="groupPrivacy" class="availability-detail">Ao entrar no grupo, seu nome e telefone podem ficar visíveis aos outros participantes.</p></div>
-      <aside class="support-note" aria-labelledby="supportTitle"><span class="support-symbol" aria-hidden="true">✳</span><p class="eyebrow">APOIO VOLUNTÁRIO</p><h3 id="supportTitle">Ajude a cultivar <br>este espaço.</h3><p>Se desejar e puder, escolha um valor para contribuir. A oração continuará aberta a todos.</p><p id="supportBeneficiary" class="support-beneficiary" hidden></p><fieldset id="supportAmounts" class="support-amounts" disabled><legend>Escolha o valor</legend><div class="amount-options"><label><input type="radio" name="supportAmount" value="50"><span>R$ 0,50</span></label><label><input type="radio" name="supportAmount" value="100"><span>R$ 1</span></label><label><input type="radio" name="supportAmount" value="200"><span>R$ 2</span></label><label><input type="radio" name="supportAmount" value="300"><span>R$ 3</span></label><label><input type="radio" name="supportAmount" value="500" checked><span>R$ 5</span></label></div></fieldset><p class="support-terms">Contribuição única e opcional, sem assinatura. Revise o valor e o recebedor no Mercado Pago.</p><button id="supportButton" class="button button-outline" type="button" disabled aria-describedby="supportStatus">Apoio em preparação</button><p id="supportStatus" class="availability-detail" role="status" aria-live="polite">O apoio ainda não está disponível. O recebedor e a forma de pagamento serão informados antes de qualquer contribuição.</p><button id="refreshSupport" class="text-button" type="button" hidden>Verificar confirmação do apoio</button></aside>
     </section>
   </main>
   <footer class="site-footer"><a class="brand footer-brand" href="/">Vitrine<span>City</span></a><p>Um espaço de fé, acolhimento e esperança.<br>Oração e reflexão originais · edição de <!-- prayer:footer-edition:start -->10 de setembro de 2026<!-- prayer:footer-edition:end -->.</p><a href="#oracao">Voltar à oração <span aria-hidden="true">↑</span></a></footer>

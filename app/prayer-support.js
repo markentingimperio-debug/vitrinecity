@@ -1,4 +1,5 @@
 import {createHash,createHmac,randomUUID,timingSafeEqual} from 'node:crypto';
+import {setupPrayerSupportPix,publicSupportPix} from './prayer-support-pix.js';
 
 export const PRAYER_SUPPORT_AMOUNT_CENTS=500;
 export const PRAYER_SUPPORT_AMOUNTS_CENTS=Object.freeze([50,100,200,300,500]);
@@ -32,6 +33,21 @@ export function setupPrayerSupport({app,db,siteUrl,sameOriginOnly,allowAttempt=(
     status TEXT NOT NULL,amount_cents INTEGER NOT NULL,refunded_cents INTEGER NOT NULL DEFAULT 0,created_ms INTEGER NOT NULL);`);
   if(!db.prepare('PRAGMA table_info(prayer_support_orders)').all().some(column=>column.name==='provider_updated_ms'))
     db.exec('ALTER TABLE prayer_support_orders ADD COLUMN provider_updated_ms INTEGER');
+  if(!db.prepare('PRAGMA table_info(prayer_support_orders)').all().some(column=>column.name==='status_token_aliases'))
+    db.exec("ALTER TABLE prayer_support_orders ADD COLUMN status_token_aliases TEXT NOT NULL DEFAULT '[]'");
+  const tokenHashes=order=>{try{return [order.status_token_hash,...JSON.parse(order.status_token_aliases||'[]')].filter(value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value));}catch{return [order.status_token_hash];}};
+  const tokenFor=(order,config)=>{
+    const token=receiptToken(order,config.webhookSecret),digest=hash(token);
+    // A replay is authorized by its unguessable request key. When the provider
+    // signing secret rotates, retain the previous receipt hashes and accept the
+    // current one too; never invalidate a receipt already saved by the visitor.
+    if(order.status_token_hash&&!tokenHashes(order).includes(digest)){
+      const current=db.prepare('SELECT * FROM prayer_support_orders WHERE reference=?').get(order.reference);
+      const aliases=[...new Set([...tokenHashes(current),digest])].filter(value=>value!==current.status_token_hash);
+      db.prepare('UPDATE prayer_support_orders SET status_token_aliases=? WHERE reference=?').run(JSON.stringify(aliases),order.reference);
+    }
+    return token;
+  };
   let verification=null;
   const headers=config=>({Authorization:`Bearer ${config.accessToken}`,'Content-Type':'application/json'});
   async function recipientReady(config){
@@ -52,10 +68,11 @@ export function setupPrayerSupport({app,db,siteUrl,sameOriginOnly,allowAttempt=(
     })();
     return entry.promise;
   }
-  const publicOrder=order=>({reference:order.reference,status:order.status,amountCents:order.amount_cents,currency:'BRL',beneficiary:order.beneficiary});
+  let pixService;
+  const publicOrder=order=>({reference:order.reference,status:order.status,amountCents:order.amount_cents,currency:'BRL',beneficiary:order.beneficiary,...publicSupportPix(order,now())});
   app.get('/api/prayer-support/config',async(_req,res)=>{
     const config=readConfig(),ready=await recipientReady(config);
-    return res.set('Cache-Control','no-store').json({amountCents:500,defaultAmountCents:500,amountsCents:PRAYER_SUPPORT_AMOUNTS_CENTS,currency:'BRL',beneficiary:config.beneficiary,oneTime:true,...ready});
+    return res.set('Cache-Control','no-store').json({amountCents:500,defaultAmountCents:500,amountsCents:PRAYER_SUPPORT_AMOUNTS_CENTS,currency:'BRL',beneficiary:config.beneficiary,oneTime:true,pixEnabled:ready.enabled,...ready});
   });
   app.post('/api/prayer-support/checkout',sameOriginOnly,async(req,res)=>{
     res.set('Cache-Control','no-store');
@@ -67,9 +84,9 @@ export function setupPrayerSupport({app,db,siteUrl,sameOriginOnly,allowAttempt=(
     let order=db.prepare('SELECT * FROM prayer_support_orders WHERE request_key=?').get(key);
     if(order){
       if(order.collector_id!==config.collectorId||order.beneficiary!==config.beneficiary)return res.status(409).json({error:'Os dados do recebedor mudaram. Confira novamente antes de apoiar.'});
-      if(order.amount_cents!==body.amountCents)return res.status(409).json({...publicOrder(order),statusToken:receiptToken(order,config.webhookSecret),error:'Já existe um apoio em acompanhamento com outro valor. Confira o status desse apoio antes de continuar.'});
-      if(order.status==='pending'&&order.checkout_url&&order.expires_ms>now())return res.json({...publicOrder(order),checkoutUrl:order.checkout_url,statusToken:receiptToken(order,config.webhookSecret)});
-      return res.status(409).json({...publicOrder(order),statusToken:receiptToken(order,config.webhookSecret),error:'Este apoio já está sendo acompanhado. Confira o status antes de tentar novamente.'});
+      if(order.amount_cents!==body.amountCents)return res.status(409).json({...publicOrder(order),statusToken:tokenFor(order,config),error:'Já existe um apoio em acompanhamento com outro valor. Confira o status desse apoio antes de continuar.'});
+      if(order.status==='pending'&&order.checkout_url&&order.expires_ms>now())return res.json({...publicOrder(order),checkoutUrl:order.checkout_url,statusToken:tokenFor(order,config)});
+      return res.status(409).json({...publicOrder(order),statusToken:tokenFor(order,config),error:'Este apoio já está sendo acompanhado. Confira o status antes de tentar novamente.'});
     }
     if(!allowAttempt(req.ip))return res.status(429).json({error:'Aguarde alguns minutos antes de tentar novamente.'});
     const time=now(),reference='support_'+randomUUID();
@@ -101,10 +118,11 @@ export function setupPrayerSupport({app,db,siteUrl,sameOriginOnly,allowAttempt=(
       return res.status(502).json({...publicOrder(order),statusToken,error:'A confirmação da abertura do pagamento não chegou. Este apoio permanece em verificação; não foi confirmado como pago.'});
     }
   });
-  app.get('/api/prayer-support/orders/:reference',(req,res)=>{
+  app.get('/api/prayer-support/orders/:reference',async(req,res)=>{
     res.set('Cache-Control','private,no-store');
-    const order=db.prepare('SELECT * FROM prayer_support_orders WHERE reference=?').get(String(req.params.reference));
-    if(!order||!safeEqual(hash(req.get('X-Support-Token')||''),order.status_token_hash))return res.status(404).json({error:'Apoio não encontrado.'});
+    let order=db.prepare('SELECT * FROM prayer_support_orders WHERE reference=?').get(String(req.params.reference));
+    if(!order||!tokenHashes(order).some(digest=>safeEqual(hash(req.get('X-Support-Token')||''),digest)))return res.status(404).json({error:'Apoio não encontrado.'});
+    if(order.payment_method==='pix')order=await pixService.reconcile(order);
     return res.set('Cache-Control','private,no-store').json(publicOrder(order));
   });
   const settle=db.transaction(payment=>{
@@ -114,6 +132,7 @@ export function setupPrayerSupport({app,db,siteUrl,sameOriginOnly,allowAttempt=(
     // a response without an explicit production marker, cannot confirm money.
     if(payment.live_mode!==true)throw Error('Support payment is not verified as live.');
     const id=String(payment.id||''),amount=Number(payment.transaction_amount),refunded=Number(payment.transaction_amount_refunded||0);
+    if(order.payment_method==='pix'&&(payment.payment_method_id!=='pix'||(order.payment_id&&order.payment_id!==id)))throw Error('Pix payment identity mismatch.');
     if(!/^\d{1,30}$/.test(id)||!allowedStatuses.has(payment.status)||payment.currency_id!=='BRL'||amount!==order.amount_cents/100||String(payment.collector_id)!==order.collector_id||!Number.isFinite(refunded)||refunded<0||refunded>amount)throw Error('Support payment mismatch.');
     let status=String(payment.status);if(status==='approved'&&refunded>0)status=refunded===amount?'refunded':'partially_refunded';
     const parsedUpdate=typeof payment.date_last_updated==='string'?Date.parse(payment.date_last_updated):NaN;
@@ -139,6 +158,8 @@ export function setupPrayerSupport({app,db,siteUrl,sameOriginOnly,allowAttempt=(
     db.prepare('UPDATE prayer_support_orders SET status=?,payment_id=?,provider_updated_ms=?,updated_ms=? WHERE reference=?').run(status,id,providerUpdatedMs,now(),reference);
     return db.prepare('SELECT * FROM prayer_support_orders WHERE reference=?').get(reference);
   });
+  pixService=setupPrayerSupportPix({app,db,site,sameOriginOnly,allowAttempt,readConfig,recipientReady,headers,publicOrder,
+    tokenFor,hash,settle,fetchImpl,now,allowedAmounts:PRAYER_SUPPORT_AMOUNTS_CENTS});
   app.post('/api/prayer-support/webhook',async(req,res)=>{
     const signatureId=String(req.query['data.id']||req.query.data_id||''),bodyId=String(req.body?.data?.id||''),id=signatureId;
     if(!verifySignature?.(req,signatureId))return res.sendStatus(401);

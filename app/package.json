@@ -30,7 +30,7 @@
     "test:city-exploration": "node --test scripts/test-city-exploration.mjs scripts/test-building-brands.mjs scripts/test-city-architecture.mjs scripts/test-retail-architecture.mjs scripts/test-architectural-lighting.mjs scripts/test-exploration-progress-ui.mjs scripts/test-modeled-buildings.mjs scripts/test-modeled-city-assets.mjs",
     "test:city-shopping": "node --test scripts/test-city-guide-products.mjs scripts/test-external-product-purchase.mjs",
     "test:prayer-distribution": "node --test scripts/test-prayer-sharing.mjs scripts/test-prayer-meta-stories.mjs scripts/test-prayer-vitrine-social.mjs scripts/test-youtube-oauth.mjs scripts/test-prayer-youtube-adapter.mjs scripts/test-admin-youtube.mjs scripts/test-manual-image-generation.mjs scripts/test-prayer-media-duration.mjs scripts/test-prayer-distribution-media.mjs scripts/test-prayer-web-story-bridge.mjs",
-    "test:prayer": "node --test scripts/test-prayer-support.mjs scripts/test-prayer-page.mjs scripts/test-prayer-daily.mjs",
+    "test:prayer": "node --test scripts/test-prayer-support.mjs scripts/test-prayer-support-pix.mjs scripts/test-prayer-page.mjs scripts/test-prayer-daily.mjs",
     "test:retention": "node --test scripts/test-customer-retention.mjs",
     "test:games": "node --test scripts/test-vitriny-farm.mjs scripts/test-vitriny-farm-scene.mjs scripts/test-vitriny-farm-walking.mjs scripts/test-vitriny-casual-games.mjs",
     "test:avatar": "node --test scripts/test-realistic-avatar.mjs scripts/test-visitor-avatar.mjs",

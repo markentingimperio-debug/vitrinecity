@@ -57,7 +57,7 @@ test('SSR provides the entire edition, reflection, dates and unchanged support c
   assert.ok(result.html.includes('A quem você pode agradecer por um gesto concreto?'));
   assert.ok(!result.html.includes('10 de setembro de 2026'));
   assert.ok(result.html.includes('id="sharePrayer"'));
-  assert.ok(result.html.includes('A oração continuará aberta a todos.'));
+  assert.ok(result.html.includes('A oração é gratuita e continuará aberta a todos.'));
   assert.match(result.html,/collection-count:start -->66<!--/);
   assert.match(result.html,/Oração de sexta-feira/);
   assert.match(result.html,/aria-current="date"/);

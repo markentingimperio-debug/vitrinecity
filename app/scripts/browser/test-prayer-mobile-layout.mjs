@@ -71,7 +71,8 @@ try{
   await page.setViewportSize({width:360,height:800});
   await page.goto(`${origin}/oracao-do-dia.html?dia=2026-09-11#oracao`);
   assert.match(await page.locator('.edition-state').innerText(),/anterior/);
-  assert.ok((await page.locator('#oracao .availability-detail').boundingBox()).width>=260);
+  assert.ok((await page.locator('#oracao .section-intro > .availability-detail').boundingBox()).width>=260);
+  assert.equal(await page.locator('#prayerText > .prayer-ending + #apoio').count(),1,'contribution follows the daily prayer text');
   await page.locator('#amenButton').click();
   assert.equal(await page.locator('#amenButton').getAttribute('aria-pressed'),'true');
   assert.deepEqual(errors,[]);assert.deepEqual(external,[]);assert.equal(writes,0);

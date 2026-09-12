@@ -18,3 +18,34 @@ dialog{border:1px solid var(--line);border-radius:8px;background:var(--paper);co
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation:none!important}}
 .hero-art{align-self:center}.art-frame{height:auto;min-height:0;aspect-ratio:3/2;border-radius:80px 80px 5px 5px}.art-frame img{object-fit:contain;object-position:center}.hero-art figcaption small{font-size:10px;line-height:1.5;letter-spacing:.15px;text-align:right;max-width:230px}.hero-art figcaption{align-items:flex-start}@media(max-width:760px){.art-frame{height:auto;aspect-ratio:3/2;border-radius:60px 60px 4px 4px}.art-frame img{object-position:center}.hero-art figcaption small{font-size:9px;max-width:190px}.hero-art figcaption>span{font-size:15px;max-width:140px}}
 .support-amounts{padding:0;border:0;margin:20px 0 15px;min-width:0}.support-amounts legend{font-size:15px;font-weight:600;margin-bottom:12px}.amount-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.amount-options label{display:flex;align-items:center;justify-content:center;gap:7px;min-height:50px;border:1px solid #a8b19e;border-radius:5px;cursor:pointer;background:#f6f5ec;font-size:16px;line-height:1.25;padding:10px 6px;white-space:nowrap}.amount-options label:has(input:checked){background:var(--forest);color:white;border-color:var(--forest)}.amount-options input{accent-color:var(--forest);width:17px;height:17px;flex:none;margin:0}.amount-options input:checked{accent-color:#e8e9d6}.amount-options label:focus-within{outline:3px solid #956520;outline-offset:3px}.support-amounts:disabled label{cursor:not-allowed;opacity:.68}.support-terms{font-size:14px!important;color:#53614e;line-height:1.7!important}.support-note #supportButton{font-size:16px;line-height:1.5}.button{font-size:16px}.availability-detail{font-size:14px!important}.hero-note{font-size:14px}.reading-time{font-size:13px}.verse-credit{font-size:12px}.site-footer p{font-size:13px}@media(max-width:390px){.amount-options{grid-template-columns:repeat(2,minmax(0,1fr))}.prayer-actions .button{font-size:16px}}
+
+/* The contribution follows the prayer text and remains outside its daily marker. */
+.prayer-support{margin:32px 0;padding:28px;border:1px solid #c8ceba;border-radius:12px;background:var(--soft);min-width:0;scroll-margin-top:24px}
+.prayer-support .eyebrow{margin-bottom:10px}
+.prayer-support h3{font-size:32px;margin:0 0 14px}
+.prayer-support>p{margin:0 0 16px}
+.prayer-support .amount-options{grid-template-columns:repeat(5,minmax(0,1fr))}
+.support-payer{margin:20px 0}
+.support-payer>label,.support-pix-copy>label{display:block;font-size:16px;font-weight:600;margin-bottom:8px}
+.support-payer input{width:100%;max-width:100%;min-width:0;min-height:52px;padding:12px 14px;border:1px solid #8b9b83;border-radius:6px;background:var(--paper);color:var(--ink);font:inherit;font-size:16px}
+.support-payer input:disabled{opacity:.68;cursor:not-allowed}
+.support-payer input:focus-visible,.support-pix-copy textarea:focus-visible{outline:3px solid #956520;outline-offset:3px}
+.support-payment-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
+.prayer-support .support-payment-actions>.button{margin:0;min-width:0;width:auto;flex:1 1 180px;min-height:52px;font-size:16px}
+.support-pix{margin-top:22px;border:1px solid #c8ceba;border-radius:10px;padding:22px;background:var(--paper);min-width:0}
+.support-pix h4{font:600 18px/1.5 'Segoe UI',Arial,sans-serif;margin:0 0 8px}
+.support-pix-help{font-size:15px;line-height:1.7;margin:0 0 20px}
+.support-pix-content{display:grid;grid-template-columns:minmax(150px,220px) minmax(0,1fr);gap:22px;align-items:start}
+.support-pix-image{padding:8px;background:white;border-radius:6px;max-width:236px;justify-self:center}
+.support-pix-image img{display:block;width:100%;height:auto;max-width:220px;aspect-ratio:1;object-fit:contain}
+.support-pix-copy{min-width:0}
+.support-pix-copy textarea{display:block;width:100%;max-width:100%;min-height:120px;padding:12px;border:1px solid #8b9b83;border-radius:6px;background:white;color:var(--ink);font:14px/1.6 ui-monospace,Consolas,monospace;overflow-wrap:anywhere;word-break:break-all;white-space:pre-wrap;resize:vertical}
+.prayer-support .support-pix-copy>.button{width:100%;min-width:0;min-height:52px;font-size:16px;margin-top:12px}
+.support-pix #supportPixCopyStatus{min-height:24px}
+.prayer-support #refreshSupport{min-height:48px;font-size:15px;margin-top:8px;text-align:left}
+.continuity-section{grid-template-columns:minmax(0,1fr)}
+.continuity-section .daily-signup{max-width:720px}
+.continuity-section .daily-signup>p{max-width:620px}
+@media(max-width:1050px){.prayer-support{padding:24px}.prayer-support .amount-options{grid-template-columns:repeat(3,minmax(0,1fr))}.support-pix-content{grid-template-columns:minmax(0,1fr)}.support-pix-image{width:min(100%,236px)}}
+@media(max-width:760px){.prayer-support{margin:28px 0;padding:22px 18px;border:1px solid #c8ceba}.prayer-support h3{font-size:29px}.support-pix{padding:18px 14px}.prayer-support .support-payment-actions>.button{flex-basis:100%}.prayer-support .support-amounts{margin-top:18px}}
+@media(max-width:390px){.prayer-support .amount-options{grid-template-columns:repeat(2,minmax(0,1fr))}.support-pix-copy textarea{font-size:14px}.support-pix{padding:16px 12px}}
