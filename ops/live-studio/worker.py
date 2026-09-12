@@ -207,6 +207,21 @@ class AnswerPlayback:
         return (obs.call('GetStreamStatus')['outputActive'], obs.call('GetRecordStatus')['outputActive'])
 
     @staticmethod
+    def _wait_record(obs, active):
+        # StartRecord/StopRecord acknowledge the request before the encoder changes
+        # state. Poll only getters; never repeat either side effect to confirm it.
+        deadline = time.monotonic() + 5
+        for attempt in range(20):
+            if obs.call('GetRecordStatus')['outputActive'] is active:
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if attempt < 19:
+                time.sleep(min(.25, remaining))
+        return False
+
+    @staticmethod
     def _input_exists(obs, name):
         return any(item['inputName'] == name for item in obs.call('GetInputList')['inputs'])
 
@@ -262,10 +277,16 @@ class AnswerPlayback:
         preview = self.state.get('mode') == 'preview-answer'
         if preview and recording and self.state.get('recordIntent'):
             attempt(lambda: obs.call('StopRecord'))
-            status = attempt(lambda: obs.call('GetRecordStatus'))
-            recording = status['outputActive'] if status is not None else None
-            if recording is not False:
+            stopped = attempt(lambda: self._wait_record(obs, False))
+            recording = False if stopped is True else None
+            if stopped is True:
+                self.state['recordStartPending'] = False
+            else:
                 errors.append(RuntimeError('Gravação local ainda não parou.'))
+        if preview and self.state.get('recordStartPending'):
+            # A start accepted but not observed may still complete later. Keep the
+            # lock until a later tick observes that output and confirms its stop.
+            errors.append(RuntimeError('Início da gravação ainda não confirmado.'))
         if self.state.get('baseLabelId') is not None:
             attempt(lambda: obs.call('SetSceneItemEnabled', sceneName=SCENE, sceneItemId=self.state['baseLabelId'],
                                     sceneItemEnabled=self.state.get('baseLabelEnabled', False)))
@@ -397,9 +418,12 @@ class AnswerPlayback:
                 self.state.update(sceneChanged=True, recordIntent=True)
                 self._save()
                 obs.call('SetCurrentProgramScene', sceneName=SCENE)
+                self.state['recordStartPending'] = True
+                self._save()
                 obs.call('StartRecord')
-                if not obs.call('GetRecordStatus')['outputActive']:
+                if not self._wait_record(obs, True):
                     raise ValueError('OBS não confirmou o teste local da resposta.')
+                self.state['recordStartPending'] = False
             self.state.update(startedAt=int(self.now() * 1000), deadline=self.now() + min(60, command['duration'] + 2))
             self._save()
             obs.call('TriggerMediaInputAction', inputName=ANSWER_SOURCE, mediaAction='OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART')

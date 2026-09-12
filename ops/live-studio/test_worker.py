@@ -45,6 +45,8 @@ class FakeOBS:
         self.inputs, self.items, self.media, self.calls = {}, {}, {}, []
         self.before_mutation = None
         self.crash_after_restart = False
+        self.record_start_delay = self.record_stop_delay = 0
+        self.pending_record = None
         if base:
             self.add(SOURCE, 'ffmpeg_source', True)
             self.add(BASE_LABEL, 'text_ft2_source_v2', True)
@@ -62,7 +64,15 @@ class FakeOBS:
         if not kind.startswith('Get') and self.before_mutation:
             self.before_mutation(kind, data)
         if kind == 'GetStreamStatus': return {'outputActive': self.streaming}
-        if kind == 'GetRecordStatus': return {'outputActive': self.recording}
+        if kind == 'GetRecordStatus':
+            if self.pending_record is not None:
+                active, polls = self.pending_record
+                if polls == 0:
+                    self.recording = active
+                    self.pending_record = None
+                else:
+                    self.pending_record = (active, polls - 1)
+            return {'outputActive': self.recording}
         if kind == 'GetStats': return {'cpuUsage': 0, 'activeFps': 30}
         if kind == 'GetVersion': return {'obsVersion': 'fake-obs'}
         if kind == 'GetCurrentProgramScene': return {'currentProgramSceneName': self.scene}
@@ -86,8 +96,12 @@ class FakeOBS:
             self.media[data['inputName']] = 'OBS_MEDIA_STATE_' + {'STOP': 'STOPPED', 'PAUSE': 'PAUSED', 'PLAY': 'PLAYING', 'RESTART': 'PLAYING'}[action]
             if self.crash_after_restart and data['inputName'] == ANSWER_SOURCE and action == 'RESTART':
                 raise SystemExit('simulated controller crash after OBS accepted RESTART')
-        elif kind == 'StartRecord': self.recording = True
-        elif kind == 'StopRecord': self.recording = False
+        elif kind == 'StartRecord':
+            if self.record_start_delay: self.pending_record = (True, self.record_start_delay)
+            else: self.recording = True
+        elif kind == 'StopRecord':
+            if self.record_stop_delay: self.pending_record = (False, self.record_stop_delay)
+            else: self.recording = False
         elif kind in ('StartStream', 'SetStreamServiceSettings'):
             raise AssertionError('Answer playback must never start a stream or modify credentials')
         else: raise AssertionError('Unhandled OBS request: ' + kind)
@@ -227,6 +241,71 @@ class AnswerPlaybackTests(unittest.TestCase):
         self.assertEqual(self.obs.media[SOURCE], 'OBS_MEDIA_STATE_PLAYING')
         self.assertFalse(self.obs.inputs[SOURCE]['muted'])
         self.assertEqual(self.actions(SOURCE), ['OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PAUSE', 'OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PLAY'])
+
+    def test_preview_waits_for_async_recording_start_and_stop_without_repeating_commands(self):
+        self.obs = FakeOBS(streaming=False, base=False)
+        self.obs.record_start_delay, self.obs.record_stop_delay = 3, 2
+        def check_audio_boundary(kind, data):
+            if kind == 'TriggerMediaInputAction' and data['mediaAction'].endswith('_RESTART'):
+                self.assertTrue(self.obs.recording)
+                self.assertIsNone(self.obs.pending_record)
+        self.obs.before_mutation = check_audio_boundary
+        with patch.object(worker_module.time, 'sleep') as wait:
+            result = self.player.start(self.obs, dict(self.command, action='preview-answer'), {})
+            self.assertEqual(result['state'], 'playing')
+            self.assertEqual(wait.call_count, 3)
+            self.obs.media[ANSWER_SOURCE] = 'OBS_MEDIA_STATE_ENDED'
+            self.assertTrue(self.player.tick(self.obs, {}))
+            self.assertEqual(wait.call_count, 5)
+        self.assertEqual(self.player.snapshot()['state'], 'finished')
+        self.assertFalse(self.obs.recording)
+        self.assertFalse(self.player.busy())
+        self.assertEqual([kind for kind, _ in self.obs.calls if kind in ('StartRecord', 'StopRecord')], ['StartRecord', 'StopRecord'])
+        self.assertFalse(any(kind in ('StartStream', 'SetStreamServiceSettings', 'SetProfileParameter') for kind, _ in self.obs.calls))
+
+    def test_unconfirmed_record_start_retains_claim_until_late_recording_is_stopped(self):
+        self.obs = FakeOBS(streaming=False, base=False)
+        self.obs.record_start_delay = 1000
+        with patch.object(worker_module.time, 'sleep'):
+            with self.assertRaisesRegex(ValueError, 'não confirmou'):
+                self.player.start(self.obs, dict(self.command, action='preview-answer'), {})
+        self.assertEqual(self.player.snapshot()['state'], 'failed')
+        self.assertTrue(self.player.snapshot()['cleanupPending'])
+        self.assertTrue(self.player.state['recordStartPending'])
+        self.assertTrue(self.player.busy())
+        self.assertNotIn('OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART', self.actions(ANSWER_SOURCE))
+        with self.assertRaisesRegex(ValueError, 'andamento'):
+            self.make_player().start(self.obs, dict(self.command, id='command-2', action='preview-answer'), {})
+        recovered = self.make_player()
+        self.assertFalse(recovered.recover(self.obs, {}))
+        self.assertTrue(recovered.busy())
+        self.obs.pending_record = (True, 0)
+        self.assertTrue(recovered.tick(self.obs, {}))
+        self.assertFalse(self.obs.recording)
+        self.assertFalse(recovered.busy())
+        self.assertFalse(recovered.state['recordStartPending'])
+        self.assertEqual(recovered.snapshot()['state'], 'failed')
+        self.assertEqual([kind for kind, _ in self.obs.calls if kind in ('StartRecord', 'StopRecord')], ['StartRecord', 'StopRecord'])
+        self.assertTrue((self.root / 'answer-command-claims/command-1.json').is_file())
+
+    def test_unconfirmed_record_stop_does_not_release_the_answer_or_claim_finished(self):
+        self.obs = FakeOBS(streaming=False, base=False)
+        self.player.start(self.obs, dict(self.command, action='preview-answer'), {})
+        self.obs.record_stop_delay = 1000
+        self.obs.media[ANSWER_SOURCE] = 'OBS_MEDIA_STATE_ENDED'
+        with patch.object(worker_module.time, 'sleep'):
+            self.assertFalse(self.player.tick(self.obs, {}))
+        self.assertTrue(self.obs.recording)
+        self.assertEqual(self.player.snapshot()['state'], 'failed')
+        self.assertTrue(self.player.snapshot()['cleanupPending'])
+        self.assertTrue(self.player.busy())
+        self.assertNotIn('finishedAt', self.player.snapshot())
+        self.obs.pending_record = (False, 0)
+        self.assertTrue(self.player.tick(self.obs, {}))
+        self.assertFalse(self.player.busy())
+        self.assertFalse(self.obs.recording)
+        self.assertEqual(self.player.snapshot()['state'], 'failed')
+        self.assertEqual([kind for kind, _ in self.obs.calls if kind in ('StartRecord', 'StopRecord')], ['StartRecord', 'StopRecord'])
 
     def test_partial_cleanup_failure_still_hides_other_elements_and_never_claims_finished(self):
         self.player.start(self.obs, self.command, self.session)
