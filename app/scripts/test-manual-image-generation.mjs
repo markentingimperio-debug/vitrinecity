@@ -8,12 +8,24 @@ import Database from 'better-sqlite3';
 import {generateManualMediaImage,manualImageFailureMessage} from '../manual-image-generation.js';
 import {mediaJobPolicy} from '../media-job-policy.js';
 import {createHash} from 'node:crypto';
+import {deflateSync,inflateSync} from 'node:zlib';
 
 const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
 const routeSource=server.slice(server.indexOf("app.post('/api/admin/media-projects/:id/generate'"),server.indexOf("app.post('/api/admin/media-projects/:id/sync'"));
 const config={provider:'openai',imageConfigured:true,imageModel:'gpt-image-2',imageOptions:['gpt-image-2']};
-// The shared raster parser validates the provider's PNG signature and dimensions.
-const png=Buffer.alloc(32);Buffer.from([137,80,78,71,13,10,26,10]).copy(png);png.write('IHDR',12);png.writeUInt32BE(1024,16);png.writeUInt32BE(1024,20);
+// Complete, decodable 512x512 PNG: IHDR, compressed scanlines, CRCs and IEND.
+// Production intentionally retains the existing raster header/size validation;
+// it does not add a full image decoder as part of the durable-claim fix.
+function pngChunk(type,data){
+  const body=Buffer.concat([Buffer.from(type),data]);let crc=0xffffffff;
+  for(const byte of body){crc^=byte;for(let bit=0;bit<8;bit++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);}
+  const chunk=Buffer.alloc(data.length+12);chunk.writeUInt32BE(data.length);body.copy(chunk,4);chunk.writeUInt32BE((crc^0xffffffff)>>>0,chunk.length-4);return chunk;
+}
+const pngHeader=Buffer.alloc(13);pngHeader.writeUInt32BE(512,0);pngHeader.writeUInt32BE(512,4);pngHeader[8]=8;pngHeader[9]=6;
+const pngPixels=Buffer.alloc(512*(1+512*4),255);for(let row=0;row<512;row++)pngPixels[row*(1+512*4)]=0;
+const pngData=deflateSync(pngPixels);
+assert.deepEqual(inflateSync(pngData),pngPixels);
+const png=Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),pngChunk('IHDR',pngHeader),pngChunk('IDAT',pngData),pngChunk('IEND',Buffer.alloc(0))]);
 const image=()=>({provider:'openai',data:{data:[{b64_json:png.toString('base64')}],usage:{cost:0.02}}});
 function fixture(t,request=image){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'manual-image-qa-')),dbPath=path.join(directory,'fixture.sqlite');
@@ -79,6 +91,13 @@ test('wrong provider or malformed response stays uncertain and cannot be retried
     const f=fixture(t,()=>result);assert.equal((await f.route()).code,502);assert.equal(f.receipt().state,'unknown');assert.equal((await f.route()).code,409);assert.equal(f.calls,1);assert.equal(fs.existsSync(f.outputDir),false);
   }
 });
-test('missing cost is retained as unknown rather than invented zero in the attempt receipt',async t=>{
-  const f=fixture(t,()=>({provider:'openai',data:{data:image().data.data}}));assert.equal((await f.route()).code,200);assert.equal(f.receipt().usage_cost_usd,null);
+test('only explicit finite numeric costs are recorded; missing, null, empty and boolean costs stay unknown',async t=>{
+  for(const cost of [undefined,null,'',false,true,'0.02',{},[],NaN,Infinity,-1]){
+    const f=fixture(t,()=>({provider:'openai',data:{data:image().data.data,usage:{total_cost:cost}}}));
+    assert.equal((await f.route()).code,200);assert.equal(f.receipt().usage_cost_usd,null);
+  }
+  for(const cost of [0,0.02]){
+    const f=fixture(t,()=>({provider:'openai',data:{data:image().data.data,usage:{cost}}}));
+    assert.equal((await f.route()).code,200);assert.equal(f.receipt().usage_cost_usd,cost);
+  }
 });

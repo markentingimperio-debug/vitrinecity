@@ -1,4 +1,5 @@
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
+import {isIP} from 'node:net';
 
 export const YOUTUBE_PRAYER_CHANNEL='UCPN5ciXL85GdPGNjpWRIqrA';
 export const YOUTUBE_UPLOAD_SCOPES=Object.freeze(['https://www.googleapis.com/auth/youtube.upload','https://www.googleapis.com/auth/youtube.readonly']);
@@ -11,9 +12,12 @@ const hasScopes=value=>YOUTUBE_UPLOAD_SCOPES.every(scope=>scopes(value).includes
 
 // No credentials or network calls on construction. Google Search Console remains independent.
 export function createYouTubeOAuth({db,encrypt,decrypt,siteUrl,expectedChannelId=YOUTUBE_PRAYER_CHANNEL,fetchImpl=fetch,now=Date.now}){
-  const site=new URL(siteUrl);
-  if(site.protocol!=='https:'||site.username||site.password||site.port||expectedChannelId!==YOUTUBE_PRAYER_CHANNEL)throw failure('youtube_configuration_invalid');
-  const redirectUri=site.origin+API+'/callback';let refreshing=null;
+  if(expectedChannelId!==YOUTUBE_PRAYER_CHANNEL)throw failure('youtube_configuration_invalid');
+  let site;try{site=new URL(siteUrl);}catch{}
+  const host=site?.hostname.replace(/^\[|\]$/g,'').replace(/\.$/,'')||'';
+  const enabled=Boolean(site?.protocol==='https:'&&!site.username&&!site.password&&!site.port&&host.includes('.')&&!isIP(host)&&host!=='localhost'&&!host.endsWith('.localhost')&&!host.endsWith('.local'));
+  const redirectUri=enabled?site.origin+API+'/callback':null;let refreshing=null;
+  const requireSecureOrigin=()=>{if(!enabled)throw failure('youtube_https_origin_required');};
   db.exec(`CREATE TABLE IF NOT EXISTS youtube_upload_app(id INTEGER PRIMARY KEY CHECK(id=1),client_id TEXT NOT NULL DEFAULT '',client_secret_encrypted TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 0);
     INSERT OR IGNORE INTO youtube_upload_app(id) VALUES(1);
     CREATE TABLE IF NOT EXISTS youtube_upload_oauth_states(state_hash TEXT PRIMARY KEY,admin_id INTEGER NOT NULL,session_hash TEXT NOT NULL,verifier_encrypted TEXT NOT NULL,revision INTEGER NOT NULL,expires_at INTEGER NOT NULL);
@@ -22,17 +26,20 @@ export function createYouTubeOAuth({db,encrypt,decrypt,siteUrl,expectedChannelId
   const config=()=>db.prepare('SELECT * FROM youtube_upload_app WHERE id=1').get();
   const account=()=>db.prepare('SELECT * FROM youtube_upload_account WHERE id=1').get();
   function status(){
+    if(!enabled)return {enabled:false,configured:false,connected:false,requiresConnection:false,channelId:expectedChannelId,channelTitle:null,revision:null,redirectUri:null,scopes:[...YOUTUBE_UPLOAD_SCOPES],status:'unconfigured',publicUploadVerified:false,refreshRetryAt:null,configurationError:'youtube_https_origin_required',detail:'YouTube desativado neste ambiente. Configure um endereço público HTTPS para autorizar o canal.'};
     const c=config(),a=account(),connected=Boolean(c.client_id&&c.client_secret_encrypted&&a?.status==='connected'&&a.channel_id===expectedChannelId&&a.app_revision===c.revision&&hasScopes(a.scope)&&a.refresh_encrypted);
-    return {configured:Boolean(c.client_id&&c.client_secret_encrypted),connected,requiresConnection:!connected,channelId:expectedChannelId,channelTitle:connected?a.channel_title:null,revision:connected?a.revision:null,
+    return {enabled:true,configured:Boolean(c.client_id&&c.client_secret_encrypted),connected,requiresConnection:!connected,channelId:expectedChannelId,channelTitle:connected?a.channel_title:null,revision:connected?a.revision:null,
       redirectUri,scopes:[...YOUTUBE_UPLOAD_SCOPES],status:a?.status||'not_connected',publicUploadVerified:false,refreshRetryAt:connected&&a.refresh_next_at>now()?a.refresh_next_at:null,
       detail:connected&&a.refresh_next_at>now()?'O Google está temporariamente indisponível. A renovação será conferida novamente após o intervalo de espera.':connected?'Canal autorizado. Um upload recebido como privado não confirma publicação pública.':'Autorize o canal para permitir o envio. Conectar não ativa a rotina.'};
   }
   function configure({clientId,clientSecret}){
+    requireSecureOrigin();
     if(typeof clientId!=='string'||!/^[-A-Za-z0-9.]{10,250}\.apps\.googleusercontent\.com$/.test(clientId)||!validToken(clientSecret))throw failure('youtube_app_invalid');
     const protectedSecret=encrypt(clientSecret);if(!validToken(protectedSecret))throw failure('youtube_encryption_unavailable');
     db.transaction(()=>{db.prepare('UPDATE youtube_upload_app SET client_id=?,client_secret_encrypted=?,revision=revision+1 WHERE id=1').run(clientId,protectedSecret);db.exec('DELETE FROM youtube_upload_account; DELETE FROM youtube_upload_oauth_states;');}).immediate();return status();
   }
   function begin({adminId,sessionKey}){
+    requireSecureOrigin();
     if(!Number.isSafeInteger(adminId)||adminId<=0||!validToken(sessionKey))throw failure('youtube_admin_session_invalid');
     const c=config();if(!c.client_id||!c.client_secret_encrypted)throw failure('youtube_app_missing');
     decrypt(c.client_secret_encrypted);
@@ -64,6 +71,7 @@ export function createYouTubeOAuth({db,encrypt,decrypt,siteUrl,expectedChannelId
     return {scope,expiresAt:now()+payload.expires_in*1000};
   }
   async function complete({state,code,adminId,sessionKey}){
+    requireSecureOrigin();
     if(!validToken(state)||!validToken(code)||!validToken(sessionKey))throw failure('youtube_oauth_state_invalid');
     const attempt=db.transaction(()=>{
       const row=db.prepare('SELECT * FROM youtube_upload_oauth_states WHERE state_hash=? AND admin_id=? AND session_hash=? AND expires_at>?').get(hash(state),adminId,hash(sessionKey),now());
@@ -83,8 +91,9 @@ export function createYouTubeOAuth({db,encrypt,decrypt,siteUrl,expectedChannelId
         .run(expectedChannelId,title,encrypt(payload.access_token),encrypt(payload.refresh_token),accepted.expiresAt,accepted.scope,randomUUID(),attempt.revision);
     }).immediate();return status();
   }
-  function disconnect(){db.transaction(()=>{db.prepare('UPDATE youtube_upload_app SET revision=revision+1 WHERE id=1').run();db.exec('DELETE FROM youtube_upload_account; DELETE FROM youtube_upload_oauth_states;');}).immediate();return {...status(),detail:'Conexão removida desta plataforma. Você também pode revogar o acesso nas permissões da Conta Google.'};}
+  function disconnect(){if(!enabled)return status();db.transaction(()=>{db.prepare('UPDATE youtube_upload_app SET revision=revision+1 WHERE id=1').run();db.exec('DELETE FROM youtube_upload_account; DELETE FROM youtube_upload_oauth_states;');}).immediate();return {...status(),detail:'Conexão removida desta plataforma. Você também pode revogar o acesso nas permissões da Conta Google.'};}
   async function renew(){
+    requireSecureOrigin();
     const a=account();if(!status().connected)throw failure('youtube_reconnect_required');
     if(a.expires_at>now()+120000){const token=decrypt(a.access_encrypted);if(!validToken(token))throw failure('youtube_token_invalid');return token;}
     if(a.refresh_next_at>now())throw Object.assign(failure('youtube_refresh_retry_later'),{retryAt:a.refresh_next_at});
@@ -113,7 +122,7 @@ export function createYouTubeOAuth({db,encrypt,decrypt,siteUrl,expectedChannelId
 export function setupYouTubeOAuth({app,requireAdmin,sameOriginOnly,getSessionKey,...deps}){
   const service=createYouTubeOAuth(deps);
   const identity=req=>({adminId:req.user?.id,sessionKey:getSessionKey(req)});
-  const safeError=(_error,res)=>res.status(409).json({error:'Não foi possível concluir a conexão do YouTube. Confira o aplicativo, as permissões e o canal autorizado.'});
+  const safeError=(error,res)=>res.status(409).json({error:error?.code==='youtube_https_origin_required'?'YouTube desativado neste ambiente. Configure um endereço público HTTPS para autorizar o canal.':'Não foi possível concluir a conexão do YouTube. Confira o aplicativo, as permissões e o canal autorizado.'});
   app.get(API+'/status',requireAdmin,(_req,res)=>res.set('Cache-Control','no-store').json(service.status()));
   app.post(API+'/app',requireAdmin,sameOriginOnly,(req,res)=>{try{res.set('Cache-Control','no-store').json(service.configure(req.body||{}));}catch(e){safeError(e,res);}});
   app.post(API+'/connect',requireAdmin,sameOriginOnly,(req,res)=>{try{res.set('Cache-Control','no-store').json(service.begin(identity(req)));}catch(e){safeError(e,res);}});

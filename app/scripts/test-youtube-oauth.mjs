@@ -1,5 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {spawn} from 'node:child_process';
 import Database from 'better-sqlite3';
 import {createYouTubeOAuth,setupYouTubeOAuth,YOUTUBE_PRAYER_CHANNEL,YOUTUBE_UPLOAD_SCOPES} from '../youtube-oauth.js';
 const encrypt=v=>'protected:'+Buffer.from(v).toString('base64'),decrypt=v=>Buffer.from(v.slice(10),'base64').toString();
@@ -16,6 +21,43 @@ function fixture(t,options={}){
   return {db,state,calls,service,identity,begin,connect,advance:ms=>{time+=ms;}};
 }
 test('construct/status never call Google; scopes, secrets and Search Console remain separated',t=>{const f=fixture(t);assert.equal(f.calls.length,0);assert.equal(f.service.status().connected,false);assert.equal(f.db.prepare("SELECT 1 FROM sqlite_master WHERE name='google_search_oauth'").get(),undefined);f.service.configure({clientId,clientSecret:'CLIENT_SECRET'});assert.doesNotMatch(JSON.stringify(f.service.status()),/CLIENT_SECRET|REFRESH_SECRET|ACCESS_SECRET/);assert.notEqual(f.db.prepare('SELECT client_secret_encrypted v FROM youtube_upload_app').get().v,'CLIENT_SECRET');});
+
+test('HTTP, local and invalid origins disable OAuth without decrypting, exchanging or replacing stored credentials',async t=>{
+  const f=fixture(t);await f.connect();const before=f.db.prepare('SELECT * FROM youtube_upload_account').get();
+  for(const siteUrl of ['http://127.0.0.1:37001','http://localhost:8080','http://vitrinecity.com','https://localhost','https://127.0.0.1','https://[::1]','https://app.localhost','https://intranet.local','https://user:password@vitrinecity.com','https://vitrinecity.com:8443','invalid']){
+    const forbidden=()=>{assert.fail('Disabled OAuth must not encrypt, decrypt or contact Google');};
+    const service=createYouTubeOAuth({db:f.db,encrypt:forbidden,decrypt:forbidden,fetchImpl:forbidden,siteUrl});
+    assert.equal(service.status().status,'unconfigured');assert.equal(service.status().enabled,false);assert.equal(service.status().configured,false);assert.equal(service.status().connected,false);assert.equal(service.status().redirectUri,null);
+    assert.throws(()=>service.configure({clientId,clientSecret:'NEW_SECRET'}),/https_origin_required/);
+    assert.throws(()=>service.begin(f.identity),/https_origin_required/);
+    await assert.rejects(service.complete({...f.identity,state:'STATE_SECRET',code:'CODE_SECRET'}),/https_origin_required/);
+    await assert.rejects(service.accessToken(),/https_origin_required/);
+    assert.equal(service.disconnect().status,'unconfigured');assert.deepEqual(f.db.prepare('SELECT * FROM youtube_upload_account').get(),before);
+  }
+  assert.equal(f.service.status().connected,true);assert.equal(await f.service.accessToken(),'ACCESS_SECRET');assert.equal(f.calls.length,2);
+  assert.throws(()=>createYouTubeOAuth({db:f.db,encrypt,decrypt,siteUrl:'https://vitrinecity.com',expectedChannelId:'UCwrong'}),/configuration_invalid/);
+});
+
+test('real HTTP server starts with YouTube unconfigured and blocks admin configure, connect and callback', {timeout:30000},async t=>{
+  const parentDir=path.resolve(tmpdir()),dataDir=mkdtempSync(path.join(parentDir,'vitrinecity-youtube-http-'));
+  const guard=path.join(dataDir,'no-external-fetch.mjs');writeFileSync(guard,"globalThis.fetch=async()=>{throw Error('External requests disabled in isolated YouTube fixture');};\n");
+  const port=42000+Math.floor(Math.random()*3000),origin=`http://127.0.0.1:${port}`;
+  const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>/^(PATH|SYSTEMROOT|WINDIR|COMSPEC|TMP|TEMP|TMPDIR|PATHEXT)$/i.test(key)));
+  const child=spawn(process.execPath,['--import',pathToFileURL(guard).href,'server.js'],{cwd:new URL('..',import.meta.url),env:{...env,DATA_DIR:dataDir,COURSE_FILES_DIR:path.join(dataDir,'courses'),PORT:String(port),SITE_URL:origin,STORE_PORTAL_SECRET:'isolated-youtube-server-secret'},stdio:['ignore','pipe','pipe']});
+  let output='',db;child.stdout.on('data',chunk=>{output=(output+chunk).slice(-5000);});child.stderr.on('data',chunk=>{output=(output+chunk).slice(-5000);});
+  t.after(async()=>{db?.close();if(child.exitCode===null){child.kill();await new Promise(resolve=>child.once('exit',resolve));}const resolved=path.resolve(dataDir);assert.ok(resolved.startsWith(parentDir+path.sep)&&path.basename(resolved).startsWith('vitrinecity-youtube-http-'));rmSync(resolved,{recursive:true,force:true,maxRetries:5});});
+  let ready=false;for(let i=0;i<150;i++){try{if((await fetch(origin+'/api/health')).ok){ready=true;break;}}catch{}if(child.exitCode!==null)break;await new Promise(resolve=>setTimeout(resolve,100));}
+  assert.ok(ready,`HTTP server failed to start: ${output}`);
+  const api='/api/admin/prayer-sharing/youtube',request=(route,options={})=>fetch(origin+route,{...options,headers:{origin,'Content-Type':'application/json',...options.headers}});
+  assert.equal((await request(api+'/status')).status,401);
+  const email=`youtube-http-${port}@example.com`,signup=await request('/api/auth/register',{method:'POST',body:JSON.stringify({name:'YouTube fixture',email,password:'isolated-password-123',adultConfirmed:true,termsAccepted:true})});
+  assert.equal(signup.status,201);const cookie=signup.headers.get('set-cookie').split(';')[0];
+  db=new Database(path.join(dataDir,'vitrinecity.db'));db.prepare('UPDATE users SET is_admin=1 WHERE email=?').run(email);
+  const statusResponse=await request(api+'/status',{headers:{cookie}});assert.equal(statusResponse.status,200);const status=await statusResponse.json();assert.equal(status.status,'unconfigured');assert.equal(status.connected,false);assert.equal(status.configured,false);assert.equal(status.redirectUri,null);
+  for(const route of ['/app','/connect']){const result=await request(api+route,{method:'POST',headers:{cookie},body:JSON.stringify({clientId,clientSecret:'UNSAVED_SECRET'})});assert.equal(result.status,409);const text=await result.text();assert.match(text,/HTTPS/);assert.doesNotMatch(text,/authorizationUrl|UNSAVED_SECRET/);}
+  const callback=await request(api+'/callback?state=STATE_SECRET&code=CODE_SECRET',{headers:{cookie},redirect:'manual'});assert.equal(callback.status,303);assert.equal(callback.headers.get('location'),'/admin-youtube.html?youtube=needs_review');
+  assert.equal(db.prepare('SELECT client_id v FROM youtube_upload_app').get().v,'');assert.equal(db.prepare('SELECT COUNT(*) n FROM youtube_upload_oauth_states').get().n,0);assert.equal(db.prepare('SELECT COUNT(*) n FROM youtube_upload_account').get().n,0);
+});
 test('consent binds admin/session, uses offline and PKCE without activating any schedule',t=>{const f=fixture(t),state=f.begin(),row=f.db.prepare('SELECT * FROM youtube_upload_oauth_states').get();assert.equal(row.admin_id,7);assert.notEqual(row.session_hash,f.identity.sessionKey);assert.notEqual(row.state_hash,state);assert.notEqual(row.verifier_encrypted,decrypt(row.verifier_encrypted));const u=new URL(f.service.begin(f.identity).authorizationUrl);assert.equal(u.searchParams.get('access_type'),'offline');assert.equal(u.searchParams.get('code_challenge_method'),'S256');assert.deepEqual(u.searchParams.get('scope').split(' '),YOUTUBE_UPLOAD_SCOPES);assert.equal(f.calls.length,0);assert.equal(f.service.status().connected,false);});
 test('wrong admin, wrong session, expired state and replay cannot exchange a code',async t=>{const f=fixture(t),state=f.begin();await assert.rejects(f.service.complete({...f.identity,adminId:8,state,code:'CODE_SECRET'}),/state_invalid/);await assert.rejects(f.service.complete({...f.identity,sessionKey:'OTHER_SECRET',state,code:'CODE_SECRET'}),/state_invalid/);assert.equal(f.calls.length,0);await f.service.complete({...f.identity,state,code:'CODE_SECRET'});await assert.rejects(f.service.complete({...f.identity,state,code:'CODE_SECRET'}),/state_invalid/);assert.equal(f.calls.length,2);const next=f.begin();f.advance(600001);await assert.rejects(f.service.complete({...f.identity,state:next,code:'CODE_SECRET'}),/state_invalid/);assert.equal(f.calls.length,2);});
 test('valid consent validates exact channel and protects offline tokens',async t=>{const f=fixture(t),result=await f.connect();assert.equal(result.connected,true);assert.equal(result.channelId,YOUTUBE_PRAYER_CHANNEL);assert.equal(result.publicUploadVerified,false);const row=f.db.prepare('SELECT * FROM youtube_upload_account').get();assert.equal(decrypt(row.refresh_encrypted),'REFRESH_SECRET');assert.doesNotMatch(JSON.stringify(result),/ACCESS_SECRET|REFRESH_SECRET|CLIENT_SECRET|CODE_SECRET/);assert.equal(f.calls[0].opts.body.get('grant_type'),'authorization_code');assert.ok(f.calls[0].opts.body.get('code_verifier'));assert.equal(f.calls[0].opts.redirect,'error');assert.match(f.calls[1].url,/mine=true/);assert.equal(await f.service.accessToken(),'ACCESS_SECRET');assert.equal(f.calls.length,2);});

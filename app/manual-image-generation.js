@@ -53,7 +53,7 @@ export async function generateManualMediaImage({db,project,config,outputDir,requ
     const file=`factory-${project.id}-${reservation.attemptId}.${size.type==='jpeg'?'jpg':size.type}`,url='/uploads/generated-videos/'+file;
     fs.mkdirSync(outputDir,{recursive:true});fs.writeFileSync(path.join(outputDir,file),bytes,{flag:'wx'});
     const rawCost=result.data?.usage?.cost??result.data?.usage?.total_cost;
-    const cost=rawCost!==undefined&&Number.isFinite(Number(rawCost))&&Number(rawCost)>=0?Number(rawCost):null;
+    const cost=typeof rawCost==='number'&&Number.isFinite(rawCost)&&rawCost>=0?rawCost:null;
     // Save the received artifact even if the project was cancelled/edited while
     // the provider ran. A later retry can never spend again for this project.
     db.prepare("UPDATE manual_image_generation_attempts SET state='received',output_url=?,sha256=?,bytes=?,usage_cost_usd=?,error_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE project_id=? AND attempt_id=? AND state='submitting'").run(url,hash(bytes),bytes.length,cost,project.id,reservation.attemptId);
