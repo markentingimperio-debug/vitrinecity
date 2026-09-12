@@ -15,7 +15,7 @@ export function arrangeStoreBuildings(entities=[]) {
   for(const entity of entities)if(entity?.reference&&!unique.has(entity.reference))unique.set(entity.reference,entity);
   return [...unique.values()].sort((a,b)=>a.reference.localeCompare(b.reference)).map((source,index)=>({
     ...source,
-    position:{...source.position,x:index<4?-126:180+Math.floor((index-4)/4)*64,y:0,z:index<4?[-51,13,75,145][index]:-160+((index-4)%4)*64},
+    position:{...source.position,x:index<4?-126:180+Math.floor((index-4)/4)*64,y:0,z:index<4?[145,13,75,-51][index]:-160+((index-4)%4)*64},
     size:{...source.size,width:24,depth:18,height:9},
     buildingIdentity:storeBuildingIdentity(source.name)
   }));

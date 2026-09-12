@@ -160,6 +160,7 @@
         <h2 id="communications-title">Campanhas e promoções</h2>
         <p>Escolha se quer receber novidades por e-mail ou WhatsApp. Você pode cancelar cada canal quando quiser.</p>
         <a class="button" href="/preferencias-comunicacao.html">Gerenciar minhas preferências</a>
+        <p><a class="button" href="/recompra">Vincular compras e receber ofertas da minha loja</a></p>
       </section>
       <section class="panel" aria-labelledby="stores-title">
         <h2 id="stores-title">Lojas disponíveis para comprar</h2>
@@ -189,7 +190,25 @@
               })[c],
           );
       const requestedReturn = new URLSearchParams(location.search).get("returnTo"),
-        safeReturn = requestedReturn && requestedReturn.startsWith("/") && !requestedReturn.startsWith("//") ? requestedReturn : "";
+        safeReturn = requestedReturn && requestedReturn.startsWith("/") && !requestedReturn.startsWith("//") && !/[\\\u0000-\u0020\u007f]/.test(requestedReturn) ? requestedReturn : "";
+      function navigateAccount(url) {
+        if (typeof window.vcLiaNavigate === 'function' && window.vcLiaNavigate(url) === true) return;
+        location.assign(url);
+      }
+      function accountLoginUrl() {
+        const embedded = new URLSearchParams(location.search).get('lia') === '1';
+        let destination = new URL('/minha-conta.html', location.origin);
+        if (safeReturn) {
+          const candidate = new URL(safeReturn, location.origin);
+          // These are the public purchase pages that send customers here.
+          const purchasePage = /^\/(?:loja(?:\.html|\/[a-zA-Z0-9_-]+(?:\/[a-z0-9-]+)?)?|produto\/[1-9]\d*(?:\/[a-z0-9-]+)?|course-checkout\.html|centro-educacional\.html|cursos(?:\/[a-z0-9-]+)?)$/.test(candidate.pathname);
+          if (candidate.origin === location.origin && purchasePage && ![...candidate.searchParams.keys()].some(key => /returnTo|token|session|password|secret|auth/i.test(key))) destination = candidate;
+        }
+        if (embedded) destination.searchParams.set('lia', '1');
+        const query = new URLSearchParams({ returnTo: destination.pathname + destination.search + destination.hash });
+        if (embedded) query.set('lia', '1');
+        return '/entrar.html?' + query;
+      }
       if (safeReturn) {
         const returnCheckout = document.getElementById("returnCheckout");
         returnCheckout.href = safeReturn;
@@ -197,8 +216,7 @@
       async function load() {
         const r = await fetch("/api/customer/profile");
         if (r.status === 401) {
-          location.href =
-            "/entrar.html?returnTo=" + encodeURIComponent(location.pathname);
+          navigateAccount(accountLoginUrl());
           return;
         }
         const d = await r.json();
@@ -243,7 +261,8 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(b),
           });
-          load();
+          if (safeReturn) navigateAccount(safeReturn);
+          else load();
         } catch (err) {
           m.textContent = err.message;
           m.style.color = "#b42424";

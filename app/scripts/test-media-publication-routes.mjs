@@ -20,6 +20,7 @@ test('real admin routes and signed callbacks preserve moderation, receipts and t
       return new Response(JSON.stringify({success:true,result:{uid:config.uid,readyToStream:config.ready,status:{state:config.ready?'ready':'inprogress'}}}),{status:200,headers:{'Content-Type':'application/json'}});
     };`);
   const env={PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,TEMP:temp,TMP:temp,DATA_DIR:temp,PORT:String(port),SITE_URL:origin,
+    AI_MEDIA_PROVIDER:'openai',OPENAI_API_KEY:'OFFLINE_ONLY_OPENAI',AI_VIDEO_PROVIDER:'google',GEMINI_API_KEY:'OFFLINE_ONLY_GOOGLE',
     STREAM_TEST_MOCK:mock,STREAM_TEST_LOG:log,CLOUDFLARE_ACCOUNT_ID:'c'.repeat(32),CLOUDFLARE_STREAM_API_TOKEN:'OFFLINE_ONLY',CLOUDFLARE_STREAM_WEBHOOK_SECRET:secret};
   let output='',db;
   const child=spawn(process.execPath,['--import',pathToFileURL(preload).href,'server.js'],{cwd:new URL('..',import.meta.url),env,stdio:['ignore','pipe','pipe']});
@@ -36,7 +37,14 @@ test('real admin routes and signed callbacks preserve moderation, receipts and t
     db=new Database(path.join(temp,'vitrinecity.db'));const userId=db.prepare("SELECT id FROM users WHERE email='stream@example.com'").get().id;
     db.prepare('UPDATE users SET is_admin=1 WHERE id=?').run(userId);db.prepare("UPDATE admin_specialist_agents SET status='active' WHERE code='midia'").run();
     response=await request('/api/admin/auth/login',json('POST',{email:'stream@example.com',password:'senha-forte-12345'}));assert.equal(response.status,200);const cookie=response.headers.get('set-cookie').split(';')[0];
+    response=await request('/api/admin/media-factory',{headers:{cookie}});const config=await response.json();assert.equal(config.provider,'openai');assert.equal(config.videoProvider,'google');assert.equal(config.videoEnabled,true);assert.deepEqual(config.videoDurationOptions,[4,6,8]);assert.equal(config.videoAudioAlwaysOn,true);
+    const initialTasks=db.prepare('SELECT count(*) n FROM admin_agent_tasks').get().n;
+    for(const invalid of [{durationSeconds:5},{durationSeconds:30},{aspectRatio:'1:1'},{model:'google/veo-3.1-lite'}]){
+      response=await request('/api/admin/media-factory',json('POST',{format:'short_video',prompt:'Descrição de teste local',...invalid},cookie));assert.equal(response.status,400);
+    }
+    assert.equal(db.prepare('SELECT count(*) n FROM admin_agent_tasks').get().n,initialTasks);assert.deepEqual(JSON.parse(readFileSync(log)),[]);
     response=await request('/api/admin/media-factory',json('POST',{format:'short_video',title:'Vídeo de teste',prompt:'Vídeo ilustrativo para teste local'},cookie));assert.equal(response.status,201);const id=(await response.json()).project.id;
+    const created=db.prepare('SELECT * FROM admin_media_projects WHERE id=?').get(id);assert.equal(created.video_provider,'google');assert.equal(created.image_provider,'openai');assert.equal(created.duration_seconds,4);assert.equal(created.model,'veo-3.1-lite-generate-preview');
     db.prepare("UPDATE admin_media_projects SET output_url='https://vitrinecity.com/uploads/test.mp4',production_status='approved' WHERE id=?").run(id);
     assert.equal((await request(`/api/admin/media-projects/${id}/publish-vitriny`,{...json('POST',{},cookie),headers:{cookie,origin:'https://outro.example'}})).status,403);
     response=await request(`/api/admin/media-projects/${id}/publish-vitriny`,json('POST',{},cookie));assert.equal(response.status,202);const first=await response.json();assert.equal(first.publication.status,'processing');const postId=first.postId;

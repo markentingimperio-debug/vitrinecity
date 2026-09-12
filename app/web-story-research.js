@@ -2,6 +2,7 @@ import https from 'node:https';
 import {lookup} from 'node:dns/promises';
 import {createHash} from 'node:crypto';
 import {publicImageAddress} from './catalog-product-images.js';
+import {storyTopicCategory,storyEditorialPortal} from './web-story-categories.js';
 
 const RSS='https://trends.google.com/trending/rss?geo=BR';
 const MAX_BYTES=512*1024, MAX_AGE=24*60*60*1000;
@@ -154,7 +155,7 @@ export function parseStoryTrends(xml) {
       const url=storyResearchUrl(tag(m[1],'ht:news_item_url'));
       return url?{title:tag(m[1],'ht:news_item_title').slice(0,180),url,publisher:STORY_RESEARCH_PUBLISHERS[new URL(url).hostname]}:null;
     }).filter(Boolean);
-    const n=normalize(title),group=/futebol|flamengo|vasco|corinthians|palmeiras|atletico|cruzeiro|santos|botafogo|gremio|real madrid|liga|campeonato|jogo|esporte|tenis|formula|copa/.test(n)?'sports':/receita|cozinha|planta|jardim|tecnologia|inteligencia artificial/.test(n)?'trends':'news';
+    const {group}=storyTopicCategory(title);
     return {id:hash(title.toLowerCase()+'|'+publishedAt.slice(0,10)).slice(0,24),title,publishedAt,group,refs:[...new Map(refs.map(x=>[x.url,x])).values()].slice(0,8)};
   }).filter(x=>x.title.length>=3&&x.publishedAt);
 }
@@ -188,10 +189,18 @@ export function createWebStoryResearch({db,fetchImpl,now=Date.now,searchSources=
   function source(item) {
     if(!item)return null;
     const evidence=JSON.parse(item.evidence_json),ready=evidenceReady(evidence,item.checked_at,item.title);
-    const result={id:'trend:'+item.id,key:'trend:'+item.id,kind:'trend',group:item.topic_group,groups:[item.topic_group],slug:'tendencia-'+item.id,title:item.title,summary:'Pesquisa de fontes sobre '+item.title,body:ready?evidence.map(x=>x.title+'\n'+x.excerpt).join('\n\n'):'',image_url:'',portal:item.topic_group==='sports'?'esportes':'noticias',updated_at:item.updated_at,sourcePath:'/conteudo',sources:citations(evidence),facts:{topic:item.title,evidence:ready?evidence:[],trendIsInterestOnly:true},commercial:false,evidenceReady:ready,checkedAt:item.checked_at,researchOnly:true};
+    const result={id:'trend:'+item.id,key:'trend:'+item.id,kind:'trend',group:item.topic_group,groups:[item.topic_group],slug:'tendencia-'+item.id,title:item.title,summary:'Pesquisa de fontes sobre '+item.title,body:ready?evidence.map(x=>x.title+'\n'+x.excerpt).join('\n\n'):'',image_url:'',portal:storyEditorialPortal({group:item.topic_group,title:item.title}),updated_at:item.updated_at,sourcePath:'/conteudo',sources:citations(evidence),facts:{topic:item.title,evidence:ready?evidence:[],trendIsInterestOnly:true},commercial:false,evidenceReady:ready,checkedAt:item.checked_at,researchOnly:true};
     result.hash=hash(result);result.sourceHash=result.hash;return result;
   }
   function get(key){return source(row(key));}
+  // Ingestion owns these persisted namespaces: syncTrends writes feed hashes;
+  // addDiscoveredTopic writes channel-<YouTube ID>. Both expose kind='trend',
+  // so neither editorial group nor caller-supplied readiness proves origin.
+  // Google Trends remains searchable/researchable but never seeds automation.
+  function automaticSourceAllowed(input){
+    const stored=row(typeof input==='string'?input:input?.key||input?.id);
+    return !!stored&&/^channel-[A-Za-z0-9_-]{11}$/.test(stored.id);
+  }
   // This is feasibility, not approval: actual fetching, freshness, grounding and
   // independent editorial review still run after a candidate is selected.
   // Trend references come from the persisted feed, never caller-supplied flags.
@@ -202,7 +211,7 @@ export function createWebStoryResearch({db,fetchImpl,now=Date.now,searchSources=
     return getEnriched(base).evidenceReady===true||!requirePreparedEvidence&&independentReferences(base.sources);
   }
   function list({q='',group='all',limit=50,offset=0,automatic=false}={}) {
-    if(!['all','news','sports','trends'].includes(group))return [];
+    if(!['all','news','recipes','sports','trends'].includes(group))return [];
     const take=Math.max(0,Math.min(200,Number.isFinite(Number(limit))?Math.trunc(Number(limit)):50)),skip=Math.max(0,Number.isSafeInteger(Number(offset))?Number(offset):0);
     if(!take)return [];
     const terms=normalize(String(q).slice(0,200)).split(' ').filter(Boolean).slice(0,12);
@@ -278,5 +287,5 @@ export function createWebStoryResearch({db,fetchImpl,now=Date.now,searchSources=
     }
     return null;
   }
-  return {syncTrends,list,get,enrich,getEnriched,automaticEligible,addDiscoveredTopic,prepareCandidates,findGardeningSource};
+  return {syncTrends,list,get,enrich,getEnriched,automaticEligible,automaticSourceAllowed,addDiscoveredTopic,prepareCandidates,findGardeningSource};
 }

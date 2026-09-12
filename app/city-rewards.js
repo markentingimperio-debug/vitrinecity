@@ -1,6 +1,15 @@
 import {randomUUID} from 'node:crypto';
 const DAY=86400000;
-export const REWARD_TERMS='city-rewards-2026-09-08';
+export const REWARD_TIME_ZONE='America/Sao_Paulo';
+const rewardDayFormat=new Intl.DateTimeFormat('en-CA',{timeZone:REWARD_TIME_ZONE,year:'numeric',month:'2-digit',day:'2-digit'});
+export function rewardDay(time){const parts=Object.fromEntries(rewardDayFormat.formatToParts(new Date(time)).map(p=>[p.type,p.value]));return `${parts.year}-${parts.month}-${parts.day}`;}
+export function rewardDayWindow(time){
+  const day=rewardDay(time);
+  // Brasília uses UTC-3 without daylight saving time for the current program.
+  const startsAt=Date.parse(day+'T00:00:00-03:00');
+  return {day,startsAt,endsAt:startsAt+DAY};
+}
+export const REWARD_TERMS='city-rewards-2026-09-10';
 export function rewardDiscount(priceCents,points,coinsPerReal){
   if(!Number.isSafeInteger(priceCents)||priceCents<1||!Number.isSafeInteger(points)||points<0||!Number.isSafeInteger(coinsPerReal)||coinsPerReal<1)return {discountCents:0,points:0,payCents:priceCents};
   const discountCents=Math.min(Math.floor(priceCents*.3),Math.floor(points*100/coinsPerReal));
@@ -16,6 +25,11 @@ export function setupCityRewards({app,db,requireUser,requireAdmin,sameOriginOnly
     CREATE TABLE IF NOT EXISTS city_reward_checks(reference TEXT PRIMARY KEY REFERENCES city_reward_orders(reference) ON DELETE CASCADE,checked_ms INTEGER NOT NULL);`);
   const settings=()=>db.prepare('SELECT coins_per_real coinsPerReal,daily_limit dailyLimit,enabled FROM city_reward_settings WHERE id=1').get();
   const available=id=>db.prepare('SELECT COALESCE(SUM(remaining),0) points,MIN(expires_ms) nextExpiry FROM city_reward_batches WHERE user_id=? AND remaining>0 AND expires_ms>?').get(id,now());
+  function dailyAllowance(id,time=now()){
+    const {day,startsAt,endsAt}=rewardDayWindow(time),limit=settings().dailyLimit;
+    const earned=db.prepare('SELECT COALESCE(SUM(points),0) n FROM city_reward_batches WHERE user_id=? AND created_ms>=? AND created_ms<?').get(id,startsAt,endsAt).n;
+    return {limit,earned,remaining:Math.max(0,limit-earned),day,resetsAt:new Date(endsAt).toISOString(),timeZone:REWARD_TIME_ZONE};
+  }
   const entitlement=id=>{const time=now(),periods=db.prepare("SELECT starts_ms,ends_ms FROM city_reward_orders WHERE user_id=? AND kind='avatar' AND status='approved' AND ends_ms>? ORDER BY starts_ms").all(id,time);let until=time;for(const period of periods){if(period.starts_ms>until)break;until=Math.max(until,period.ends_ms);}return {active:until>time,expiresAt:until>time?until:null};};
   function product(kind,slug){if(kind==='avatar')return {kind,title:'Avatar Premium · 30 dias',priceCents:1000,slug:''};if(kind==='course'){const c=getCourse(String(slug||''));if(c)return {kind,slug:c.slug,title:c.title,priceCents:c.priceCents};}return null;}
   function quote(id,p,usePoints){const config=settings(),balance=available(id),discount=rewardDiscount(p.priceCents,usePoints&&config.enabled?balance.points:0,config.coinsPerReal);return {...p,...discount,availablePoints:balance.points,coinsPerReal:config.coinsPerReal,maxDiscountPercent:30,termsVersion:REWARD_TERMS};}
@@ -43,7 +57,7 @@ export function setupCityRewards({app,db,requireUser,requireAdmin,sameOriginOnly
     if(order.kind==='course')db.prepare('UPDATE course_orders SET status=?,mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?').run(status,String(payment.id),reference);
     return db.prepare('SELECT * FROM city_reward_orders WHERE reference=?').get(reference);
   });
-  function grantGame(id,points,sourceKey){const config=settings();if(!config.enabled||!Number.isSafeInteger(points)||points<1)return 0;const dayStart=Math.floor(now()/DAY)*DAY,today=db.prepare('SELECT COALESCE(SUM(points),0) n FROM city_reward_batches WHERE user_id=? AND created_ms>=?').get(id,dayStart).n,grant=Math.min(points,Math.max(0,config.dailyLimit-today));if(!grant)return 0;const result=db.prepare('INSERT OR IGNORE INTO city_reward_batches(user_id,source_key,points,remaining,created_ms,expires_ms) VALUES(?,?,?,?,?,?)').run(id,sourceKey,grant,grant,now(),now()+60*DAY);return result.changes?grant:0;}
+  function grantGame(id,points,sourceKey){const config=settings();if(!config.enabled||!Number.isSafeInteger(points)||points<1)return 0;const time=now(),grant=Math.min(points,dailyAllowance(id,time).remaining);if(!grant)return 0;const result=db.prepare('INSERT OR IGNORE INTO city_reward_batches(user_id,source_key,points,remaining,created_ms,expires_ms) VALUES(?,?,?,?,?,?)').run(id,sourceKey,grant,grant,time,time+60*DAY);return result.changes?grant:0;}
   app.get('/api/rewards/me',requireUser,(req,res)=>res.set('Cache-Control','private,no-store').json({balance:available(req.user.id),settings:settings(),avatar:entitlement(req.user.id),avatarPriceCents:1000,maxDiscountPercent:30,validityDays:60,orders:db.prepare('SELECT reference,kind,title,price_cents,discount_cents,pay_cents,points,status,starts_ms,ends_ms,created_ms FROM city_reward_orders WHERE user_id=? ORDER BY created_ms DESC LIMIT 30').all(req.user.id),batches:db.prepare('SELECT points,remaining,created_ms,expires_ms FROM city_reward_batches WHERE user_id=? ORDER BY id DESC LIMIT 30').all(req.user.id)}));
   app.get('/api/rewards/quote',requireUser,(req,res)=>{const p=product(req.query.kind,req.query.slug);if(!p)return res.sendStatus(404);return res.set('Cache-Control','private,no-store').json(quote(req.user.id,p,req.query.usePoints==='true'));});
   app.post('/api/rewards/checkout',requireUser,sameOriginOnly,async(req,res)=>{
@@ -98,5 +112,5 @@ export function setupCityRewards({app,db,requireUser,requireAdmin,sameOriginOnly
   app.get('/admin-recompensas.html',requireAdmin,(_req,res)=>res.sendFile(publicDir+'/admin-recompensas.html'));
   app.get('/api/admin/rewards',requireAdmin,(_req,res)=>res.set('Cache-Control','private,no-store').json({settings:settings(),pending:db.prepare("SELECT reference,user_id,title,pay_cents,points,status,created_ms FROM city_reward_orders WHERE status IN ('created','creating','pending','review_required') ORDER BY created_ms LIMIT 100").all(),audit:db.prepare('SELECT * FROM city_reward_audit ORDER BY id DESC LIMIT 30').all()}));
   app.put('/api/admin/rewards',requireAdmin,sameOriginOnly,(req,res)=>{const rate=Number(req.body?.coinsPerReal),limit=Number(req.body?.dailyLimit);if(!Number.isSafeInteger(rate)||rate<1||rate>10000||!Number.isSafeInteger(limit)||limit<1||limit>1000)return res.status(400).json({error:'Informe 1 a 10.000 moedas por real e limite diário de 1 a 1.000.'});db.transaction(()=>{db.prepare('UPDATE city_reward_settings SET coins_per_real=?,daily_limit=?,enabled=? WHERE id=1').run(rate,limit,req.body?.enabled===false?0:1);db.prepare('INSERT INTO city_reward_audit(admin_id,coins_per_real,daily_limit,enabled,created_ms) VALUES(?,?,?,?,?)').run(req.user.id,rate,limit,req.body?.enabled===false?0:1,now());})();return res.json({ok:true});});
-  return {grantGame,settle,entitlement,settings,available,exportUser:id=>({batches:db.prepare('SELECT points,remaining,created_ms,expires_ms FROM city_reward_batches WHERE user_id=?').all(id),orders:db.prepare('SELECT reference,kind,title,price_cents,discount_cents,pay_cents,points,status,created_ms FROM city_reward_orders WHERE user_id=?').all(id)})};
+  return {grantGame,settle,entitlement,settings,available,dailyAllowance,exportUser:id=>({batches:db.prepare('SELECT points,remaining,created_ms,expires_ms FROM city_reward_batches WHERE user_id=?').all(id),orders:db.prepare('SELECT reference,kind,title,price_cents,discount_cents,pay_cents,points,status,created_ms FROM city_reward_orders WHERE user_id=?').all(id)})};
 }

@@ -18,6 +18,7 @@ services:
       - vitrinecity_data:/data
       - ./private-courses:/private-courses:ro
       - live_studio:/live-studio
+      - kling_credentials:/var/lib/vitrinecity-kling
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
@@ -52,6 +53,7 @@ services:
       - default
       - chatbotx
 volumes:
+  kling_credentials:
   live_studio:
   vitrinecity_data:
   caddy_data:

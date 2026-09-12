@@ -5,6 +5,8 @@
   const GOOGLE_KEY = 'vc_google_analytics_consent_v1';
   const CONVERSION_KEY = 'vc_conversion_measurement_consent_v1';
   const googleEnabled = !!document.querySelector('script[data-vc-google-analytics="enabled"]');
+  const OPENAI_KEY = 'vc_openai_ads_consent_v1';
+  const openaiEnabled = !!document.querySelector('script[data-vc-openai-ads="enabled"]');
   const SESSION_KEY = 'vc_analytics_session';
   const TOUCH_KEY = 'vc_analytics_first_touch_v1';
   const read = (area, key) => { try { return window[area].getItem(key); } catch { return null; } };
@@ -81,6 +83,7 @@
         const headers = new Headers(init.headers === undefined && input instanceof Request ? input.headers : init.headers);
         headers.set('X-VC-Session', sid);
         headers.set('X-VC-Analytics-Consent', 'accepted');
+        if (read('localStorage', OPENAI_KEY) === 'accepted') headers.set('X-VC-OpenAI-Ads-Consent', 'accepted');
         if (read('localStorage', GOOGLE_KEY) === 'accepted' && read('localStorage', CONVERSION_KEY) === 'accepted') headers.set('X-VC-Google-Analytics-Consent', 'accepted');
         init = { ...init, headers };
       }
@@ -105,7 +108,9 @@
     if (activeBanner) return;
     const banner = document.createElement('aside');banner.id = 'vc-consent';
     activeBanner = banner;
-    const message = googleEnabled
+    const message = openaiEnabled
+      ? 'Com sua permissão, a VitrineCity, o Google Analytics e a OpenAI medem visitas e interações com produtos. A OpenAI recebe identificadores dos produtos, eventos e o identificador do clique do anúncio. Não enviamos campos de formulários. A medição é opcional.'
+      : googleEnabled
       ? 'Com sua permissão, a VitrineCity e o Google Analytics medem visitas, cadastros, contatos comerciais e compras. Não enviamos campos de formulários ao Google. A medição é opcional.'
       : 'Dados opcionais nos ajudam a melhorar a cidade.';
     banner.innerHTML = `<div><strong>Privacidade</strong><p>${message}</p></div><div class="vc-consent-actions"><button type="button" data-choice="essential">Só essenciais</button><button type="button" data-choice="accepted">Aceitar medição</button></div>`;
@@ -115,6 +120,7 @@
       const choice = event.target.dataset.choice;if (!choice) return;
       if (!['essential', 'accepted'].includes(choice)) return;
       write('localStorage', CONSENT_KEY, choice);
+      if (openaiEnabled) write('localStorage', OPENAI_KEY, choice);
       if (googleEnabled) {
         write('localStorage', GOOGLE_KEY, choice);
         write('localStorage', CONVERSION_KEY, choice);
@@ -126,7 +132,7 @@
     });
   };
   const consent = read('localStorage', CONSENT_KEY);
-  if (!consent || (googleEnabled && consent === 'accepted' && (!read('localStorage', GOOGLE_KEY) || (read('localStorage', GOOGLE_KEY) === 'accepted' && !read('localStorage', CONVERSION_KEY))))) showConsent();
+  if (!consent || (openaiEnabled && consent === 'accepted' && !read('localStorage', OPENAI_KEY)) || (googleEnabled && consent === 'accepted' && (!read('localStorage', GOOGLE_KEY) || (read('localStorage', GOOGLE_KEY) === 'accepted' && !read('localStorage', CONVERSION_KEY))))) showConsent();
   if (consent === 'accepted') { loadExperiment(); loadGoogle(); }
   if (googleEnabled) {
     const preferences = document.createElement('button');
@@ -142,7 +148,7 @@
     if (/wa\.me|whatsapp/i.test(href)) eventName = 'whatsapp_click';
     else if (/loja-|store|sertaneja|agrotecnica/i.test(href)) eventName = 'store_view';
     send(eventName, { assetType: link.dataset.assetType || '', assetId: link.dataset.assetId || href.slice(0, 120),
-      metadata: { label: (link.textContent || '').trim().slice(0, 120) } });
+      metadata: { label: (link.textContent || '').trim().slice(0, 120), platform: link.dataset.platform || '' } });
   }, { passive: true });
   document.addEventListener('vc:analytics', event => {
     const detail = event.detail || {};

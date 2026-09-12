@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
-import {fetchCatalogImage,originalCatalogImageUrl} from './catalog-product-images.js';
+import {fetchStoryCatalogImage,storyCatalogImageUrl} from './web-story-catalog-image.js';
 import {rasterSize,normalizeStoryImagePath} from './web-story-assets.js';
 import {storyPageVisibleText} from './web-story-render.js';
 import {storySourceCta} from './web-story-cta.js';
@@ -14,7 +14,7 @@ const reviewCriteria=['approved','grounded','original','complete','nonRepetitive
 const reviewFailures=review=>[...reviewCriteria.filter(key=>review?.[key]===false),...(review?.risk&&review.risk!=='low'?['risk']:[])];
 const reviewNotes=value=>plain(value,500).replace(/https?:\/\/\S+|www\.\S+/gi,'[link removido]').replace(/[\w.+-]+@[\w.-]+/g,'[contato removido]');
 const hold=(code,review={},repair=null)=>({draft:null,approved:false,notes:code,qualityFailures:reviewFailures(review),review:{...review,notes:reviewNotes(review?.notes),approved:false,qualityCheckOnly:true},repair:repair?{...repair,outcome:'held'}:{attempted:false}});
-const structuralRepairCodes=new Set(['ai_invalid_json','ai_copy_limits','ai_page_invalid','ai_ten_pages_required']);
+const structuralRepairCodes=new Set(['ai_invalid_json','ai_copy_limits','ai_page_invalid','ai_ten_pages_required','ai_repetitive_or_thin']);
 function providerFailure(error,fallback){
   const code=String(error?.code||''),message=String(error?.message||'');
   if(/inference is blocked|account.{0,30}(?:blocked|suspended|disabled)|zdr|data.policy|no endpoints found matching|insufficient.{0,30}credits|key limit exceeded|invalid.{0,20}key|unauthorized/i.test(message)||code==='openai_story_not_configured'||code==='openai_story_http_error'&&error.status<500&&error.status!==429)return 'ai_provider_blocked';
@@ -86,7 +86,7 @@ export function storySourcePreflight(source,{siteUrl='https://vitrinecity.com',r
   if(['product','service','course','affiliate','store'].includes(source.kind)){
     const image=source.image_url||source.imageUrl;if(!image)return blocked('catalog_photo_missing');
     let local=false;try{local=/^\/(?:assets|uploads\/(?:generated-videos|store-assets))\/.+\.(?:png|jpe?g|webp)$/i.test(normalizeStoryImagePath(image,siteUrl));}catch{}
-    let remote=false;try{remote=new URL(image).origin!==new URL(siteUrl).origin&&!!originalCatalogImageUrl(image);}catch{}
+    let remote=false;try{remote=new URL(image).origin!==new URL(siteUrl).origin&&!!storyCatalogImageUrl(image);}catch{}
     if(!local&&!remote)return blocked('catalog_photo_unavailable');
   }
   return {eligible:true,code:'source_preflight_passed'};
@@ -127,12 +127,12 @@ function validateCopy(copy,sourceText,{affiliate=false,companion=false,homeCta=f
   return {title:copy.title.trim(),description:copy.description.trim(),pages,imagePrompt:plain(copy.imagePrompt,1100),...(companion?{articleBody}:{})};
 }
 
-export function createWebStoryAI({requestText,requestImage,assets,siteUrl='https://vitrinecity.com',dataDir,catalogImageFetcher=fetchCatalogImage}) {
+export function createWebStoryAI({requestText,requestImage,assets,siteUrl='https://vitrinecity.com',dataDir,catalogImageFetcher=fetchStoryCatalogImage}) {
   const origin=new URL(siteUrl).origin;
   async function actualPhoto(source,checkpoint) {
     const value=String(source.image_url||source.imageUrl||'');if(!value)throw fail('catalog_photo_missing');
     try{return await assets.image(value,{catalog:true});}catch{}
-    const remote=originalCatalogImageUrl(value);if(!remote||!dataDir)throw fail('catalog_photo_unavailable');
+    const remote=storyCatalogImageUrl(value);if(!remote||!dataDir)throw fail('catalog_photo_unavailable');
     const downloaded=await catalogImageFetcher(remote);await checkpoint();
     const size=rasterSize(downloaded.body);
     if(downloaded.body.length>4*1024*1024||size.width<640||size.height<360||size.width>10000||size.height>10000||size.width*size.height>40000000)throw fail('catalog_photo_quality');
@@ -145,7 +145,7 @@ export function createWebStoryAI({requestText,requestImage,assets,siteUrl='https
     await checkpoint();
     const preflight=storySourcePreflight(source,{siteUrl:origin});if(!preflight.eligible)return hold(preflight.code);
     const destination=sourcePath(source?.sourcePath,origin);
-    const data={kind:source.kind,title:plain(source.title,180),summary:plain(source.summary,500),body:plain(source.body,12000),facts:source.facts||{},sources:(source.sources||[]).slice(0,5),commercial:source.commercial===true};
+    const data={kind:source.kind,group:plain(source.group,40),portal:plain(source.portal,60),title:plain(source.title,180),summary:plain(source.summary,500),body:plain(source.body,12000),facts:source.facts||{},sources:(source.sources||[]).slice(0,5),commercial:source.commercial===true};
     const sourceText=JSON.stringify(data);
     const affiliate=source.kind==='affiliate'||source.facts?.affiliate===true,cta=buttons.cta??storySourceCta(source),homeCta=buttons.homeCta??'';
     let realPhoto=null,logo;

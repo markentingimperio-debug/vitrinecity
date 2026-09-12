@@ -23,6 +23,7 @@ export const CITY_GUIDE_ITEMS = Object.freeze([
   { id: 'web-stories', title: 'Web Stories · Guias visuais', description: 'Explore histórias em páginas ilustradas, com artigos e fontes para continuar a leitura.', group: 'aprender', keywords: ['história', 'stories', 'artigos', 'conteúdos', 'leitura', 'guias'], href: '/stories', landmark: 'Centro Educacional', place: 'education' },
   { id: 'emissora', title: 'Emissora VitrineCity', description: 'Explore os conteúdos editoriais da cidade e escolha um assunto para acompanhar.', group: 'aprender', keywords: ['emissora', 'editorial', 'notícias', 'receitas', 'esportes', 'celebridades', 'conteúdo'], href: '/emissora', landmark: 'Emissora VitrineCity', place: 'emissora' },
 
+  { id: 'oracao-do-dia', title: 'Orações e Esperança · Oração do dia', description: 'Leia a oração do dia, encontre uma palavra de esperança e compartilhe uma mensagem de carinho.', group: 'diversao', keywords: ['oração', 'orações', 'orar', 'fé', 'Jesus', 'amém', 'versículo', 'Bíblia', 'esperança', 'acolhimento'], href: '/oracao-do-dia.html', landmark: 'Fé e acolhimento' },
   { id: 'jogos', title: 'Prédio de jogos', description: 'Escolha um jogo e conheça as opções disponíveis na plataforma.', group: 'diversao', keywords: ['jogar', 'games', 'arcade', 'diversão'], href: '/vitriny-games.html', action: 'openGames', landmark: 'Prédio de jogos', place: 'games' },
   { id: 'fazenda', title: 'Minha mini fazenda', description: 'Cuide das plantações e dos animais e acompanhe suas conquistas.', group: 'diversao', keywords: ['jogo', 'fazendinha', 'colheita', 'plantar', 'animais', 'recompensas'], href: '/vitriny-mini-fazenda.html', landmark: 'Prédio de jogos', place: 'games' },
   { id: 'musica', title: 'Pulse Arena · Música', description: 'Escolha um estilo e abra o player da seleção disponível.', group: 'diversao', keywords: ['músicas', 'musica', 'eletrônica', 'sertanejo', 'playlist', 'live', 'arena', 'rádio'], href: '/vitriny-music-arena.html', action: 'openMusic', landmark: 'Pulse Arena', place: 'music' },
@@ -59,7 +60,8 @@ export const CITY_GUIDE_ITEMS = Object.freeze([
 
 const normalize = value => String(value ?? '').normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '').toLowerCase()
-  .replace(/[^a-z0-9]+/g, ' ').trim();
+  .replace(/[^a-z0-9]+/g, ' ').trim()
+  .replace(/\b(adubos|substratos|plantas|hortas|produtos|lojas)\b/g, word => word.slice(0, -1));
 
 /** Every search token must match; the source array and objects stay unchanged. */
 export function filterCityGuide(query, group = 'all', items = CITY_GUIDE_ITEMS) {

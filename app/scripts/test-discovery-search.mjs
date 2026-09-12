@@ -86,6 +86,22 @@ try {
   result=await get('/api/discovery/search','plantas','cidade inexistente');assert.ok(result.contents.some(item=>item.kind==='book'),'The city filter applies to local inventory, not digital content');
   result=await get('/api/discovery/search/suggestions','plantas');assert.ok(result.suggestions.some(item=>item.category==='Livro digital'));assert.ok(result.suggestions.every(item=>!/rascunho|secretas|futebol/i.test(item.label)));
   result=await get('/api/discovery/search','astronomia marciana');assert.equal(result.contents.length+result.products.length+result.stores.length,0,'An external-only query gets no unrelated internal promotion');
+  for (const q of ['oração','oracao','orações','oracoes','oração do dia','orações diárias','oração de hoje','orar','fé','Jesus']) {
+    result=await get('/api/discovery/search',q);
+    const prayer=result.contents.filter(item=>item.url==='/oracao-do-dia');
+    assert.equal(prayer.length,1,q+' finds the real daily prayer page once');
+    assert.equal(prayer[0].title,'Oração do dia · Orações e Esperança');
+    assert.match(prayer[0].description,/Leia a oração do dia/);
+    assert.equal(prayer[0].kind,'article','Prayer remains public content, without affiliate or checkout semantics');
+  }
+  result=await get('/api/discovery/search/suggestions','ora');
+  assert.ok(result.suggestions.some(item=>item.label==='Oração do dia · Orações e Esperança'),'Typing the beginning of prayer exposes the page in search suggestions');
+  result=await get('/api/discovery/search','oração','cidade inexistente');
+  assert.ok(result.contents.some(item=>item.url==='/oracao-do-dia'),'Prayer is available independently of the local inventory city filter');
+  for (const q of ['oração futebol','oração receita','parafusadeira','como fazer bolo']) {
+    result=await get('/api/discovery/search',q);
+    assert.ok(!result.contents.some(item=>item.url==='/oracao-do-dia'),q+' cannot receive an unrelated prayer placement');
+  }
   db.prepare("UPDATE editorial_articles SET image_url='/assets/vitriny-city-master.jpg' WHERE slug='cuidar-de-plantas'").run();
   result=await get('/api/discovery/search','plantas');
   assert.equal(result.contents.find(item=>item.url==='/artigo/cuidar-de-plantas').imageUrl,'','A generic city cover is removed without suppressing the article');
@@ -96,5 +112,6 @@ try {
   result=await get('/api/discovery/search','plantas');assert.equal(result.contents.find(item=>item.url==='/artigo/cuidar-de-plantas').imageCredit,'Ilustração por IA');
   db.exec('DROP TABLE editorial_articles; DROP TABLE digital_books;');
   result=await get('/api/discovery/search','plantas');assert.ok(result.contents.some(item=>item.kind==='course'),'An installation without optional editorial tables still searches existing courses and catalogs');
+  result=await get('/api/discovery/search','oração');assert.ok(result.contents.some(item=>item.url==='/oracao-do-dia'),'The existing public prayer page is searchable without an editorial database record');
   console.log('discovery-search: relevant official inventory, published articles/books/courses/affiliate pages, strict matching, drafts, city filtering and external-only fallback passed');
 } finally { await new Promise(resolve=>server.close(resolve));db.close(); }

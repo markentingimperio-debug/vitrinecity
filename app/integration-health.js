@@ -1,5 +1,10 @@
 // Only fixed diagnostic codes are retained: never provider payloads, tokens or prompts.
 const AI_OPERATIONS = {
+  openai_text: 'OpenAI · texto',
+  openai_media: 'OpenAI · imagens',
+  google_video: 'Google Veo · vídeos',
+  kling_studio_video: 'Kling Studio · vídeos',
+  kling_studio_account: 'Kling Studio · conexão e créditos',
   openrouter_text: 'OpenRouter · texto',
   openrouter_media: 'OpenRouter · imagens e vídeos',
   openrouter_account: 'OpenRouter · consulta da conta'
@@ -24,8 +29,11 @@ export function classifyIntegrationFailure(error = {}) {
   const message = String(error?.message || '');
   const status = Number(error?.status);
   if (/inference is blocked|access.blocked/i.test(message)) return 'access_blocked';
+  if (/kling_studio_auth_unavailable/.test(message)) return 'authentication';
+  if (/kling_studio_(?:not_configured|home_(?:invalid|missing)|model_invalid)/.test(message)) return 'not_configured';
+  if (/kling_studio_(?:insufficient_credits|credits_insufficient|credits_unavailable)/.test(message)) return 'billing';
   if (/pages_read_user_content|permissions|required.permission/i.test(message) || [10, 200].includes(Number(error?.providerCode))) return 'permissions';
-  if (/not_configured|Configure OPENROUTER_API_KEY/i.test(message)) return 'not_configured';
+  if (/not_configured|Configure OPENROUTER_API_KEY|ai_text_(?:provider_invalid|key_missing|model_invalid)|ai_media_(?:provider_invalid|key_missing)/i.test(message)) return 'not_configured';
   if (status === 401 || Number(error?.providerCode) === 190 || /api_401/.test(message)) return 'authentication';
   if (status === 402) return 'billing';
   if (status === 403 || /api_403/.test(message)) return 'permissions';

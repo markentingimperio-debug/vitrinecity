@@ -7,10 +7,12 @@ const calls=[];
 const originalFetch=globalThis.fetch;
 const originalKey=process.env.OPENROUTER_API_KEY;
 const originalOpenAiKey=process.env.OPENAI_API_KEY;
+const originalGoogleKey=process.env.GEMINI_API_KEY;
 
 try{
   process.env.OPENROUTER_API_KEY='audit-secret-example';
   process.env.OPENAI_API_KEY='audit-openai-example';
+  process.env.GEMINI_API_KEY='audit-google-example';
   globalThis.fetch=async(input,init={})=>{
     calls.push({url:String(typeof input==='string'?input:input.url),headers:new Headers(init.headers||(input instanceof Request?input.headers:undefined)),method:init.method,body:init.body});
     return new Response('ok',{status:200});
@@ -25,7 +27,9 @@ try{
   assert.equal(calls[1].headers.get('authorization'),'Bearer audit-secret-example','OpenRouter must retain its own bearer token');
 
   await globalThis.fetch('https://api.openai.com/v1/responses',{headers:{Authorization:'Bearer audit-secret-example'}});
-  assert.equal(calls[2].headers.get('authorization'),'Bearer audit-secret-example','OpenAI must retain its own bearer token');
+  assert.equal(calls[2].headers.get('authorization'),null,'OpenAI must never receive the OpenRouter bearer token');
+  await globalThis.fetch('https://openrouter.ai/api/v1/models',{headers:{Authorization:'Bearer audit-openai-example'}});
+  assert.equal(calls.at(-1).headers.get('authorization'),null,'OpenRouter must never receive the OpenAI bearer token');
 
   await globalThis.fetch('https://cdn.example.invalid/second.mp4',{headers:{Authorization:'Bearer audit-openai-example'}});
   assert.equal(calls.at(-1).headers.get('authorization'),null,'Both configured credentials must be protected');
@@ -42,6 +46,16 @@ try{
   assert.equal(calls.at(-1).body,'{}');
   await globalThis.fetch('https://payments.example.invalid',{headers:{Authorization:'Bearer unrelated-payment-token'}});
   assert.equal(calls.at(-1).headers.get('authorization'),'Bearer unrelated-payment-token','Unrelated integration authentication must be preserved');
+  for(const url of ['https://cdn.example.invalid/video.mp4','https://api.openai.com/v1/responses','http://generativelanguage.googleapis.com/v1beta/models','https://generativelanguage.googleapis.com.attacker.invalid/video','https://generativelanguage.googleapis.com:8443/v1beta/models']){
+    await globalThis.fetch(url,{headers:{'x-goog-api-key':'audit-google-example',Authorization:'Bearer audit-google-example','X-Test':'preserved'}});
+    assert.equal(calls.at(-1).headers.get('x-goog-api-key'),null,'Google API key must only reach its exact HTTPS origin');
+    assert.equal(calls.at(-1).headers.get('authorization'),null);
+    assert.equal(calls.at(-1).headers.get('x-test'),'preserved');
+  }
+  await globalThis.fetch('https://generativelanguage.googleapis.com/v1beta/models',{headers:{'x-goog-api-key':'audit-google-example'}});
+  assert.equal(calls.at(-1).headers.get('x-goog-api-key'),'audit-google-example');
+  await globalThis.fetch('https://generativelanguage.googleapis.com/v1beta/models',{headers:{'x-goog-api-key':'audit-openai-example'}});
+  assert.equal(calls.at(-1).headers.get('x-goog-api-key'),null,'Mislabelled OpenAI key cannot be sent to Google');
 
   const pkg=JSON.parse(readFileSync(`${appRoot}/package.json`,'utf8'));
   const dockerfile=readFileSync(`${appRoot}/Dockerfile`,'utf8');
@@ -52,4 +66,5 @@ try{
   globalThis.fetch=originalFetch;
   if(originalKey===undefined)delete process.env.OPENROUTER_API_KEY;else process.env.OPENROUTER_API_KEY=originalKey;
   if(originalOpenAiKey===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=originalOpenAiKey;
+  if(originalGoogleKey===undefined)delete process.env.GEMINI_API_KEY;else process.env.GEMINI_API_KEY=originalGoogleKey;
 }

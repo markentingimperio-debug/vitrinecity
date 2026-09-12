@@ -1,0 +1,25 @@
+{
+  "id": "/games/",
+  "name": "VitrineCity Cultiva",
+  "short_name": "VC Cultiva",
+  "description": "Suas plantas, anotações, guias de cuidados e uma pausa para jogar. Plantas e puzzles salvos no aparelho; fazenda conectada à conta.",
+  "lang": "pt-BR",
+  "start_url": "/games/",
+  "scope": "/games/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f5f2e9",
+  "theme_color": "#294937",
+  "categories": ["lifestyle", "games"],
+  "icons": [
+    {"src":"/assets/pwa-icon-192.png","sizes":"192x192","type":"image/png","purpose":"any"},
+    {"src":"/assets/pwa-icon-512.png","sizes":"512x512","type":"image/png","purpose":"any"},
+    {"src":"/assets/pwa-icon-maskable-512.png","sizes":"512x512","type":"image/png","purpose":"maskable"}
+  ],
+  "shortcuts": [
+    {"name":"Minhas plantas","url":"/games/plantas"},
+    {"name":"Ateliê de Blocos","url":"/games/blocos"},
+    {"name":"Jardim em Dobro","url":"/games/jardim"},
+    {"name":"Mini Fazenda","url":"/games/fazenda"}
+  ]
+}

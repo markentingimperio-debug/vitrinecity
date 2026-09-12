@@ -54,7 +54,11 @@ export function setupLiveStudio({ app, requireAdmin, sameOriginOnly, root = proc
     const temp = file(`${name}.${randomUUID()}.tmp`);
     fs.writeFileSync(temp, JSON.stringify(value), { mode: 0o600 });
     if (process.getuid?.() === 0) fs.chownSync(temp, 10001, 10001);
-    fs.renameSync(temp, file(name));
+    if(name==='command.json'){
+      // Never replace another administrative command that won the queue race.
+      // The fully written inode becomes visible atomically to the worker.
+      try{fs.linkSync(temp,file(name));}finally{fs.unlinkSync(temp);}
+    }else fs.renameSync(temp, file(name));
   };
   const catalog = () => read('media.json', []).filter(m => /^[a-zA-Z0-9_-]+\.mp4$/.test(m.file) && Number.isFinite(m.duration) && m.duration > 0 && m.duration <= 601);
   const snapshot = () => {
@@ -98,6 +102,8 @@ export function setupLiveStudio({ app, requireAdmin, sameOriginOnly, root = proc
   app.post('/api/admin/live-studio/control', requireAdmin, sameOriginOnly, (req, res) => {
     const action = req.body?.action;
     if (!['preview', 'start', 'stop', 'stop-network'].includes(action)) return res.status(400).json({ error: 'Ação inválida.' });
+    const durationSeconds = req.body?.durationSeconds;
+    if (durationSeconds !== undefined && (action !== 'start' || durationSeconds !== 7200)) return res.status(400).json({ error: 'O limite disponível para esta transmissão é de 2 horas (7200 segundos).' });
     const stopping = action === 'stop' || action === 'stop-network';
     if(action==='stop-network' && !LIVE_PLATFORMS.includes(req.body.platform)) return res.status(400).json({error:'Rede inválida.'});
     const status = snapshot();
@@ -119,8 +125,10 @@ export function setupLiveStudio({ app, requireAdmin, sameOriginOnly, root = proc
       }
       catch (e) { return res.status(400).json({error:e.message}); }
     }
-    write('command.json', { id: randomUUID(), action, platform:action==='stop-network'?req.body.platform:undefined, createdAt: Date.now(), actor: req.user?.id });
-    res.status(202).json({ ok: true, message: 'Comando recebido; acompanhe o status do OBS.' });
+    const commandId=randomUUID();
+    try{write('command.json', { id: commandId, action, platform:action==='stop-network'?req.body.platform:undefined, createdAt: Date.now(), actor: req.user?.id, ...(durationSeconds!==undefined?{durationSeconds}:{}) });}
+    catch(error){return res.status(error.code==='EEXIST'?409:503).json({error:error.code==='EEXIST'?'Outra operação entrou na fila. Atualize o status antes de continuar.':'Não foi possível entregar o comando. Confira o estado antes de tentar outra ação.'});}
+    res.status(202).json({ ok: true, commandId, ...(durationSeconds!==undefined?{durationSeconds}:{}), message: 'Comando recebido; acompanhe o status do OBS.' });
   });
   app.get('/api/admin/live-studio/media/:name', requireAdmin, (req, res) => {
     if (!catalog().some(m => m.file === req.params.name)) return res.sendStatus(404);

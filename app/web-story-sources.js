@@ -5,7 +5,7 @@ import {validAffiliateUrl,platforms} from './affiliate-catalog.js';
 import {CITY_GUIDE_ITEMS} from './public/vitriny-city-guide-core.js';
 
 const groups=new Set(['all','products','services','news','recipes','sports','trends']);
-const kindOrder={article:0,product:1,service:2,course:3,affiliate:4,city:5,store:6};
+const kindOrder={article:0,product:1,service:2,course:3,affiliate:4,city:5,store:6,page:7};
 const plain=value=>typeof value==='string'?value:'';
 const named=value=>plain(value).trim().length>0;
 const slugValid=value=>typeof value==='string'&&/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)&&value.length<=150;
@@ -38,10 +38,11 @@ function citations(title,sourcePath,raw){
  * `services()` must be the public DIGITAL_SERVICE_PACKAGES catalog. Both are re-read
  * on every call; explicit inactive/unavailable flags and database withdrawal win.
  * `publicDir` enables the city presentation from the actual public home file;
+ * `includePrayerPage` opts in to one fixed public prayer page, for comment campaigns.
  * no arbitrary path or remote page is accepted from a source or database field.
  * list returns an array, ordered by kind then stable key, with no top-N catalog cutoff.
  */
-export function createWebStorySources({db,services=()=>[],courses=()=>[],publicDir=null}) {
+export function createWebStorySources({db,services=()=>[],courses=()=>[],publicDir=null,includePrayerPage=false}) {
   function columns(table){
     if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))return new Set();
     return new Set(db.prepare(`PRAGMA table_info("${table}")`).all().map(row=>row.name));
@@ -109,6 +110,24 @@ export function createWebStorySources({db,services=()=>[],courses=()=>[],publicD
     const imageUrl=publicSourceUrl(image?.src),facts=compact({accessNote,illustrationDescription:image?.alt,destinations});
     return [{id,key:id,kind:'city',group:'trends',slug:'vitrine-city',title,summary,body,image_url:imageUrl?.startsWith('/')?imageUrl:'',portal:'cidade',updated_at:'',sourcePath,sources:[{title,url:sourcePath},{title:'Guia público da cidade',url:'/multiverso?city=vitrine-city'}],facts,commercial:false}];
   }
+  function prayerPageItems(key){
+    if(includePrayerPage!==true||!publicDir||(key!==undefined&&key!=='oracao-do-dia'))return [];
+    // Only this fixed, already-published page is a source. Never read a path or
+    // URL supplied by a campaign, an article record or a catalog search.
+    let html;try{const file=path.join(publicDir,'oracao-do-dia.html');if(statSync(file).size>512*1024)return [];html=readFileSync(file,'utf8');}catch{return [];}
+    const head=html.match(/<head\b[^>]*>([\s\S]*?)<\/head>/i)?.[1]||'';
+    const title=htmlText(head.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]);
+    const summary=[...head.matchAll(/<meta\b[^>]*>/gi)].map(match=>htmlAttributes(match[0])).find(attrs=>attrs.name==='description')?.content||'';
+    const selected=(tag,id)=>[...html.matchAll(new RegExp('<'+tag+'\\b([^>]*)>([\\s\\S]*?)<\\/'+tag+'>','gi'))].find(match=>htmlAttributes(match[1]).id===id);
+    const prayerTitle=htmlText(selected('h2','prayerTitle')?.[2]),edition=htmlText(selected('time','prayerEdition')?.[2]),verse=htmlText(selected('p','dailyVerse')?.[2]);
+    const paragraphs=[...html.matchAll(/<p\b[^>]*\sdata-prayer-paragraph(?=[\s=>])[^>]*>([\s\S]*?)<\/p>/gi)].map(match=>htmlText(match[1])).filter(Boolean);
+    const image=[...html.matchAll(/<img\b[^>]*>/gi)].map(match=>htmlAttributes(match[0])).find(attrs=>attrs.id==='jesusArt');
+    const imageUrl=image?.src||'';
+    if(!title||!summary||!prayerTitle||!paragraphs.length||!verse||!/^\/assets\/prayer\/[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:png|jpe?g|webp|avif)$/i.test(imageUrl))return [];
+    try{if(!statSync(path.join(publicDir,imageUrl.slice(1))).isFile())return [];}catch{return [];}
+    const id='page:oracao-do-dia',sourcePath='/oracao-do-dia.html';
+    return [{id,key:id,kind:'page',group:'trends',slug:'oracao-do-dia',title,summary,body:basicBody(prayerTitle,edition,...paragraphs,verse),image_url:imageUrl,portal:'oracao',updated_at:'',sourcePath,sources:[{title,url:sourcePath}],facts:compact({prayerTitle,edition,verse,illustrationDescription:image.alt}),commercial:false}];
+  }
   function storeItems(key){
     const cols=columns('store_profiles');if(!has(cols,'order_reference','business_name','review_status','description'))return [];
     const fields=['order_reference','business_name','description','facade_url','gallery_1_url','logo_url','city','state','website_url','instagram_url','tiktok_url','google_maps_url','updated_at'];
@@ -131,7 +150,7 @@ export function createWebStorySources({db,services=()=>[],courses=()=>[],publicD
     // Published legacy article IDs retain priority even if one happens to contain a prefix.
     const legacy=articles(key)[0];if(legacy)return legacy;
     const colon=key.indexOf(':');if(colon<0)return null;
-    const type=key.slice(0,colon),id=key.slice(colon+1),providers={product:products,service:serviceItems,course:courseItems,affiliate:affiliates,city:cityItems,store:storeItems};
+    const type=key.slice(0,colon),id=key.slice(colon+1),providers={product:products,service:serviceItems,course:courseItems,affiliate:affiliates,city:cityItems,store:storeItems,page:prayerPageItems};
     if(!id||!Object.hasOwn(providers,type)||(type==='product'&&!/^[1-9]\d*$/.test(id)))return null;
     return providers[type](id)[0]||null;
   }
@@ -140,7 +159,7 @@ export function createWebStorySources({db,services=()=>[],courses=()=>[],publicD
     const take=Math.max(0,Math.min(200,Number.isFinite(Number(limit))?Math.trunc(Number(limit)):50)),skip=Math.max(0,Number.isSafeInteger(Number(offset))?Number(offset):0);
     if(take===0)return [];
     const terms=normalized(plain(q).slice(0,200)).split(' ').filter(Boolean).slice(0,12),seen=new Set();
-    return [...articles(),...products(),...serviceItems(),...courseItems(),...affiliates(),...cityItems(),...storeItems()].filter(item=>{
+    return [...articles(),...products(),...serviceItems(),...courseItems(),...affiliates(),...cityItems(),...storeItems(),...prayerPageItems()].filter(item=>{
       if(seen.has(item.key))return false;seen.add(item.key);
       return (group==='all'||item.group===group)&&terms.every(term=>normalized([item.title,item.summary,item.body,item.portal,JSON.stringify(item.facts)].join(' ')).includes(term));
     }).sort((a,b)=>kindOrder[a.kind]-kindOrder[b.kind]||(a.key<b.key?-1:a.key>b.key?1:0)).slice(skip,skip+take);
