@@ -268,10 +268,11 @@ test('daily cap counts uncertain claims and uses the Brasília date, reserving b
 });
 
 const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
+const instagramHarness={instagramMessaging:{settings:()=>({enabled:false,autoReply:false,dailyLimit:30}),ingestWebhook:()=>({jobIds:[],handledLiveCommentIds:new Set()})},isInstagramMessageJob:job=>job.channel==='instagram'&&['instagram_message','instagram_live_comment'].includes(job.source_kind),setTimeout:()=>({unref(){}})};
 test('the real signed webhook wires Messenger and preserves the existing comment branch',t=>{
   const f=fixture(t),comments=[];let handler;
   const start=server.indexOf("app.post('/api/webhooks/social'"),end=server.indexOf('function saveSocialPages(',start);assert.ok(start>0&&end>start);
-  vm.runInNewContext(server.slice(start,end),{app:{post(path,callback){handler=callback;}},db:f.db,facebookMessenger:f.service,socialCommentCampaigns:{ingestWebhook:()=>new Set()},enqueueOmnichannelJob:(...args)=>comments.push(args),process:{env:{META_SOCIAL_APP_SECRET:'offline-secret'}},Buffer,createHmac,timingSafeEqual,console:{error(){throw Error('Webhook should not fail');}}});
+  vm.runInNewContext(server.slice(start,end),{...instagramHarness,app:{post(path,callback){handler=callback;}},db:f.db,facebookMessenger:f.service,socialCommentCampaigns:{ingestWebhook:()=>new Set()},enqueueOmnichannelJob:(...args)=>comments.push(args),process:{env:{META_SOCIAL_APP_SECRET:'offline-secret'}},Buffer,createHmac,timingSafeEqual,console:{error(){throw Error('Webhook should not fail');}}});
   const payload=body();payload.entry[0].changes=[{field:'feed',value:{item:'comment',comment_id:'comment-1',message:'Comentário legado'}}];
   const rawBody=Buffer.from(JSON.stringify(payload));let status;
   const res={sendStatus:value=>{status=value;return value;}},request={body:payload,rawBody,get:()=> 'invalid'};
@@ -284,7 +285,7 @@ test('the real worker uses Messenger auto-reply at 23h while leaving comment app
   const f=fixture(t),[job]=f.enqueue();f.db.prepare("UPDATE omnichannel_automation_settings SET enabled=0 WHERE channel='facebook'").run();
   const start=server.indexOf('async function processOmnichannelAutomation()'),end=server.indexOf("app.get('/api/admin/marketplace/payments/setup'",start);assert.ok(start>0&&end>start);
   const worker=vm.runInNewContext('let omnichannelAutomationRunning=false;'+server.slice(start,end)+';processOmnichannelAutomation;',{
-    db:f.db,facebookMessenger:f.service,ecosystemCanRun:()=>true,discoverWhatsAppQrAutomationJobs:async()=>{},ecosystemLocalWindow:()=>({hour:23,start:'2026-09-12T03:00:00Z',end:'2026-09-13T03:00:00Z'}),generateServiceReply:(_channel,_text,item)=>f.service.generateReply(item),sendOmnichannelReply:(item,reply,options)=>f.service.send(item,reply,options)});
+    ...instagramHarness,db:f.db,facebookMessenger:f.service,ecosystemCanRun:()=>true,discoverWhatsAppQrAutomationJobs:async()=>{},ecosystemLocalWindow:()=>({hour:23,start:'2026-09-12T03:00:00Z',end:'2026-09-13T03:00:00Z'}),generateServiceReply:(_channel,_text,item)=>f.service.generateReply(item),sendOmnichannelReply:(item,reply,options)=>f.service.send(item,reply,options)});
   await worker();assert.equal(f.row(job).state,'sent');assert.equal(f.db.prepare('SELECT status FROM omnichannel_automation_jobs WHERE id=?').get(job.id).status,'sent');
   assert.equal(f.db.prepare("SELECT approval_required FROM omnichannel_automation_settings WHERE channel='facebook'").get().approval_required,1);
 });
@@ -294,7 +295,7 @@ test('older comments outside their permitted hours cannot occupy the three worke
   for(let i=0;i<3;i++)f.db.prepare("INSERT INTO omnichannel_automation_jobs(id,channel,external_id,destination,source_text,account_id,source_kind,created_at) VALUES (?,'facebook',?,'comment-id','Comentário antigo',7,'feed','2026-09-11 00:00:00')").run('legacy-'+i,'facebook:legacy-'+i);
   const start=server.indexOf('async function processOmnichannelAutomation()'),end=server.indexOf("app.get('/api/admin/marketplace/payments/setup'",start);
   const worker=vm.runInNewContext('let omnichannelAutomationRunning=false;'+server.slice(start,end)+';processOmnichannelAutomation;',{
-    db:f.db,facebookMessenger:f.service,ecosystemCanRun:()=>true,discoverWhatsAppQrAutomationJobs:async()=>{},ecosystemLocalWindow:()=>({hour:23,start:'2026-09-12T03:00:00Z',end:'2026-09-13T03:00:00Z'}),generateServiceReply:(_channel,_text,item)=>{assert.equal(item.source_kind,'facebook_message');return f.service.generateReply(item);},sendOmnichannelReply:(item,reply,options)=>f.service.send(item,reply,options)});
+    ...instagramHarness,db:f.db,facebookMessenger:f.service,ecosystemCanRun:()=>true,discoverWhatsAppQrAutomationJobs:async()=>{},ecosystemLocalWindow:()=>({hour:23,start:'2026-09-12T03:00:00Z',end:'2026-09-13T03:00:00Z'}),generateServiceReply:(_channel,_text,item)=>{assert.equal(item.source_kind,'facebook_message');return f.service.generateReply(item);},sendOmnichannelReply:(item,reply,options)=>f.service.send(item,reply,options)});
   await worker();assert.equal(f.row(job).state,'sent');assert.equal(f.state.sends.length,1);
   assert.equal(f.db.prepare("SELECT count(*) n FROM omnichannel_automation_jobs WHERE source_kind='feed' AND status='pending'").get().n,3);
 });

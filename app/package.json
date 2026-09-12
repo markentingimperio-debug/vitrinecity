@@ -11,6 +11,7 @@
     "test:whatsapp-products": "node --test scripts/test-whatsapp-product-campaigns.mjs scripts/test-whatsapp-schedule-worker.mjs scripts/test-admin-whatsapp-products.mjs scripts/test-whatsapp-thematic-groups.mjs scripts/test-admin-whatsapp-thematic.mjs",
     "test:social-comment-campaigns": "node --test scripts/test-social-comment-campaigns.mjs scripts/test-meta-comment-api.mjs scripts/test-admin-social-comment-campaigns.mjs scripts/test-social-oauth-intent.mjs scripts/test-facebook-messenger.mjs",
     "test:facebook-messenger": "node --test scripts/test-facebook-messenger.mjs",
+    "test:live-connections": "node --test scripts/test-youtube-live-chat.mjs scripts/test-youtube-oauth.mjs scripts/test-instagram-messaging.mjs scripts/test-instagram-live-direct.mjs scripts/test-social-oauth-intent.mjs scripts/test-live-connections-ui.mjs scripts/test-live-studio-ui.mjs",
     "test:youtube-channel-scope": "node --test scripts/test-external-metrics-store.mjs scripts/test-admin-youtube-scope.mjs",
     "test:video-provider-receipts": "node --test scripts/test-video-provider-receipts.mjs scripts/test-viral-production-status.mjs",
     "test:media-publication": "node --test scripts/test-media-publication-lifecycle.mjs scripts/test-media-publication-routes.mjs scripts/test-admin-media-publication.mjs",
