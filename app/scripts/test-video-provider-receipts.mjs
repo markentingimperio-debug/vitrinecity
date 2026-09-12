@@ -57,6 +57,10 @@ test('diagnostics classify account and policy blocks without leaking raw provide
   assert.doesNotMatch(videoFailureMessage(Error('Bearer extremely-private-value https://private.example')),/private|Bearer/);
 });
 const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
+// Load only this top-level policy helper. The route boundary also contains
+// unrelated service startup, which must not execute in a media-provider fixture.
+const videoGenerationIssueSource=server.match(/^function videoGenerationIssue\([^\r\n]*\) \{\r?\n[\s\S]*?^\}/m)?.[0];
+assert.ok(videoGenerationIssueSource,'The real videoGenerationIssue declaration must exist.');
 function fixture(request,download=async()=>mp4,{mediaConfig={provider:'openrouter',configured:true,imageConfigured:true,videoEnabled:true},account={connected:true,availableCredits:660}}={}){
   const db=new Database(':memory:');
   db.exec(`CREATE TABLE admin_viral_quizzes(id INTEGER PRIMARY KEY,status TEXT,task_id INTEGER,media_project_id INTEGER);
@@ -75,7 +79,7 @@ function fixture(request,download=async()=>mp4,{mediaConfig={provider:'openroute
     getVideoAccountCapabilities:async()=>typeof account==='function'?account():account
   };
   const context=vm.createContext({...receipts,mediaJobPolicy,requireMediaJob,AI_MEDIA_CONFIG:config,db,ecosystemCanRun:()=>true,aiConfigured:()=>true,finishViralQuizVideo:async()=>{},openRouterRequest:()=>{throw Error('legacy server routing forbidden');},aiMediaClient:client,generatedMediaDir:'/tmp',fs:{writeFileSync:(...args)=>writes.push(args)},path:{join:(...parts)=>parts.join('/')},Buffer,requireAdmin(){},requireEcosystemRunning(){},app:{post:(route,...handlers)=>routes.set(route,handlers.at(-1))},mediaFactoryProject:id=>db.prepare('SELECT * FROM admin_media_projects WHERE id=?').get(id)});
-  vm.runInContext(server.slice(server.indexOf('function videoGenerationIssue('),server.indexOf("app.get('/api/admin/media-factory'")),context);
+  vm.runInContext(videoGenerationIssueSource,context);
   vm.runInContext(server.slice(server.indexOf('let viralVideoFactoryRunning=false;'),server.indexOf("app.get('/api/admin/viral-factory/automation'")),context);
   vm.runInContext(server.slice(server.indexOf("app.post('/api/admin/media-projects/:id/generate'"),server.indexOf("app.post('/api/admin/media-projects/:id/approve'")),context);
   const run=()=>vm.runInContext('processViralVideoFactory()',context),scene=()=>db.prepare('SELECT * FROM viral_quiz_scenes WHERE id=1').get();
