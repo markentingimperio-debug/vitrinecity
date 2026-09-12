@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node --import ./security-fetch-guard.js server.js",
     "pretest": "node --test scripts/test-integration-health.mjs && node scripts/test-market-banner-loading.mjs",
+    "posttest": "npm run test:live-lia",
+    "test:live-lia": "node --test scripts/test-live-lia.mjs scripts/test-live-lia-ui.mjs scripts/test-live-lia-media.mjs scripts/test-live-studio.mjs scripts/test-live-avatar-admin.mjs",
     "test:whatsapp-products": "node --test scripts/test-whatsapp-product-campaigns.mjs scripts/test-whatsapp-schedule-worker.mjs scripts/test-admin-whatsapp-products.mjs scripts/test-whatsapp-thematic-groups.mjs scripts/test-admin-whatsapp-thematic.mjs",
     "test:social-comment-campaigns": "node --test scripts/test-social-comment-campaigns.mjs scripts/test-meta-comment-api.mjs scripts/test-admin-social-comment-campaigns.mjs scripts/test-social-oauth-intent.mjs",
     "test:youtube-channel-scope": "node --test scripts/test-external-metrics-store.mjs scripts/test-admin-youtube-scope.mjs",

@@ -59,4 +59,12 @@ assert.ok(!JSON.stringify(call('get/api/admin/live-studio').result).includes('se
 fs.renameSync(path.join(root,'command.json'),path.join(root,'executing-command.json'));
 assert.equal(call('put/api/admin/live-studio/config',valid).code,409);
 assert.equal(call('post/api/admin/live-studio/control',{action:'preview'}).code,409);
+fs.unlinkSync(path.join(root,'executing-command.json'));
+const originalLink=fs.linkSync;
+try{
+  fs.linkSync=(from,to)=>{fs.writeFileSync(path.join(root,'command.json'),'concurrent Lia command',{flag:'wx'});return originalLink(from,to);};
+  assert.equal(call('post/api/admin/live-studio/control',{action:'preview'}).code,409);
+  assert.equal(fs.readFileSync(path.join(root,'command.json'),'utf8'),'concurrent Lia command');
+  assert.equal(fs.readdirSync(root).filter(name=>name.endsWith('.tmp')).length,0);
+}finally{fs.linkSync=originalLink;}
 console.log('Live Studio: validation, admin/CSRF middleware, secret redaction, offline/duplicate guards OK');

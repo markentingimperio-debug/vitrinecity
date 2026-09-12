@@ -120,6 +120,8 @@ import { setupSiteSalesNeural } from './site-sales-neural.js';
 import { setupBuildingSubscriptions } from './building-subscriptions.js';
 import { SITE_ASSISTANT_GROUPS } from './site-assistant-groups.js';
 import { setupLiveStudio } from './live-studio.js';
+import { setupLiveLia } from './live-lia.js';
+import { createLiveLiaMedia } from './live-lia-media.js';
 import { sendInstagramLiveDirect } from './instagram-live-direct.js';
 
 const app = express();
@@ -5951,6 +5953,13 @@ const siteSalesAssistant = typeof setupSiteSalesAssistant === 'function' ? setup
     return requestOpenAI(body);
   }
 }) : null;
+
+let liveLia;
+const liveLiaMedia=createLiveLiaMedia({env:process.env,liveStudioDir:process.env.LIVE_STUDIO_DIR||'/live-studio',publicDir:path.join(dir,'public'),reserveDailyOperation:input=>liveLia?.reserveDailyOperation(input)||{allowed:false}});
+liveLia=setupLiveLia({app,db,requireAdmin,sameOriginOnly,root:process.env.LIVE_STUDIO_DIR||'/live-studio',publicOrigin:SITE_URL,
+  resolveContext:value=>siteSalesAssistant?.resolveContext(value)||null,offersFor:(context,message)=>siteSalesAssistant?.offersFor(context,message)||[],
+  requestText:body=>{if(AI_TEXT_CONFIG.provider!=='openai'||!ecosystemCanRun())throw Error('live_lia_text_unavailable');return requestOpenAI(body);},
+  textConfigured:()=>AI_TEXT_CONFIG.provider==='openai'&&AI_TEXT_CONFIG.configured,media:liveLiaMedia,canRun:ecosystemCanRun,dailyLimit:3,textDailyLimit:20});
 
 app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
   const projects = db.prepare(`SELECT m.*,t.title,t.instructions,t.priority,t.status AS task_status,a.name AS agent_name

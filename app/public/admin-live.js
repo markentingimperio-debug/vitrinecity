@@ -101,3 +101,4 @@ for(const action of ['preview','start','stop']) $(action).onclick=async()=>{
 };
 refresh().catch(e=>$('message').textContent=e.message);
 setInterval(()=>refresh().catch(e=>{$('status').textContent='Sem atualização: '+e.message;for(const id of ['preview','start','stop'])$(id).disabled=true;}),5000);
+import('/admin-live-lia.js').then(module=>module.mountLiveLia(document)).catch(()=>{const note=document.createElement('p');note.textContent='A preparação da Lia está indisponível. Os controles do estúdio continuam acima.';document.querySelector('main').append(note);});
