@@ -18,9 +18,16 @@ def read(name, fallback=None):
 
 def write(name, value):
     temp = ROOT / (name + '.worker.tmp')
-    temp.write_text(json.dumps(value))
-    temp.chmod(0o600)
+    with temp.open('w') as output:
+        temp.chmod(0o600)
+        output.write(json.dumps(value))
+        output.flush()
+        if name == 'session.json': os.fsync(output.fileno())
     temp.replace(ROOT / name)
+    if name == 'session.json' and os.name != 'nt':
+        directory = os.open(ROOT, os.O_RDONLY)
+        try: os.fsync(directory)
+        finally: os.close(directory)
 
 class OBS:
     def __init__(self):
@@ -87,9 +94,39 @@ def validate_server(config):
         raise ValueError('Chave de transmissão ausente ou inválida.')
 
 def continuous_session(session):
-    return session.get('action') == 'start' and session.get('continuous') is True
+    return session.get('action') == 'start' and session.get('continuous') is True and 'durationSeconds' not in session
+
+def requested_duration(command):
+    if 'durationSeconds' not in command: return None
+    value = command['durationSeconds']
+    if command.get('action') != 'start' or type(value) is not int or value != 7200:
+        raise ValueError('O limite disponível para esta transmissão é de 2 horas (7200 segundos).')
+    if not isinstance(command.get('id'), str) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}', command['id']):
+        raise ValueError('Identificação do comando inválida.')
+    return value
+
+def new_session(command, config, duration, started_at):
+    limit = requested_duration(command)
+    action = command['action']
+    continuous = action == 'start' and config.get('repetitions') == 0 and limit is None
+    session = {'deadline': None if continuous else started_at + (limit if limit is not None else 15 if action == 'preview' else min(duration, 1800)),
+               'action': action, 'continuous': continuous, 'platform': config.get('platform', 'instagram'),
+               'targets': config.get('targets', [config.get('platform', 'instagram')]), 'relay': action == 'start'}
+    if limit is not None:
+        session.update(commandId=command['id'], startedAt=started_at, durationSeconds=limit)
+    return session
 
 def session_expired(session, now):
+    if 'durationSeconds' in session:
+        # A corrupt bounded receipt must never become an unlimited session.
+        start, deadline = session.get('startedAt'), session.get('deadline')
+        if (session.get('action') != 'start' or session.get('continuous') is not False
+                or type(session['durationSeconds']) is not int or session['durationSeconds'] != 7200
+                or not isinstance(start, (int, float)) or isinstance(start, bool) or not math.isfinite(start)
+                or not isinstance(deadline, (int, float)) or isinstance(deadline, bool) or not math.isfinite(deadline)
+                or start <= 0 or abs(deadline - start - 7200) > 0.01):
+            return True
+        return now >= deadline
     if continuous_session(session):
         return False
     return not session.get('deadline') or now >= session['deadline']
@@ -480,9 +517,12 @@ def main():
                 last='Entrada do OBS encerrada; saídas interrompidas sem reinício automático.'
             if stream['outputActive'] and session.get('relay') and not relay.active():
                 obs.call('StopStream')
-                last='Todas as saídas foram encerradas ou falharam. Nenhuma será reiniciada automaticamente.'
-                session={};write('session.json',session)
                 stream=obs.call('GetStreamStatus')
+                if not stream['outputActive']:
+                    last='Todas as saídas foram encerradas ou falharam. Nenhuma será reiniciada automaticamente.'
+                    session={};write('session.json',session)
+                else:
+                    last='Saídas paradas; aguardando a confirmação de encerramento do OBS.'
                 active=stream['outputActive'] or record['outputActive']
             if active and session_expired(session, time.time()):
                 answers.finish(obs, session, state='interrupted', resume=False)
@@ -491,8 +531,11 @@ def main():
                 if obs.call('GetRecordStatus')['outputActive']: obs.call('StopRecord')
                 if answers._input_exists(obs, SOURCE):
                     obs.call('TriggerMediaInputAction',inputName=SOURCE,mediaAction='OBS_WEBSOCKET_MEDIA_INPUT_ACTION_STOP')
-                session={};write('session.json',session)
-                last='Sessão encerrada automaticamente. Não haverá reinício automático.'
+                if not obs.call('GetStreamStatus')['outputActive'] and not obs.call('GetRecordStatus')['outputActive']:
+                    session={};write('session.json',session)
+                    last='Sessão encerrada automaticamente. Não haverá reinício automático.'
+                else:
+                    last='Encerramento automático solicitado; aguardando a confirmação do OBS.'
             pending = ROOT / 'command.json'
             if pending.exists():
                 command = read('command.json',{})
@@ -529,6 +572,7 @@ def main():
                         if answers.busy():
                             raise ValueError('Aguarde a retirada confirmada da resposta da Lia antes de iniciar outra sessão.')
                         if active: raise ValueError('Uma sessão já está ativa.')
+                        requested_duration(command)
                         config=read('config.json',{})
                         targets=config.get('targets',[config.get('platform','instagram')])
                         if action=='start':
@@ -539,12 +583,13 @@ def main():
                             selected={p:profiles.get(p,{}) for p in targets}
                             for p,profile in selected.items(): validate_server({**profile,'platform':p})
                         duration=prepare(obs,config)
+                        # Persist the original absolute deadline before any transport starts.
+                        # Reconnecting/restarting the controller only reloads this receipt.
+                        session=new_session(command,config,duration,time.time())
+                        write('session.json',session)
                         if action=='start':
                             relay.start(selected)
                             obs.call('SetStreamServiceSettings',streamServiceType='rtmp_custom',streamServiceSettings={'server':INGEST.rsplit('/',1)[0],'key':INGEST.rsplit('/',1)[1],'use_auth':False})
-                        continuous=action=='start' and config.get('repetitions')==0
-                        session={'deadline':None if continuous else time.time()+(15 if action=='preview' else min(duration,1800)), 'action':action, 'continuous':continuous, 'platform':config.get('platform','instagram'), 'targets':targets, 'relay':action=='start'}
-                        write('session.json',session)
                         obs.call('StartRecord' if action=='preview' else 'StartStream')
                         # OBS may accept the request but fail asynchronously. Verify the output.
                         for attempt in range(10):
@@ -571,7 +616,7 @@ def main():
             output_active=stream['outputActive'] or record['outputActive']
             continuous=output_active and continuous_session(session)
             remaining=None if continuous else max(0,round((session.get('deadline') or 0)-time.time())) if output_active else 0
-            write('status.json',{'updatedAt':int(time.time()*1000),'version':obs.call('GetVersion')['obsVersion'],'streaming':stream['outputActive'],'recording':record['outputActive'],'platform':session.get('platform'),'networks':relay.snapshot(),'cpu':round(stats['cpuUsage'],1),'fps':round(stats['activeFps'],1),'droppedFrames':stream.get('outputSkippedFrames',0),'remaining':remaining,'continuous':continuous,'lastMessage':last,'answer':answers.snapshot()})
+            write('status.json',{'updatedAt':int(time.time()*1000),'version':obs.call('GetVersion')['obsVersion'],'streaming':stream['outputActive'],'recording':record['outputActive'],'platform':session.get('platform'),'networks':relay.snapshot(),'cpu':round(stats['cpuUsage'],1),'fps':round(stats['activeFps'],1),'droppedFrames':stream.get('outputSkippedFrames',0),'remaining':remaining,'continuous':continuous,'lastMessage':last,'answer':answers.snapshot(), 'durationSeconds':session.get('durationSeconds'), 'startedAt':session.get('startedAt'), 'deadline':session.get('deadline'), 'commandId':session.get('commandId')})
         except Exception:
             relay.stop()
             if obs:

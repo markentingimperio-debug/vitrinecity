@@ -117,11 +117,14 @@ export function createFacebookMessenger({db,sourceCatalog,requestText,decryptTok
       binding:hash(JSON.stringify([source.sourcePath,source.title,source.summary,source.body,source.facts]))};
   }
   function sources(text,previous){
-    const stop=new Set(['quero','gostaria','saber','sobre','como','onde','qual','voce','voces','tenho','para','esse','essa','isso','esta','estao','estou','tem','pode','poderia','ajuda','preciso','mais','ola','bom','dia','tarde','noite','com','uma','sim','link','envia','manda','enviar','favor']);
-    const terms=value=>[...new Set(normalize(value).match(/[a-z0-9]{3,}/g)||[])].filter(word=>!stop.has(word)).slice(0,4);
+    const stop=new Set(['quero','gostaria','saber','sobre','como','onde','qual','voce','voces','tenho','para','esse','essa','isso','esta','estao','estou','tem','pode','poderia','ajuda','preciso','mais','ola','bom','dia','tarde','noite','com','uma','sim','link','envia','manda','enviar','favor','lia','teste','atendimento','vitrinecity','encontro','entrei','ontem','site','aqui','obrigado','obrigada']);
+    // Keep the request after its introduction, including repeated terms mentioned
+    // again at the end. Bound catalog work without cutting off the product name.
+    const terms=value=>[...new Set((normalize(value).match(/[a-z0-9]{3,}/g)||[]).filter(word=>!stop.has(word)).reverse())].slice(0,6).reverse();
     const current=terms(text),queries=current.length?current:terms(previous.filter(item=>item.role==='user').map(item=>item.content).join(' '));
     const found=new Map();
-    for(const q of queries){
+    const searches=queries.length>1?[queries.slice(-3).join(' '),...queries]:queries;
+    for(const q of searches){
       for(const candidate of sourceCatalog?.list?.({q,limit:5})||[]){
         const item=sourceDto(sourceCatalog.get(candidate.key));if(item&&!found.has(item.key))found.set(item.key,item);
       }

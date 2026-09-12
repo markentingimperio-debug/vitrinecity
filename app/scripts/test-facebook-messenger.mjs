@@ -19,9 +19,9 @@ function fixture(t,{enabled=true}={}){
     INSERT INTO omnichannel_automation_settings VALUES('facebook',1,'','site','https://vitrinecity.com/oracao-do-dia','','30',9,20,1);
     CREATE TABLE omnichannel_automation_jobs(id TEXT PRIMARY KEY,channel TEXT,external_id TEXT UNIQUE,destination TEXT,source_text TEXT,account_id INTEGER,source_kind TEXT DEFAULT '',media_id TEXT DEFAULT '',status TEXT DEFAULT 'pending',reply_text TEXT DEFAULT '',error TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP,processed_at TEXT);
     CREATE TABLE social_webhook_events(object_type TEXT,object_id TEXT,field_name TEXT,payload_json TEXT);`);
-  const state={now:instant,run:true,textCalls:[],sends:[],sources:new Map([['recipe',source]]),reply:'A receita está aqui: https://vitrinecity.com/artigo/bolo',textHook:null,sendHook:null};
+  const state={now:instant,run:true,textCalls:[],catalogQueries:[],sends:[],sources:new Map([['recipe',source]]),reply:'A receita está aqui: https://vitrinecity.com/artigo/bolo',textHook:null,sendHook:null};
   const opts={db,siteUrl:'https://vitrinecity.com',canRun:()=>state.run,now:()=>state.now,
-    sourceCatalog:{list:({q})=>[...state.sources.values()].filter(value=>(value.title+' '+value.body).toLowerCase().includes(q)),get:key=>state.sources.get(key)},
+    sourceCatalog:{list:({q,limit})=>{state.catalogQueries.push(q);const normalized=value=>value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();return [...state.sources.values()].filter(value=>q.split(' ').every(term=>normalized(value.title+' '+value.body).includes(term))).slice(0,limit);},get:key=>state.sources.get(key)},
     decryptToken:token=>token,apiVersion:()=> 'v26.0',
     requestText:async input=>{state.textCalls.push(input);if(state.textHook)await state.textHook(input);return {output_text:JSON.stringify({reply:state.reply})};},
     fetchImpl:async(url,options)=>{state.sends.push({url,options});if(state.sendHook)return state.sendHook(url,options);return response({recipient_id:JSON.parse(options.body).recipient.id,message_id:'sent-'+state.sends.length});}};
@@ -131,6 +131,39 @@ test('short opt-out commands with punctuation remain respected',t=>{
 test('specific content terms rank ahead of broad recipe matches',async t=>{
   const f=fixture(t);f.state.sources.clear();for(let n=0;n<5;n++)f.state.sources.set('generic-'+n,{...source,key:'generic-'+n,title:'Receita de arroz '+n,body:'Receita de arroz.',sourcePath:'/artigo/arroz-'+n});f.state.sources.set('recipe',source);
   const [job]=f.enqueue();await f.service.generateReply(job);assert.equal(JSON.parse(f.state.textCalls[0].input).catalog[0].url,'https://vitrinecity.com/artigo/bolo');
+});
+
+test('a greeting or test introduction does not hide the requested product from the grounded reply',async t=>{
+  for(const text of ['Teste de atendimento da VitrineCity: onde encontro o adubo para rosa do deserto?','Oi Lia eu entrei ontem no site e gostaria de saber onde encontro adubo para rosa do deserto']){
+    const f=fixture(t);f.state.sources.clear();
+    for(let n=0;n<5;n++)for(const word of ['teste','atendimento','adubo','rosa','deserto'])f.state.sources.set(word+n,{...source,key:word+n,title:'Artigo sobre '+word,body:'Informações gerais.',sourcePath:'/artigo/'+word+n});
+    f.state.sources.set('product:11',{key:'product:11',title:'Adubo para Rosa do Deserto',summary:'Produto da loja Agrotécnica.',body:'Adubo para rosa do deserto.',sourcePath:'/produto/11/adubo-para-rosa-do-deserto',commercial:true});
+    f.state.reply='O adubo para rosa do deserto está aqui: https://vitrinecity.com/produto/11/adubo-para-rosa-do-deserto';
+    const job=await f.ready(body(event({message:{mid:'product-introduction',text}})));
+    assert.equal(JSON.parse(f.state.textCalls[0].input).catalog[0].url,'https://vitrinecity.com/produto/11/adubo-para-rosa-do-deserto');
+    assert.equal(job.reply_text,f.state.reply);assert.ok(f.state.catalogQueries.length<=7);assert.equal(f.state.sends.length,0);
+  }
+});
+
+test('the final specific term survives a long introduction and repeated earlier terms',async t=>{
+  const f=fixture(t);f.state.sources.clear();
+  f.state.sources.set('product:11',{key:'product:11',title:'Adubo para Rosa do Deserto',summary:'Produto da loja.',body:'Adubo para rosa do deserto.',sourcePath:'/produto/11/adubo-para-rosa-do-deserto',commercial:true});
+  f.state.reply='Veja o produto: https://vitrinecity.com/produto/11/adubo-para-rosa-do-deserto';
+  await f.ready(body(event({message:{mid:'long-introduction',text:'Deserto: comecei pesquisando artigos, acessei a plataforma, tentei encontrar informações e agora quero adubo para rosa do deserto'}})));
+  assert.equal(JSON.parse(f.state.textCalls[0].input).catalog[0].url,'https://vitrinecity.com/produto/11/adubo-para-rosa-do-deserto');
+  assert.ok(f.state.catalogQueries.length<=7);assert.ok(f.state.catalogQueries.includes('deserto'));
+});
+
+test('product retrieval still excludes unsafe sources and blocks a withdrawn product before sending',async t=>{
+  const f=fixture(t);f.state.sources.clear();
+  const product={key:'product:11',title:'Adubo para Rosa do Deserto',summary:'Produto da loja.',body:'Adubo para rosa do deserto.',sourcePath:'/produto/11/adubo-para-rosa-do-deserto',commercial:true};
+  f.state.sources.set('missing-path',{...product,key:'missing-path',sourcePath:undefined});
+  f.state.sources.set('external-path',{...product,key:'external-path',sourcePath:'https://evil.test/adubo'});
+  f.state.sources.set(product.key,product);f.state.reply='Veja o adubo: https://vitrinecity.com/produto/11/adubo-para-rosa-do-deserto';
+  const job=await f.ready(body(event({message:{mid:'product-guard',text:'Oi Lia, onde encontro o adubo para rosa do deserto?'}})));
+  assert.deepEqual(JSON.parse(f.state.textCalls[0].input).catalog.map(item=>item.url),['https://vitrinecity.com/produto/11/adubo-para-rosa-do-deserto']);
+  f.state.sources.set(product.key,{...product,active:false});
+  await assert.rejects(f.service.send(job,job.reply_text),/source_changed/);assert.equal(f.state.sends.length,0);
 });
 
 test('conversation context is limited to that Page and PSID and includes only confirmed assistant messages',async t=>{

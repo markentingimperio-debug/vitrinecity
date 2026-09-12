@@ -52,6 +52,26 @@ assert.equal(call('put/api/admin/live-studio/config',{...valid,platform:'tiktok'
 assert.equal(call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR'}).code,202);
 assert.ok(!fs.readFileSync(path.join(root,'command.json'),'utf8').includes('secret-'));
 fs.unlinkSync(path.join(root,'command.json'));
+const configBeforeTimedStart=fs.readFileSync(path.join(root,'config.json'));
+for(const durationSeconds of [null,false,true,'7200',0,-1,3600,7199,7201,36000,{},[]]){
+  assert.equal(call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR',durationSeconds}).code,400);
+  assert.ok(!fs.existsSync(path.join(root,'command.json')));
+}
+for(const action of ['preview','stop','stop-network']){
+  assert.equal(call('post/api/admin/live-studio/control',{action,platform:'youtube',durationSeconds:7200}).code,400);
+  assert.ok(!fs.existsSync(path.join(root,'command.json')));
+}
+assert.equal(call('post/api/admin/live-studio/control',{action:'start',durationSeconds:7200}).code,400);
+const timed=call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR',durationSeconds:7200});
+assert.equal(timed.code,202);assert.equal(timed.result.durationSeconds,7200);
+const boundedCommand=fs.readFileSync(path.join(root,'command.json'));
+assert.equal(JSON.parse(boundedCommand).durationSeconds,7200);
+assert.equal(JSON.parse(boundedCommand).id,timed.result.commandId);
+assert.ok(!boundedCommand.toString().includes('secret-'));
+assert.equal(call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR',durationSeconds:7200}).code,409);
+assert.deepEqual(fs.readFileSync(path.join(root,'command.json')),boundedCommand);
+assert.deepEqual(fs.readFileSync(path.join(root,'config.json')),configBeforeTimedStart);
+fs.unlinkSync(path.join(root,'command.json'));
 assert.equal(call('post/api/admin/live-studio/control',{action:'stop-network',platform:'evil'}).code,400);
 assert.equal(call('post/api/admin/live-studio/control',{action:'stop-network',platform:'tiktok'}).code,202);
 assert.equal(JSON.parse(fs.readFileSync(path.join(root,'command.json'))).platform,'tiktok');

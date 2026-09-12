@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 import worker as worker_module
 from worker import (AnswerPlayback, ANSWER_SOURCE, ANSWER_LABEL, BASE_LABEL, SCENE, SOURCE,
-                    continuous_session, session_expired, validate_server)
+                    continuous_session, session_expired, validate_server, requested_duration, new_session)
 
 
 class SessionTests(unittest.TestCase):
@@ -34,6 +34,24 @@ class SessionTests(unittest.TestCase):
     def test_continuous_has_no_countdown(self):
         self.assertFalse(session_expired({'action': 'start', 'continuous': True,
                                          'deadline': None}, 9999999999))
+
+    def test_only_explicit_two_hours_is_accepted_and_damaged_receipt_expires(self):
+        command = {'id': 'two-hours', 'action': 'start', 'durationSeconds': 7200}
+        session = new_session(command, {'repetitions': 0, 'targets': ['instagram', 'youtube']}, 0, 1000)
+        self.assertEqual(session['deadline'], 8200)
+        self.assertEqual(session['startedAt'], 1000)
+        self.assertEqual(session['commandId'], 'two-hours')
+        self.assertFalse(continuous_session(session))
+        self.assertFalse(session_expired(session, 8199.99))
+        self.assertTrue(session_expired(json.loads(json.dumps(session)), 8200))
+        for value in (None, True, False, '7200', 7200.0, 0, 3600, 36000, 7201, {}, []):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                requested_duration(dict(command, durationSeconds=value))
+        for action in ('preview', 'stop'):
+            with self.assertRaises(ValueError): requested_duration(dict(command, action=action))
+        for change in ({'continuous': True}, {'deadline': 8300}, {'deadline': None}, {'startedAt': float('nan')}, {'durationSeconds': '7200'}):
+            self.assertTrue(session_expired(dict(session, **change), 1001))
+        self.assertIsNone(requested_duration({'action': 'start'}))
 
 
 class FakeOBS:
@@ -532,6 +550,148 @@ class AnswerPlaybackTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Metadados'):
             self.make_player(probe=no_probe).start(self.obs, self.command, self.session)
         self.assertEqual(self.obs.calls, [])
+
+
+class TimedLiveMainTests(unittest.TestCase):
+    """Real file queue and main loop; transport/OBS and clock are offline fixtures."""
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='timed-live-', dir=pathlib.Path.cwd())
+        self.addCleanup(self.temp.cleanup)
+        self.root = pathlib.Path(self.temp.name)
+        self.clock = 1000.0
+        self.command = {'id': 'two-hour-command', 'action': 'start', 'durationSeconds': 7200, 'createdAt': 1000000}
+        self.config = {'media': 'base.mp4', 'repetitions': 0, 'platform': 'instagram', 'targets': ['instagram', 'youtube'],
+                       'profiles': {'instagram': {'server': 'rtmps://live-upload.instagram.com/rtmp/', 'key': 'fixture-only'},
+                                    'youtube': {'server': 'rtmps://a.rtmps.youtube.com/live2', 'key': 'fixture-only'}}}
+        (self.root / 'config.json').write_text(json.dumps(self.config))
+        (self.root / 'media.json').write_text(json.dumps([{'file': 'base.mp4', 'duration': 470.666667}]))
+        (self.root / 'media').mkdir()
+        (self.root / 'media/base.mp4').write_bytes(b'reviewed-base-fixture')
+        (self.root / 'publication-first-live-20260912.json').write_text('{"historical":true}')
+        self.protected = {name: (self.root / name).read_bytes() for name in ('config.json', 'media.json', 'publication-first-live-20260912.json')}
+        owner = self
+
+        class StreamOBS(FakeOBS):
+            hold_stop = False
+            def call(self, kind, **data):
+                if kind in ('StartStream', 'StopStream', 'SetStreamServiceSettings'):
+                    self.calls.append((kind, copy.deepcopy(data)))
+                    if kind in ('StartStream', 'SetStreamServiceSettings'):
+                        receipt = json.loads((owner.root / 'session.json').read_text())
+                        owner.assertEqual(receipt['deadline'], 8200)
+                        owner.assertEqual(receipt['durationSeconds'], 7200)
+                    if kind == 'StartStream': self.streaming = True
+                    if kind == 'StopStream' and not self.hold_stop: self.streaming = False
+                    return {}
+                return super().call(kind, **data)
+
+        class RelayFixture:
+            def __init__(self):
+                self.states = {};self.starts = 0;self.stops = 0;self.crash_on_start = False
+            def snapshot(self): return {p: {'state': state} for p, state in self.states.items()}
+            def active(self): return any(state == 'sending' for state in self.states.values())
+            def start(self, profiles):
+                receipt = json.loads((owner.root / 'session.json').read_text())
+                owner.assertEqual(receipt['deadline'], 8200)
+                owner.assertFalse(receipt['continuous'])
+                self.starts += 1
+                if self.crash_on_start: raise SystemExit('crash after durable intent, before OBS start')
+                self.states = {p: 'sending' for p in profiles}
+            def stop(self, platform=None):
+                self.stops += 1
+                for p in self.states:
+                    if platform is None or p == platform: self.states[p] = 'stopped'
+
+        self.obs = StreamOBS(streaming=False)
+        self.relay = RelayFixture()
+
+    def cycle(self, command=None):
+        if command is not None:
+            # POSIX rename replaces this journal; Windows fixtures remove only
+            # their previous synthetic command before exercising the next one.
+            (self.root / 'last-command.json').unlink(missing_ok=True)
+            (self.root / 'command.json').write_text(json.dumps(command))
+        with patch.object(worker_module, 'ROOT', self.root), patch.object(worker_module, 'OBS', lambda: self.obs), \
+             patch.object(worker_module, 'Relay', lambda: self.relay), patch.object(worker_module.time, 'time', lambda: self.clock), \
+             patch.object(worker_module.time, 'sleep', side_effect=SystemExit('one loop only')):
+            with self.assertRaises(SystemExit): worker_module.main()
+        for name, value in self.protected.items(): self.assertEqual((self.root / name).read_bytes(), value)
+
+    def session(self): return json.loads((self.root / 'session.json').read_text())
+    def status(self): return json.loads((self.root / 'status.json').read_text())
+
+    def test_main_loops_both_outputs_and_stops_at_original_deadline(self):
+        self.cycle(self.command)
+        original = (self.root / 'session.json').read_bytes()
+        self.assertEqual(self.relay.starts, 1)
+        self.assertTrue(self.obs.inputs[SOURCE]['settings']['looping'])
+        self.assertEqual(self.status()['remaining'], 7200)
+        self.assertEqual(self.status()['commandId'], self.command['id'])
+        self.assertFalse(self.status()['continuous'])
+        self.clock = 8199
+        self.cycle()  # Reconstructing the controller never creates a new deadline.
+        self.assertEqual((self.root / 'session.json').read_bytes(), original)
+        self.assertEqual(self.status()['remaining'], 1)
+        self.assertTrue(self.obs.streaming)
+        self.clock = 8200
+        self.cycle()
+        self.assertFalse(self.obs.streaming)
+        self.assertFalse(self.obs.recording)
+        self.assertEqual(self.session(), {})
+        self.assertEqual(self.relay.states, {'instagram': 'stopped', 'youtube': 'stopped'})
+        self.assertEqual(self.obs.media[SOURCE], 'OBS_MEDIA_STATE_STOPPED')
+        self.clock = 9000
+        self.cycle()
+        self.assertEqual(self.relay.starts, 1)
+        self.assertEqual(sum(kind == 'StartStream' for kind, _ in self.obs.calls), 1)
+
+    def test_invalid_duration_rejected_before_prepare_or_transport(self):
+        for value in (None, True, '7200', 36000, 7201):
+            with self.subTest(value=value):
+                self.cycle(dict(self.command, durationSeconds=value))
+                self.assertFalse((self.root / 'session.json').exists())
+                self.assertEqual(self.relay.starts, 0)
+                self.assertFalse(any(not kind.startswith('Get') for kind, _ in self.obs.calls))
+
+    def test_crash_after_durable_receipt_does_not_replay_start(self):
+        self.relay.crash_on_start = True
+        self.cycle(self.command)
+        receipt = (self.root / 'session.json').read_bytes()
+        self.assertEqual(self.session()['deadline'], 8200)
+        self.assertFalse(self.obs.streaming)
+        self.relay.crash_on_start = False
+        self.clock = 1005
+        self.cycle()
+        self.assertEqual((self.root / 'session.json').read_bytes(), receipt)
+        self.assertEqual(self.relay.starts, 1)
+        self.assertFalse(any(kind == 'StartStream' for kind, _ in self.obs.calls))
+
+    def test_async_stop_keeps_deadline_until_obs_confirms_stopped(self):
+        self.cycle(self.command)
+        self.obs.hold_stop = True
+        self.clock = 8200
+        self.cycle()
+        self.assertTrue(self.obs.streaming)
+        self.assertEqual(self.session()['deadline'], 8200)
+        self.assertFalse(self.relay.active())
+        self.assertIn('aguardando', self.status()['lastMessage'])
+        self.clock = 8202
+        self.cycle()
+        self.assertEqual(self.session()['deadline'], 8200)
+        self.obs.hold_stop = False
+        self.cycle()
+        self.assertFalse(self.obs.streaming)
+        self.assertEqual(self.session(), {})
+        self.assertEqual(self.relay.starts, 1)
+
+    def test_manual_stop_still_ends_both_outputs_before_deadline(self):
+        self.cycle(self.command)
+        self.clock = 1100
+        self.cycle({'id': 'explicit-stop', 'action': 'stop', 'createdAt': self.clock * 1000})
+        self.assertFalse(self.obs.streaming)
+        self.assertFalse(self.relay.active())
+        self.assertEqual(self.session(), {})
+        self.assertEqual(self.relay.starts, 1)
 
 
 if __name__ == '__main__':
