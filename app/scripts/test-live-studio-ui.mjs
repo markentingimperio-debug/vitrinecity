@@ -10,8 +10,8 @@ const source = fs.readFileSync(new URL('../public/admin-live.js', import.meta.ur
 const studioSource = source.slice(0, source.indexOf("import('/admin-live-lia.js')"));
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-async function fixture({ repetitions = 0, accepted = true } = {}) {
-  const elements = new Map(), posts = [], confirmations = [], intervals = [];
+async function fixture({ repetitions = 0, accepted = true, targets = ['instagram','youtube'], facebookConfigured = false } = {}) {
+  const elements = new Map(), posts = [], configurations = [], confirmations = [], intervals = [];
   class Element {
     constructor(tag = 'div') { this.tagName = tag; this.value = ''; this.src = ''; this.textContent = ''; this.children = []; this.disabled = false; this.checked = false; this.listeners = {}; }
     set id(value) { this._id = value; elements.set(value, this); }
@@ -28,8 +28,8 @@ async function fixture({ repetitions = 0, accepted = true } = {}) {
   const selectors = new Map(['label[for="server"]', 'aside', 'h1 + p', 'main'].map(key => [key, new Element()]));
   const document = { getElementById: id => elements.get(id), createElement: tag => new Element(tag), createTextNode: text => text, querySelector: selector => selectors.get(selector) || null };
   const state = {
-    config: { title: 'Apresentação revisada', media: 'catalogo.mp4', repetitions, destination: 'https://vitrinecity.com', platform: 'instagram', server: 'rtmps://live-upload.instagram.com/rtmp/', targets: ['instagram', 'youtube'] },
-    profiles: { instagram: { hasKey: true, server: 'rtmps://live-upload.instagram.com/rtmp/' }, youtube: { hasKey: true, server: 'rtmps://a.rtmps.youtube.com/live2' } },
+    config: { title: 'Apresentação revisada', media: 'catalogo.mp4', repetitions, destination: 'https://vitrinecity.com', platform: 'instagram', server: 'rtmps://live-upload.instagram.com/rtmp/', targets },
+    profiles: { instagram: { hasKey: true, server: 'rtmps://live-upload.instagram.com/rtmp/' }, youtube: { hasKey: true, server: 'rtmps://a.rtmps.youtube.com/live2' }, facebook: {hasKey:facebookConfigured,server:facebookConfigured?'rtmps://rtmp-api.facebook.com:443/rtmp/':''} },
     media: [{ file: 'catalogo.mp4', label: 'Catálogo revisado', duration: 470.66 }],
     status: { online: true, streaming: false, recording: false, updatedAt: Date.now() }
   };
@@ -40,6 +40,13 @@ async function fixture({ repetitions = 0, accepted = true } = {}) {
     confirm: text => { confirmations.push(text); return accepted; },
     fetch: async (url, options = {}) => {
       assert.equal(url.startsWith('/api/admin/live-studio'), true);
+      if (options.method === 'PUT') {
+        assert.equal(url,'/api/admin/live-studio/config');
+        const body=JSON.parse(options.body);configurations.push(body);
+        state.config={...state.config,...body,key:undefined};
+        state.profiles[body.platform]={server:body.server,hasKey:body.clearKey?false:Boolean(body.key)||state.profiles[body.platform]?.hasKey===true};
+        return {ok:true,status:200,json:async()=>({ok:true})};
+      }
       if (options.method === 'POST') {
         posts.push(JSON.parse(options.body));
         if (deferPost) await new Promise(resolve => { releasePost = resolve; });
@@ -51,7 +58,7 @@ async function fixture({ repetitions = 0, accepted = true } = {}) {
   });
   vm.runInContext(studioSource, context);
   await flush();
-  return { elements, posts, confirmations, state, intervals, defer() { deferPost = true; }, release() { releasePost(); } };
+  return { elements, posts, configurations, confirmations, state, intervals, networks:vm.runInContext('networkRows',context), defer() { deferPost = true; }, release() { releasePost(); } };
 }
 
 test('existing unlimited config opens with explicit two-hour default and no automatic start', async () => {
@@ -117,4 +124,67 @@ test('worker deadline is shown as confirmed and cannot be edited during transmis
   assert.equal(f.elements.get('start').disabled, true);
   assert.match(f.elements.get('telemetry').textContent, /2 horas · encerramento automático/);
   assert.equal(f.posts.length, 0);
+});
+
+test('Facebook is a separate output and opening an old configuration never selects it automatically',async()=>{
+  const f=await fixture();
+  assert.deepEqual(f.elements.get('platform').children.map(option=>option.value),['instagram','facebook','youtube','tiktok']);
+  assert.equal(f.elements.get('target-facebook').checked,false);
+  assert.equal(f.configurations.length,0);assert.equal(f.posts.length,0);
+  assert.match(f.networks.facebook.status.textContent,/Facebook: Configuração pendente/);
+  assert.equal(f.networks.facebook.stop.disabled,true);
+  const instagramProfile=structuredClone(f.state.profiles.instagram);
+  f.elements.get('key').value='PRIVATE_UNSAVED_INSTAGRAM';
+  f.elements.get('platform').value='facebook';f.elements.get('platform').onchange();
+  assert.equal(f.elements.get('key').value,'');assert.equal(f.elements.get('server').value,'');
+  assert.equal(f.elements.get('server').placeholder,'rtmps://rtmp-api.facebook.com:443/rtmp/');
+  assert.match(f.elements.get('platformHelp').textContent,/Facebook Live Producer da Página correta/);
+  assert.match(f.elements.get('platformHelp').textContent,/chave do Instagram.*separada/);
+  assert.deepEqual(f.state.profiles.instagram,instagramProfile);
+});
+
+test('saving only Facebook credentials preserves other profiles, clears the input and starts nothing',async()=>{
+  const f=await fixture(),before=structuredClone({instagram:f.state.profiles.instagram,youtube:f.state.profiles.youtube});
+  f.elements.get('platform').value='facebook';f.elements.get('platform').onchange();
+  f.elements.get('server').value='rtmps://rtmp-api.facebook.com:443/rtmp/';f.elements.get('key').value='OFFLINE_PRIVATE_FACEBOOK_KEY';
+  f.elements.get('target-facebook').checked=true;
+  await f.elements.get('config').onsubmit({preventDefault(){}});
+  assert.equal(f.configurations.length,1);assert.equal(f.configurations[0].platform,'facebook');
+  assert.equal(f.configurations[0].key,'OFFLINE_PRIVATE_FACEBOOK_KEY');
+  assert.deepEqual(f.configurations[0].targets,['instagram','facebook','youtube']);
+  assert.deepEqual({instagram:f.state.profiles.instagram,youtube:f.state.profiles.youtube},before);
+  assert.equal(f.elements.get('key').value,'');assert.match(f.elements.get('keyStatus').textContent,/privada; não exibida/);
+  assert.equal(f.posts.length,0);assert.equal(f.elements.get('sessionDuration').value,'7200');
+  assert.equal(f.elements.get('target-tiktok').checked,false);
+});
+
+test('three-network start names Instagram Facebook and YouTube with the unchanged two-hour control contract',async()=>{
+  const f=await fixture({targets:['instagram','facebook','youtube'],facebookConfigured:true});
+  assert.equal(f.elements.get('start').disabled,false);
+  assert.equal(f.elements.get('target-facebook').checked,true);f.elements.get('reviewed').checked=true;
+  await f.elements.get('start').onclick();
+  assert.deepEqual(f.posts,[{action:'start',confirm:'TRANSMITIR',durationSeconds:7200}]);
+  assert.match(f.confirmations[0],/Instagram, Facebook, YouTube por 2 horas/);
+  assert.match(f.confirmations[0],/públicas imediatamente/);
+  assert.equal(f.configurations.length,0);
+});
+
+test('Facebook requires its own saved profile even when Instagram and YouTube have credentials',async()=>{
+  const f=await fixture({targets:['instagram','facebook','youtube']});
+  assert.equal(f.elements.get('start').disabled,true);assert.equal(f.state.profiles.facebook.hasKey,false);
+  assert.equal(f.posts.length,0);assert.equal(f.configurations.length,0);
+});
+
+test('Facebook sending telemetry stays distinct from publication and individual stop affects only Facebook',async()=>{
+  const f=await fixture({targets:['instagram','facebook','youtube'],facebookConfigured:true});
+  Object.assign(f.state.status,{streaming:true,durationSeconds:7200,continuous:false,deadline:Date.now()/1000+7000,remaining:7000,networks:{instagram:{state:'sending'},facebook:{state:'sending'},youtube:{state:'sending'}}});
+  await f.intervals[0]();
+  assert.match(f.networks.facebook.status.textContent,/Facebook: Enviando sinal — publicação não verificada/);
+  assert.equal(f.networks.facebook.stop.disabled,false);
+  await f.networks.facebook.stop.onclick();
+  assert.deepEqual(f.posts,[{action:'stop-network',platform:'facebook'}]);
+  assert.equal(f.state.status.networks.instagram.state,'sending');assert.equal(f.state.status.networks.youtube.state,'sending');
+  assert.equal(f.elements.get('sessionDuration').value,'7200');assert.equal(f.elements.get('sessionDuration').disabled,true);
+  f.state.status.networks.facebook.state='failed';await f.intervals[0]();
+  assert.match(f.networks.facebook.status.textContent,/Falha/);assert.equal(f.networks.facebook.stop.disabled,true);
 });

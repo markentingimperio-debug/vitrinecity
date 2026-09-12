@@ -2,17 +2,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-export const LIVE_PLATFORMS = ['instagram', 'youtube', 'tiktok'];
+export const LIVE_PLATFORMS = ['instagram', 'youtube', 'tiktok', 'facebook'];
 export function validateLiveServer(server, platform = 'instagram') {
   if (!LIVE_PLATFORMS.includes(platform)) throw Error('Selecione uma rede válida.');
   if (!server) return;
   let url;
   try { url = new URL(server); } catch { throw Error('Servidor de transmissão inválido.'); }
-  const domains = {instagram: ['instagram.com','facebook.com','fbcdn.net'], youtube: ['youtube.com'], tiktok: ['tiktok.com','tiktokv.com']}[platform];
-  const official = domains.some(domain => url.hostname === domain || url.hostname.endsWith('.' + domain));
+  const domains = {instagram: ['instagram.com','facebook.com','fbcdn.net'], youtube: ['youtube.com'], tiktok: ['tiktok.com','tiktokv.com'], facebook: []}[platform];
+  // Facebook Live's explicit ingest, not an arbitrary Facebook subdomain.
+  const official = platform === 'facebook' ? ['rtmp-api.facebook.com','live-api-s.facebook.com'].includes(url.hostname) : domains.some(domain => url.hostname === domain || url.hostname.endsWith('.' + domain));
   const protocol = url.protocol === 'rtmps:' || (platform === 'tiktok' && url.protocol === 'rtmp:');
   const port = url.protocol === 'rtmp:' ? '1935' : '443';
   if (!official || !protocol || url.username || url.password || url.hash || (url.port && url.port !== port) || /[\s\x00]/.test(server)) throw Error('Use o servidor oficial da rede selecionada: RTMPS/443 (TikTok também aceita RTMP/1935).');
+  if (platform === 'facebook' && (url.search || !/^\/rtmp\/?$/.test(url.pathname))) throw Error('Cole somente o servidor RTMPS do Facebook Live; use o campo separado para a chave.');
 }
 
 function profilesOf(config) {
@@ -24,7 +26,7 @@ function profilesOf(config) {
 
 export function selectedPlatforms(config) {
   const targets = config.targets ?? [config.platform || 'instagram'];
-  if (!Array.isArray(targets) || targets.length < 1 || targets.length > 3 || new Set(targets).size !== targets.length || targets.some(p=>!LIVE_PLATFORMS.includes(p))) throw Error('Selecione de uma a três redes distintas.');
+  if (!Array.isArray(targets) || targets.length < 1 || targets.length > LIVE_PLATFORMS.length || new Set(targets).size !== targets.length || targets.some(p=>!LIVE_PLATFORMS.includes(p))) throw Error('Selecione de uma a quatro redes distintas.');
   return targets;
 }
 

@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const platformNames={instagram:'Instagram',youtube:'YouTube',tiktok:'TikTok'};
+const platformNames={instagram:'Instagram',facebook:'Facebook',youtube:'YouTube',tiktok:'TikTok'};
 const platformLabel=document.createElement('label');
 platformLabel.htmlFor='platform';platformLabel.textContent='Editar credenciais da rede';
 const platformSelect=document.createElement('select');platformSelect.id='platform';
@@ -30,8 +30,8 @@ document.querySelector('aside').prepend(networkBox);
 function platformUI(){
   const platform=platformSelect.value;
   document.querySelector('label[for="server"]').textContent='Servidor oficial — '+platformNames[platform];
-  $('server').placeholder=platform==='youtube'?'rtmps://a.rtmps.youtube.com:443/live2':platform==='tiktok'?'Cole o servidor liberado pelo TikTok':'rtmps://…:443/rtmp/';
-  platformHelp.textContent='Salve as credenciais de cada rede antes de trocar este seletor. Marque acima as redes que receberão o mesmo vídeo simultaneamente. '+(platform==='tiktok'?'É necessário acesso oficial a servidor e chave de transmissão. Ter LIVE Studio instalado não confirma esse acesso. Prefira RTMPS; RTMP não criptografa o sinal. Conteúdo gravado deve ser identificado e permitido pela rede. Movimentos não garantem ausência de bloqueios.':platform==='youtube'?'Copie o servidor RTMPS e a chave no YouTube Studio. Confira as opções de início automático antes de enviar o sinal.':'Copie o servidor RTMPS e a chave da sessão no Live Producer.');
+  $('server').placeholder=platform==='youtube'?'rtmps://a.rtmps.youtube.com:443/live2':platform==='facebook'?'rtmps://rtmp-api.facebook.com:443/rtmp/':platform==='tiktok'?'Cole o servidor liberado pelo TikTok':'rtmps://…:443/rtmp/';
+  platformHelp.textContent='Salve as credenciais de cada rede antes de trocar este seletor. Marque acima as redes que receberão o mesmo vídeo simultaneamente. '+(platform==='tiktok'?'É necessário acesso oficial a servidor e chave de transmissão. Ter LIVE Studio instalado não confirma esse acesso. Prefira RTMPS; RTMP não criptografa o sinal. Conteúdo gravado deve ser identificado e permitido pela rede. Movimentos não garantem ausência de bloqueios.':platform==='youtube'?'Copie o servidor RTMPS e a chave no YouTube Studio. Confira as opções de início automático antes de enviar o sinal.':platform==='facebook'?'Copie o servidor RTMPS e a chave no Facebook Live Producer da Página correta. Confira a prévia, a publicação e os comentários na própria rede. A chave do Instagram é uma configuração separada.':'Copie o servidor RTMPS e a chave da sessão no Live Producer.');
   updateSessionDuration();
 }
 platformSelect.onchange=()=>{

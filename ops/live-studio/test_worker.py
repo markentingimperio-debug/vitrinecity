@@ -11,6 +11,22 @@ from worker import (AnswerPlayback, ANSWER_SOURCE, ANSWER_LABEL, BASE_LABEL, SCE
 
 
 class SessionTests(unittest.TestCase):
+    def test_facebook_exact_secure_ingest_only(self):
+        for server in ('rtmps://rtmp-api.facebook.com:443/rtmp/', 'rtmps://rtmp-api.facebook.com/rtmp',
+                       'rtmps://live-api-s.facebook.com:443/rtmp/', 'rtmps://live-api-s.facebook.com/rtmp'):
+            validate_server({'platform': 'facebook', 'server': server, 'key': 'test'})
+        for server in ('rtmp://rtmp-api.facebook.com/rtmp/', 'rtmps://rtmp-api.facebook.com:1935/rtmp/',
+                       'rtmps://rtmp-api.facebook.com.evil.test/rtmp/', 'rtmps://evil.rtmp-api.facebook.com/rtmp/',
+                       'rtmps://facebook.com/rtmp/', 'rtmps://live-upload.instagram.com/rtmp/',
+                       'rtmps://user:pass@rtmp-api.facebook.com/rtmp/', 'rtmps://rtmp-api.facebook.com/rtmp/?key=hidden',
+                       'rtmps://rtmp-api.facebook.com/rtmp/embedded-key', 'rtmps://rtmp-api.facebook.com/rtmp/#key',
+                       'rtmp://live-api-s.facebook.com/rtmp/', 'rtmps://live-api-s.facebook.com:1935/rtmp/',
+                       'rtmps://live-api-s.facebook.com.evil.test/rtmp/', 'rtmps://evil.live-api-s.facebook.com/rtmp/',
+                       'rtmps://user:pass@live-api-s.facebook.com/rtmp/', 'rtmps://live-api-s.facebook.com/rtmp/?key=hidden',
+                       'rtmps://live-api-s.facebook.com/rtmp/embedded-key', 'rtmps://live-api-s.facebook.com/rtmp/#key'):
+            with self.subTest(server=server), self.assertRaises(ValueError):
+                validate_server({'platform': 'facebook', 'server': server, 'key': 'test'})
+
     def test_platform_servers(self):
         for platform,server in [('instagram','rtmps://live-upload.instagram.com/rtmp/'),('youtube','rtmps://a.rtmps.youtube.com:443/live2'),('tiktok','rtmp://push.tiktok.com/live'),('tiktok','rtmps://push.tiktokv.com/live')]:
             validate_server({'platform':platform,'server':server,'key':'test'})
@@ -652,6 +668,31 @@ class TimedLiveMainTests(unittest.TestCase):
                 self.assertFalse((self.root / 'session.json').exists())
                 self.assertEqual(self.relay.starts, 0)
                 self.assertFalse(any(not kind.startswith('Get') for kind, _ in self.obs.calls))
+
+    def test_four_destinations_preserve_deadline_and_facebook_stops_independently(self):
+        self.config['targets'] = ['instagram', 'youtube', 'tiktok', 'facebook']
+        self.config['profiles'].update(tiktok={'server': 'rtmp://push.tiktok.com/live', 'key': 'fixture-tiktok'},
+                                       facebook={'server': 'rtmps://live-api-s.facebook.com:443/rtmp/', 'key': 'fixture-facebook'})
+        (self.root / 'config.json').write_text(json.dumps(self.config))
+        self.protected['config.json'] = (self.root / 'config.json').read_bytes()
+        self.cycle(self.command)
+        original = (self.root / 'session.json').read_bytes()
+        self.assertEqual(set(self.relay.states), set(self.config['targets']))
+        self.assertFalse(self.session()['continuous'])
+        self.clock = 1200
+        self.cycle({'id': 'stop-only-facebook', 'action': 'stop-network', 'platform': 'facebook', 'createdAt': self.clock * 1000})
+        self.assertEqual(self.relay.states['facebook'], 'stopped')
+        self.assertTrue(all(self.relay.states[p] == 'sending' for p in ('instagram', 'youtube', 'tiktok')))
+        self.assertTrue(self.obs.streaming)
+        self.assertEqual((self.root / 'session.json').read_bytes(), original)
+        self.clock = 8200
+        self.cycle()
+        self.assertFalse(self.obs.streaming)
+        self.assertEqual(set(self.relay.states.values()), {'stopped'})
+        self.clock = 9000
+        self.cycle()
+        self.assertEqual(self.relay.starts, 1)
+        self.assertEqual(sum(kind == 'StartStream' for kind, _ in self.obs.calls), 1)
 
     def test_crash_after_durable_receipt_does_not_replay_start(self):
         self.relay.crash_on_start = True

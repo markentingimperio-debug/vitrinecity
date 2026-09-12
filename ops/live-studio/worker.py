@@ -86,10 +86,12 @@ def validate_server(config):
     platform = config.get('platform', 'instagram')
     domains = {'instagram': ('instagram.com','facebook.com','fbcdn.net'), 'youtube': ('youtube.com',), 'tiktok': ('tiktok.com','tiktokv.com')}.get(platform, ())
     hostname = url.hostname or ''
-    official = any(hostname == domain or hostname.endswith('.'+domain) for domain in domains)
+    official = hostname in ('rtmp-api.facebook.com', 'live-api-s.facebook.com') if platform == 'facebook' else any(hostname == domain or hostname.endswith('.'+domain) for domain in domains)
     protocol = url.scheme == 'rtmps' or (platform == 'tiktok' and url.scheme == 'rtmp')
     if not official or not protocol or url.username or url.password or url.fragment or url.port not in (None,1935 if url.scheme=='rtmp' else 443) or re.search(r'[\s\x00]',config.get('server','')):
         raise ValueError('Servidor oficial da rede selecionada inválido.')
+    if platform == 'facebook' and (url.query or url.path not in ('/rtmp', '/rtmp/')):
+        raise ValueError('Separe o servidor RTMPS do Facebook Live e a chave.')
     if not config.get('key') or len(config['key'])>2048 or any(c in config['key'] for c in '\r\n\0'):
         raise ValueError('Chave de transmissão ausente ou inválida.')
 
@@ -576,7 +578,7 @@ def main():
                         config=read('config.json',{})
                         targets=config.get('targets',[config.get('platform','instagram')])
                         if action=='start':
-                            if not isinstance(targets,list) or not 1<=len(targets)<=3 or len(set(targets))!=len(targets) or any(p not in PLATFORMS for p in targets):
+                            if not isinstance(targets,list) or not 1<=len(targets)<=len(PLATFORMS) or len(set(targets))!=len(targets) or any(p not in PLATFORMS for p in targets):
                                 raise ValueError('Selecione redes válidas.')
                             profiles=dict(config.get('profiles',{}))
                             profiles.setdefault(config.get('platform','instagram'),{'server':config.get('server',''),'key':config.get('key','')})
