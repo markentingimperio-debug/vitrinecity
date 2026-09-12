@@ -7,6 +7,9 @@ import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 export const TARGET = Object.freeze({ accountId: 7, userId: 4, pageId: '127910957075609', pageName: 'Campo & Conhecimento', instagramId: '17841461502665390', instagramUsername: 'agrotecniica' });
+export const PRAYER_META_CHANNELS = Object.freeze(['facebook', 'instagram', 'facebook-stories', 'instagram-stories']);
+const isInstagram = channel => channel === 'instagram' || channel === 'instagram-stories';
+const isStory = channel => channel === 'facebook-stories' || channel === 'instagram-stories';
 const campaignValid = value => /^oracao-\d{4}-\d{2}-\d{2}$/.test(value) && new Date(value.slice(7)+'T00:00:00Z').toISOString().slice(0,10)===value.slice(7);
 const MAX_BYTES = 200 * 1024 * 1024;
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -99,7 +102,7 @@ export function createApi(credential, fetchImpl = globalThis.fetch) {
     }
   }
   function graph(endpoint, params = {}, method = 'GET', app = false) {
-    if (!/^(?:me|debug_token|[1-9][0-9]{5,30})(?:\/(?:video_reels|media|media_publish|content_publishing_limit))?$/.test(endpoint)) fail('prayer_endpoint_invalid');
+    if (!/^(?:me|debug_token|[1-9][0-9]{5,30})(?:\/(?:video_reels|video_stories|stories|media|media_publish|content_publishing_limit))?$/.test(endpoint)) fail('prayer_endpoint_invalid');
     const url = new URL(`https://graph.facebook.com/${credential.version}/${endpoint}`);
     const body = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
     if (method === 'GET') url.search = body.toString();
@@ -109,9 +112,10 @@ export function createApi(credential, fetchImpl = globalThis.fetch) {
     get: (endpoint, params) => graph(endpoint, params),
     post: (endpoint, params) => graph(endpoint, params, 'POST'),
     async preflight(channel) {
+      if (!PRAYER_META_CHANNELS.includes(channel)) fail('prayer_command_invalid');
       const debug = await graph('debug_token', { input_token: credential.token }, 'GET', true);
       const d = debug?.data; const epoch = Math.floor(Date.now() / 1000);
-      const required = channel === 'facebook' ? ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'] : ['pages_show_list', 'pages_read_engagement', 'instagram_basic', 'instagram_content_publish'];
+      const required = !isInstagram(channel) ? ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'] : ['pages_show_list', 'pages_read_engagement', 'instagram_basic', 'instagram_content_publish'];
       if (!d?.is_valid || String(d.app_id) !== credential.appId || (d.expires_at && d.expires_at <= epoch) || (d.data_access_expires_at && d.data_access_expires_at <= epoch) || required.some(s => !d.scopes?.includes(s))) fail('prayer_token_permissions_invalid');
       for (const scope of required) {
         const granular = d.granular_scopes?.find(s => s.scope === scope);
@@ -119,7 +123,7 @@ export function createApi(credential, fetchImpl = globalThis.fetch) {
       }
       const page = await graph('me', { fields: 'id,name,instagram_business_account{id,username}' });
       if (String(page.id) !== TARGET.pageId) fail('prayer_page_identity_invalid');
-      if (channel === 'instagram') {
+      if (isInstagram(channel)) {
         if (String(page.instagram_business_account?.id) !== TARGET.instagramId) fail('prayer_instagram_binding_invalid');
         const ig = await graph(TARGET.instagramId, { fields: 'id,username' });
         if (String(ig.id) !== TARGET.instagramId || ig.username !== TARGET.instagramUsername) fail('prayer_instagram_identity_invalid');
@@ -127,7 +131,7 @@ export function createApi(credential, fetchImpl = globalThis.fetch) {
         const quota = limit?.data?.[0];
         if (!Number.isFinite(quota?.config?.quota_total) || !Number.isFinite(quota?.quota_usage) || quota.quota_usage >= quota.config.quota_total) fail('prayer_instagram_quota_unavailable');
       }
-      return { checkedAt: now(), accountId: TARGET.accountId, pageId: TARGET.pageId, ...(channel === 'instagram' ? { instagramId: TARGET.instagramId } : {}), requiredScopesPresent: true, publicReachVerified: false };
+      return { checkedAt: now(), accountId: TARGET.accountId, pageId: TARGET.pageId, ...(isInstagram(channel) ? { instagramId: TARGET.instagramId } : {}), requiredScopesPresent: true, publicReachVerified: false };
     },
     upload(videoId, buffer) {
       if (!numericId(videoId)) fail('prayer_video_receipt_invalid');
@@ -151,7 +155,7 @@ function syncDirectory(dir) {
 
 export function openJournal(directory, channel, campaign) {
   if (!campaignValid(campaign)) fail('prayer_campaign_invalid');
-  if (!['facebook', 'instagram'].includes(channel) || !path.isAbsolute(directory)) fail('prayer_journal_invalid');
+  if (!PRAYER_META_CHANNELS.includes(channel) || !path.isAbsolute(directory)) fail('prayer_journal_invalid');
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const file = path.join(directory, `${campaign}-${channel}.json`);
   const lock = path.join(directory, `${campaign}-${channel}.lock`);
@@ -183,9 +187,28 @@ function validPermalink(raw, channel) {
   } catch { return null; }
 }
 
+function storyPostId(value) {
+  const id = typeof value === 'string' ? value : Number.isSafeInteger(value) && value > 0 ? String(value) : '';
+  return numericId(id) || (id.startsWith(TARGET.pageId + '_') && numericId(id.slice(TARGET.pageId.length + 1))) ? id : null;
+}
+
+function storyPermalink(raw, channel) {
+  try {
+    const url = new URL(raw);
+    const hosts = channel === 'facebook-stories' ? ['facebook.com', 'www.facebook.com'] : ['instagram.com', 'www.instagram.com'];
+    if (url.protocol !== 'https:' || !hosts.includes(url.hostname) || url.port || url.username || url.password || url.hash) return null;
+    // Page Stories v26 readback uses a padded opaque ID and ?view_single=1.
+    if (url.search && (channel !== 'facebook-stories' || url.search !== '?view_single=1')) return null;
+    const pattern = channel === 'facebook-stories' ? /^\/stories\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+={0,2})?\/?$/ : new RegExp(`^/stories/${TARGET.instagramUsername}/[0-9]+/?$`);
+    return pattern.test(url.pathname) ? url.href : null;
+  } catch { return null; }
+}
+
 export async function run({ mode, channel, manifest: raw, credentialVersion, local, api, journal, canPublish = () => true }) {
-  if (!['prepare', 'step', 'status'].includes(mode) || !['facebook', 'instagram'].includes(channel)) fail('prayer_command_invalid');
+  if (!['prepare', 'step', 'status'].includes(mode) || !PRAYER_META_CHANNELS.includes(channel)) fail('prayer_command_invalid');
   const manifest = validateManifest(raw);
+  if (isStory(channel) && (!Number.isFinite(local.info?.durationSeconds) || local.info.durationSeconds < 3 || local.info.durationSeconds > 60 || !Number.isInteger(local.info.bytes) || local.info.bytes < 32 || local.info.bytes > (channel === 'instagram-stories' ? 100 * 1024 * 1024 : MAX_BYTES) || (channel === 'instagram-stories' && local.info.width > 1920))) fail('prayer_story_video_specs_invalid');
+  // Do not add fields or reorder this payload: existing Reels journals bind its exact bytes.
   const binding = digest(JSON.stringify({ manifest, channel, info: local.info, account: TARGET }));
   let state = journal.load();
   if (state && (state.binding !== binding || state.channel !== channel || state.campaign !== manifest.campaign || state.credentialVersion !== credentialVersion)) fail('prayer_receipt_binding_changed');
@@ -194,7 +217,7 @@ export async function run({ mode, channel, manifest: raw, credentialVersion, loc
   const save = () => { state.updatedAt = now(); journal.save(state); };
   if (mode === 'prepare') {
     state.preflight = await api.preflight(channel);
-    if (channel === 'instagram') await api.verifyPublic(manifest, local.info);
+    if (isInstagram(channel)) await api.verifyPublic(manifest, local.info);
     save(); return state;
   }
   // A persisted intent precedes every POST. A lost response can never cause replay.
@@ -215,6 +238,7 @@ export async function run({ mode, channel, manifest: raw, credentialVersion, loc
     }
   }
   async function refresh() {
+    if (isStory(channel)) return refreshStory();
     if (channel === 'facebook' && state.videoId) {
       const data = await api.get(state.videoId, { fields: 'id,status,from,description,permalink_url' });
       if (String(data.id) !== state.videoId || (data.from && String(data.from.id) !== TARGET.pageId)) fail('prayer_video_receipt_invalid');
@@ -246,6 +270,70 @@ export async function run({ mode, channel, manifest: raw, credentialVersion, loc
     }
     return state;
   }
+  // Meta v26.0 docs (read 2026-09-12): /documentation/video-api/page-stories-api
+  // and /documentation/instagram-platform/instagram-graph-api/reference/ig-user/{media,stories}.
+  // The Stories edge proves the placement; a processed video or a Reel is not that proof.
+  async function refreshStory() {
+    if (state.phase === 'published_verified') return state; // Historical proof survives the 24h Story lifetime.
+    if (channel === 'facebook-stories' && state.videoId) {
+      const data = await api.get(state.videoId, { fields: 'id,status' });
+      if (String(data.id) !== state.videoId) fail('prayer_video_receipt_invalid');
+      const status = data.status || {}, phases = ['complete', 'not_started', 'in_progress', 'error'];
+      state.remote = { checkedAt: now(), videoStatus: knownStatus(status.video_status, ['ready', 'processing', 'expired', 'error']), uploading: knownStatus(status.uploading_phase?.status, phases), processing: knownStatus(status.processing_phase?.status, phases), publishing: knownStatus(status.publishing_phase?.status, phases) };
+      if (state.attempts.finish) {
+        const listing = await api.get(`${TARGET.pageId}/stories`, { fields: 'post_id,status,creation_time,media_type,media_id,url', limit: 100 });
+        if (!Array.isArray(listing?.data)) fail('prayer_story_response_invalid');
+        const matches = listing.data.filter(item => String(item.media_id) === state.videoId && (!state.postId || storyPostId(item.post_id) === state.postId));
+        if (matches.length > 1) fail('prayer_story_verification_failed');
+        if (matches.length === 1) {
+          const story = matches[0], postId = storyPostId(story.post_id), link = storyPermalink(story.url, channel);
+          if (!postId || story.media_type !== 'video' || !['PUBLISHED', 'ARCHIVED'].includes(String(story.status).toUpperCase()) || !link) fail('prayer_story_verification_failed');
+          Object.assign(state, { phase: 'published_verified', postId, permalink: link, verifiedAt: now(), verification: { kind: 'page_stories_edge', pageId: TARGET.pageId, videoId: state.videoId, postId, storyStatus: story.status }, remote: { ...state.remote, storyStatus: story.status } });
+        } else if (state.phase !== 'held_unknown') state.phase = 'published_needs_verification';
+      } else if (status.video_status === 'error' || status.video_status === 'expired') state.phase = 'failed';
+      save();
+    }
+    if (channel === 'instagram-stories' && state.containerId && !state.mediaId) {
+      const data = await api.get(state.containerId, { fields: 'id,status_code' });
+      if (String(data.id) !== state.containerId) fail('prayer_container_receipt_invalid');
+      state.remote = { checkedAt: now(), containerStatus: knownStatus(data.status_code, ['IN_PROGRESS', 'FINISHED', 'ERROR', 'EXPIRED', 'PUBLISHED']) };
+      if (['ERROR', 'EXPIRED'].includes(data.status_code)) state.phase = 'failed';
+      else if (data.status_code === 'FINISHED' && !state.attempts.publish) state.phase = 'ready_to_publish';
+      else if (data.status_code === 'PUBLISHED' && state.phase !== 'held_unknown') state.phase = 'published_needs_verification';
+      save();
+    }
+    if (channel === 'instagram-stories' && state.mediaId) {
+      const listing = await api.get(`${TARGET.instagramId}/stories`, { fields: 'id,owner,username,media_type,media_product_type,permalink,is_ai_generated', limit: 100 });
+      if (!Array.isArray(listing?.data)) fail('prayer_story_response_invalid');
+      const matches = listing.data.filter(item => String(item.id) === state.mediaId);
+      if (matches.length > 1) fail('prayer_story_verification_failed');
+      if (!matches.length) { state.phase = 'published_needs_verification'; save(); return state; }
+      const data = matches[0], link = storyPermalink(data.permalink, channel);
+      if (String(data.owner?.id) !== TARGET.instagramId || data.username !== TARGET.instagramUsername || data.media_type !== 'VIDEO' || data.media_product_type !== 'STORY' || (data.permalink && !link)) fail('prayer_story_verification_failed');
+      Object.assign(state, { phase: 'published_verified', ...(link ? { permalink: link } : {}), verifiedAt: now(), aiLabelReadback: data.is_ai_generated === true, verification: { kind: 'instagram_stories_edge', instagramId: TARGET.instagramId, mediaId: state.mediaId }, remote: { checkedAt: now(), storyStatus: 'PUBLISHED' } }); save();
+    }
+    return state;
+  }
+  if (isStory(channel)) {
+    // A lost write response can only be investigated with GET, even if a status later changes.
+    if (mode === 'status' || Object.values(state.attempts).some(attempt => attempt.state === 'pending_unknown') || ['held_unknown', 'publishing', 'published_needs_verification', 'published_verified', 'failed'].includes(state.phase)) return refreshStory();
+    state.preflight = await api.preflight(channel); save();
+    if (channel === 'facebook-stories') {
+      if (state.phase === 'prepared') await once('start', () => api.post(`${TARGET.pageId}/video_stories`, { upload_phase: 'start' }), data => { if (!numericId(data.video_id)) fail('prayer_video_receipt_invalid'); return { videoId: data.video_id }; }, 'started');
+      else if (state.phase === 'started') await once('upload', () => api.upload(state.videoId, local.buffer), data => { if (data.success !== true) fail('prayer_upload_unconfirmed'); return {}; }, 'uploaded');
+      else if (state.phase === 'uploaded') await once('finish', () => api.post(`${TARGET.pageId}/video_stories`, { upload_phase: 'finish', video_id: state.videoId, is_ai_generated: true }), data => { const postId = storyPostId(data.post_id); if (data.success !== true || !postId) fail('prayer_publish_unconfirmed'); return { postId }; }, 'publishing');
+    } else {
+      if (state.phase === 'prepared') {
+        await api.verifyPublic(manifest, local.info);
+        await once('create', () => api.post(`${TARGET.instagramId}/media`, { media_type: 'STORIES', video_url: manifest.publicVideoUrl, is_ai_generated: true }), data => { if (!numericId(data.id)) fail('prayer_container_receipt_invalid'); return { containerId: data.id }; }, 'processing');
+      } else if (state.phase === 'processing') await refreshStory();
+      else if (state.phase === 'ready_to_publish') {
+        await refreshStory();
+        if (state.remote.containerStatus === 'FINISHED') await once('publish', () => api.post(`${TARGET.instagramId}/media_publish`, { creation_id: state.containerId }), data => { if (!numericId(data.id)) fail('prayer_media_receipt_invalid'); return { mediaId: data.id }; }, 'publishing');
+      }
+    }
+    return state;
+  }
   if (mode === 'status' || ['held_unknown', 'publishing', 'published_needs_verification', 'published_verified', 'failed'].includes(state.phase)) return refresh();
   state.preflight = await api.preflight(channel); save();
   if (channel === 'facebook') {
@@ -267,7 +355,7 @@ export async function run({ mode, channel, manifest: raw, credentialVersion, loc
 
 export async function cli(argv = process.argv.slice(2)) {
   const [mode, channel, manifestFile, ...extra] = argv;
-  if (extra.length || !['prepare', 'step', 'status'].includes(mode) || !['facebook', 'instagram'].includes(channel) || !manifestFile) fail('prayer_usage_prepare_step_status_channel_manifest');
+  if (extra.length || !['prepare', 'step', 'status'].includes(mode) || !PRAYER_META_CHANNELS.includes(channel) || !manifestFile) fail('prayer_usage_prepare_step_status_channel_manifest');
   const manifest = validateManifest(JSON.parse(fs.readFileSync(manifestFile, 'utf8')));
   const local = inspectLocalVideo(manifest, process.env.PRAYER_FFPROBE || '/usr/bin/ffprobe');
   const credential = loadCredential();
@@ -275,7 +363,7 @@ export async function cli(argv = process.argv.slice(2)) {
   const journal = openJournal('/data/prayer-publications', channel, manifest.campaign);
   try {
     const result = await run({ mode, channel, manifest, credentialVersion: credential.credentialVersion, local, api: createApi(credential), journal });
-    console.log(JSON.stringify({ campaign: result.campaign, channel, target: channel === 'facebook' ? TARGET.pageName : '@' + TARGET.instagramUsername, phase: result.phase, videoId: result.videoId, containerId: result.containerId, mediaId: result.mediaId, permalink: result.permalink, aiLabelReadback: result.aiLabelReadback, remote: result.remote, receiptFile: journal.file, publicReachVerified: false }, null, 2));
+    console.log(JSON.stringify({ campaign: result.campaign, channel, target: !isInstagram(channel) ? TARGET.pageName : '@' + TARGET.instagramUsername, phase: result.phase, videoId: result.videoId, containerId: result.containerId, mediaId: result.mediaId, ...(isStory(channel) ? { postId: result.postId, verification: result.verification } : {}), permalink: result.permalink, aiLabelReadback: result.aiLabelReadback, remote: result.remote, receiptFile: journal.file, publicReachVerified: false }, null, 2));
   } finally { journal.close(); }
 }
 

@@ -9,6 +9,7 @@ import {setupCustomerRetention} from './customer-retention.js';
 import { integrationObserver, openRouterOperation } from './integration-health.js';
 import { createAiTextClient } from './ai-text-provider.js';
 import { createMediaProvider } from './ai-media-provider.js';
+import { generateManualMediaImage, manualImageFailureMessage } from './manual-image-generation.js';
 import { mediaJobPolicy, requireMediaJob } from './media-job-policy.js';
 import {videoPollState,videoFailureMessage,videoRetryableFailure,videoProjectUnchanged} from './video-provider-receipts.js';
 import express from 'express';
@@ -17,6 +18,9 @@ import { registerWhatsAppProductCampaigns } from './whatsapp-product-campaigns.j
 import { createWhatsAppScheduleProcessor, whatsappScheduleState, countWhatsAppSchedules, validWhatsAppReceiptId } from './whatsapp-schedule-worker.js';
 import { isWhatsAppCommercialGroupAllowed, WHATSAPP_COMMERCIAL_EXCLUDED_REASON } from './whatsapp-commercial-policy.js';
 import { setupPrayerSharing, isWhatsAppPrayerGroupAllowed } from './prayer-sharing.js';
+import { setupYouTubeOAuth } from './youtube-oauth.js';
+import { createPrayerYouTubeAdapter } from './prayer-youtube-adapter.js';
+import { createPrayerVitrineSocial } from './prayer-vitrine-social.js';
 import { setupWhatsAppThematicGroups } from './whatsapp-thematic-groups.js';
 import { registerSocialCommentCampaigns } from './social-comment-campaigns.js';
 import { createEcosystemOrchestrator, registerEcosystemRoutes, ecosystemLocalWindow } from './ecosystem-orchestrator.js';
@@ -2125,6 +2129,8 @@ ADMIN_HTML_PATHS.add('/admin-avaliacoes');
 ADMIN_HTML_PATHS.add('/admin-avaliacoes.html');
 ADMIN_HTML_PATHS.add('/admin-recompra');
 ADMIN_HTML_PATHS.add('/admin-recompra.html');
+ADMIN_HTML_PATHS.add('/admin-youtube.html');
+ADMIN_HTML_PATHS.add('/admin-youtube');
 
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
@@ -2736,6 +2742,8 @@ const publicPage = file => (req, res) => {
   ));
 };
 let dailyStories,ecosystem;
+app.get('/admin-youtube.html',requireAdmin,publicPage('admin-youtube.html'));
+app.get('/admin-youtube',requireAdmin,publicPage('admin-youtube.html'));
 const ecosystemCanRun=()=>ecosystem?.canRun()!==false;
 const requireEcosystemRunning=(_req,res,next)=>ecosystemCanRun()?next():res.status(409).json({error:'A pausa geral está ativa. Retome as rotinas na Central do dia.'});
 const mediaPublications = createMediaPublicationLifecycle({ db, siteUrl:SITE_URL, canRun:ecosystemCanRun,
@@ -4273,7 +4281,12 @@ const whatsappProductCampaigns = registerWhatsAppProductCampaigns({
   app, db, requireAdmin, sameOriginOnly, siteUrl: SITE_URL, dataDir,
   whatsappQrRequest, whatsappQrData
 });
-const prayerSharing = setupPrayerSharing({app,db,dataDir,publicDir:path.join(dir,'public'),requireAdmin,sameOriginOnly,whatsappQrRequest,whatsappQrData,canRun:ecosystemCanRun});
+const youtubeOAuth=setupYouTubeOAuth({app,db,requireAdmin,sameOriginOnly,siteUrl:SITE_URL,encrypt:encryptSocialToken,decrypt:decryptSocialToken,getSessionKey:req=>parseCookies(req)[SESSION_COOKIE]});
+const prayerYouTubeAdapter=createPrayerYouTubeAdapter({db,dataDir,oauth:youtubeOAuth,encrypt:encryptSocialToken,decrypt:decryptSocialToken});
+const prayerVitrineSocialAdapter=createPrayerVitrineSocial({db,dataDir,mediaPublications,canRun:ecosystemCanRun,moderationReason:socialModerationReason,
+  isPublisherAllowed:id=>isAdministrativeUser(db.prepare('SELECT id,email,is_admin FROM users WHERE id=?').get(id)),
+  isConfigured:()=>Boolean(String(process.env.CLOUDFLARE_ACCOUNT_ID||'').trim()&&String(process.env.CLOUDFLARE_STREAM_API_TOKEN||'').trim())});
+const prayerSharing = setupPrayerSharing({app,db,dataDir,publicDir:path.join(dir,'public'),requireAdmin,sameOriginOnly,whatsappQrRequest,whatsappQrData,canRun:ecosystemCanRun,youtubeAdapter:prayerYouTubeAdapter,vitrineSocialAdapter:prayerVitrineSocialAdapter});
 const processWhatsAppQrSchedules = createWhatsAppScheduleProcessor({
   isGroupAllowed:(jid,item)=>String(item?.campaign_id||'').startsWith('prayer-v1:')?isWhatsAppPrayerGroupAllowed(jid):isWhatsAppCommercialGroupAllowed(jid),
   db, canRun:ecosystemCanRun, prepareScheduledMessage: item=>String(item.campaign_id||'').startsWith('prayer-v1:')?prayerSharing.prepareScheduledMessage(item):String(item.campaign_id||'').startsWith('thematic-v1:')?whatsappThematicGroups.prepareScheduledMessage(item):whatsappProductCampaigns.prepareScheduledMessage(item),
@@ -6008,18 +6021,8 @@ app.post('/api/admin/media-projects/:id/generate', requireAdmin, requireEcosyste
   if(project.format!=='image'&&AI_MEDIA_CONFIG.videoManualOnly&&db.prepare('SELECT 1 FROM admin_viral_quizzes WHERE media_project_id=? OR task_id=? LIMIT 1').get(id,project.task_id))return res.status(409).json({error:'Esta tarefa pertence à produção automática. Crie um clipe manual no Estúdio.',code:'ai_video_manual_only'});
   try {
     if (project.format === 'image') {
-      db.prepare("UPDATE admin_media_projects SET production_status='assets',progress=25,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
-      const result = await aiMediaClient.requestImage({model:project.model||AI_MEDIA_CONFIG.imageModel,prompt:project.prompt,aspectRatio:project.aspect_ratio});
-      const item = result.data?.data?.[0] || result.data?.images?.[0];
-      const encoded = String(item?.b64_json || item?.image_url?.url || '').replace(/^data:[^;]+;base64,/, '');
-      if (!encoded) throw new Error('O modelo não devolveu uma imagem utilizável.');
-      const buffer = Buffer.from(encoded, 'base64');
-      if (!buffer.length || buffer.length > 25 * 1024 * 1024) throw new Error('A imagem gerada é inválida ou excede 25 MB.');
-      const file = `factory-${id}-${Date.now()}.png`; fs.writeFileSync(path.join(generatedMediaDir, file), buffer, { flag: 'wx' });
-      const cost = Number(result.data?.usage?.cost || result.data?.usage?.total_cost || 0);
-      db.prepare(`UPDATE admin_media_projects SET production_status='review',progress=100,output_url=?,usage_cost_usd=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-        .run(`/uploads/generated-videos/${file}`, cost, id);
-      db.prepare("UPDATE admin_agent_tasks SET status='awaiting_approval',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(project.task_id);
+      const result=await generateManualMediaImage({db,project,config:AI_MEDIA_CONFIG,outputDir:generatedMediaDir,requestImage:input=>aiMediaClient.requestImage(input),canRun:ecosystemCanRun});
+      if(!result.applied)return res.status(409).json({error:'O projeto ou a pausa mudou durante a geração. A imagem recebida foi preservada para conferência, sem reabrir o projeto.',project:mediaFactoryProject(id)});
       return res.json({ project: mediaFactoryProject(id) });
     }
     // Claim before paid generation. A timeout/crash must never make a second
@@ -6044,9 +6047,8 @@ app.post('/api/admin/media-projects/:id/generate', requireAdmin, requireEcosyste
     if(!videoProjectUnchanged(mediaFactoryProject(id),{...project,production_status:'editing',remote_job_id:jobId,polling_url:pollingUrl}))return res.status(409).json({error:'O projeto foi alterado durante a geração. O recibo recebido foi preservado sem reabrir o projeto.'});
     return res.status(202).json({ project: mediaFactoryProject(id) });
   } catch (error) {
-    const message=project.format==='image'?String(error.message).slice(0,500):videoFailureMessage(error);
-    if(project.format==='image')db.prepare("UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(message,id);
-    else db.prepare("UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND production_status='editing'").run(message,id);
+    const message=project.format==='image'?manualImageFailureMessage(error):videoFailureMessage(error);
+    if(project.format!=='image')db.prepare("UPDATE admin_media_projects SET error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND production_status='editing'").run(message,id);
     return res.status(error.status || 502).json({ error: message });
   }
 });

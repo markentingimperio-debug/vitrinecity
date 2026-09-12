@@ -6,7 +6,9 @@ import {promisify} from 'node:util';
 import {getDailyPrayer,validDay} from './prayer-daily.js';
 
 const exec=promisify(execFile);
-export const PRAYER_FORMATS=Object.freeze({short:30,tiktok:61});
+// Applies to new renders only. A dated ready.json remains immutable, including
+// earlier 61-second editions and their publication receipts.
+export const PRAYER_FORMATS=Object.freeze({short:30,tiktok:65});
 export const mediaHash=value=>createHash('sha256').update(value).digest('hex');
 const exists=async file=>fs.stat(file).then(()=>true,()=>false);
 const writeJson=(file,data)=>fs.writeFile(file,JSON.stringify(data,null,2)+'\n',{mode:0o600,flag:'wx'});
