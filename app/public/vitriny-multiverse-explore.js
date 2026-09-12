@@ -360,6 +360,7 @@ addEventListener('keydown',event=>{
 addEventListener('keyup',event=>keys.delete(event.code));
 function releaseControls(){keys.clear();dragging=false;}
 addEventListener('vitriny:guide-open',releaseControls);
+addEventListener('vitriny:hud-open',releaseControls);
 addEventListener('vitriny:assistant-open',releaseControls);
 addEventListener('vitriny:guide-leave',()=>{releaseControls();saveSpatialContext();});
 let guideArrivalTimer;
