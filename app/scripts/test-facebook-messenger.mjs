@@ -19,11 +19,11 @@ function fixture(t,{enabled=true}={}){
     INSERT INTO omnichannel_automation_settings VALUES('facebook',1,'','site','https://vitrinecity.com/oracao-do-dia','','30',9,20,1);
     CREATE TABLE omnichannel_automation_jobs(id TEXT PRIMARY KEY,channel TEXT,external_id TEXT UNIQUE,destination TEXT,source_text TEXT,account_id INTEGER,source_kind TEXT DEFAULT '',media_id TEXT DEFAULT '',status TEXT DEFAULT 'pending',reply_text TEXT DEFAULT '',error TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP,processed_at TEXT);
     CREATE TABLE social_webhook_events(object_type TEXT,object_id TEXT,field_name TEXT,payload_json TEXT);`);
-  const state={now:instant,run:true,textCalls:[],catalogQueries:[],sends:[],sources:new Map([['recipe',source]]),reply:'A receita está aqui: https://vitrinecity.com/artigo/bolo',textHook:null,sendHook:null};
+  const state={now:instant,run:true,textCalls:[],catalogQueries:[],sends:[],sources:new Map([['recipe',source]]),reply:'A receita está aqui:',sourceIndex:1,payload:null,textHook:null,sendHook:null};
   const opts={db,siteUrl:'https://vitrinecity.com',canRun:()=>state.run,now:()=>state.now,
     sourceCatalog:{list:({q,limit})=>{state.catalogQueries.push(q);const normalized=value=>value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();return [...state.sources.values()].filter(value=>q.split(' ').every(term=>normalized(value.title+' '+value.body).includes(term))).slice(0,limit);},get:key=>state.sources.get(key)},
     decryptToken:token=>token,apiVersion:()=> 'v26.0',
-    requestText:async input=>{state.textCalls.push(input);if(state.textHook)await state.textHook(input);return {output_text:JSON.stringify({reply:state.reply})};},
+    requestText:async input=>{state.textCalls.push(input);if(state.textHook)await state.textHook(input);return state.payload||{output_text:JSON.stringify({reply:state.reply,sourceIndex:state.sourceIndex})};},
     fetchImpl:async(url,options)=>{state.sends.push({url,options});if(state.sendHook)return state.sendHook(url,options);return response({recipient_id:JSON.parse(options.body).recipient.id,message_id:'sent-'+state.sends.length});}};
   const service=createFacebookMessenger(opts);if(enabled)service.configure({enabled:true,autoReply:true,accountIds:[7,5]});
   const enqueue=(input=body())=>{const ids=service.ingestWebhook(input);return ids.map(id=>db.prepare('SELECT * FROM omnichannel_automation_jobs WHERE id=?').get(id));};
@@ -61,6 +61,73 @@ test('Send API uses page/messages + recipient.id + RESPONSE and persists a match
   assert.equal(sent.options.headers.Authorization,'Bearer protected-offline-secret');assert.ok(!sent.url.includes('secret'));
   assert.equal(f.row(job).state,'sent');assert.equal(f.row(job).provider_message_id,'sent-1');
   await assert.rejects(f.service.send(job,job.reply_text),/already_attempted/);assert.equal(f.state.sends.length,1);
+});
+
+test('the server appends only the selected catalog URL and gives the model indices without URL bindings',async t=>{
+  const f=fixture(t);f.state.sources.set('other',{...source,key:'other',sourcePath:'/artigo/bolo-alternativo'});f.state.sourceIndex=2;
+  const job=await f.ready();const input=JSON.parse(f.state.textCalls[0].input);
+  assert.deepEqual(input.catalog.map(item=>item.sourceIndex),[1,2]);
+  for(const item of input.catalog)for(const property of ['url','key','binding'])assert.equal(Object.hasOwn(item,property),false);
+  assert.equal(job.reply_text,'A receita está aqui:\nhttps://vitrinecity.com/artigo/bolo');
+  assert.equal((job.reply_text.match(/https:\/\//g)||[]).length,1);
+  const bindings=JSON.parse(f.row(job).sources_json);assert.equal(bindings.length,1);assert.equal(bindings[0].key,'recipe');
+  await f.service.send(job,job.reply_text);assert.equal(JSON.parse(f.state.sends[0].options.body).message.text,job.reply_text);
+});
+
+test('null selection produces no link even when a catalog source is available',async t=>{
+  const f=fixture(t);f.state.sourceIndex=null;f.state.reply='Você prefere uma receita doce ou salgada?';const job=await f.ready();
+  assert.equal(job.reply_text,f.state.reply);assert.equal(f.row(job).sources_json,'[]');await f.service.send(job,job.reply_text);
+  assert.equal(JSON.parse(f.state.sends[0].options.body).message.text,f.state.reply);
+});
+
+test('the Messenger contract rejects missing, duplicate, foreign and out-of-range source selections',async t=>{
+  for(const raw of ['{"reply":"Olá"}','{"reply":"Olá","sourceIndex":1,"url":"https://evil.test"}','{"reply":"Olá","sourceIndex":1,"sourceIndex":null}','{"reply":"Olá","reply":"Outro","sourceIndex":1}','{"reply":"Olá","sourceIndex":"https://evil.test"}','{"reply":"Olá","sourceIndex":0}','{"reply":"Olá","sourceIndex":1.5}','{"reply":"Olá","sourceIndex":6}']){
+    const f=fixture(t);f.state.payload={output_text:raw};const [job]=f.enqueue();await assert.rejects(f.service.generateReply(job),/messenger_invalid/);assert.equal(f.row(job).reply_text,'');assert.equal(f.row(job).claimed_at,null);assert.equal(f.state.sends.length,0);
+  }
+  const f=fixture(t);f.state.sources.clear();const [job]=f.enqueue();await assert.rejects(f.service.generateReply(job),/invalid_source/);assert.equal(f.row(job).sources_json,'[]');
+});
+
+test('even an exact model-written catalog link is rejected and the appended message still obeys the final text limit',async t=>{
+  const f=fixture(t);f.state.reply='Veja https://vitrinecity.com/artigo/bolo';const [job]=f.enqueue();await assert.rejects(f.service.generateReply(job),/unverified_link/);assert.equal(f.state.sends.length,0);
+  const long=fixture(t);long.state.reply='a'.repeat(590);const [largeJob]=long.enqueue();await assert.rejects(long.service.generateReply(largeJob),/mensagem final válida/);assert.equal(long.row(largeJob).reply_text,'');
+});
+
+test('a source changed while generating text is rejected before saving or submitting its URL',async t=>{
+  const f=fixture(t);f.state.textHook=()=>f.state.sources.set('recipe',{...source,sourcePath:'/artigo/outro-bolo'});const [job]=f.enqueue();
+  await assert.rejects(f.service.generateReply(job),/source_changed/);assert.equal(f.row(job).reply_text,'');assert.equal(f.row(job).sources_json,'[]');assert.equal(f.state.sends.length,0);
+});
+
+test('the shared envelope gate still rejects partial, multiple, reasoning-only and tool-call responses',async t=>{
+  const raw=JSON.stringify({reply:'A receita está aqui:',sourceIndex:1}),message={type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:raw}]};
+  for(const payload of [
+    {status:'incomplete',output_text:raw},
+    {output:[{...message,status:'in_progress'}]},
+    {output:[message,message]},
+    {output:[{...message,role:'user'}]},
+    {output:[{type:'reasoning',text:raw}],output_text:raw},
+    {output:[message,{type:'function_call',name:'send'}]},
+    {output:[{...message,content:[{type:'reasoning_text',text:raw}]}]},
+    {output:[{...message,content:[{type:'output_text',text:raw},{type:'output_text',text:raw}]}]},
+    {choices:[{finish_reason:'length',message:{role:'assistant',content:raw}}]},
+    {choices:[{message:{role:'assistant',content:raw,tool_calls:[{id:'tool'}]}}]},
+    {choices:[{message:{role:'assistant',content:raw,refusal:'Cannot answer'}}]},
+    {choices:[{message:{role:'assistant',content:raw}},{message:{role:'assistant',content:raw}}]},
+    {output_text:JSON.stringify({reply:'Análise: preciso responder ao usuário.',sourceIndex:null})}
+  ]){
+    const f=fixture(t);f.state.payload=payload;const [job]=f.enqueue();await assert.rejects(f.service.generateReply(job));assert.equal(f.row(job).reply_text,'');assert.equal(f.row(job).claimed_at,null);assert.equal(f.state.sends.length,0);
+  }
+});
+
+test('completed provider envelopes use only final text while reasoning remains excluded',async t=>{
+  const raw=JSON.stringify({sourceIndex:1,reply:'A receita está aqui:'});
+  for(const payload of [
+    {status:'completed',output:[{type:'reasoning',summary:[{text:'PRIVATE_REASONING'}]},{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:raw}]}]},
+    {choices:[{finish_reason:'stop',message:{role:'assistant',content:raw,reasoning_content:'PRIVATE_REASONING'}}]},
+    {choices:[{finish_reason:'stop',message:{role:'assistant',content:[{type:'text',text:raw}]}}]},
+    {output_text:'```json\n'+raw+'\n```'}
+  ]){
+    const f=fixture(t);f.state.payload=payload;const job=await f.ready();assert.equal(job.reply_text,'A receita está aqui:\nhttps://vitrinecity.com/artigo/bolo');assert.ok(!job.reply_text.includes('PRIVATE_REASONING'));
+  }
 });
 
 test('a durable claim exists before POST and blocks a race or process restart from resending',async t=>{
@@ -130,7 +197,7 @@ test('short opt-out commands with punctuation remain respected',t=>{
 
 test('specific content terms rank ahead of broad recipe matches',async t=>{
   const f=fixture(t);f.state.sources.clear();for(let n=0;n<5;n++)f.state.sources.set('generic-'+n,{...source,key:'generic-'+n,title:'Receita de arroz '+n,body:'Receita de arroz.',sourcePath:'/artigo/arroz-'+n});f.state.sources.set('recipe',source);
-  const [job]=f.enqueue();await f.service.generateReply(job);assert.equal(JSON.parse(f.state.textCalls[0].input).catalog[0].url,'https://vitrinecity.com/artigo/bolo');
+  const [job]=f.enqueue();const reply=await f.service.generateReply(job);assert.equal(JSON.parse(f.state.textCalls[0].input).catalog[0].title,'Receita do bolo');assert.match(reply,/https:\/\/vitrinecity.com\/artigo\/bolo$/);
 });
 
 test('a greeting or test introduction does not hide the requested product from the grounded reply',async t=>{
@@ -138,19 +205,19 @@ test('a greeting or test introduction does not hide the requested product from t
     const f=fixture(t);f.state.sources.clear();
     for(let n=0;n<5;n++)for(const word of ['teste','atendimento','adubo','rosa','deserto'])f.state.sources.set(word+n,{...source,key:word+n,title:'Artigo sobre '+word,body:'Informações gerais.',sourcePath:'/artigo/'+word+n});
     f.state.sources.set('product:11',{key:'product:11',title:'Adubo para Rosa do Deserto',summary:'Produto da loja Agrotécnica.',body:'Adubo para rosa do deserto.',sourcePath:'/produto/11/adubo-para-rosa-do-deserto',commercial:true});
-    f.state.reply='O adubo para rosa do deserto está aqui: https://vitrinecity.com/produto/11/adubo-para-rosa-do-deserto';
+    f.state.reply='O adubo para rosa do deserto está aqui:';
     const job=await f.ready(body(event({message:{mid:'product-introduction',text}})));
-    assert.equal(JSON.parse(f.state.textCalls[0].input).catalog[0].url,'https://vitrinecity.com/produto/11/adubo-para-rosa-do-deserto');
-    assert.equal(job.reply_text,f.state.reply);assert.ok(f.state.catalogQueries.length<=7);assert.equal(f.state.sends.length,0);
+    assert.equal(JSON.parse(f.state.textCalls[0].input).catalog[0].title,'Adubo para Rosa do Deserto');
+    assert.equal(job.reply_text,f.state.reply+'\nhttps://vitrinecity.com/produto/11/adubo-para-rosa-do-deserto');assert.ok(f.state.catalogQueries.length<=7);assert.equal(f.state.sends.length,0);
   }
 });
 
 test('the final specific term survives a long introduction and repeated earlier terms',async t=>{
   const f=fixture(t);f.state.sources.clear();
   f.state.sources.set('product:11',{key:'product:11',title:'Adubo para Rosa do Deserto',summary:'Produto da loja.',body:'Adubo para rosa do deserto.',sourcePath:'/produto/11/adubo-para-rosa-do-deserto',commercial:true});
-  f.state.reply='Veja o produto: https://vitrinecity.com/produto/11/adubo-para-rosa-do-deserto';
-  await f.ready(body(event({message:{mid:'long-introduction',text:'Deserto: comecei pesquisando artigos, acessei a plataforma, tentei encontrar informações e agora quero adubo para rosa do deserto'}})));
-  assert.equal(JSON.parse(f.state.textCalls[0].input).catalog[0].url,'https://vitrinecity.com/produto/11/adubo-para-rosa-do-deserto');
+  f.state.reply='Veja o produto:';
+  const job=await f.ready(body(event({message:{mid:'long-introduction',text:'Deserto: comecei pesquisando artigos, acessei a plataforma, tentei encontrar informações e agora quero adubo para rosa do deserto'}})));
+  assert.match(job.reply_text,/https:\/\/vitrinecity.com\/produto\/11\/adubo-para-rosa-do-deserto$/);
   assert.ok(f.state.catalogQueries.length<=7);assert.ok(f.state.catalogQueries.includes('deserto'));
 });
 
@@ -159,9 +226,9 @@ test('product retrieval still excludes unsafe sources and blocks a withdrawn pro
   const product={key:'product:11',title:'Adubo para Rosa do Deserto',summary:'Produto da loja.',body:'Adubo para rosa do deserto.',sourcePath:'/produto/11/adubo-para-rosa-do-deserto',commercial:true};
   f.state.sources.set('missing-path',{...product,key:'missing-path',sourcePath:undefined});
   f.state.sources.set('external-path',{...product,key:'external-path',sourcePath:'https://evil.test/adubo'});
-  f.state.sources.set(product.key,product);f.state.reply='Veja o adubo: https://vitrinecity.com/produto/11/adubo-para-rosa-do-deserto';
+  f.state.sources.set(product.key,product);f.state.reply='Veja o adubo:';
   const job=await f.ready(body(event({message:{mid:'product-guard',text:'Oi Lia, onde encontro o adubo para rosa do deserto?'}})));
-  assert.deepEqual(JSON.parse(f.state.textCalls[0].input).catalog.map(item=>item.url),['https://vitrinecity.com/produto/11/adubo-para-rosa-do-deserto']);
+  assert.deepEqual(JSON.parse(f.state.textCalls[0].input).catalog.map(item=>item.title),['Adubo para Rosa do Deserto']);assert.match(job.reply_text,/https:\/\/vitrinecity.com\/produto\/11\/adubo-para-rosa-do-deserto$/);
   f.state.sources.set(product.key,{...product,active:false});
   await assert.rejects(f.service.send(job,job.reply_text),/source_changed/);assert.equal(f.state.sends.length,0);
 });
@@ -171,7 +238,7 @@ test('conversation context is limited to that Page and PSID and includes only co
   f.state.now++;f.enqueue(body(event({timestamp:f.state.now,sender:{id:'777'},message:{mid:'other-user',text:'PRIVATE_OTHER_USER'}})));
   const [next]=f.enqueue(body(event({timestamp:f.state.now,message:{mid:'mid-2',text:'Pode enviar esse link?'}})));await f.service.generateReply(next);
   const input=JSON.parse(f.state.textCalls.at(-1).input);assert.deepEqual(input.history,[{role:'user',content:first.source_text},{role:'assistant',content:first.reply_text}]);assert.ok(!JSON.stringify(input).includes('PRIVATE_OTHER_USER'));
-  assert.ok(input.catalog.some(item=>item.url==='https://vitrinecity.com/artigo/bolo'));assert.ok(!JSON.stringify(input).includes('protected-offline-secret'));assert.ok(!JSON.stringify(input).includes('mid-1'));
+  assert.ok(input.catalog.some(item=>item.title==='Receita do bolo'));assert.ok(!JSON.stringify(input).includes('protected-offline-secret'));assert.ok(!JSON.stringify(input).includes('mid-1'));
   assert.match(f.state.textCalls.at(-1).instructions,/Não envie sempre a página de oração/);assert.match(f.state.textCalls.at(-1).instructions,/não pressione/);
 });
 
@@ -183,7 +250,7 @@ test('unknown or withdrawn links are blocked rather than replaced by an unrelate
 });
 
 test('unknown topics ask for context without invented links or catalog offers',async t=>{
-  const f=fixture(t);f.state.reply='Quero ajudar. Qual é o nome ou o assunto do conteúdo que você procura?';
+  const f=fixture(t);f.state.reply='Quero ajudar. Qual é o nome ou o assunto do conteúdo que você procura?';f.state.sourceIndex=null;
   const [job]=f.enqueue(body(event({message:{mid:'unknown-topic',text:'Qual microscópio tem?'}})));const reply=await f.service.generateReply(job);
   assert.deepEqual(JSON.parse(f.state.textCalls[0].input).catalog,[]);await f.service.send(job,reply);assert.equal(f.row(job).state,'sent');
 });
