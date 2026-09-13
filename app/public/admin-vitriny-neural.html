@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>Vitriny Neural · Console de IA | VitrineCity</title>
-  <link rel="stylesheet" href="/vitriny-neural-admin.css">
-  <script src="/vitriny-neural-admin.js" defer></script>
+  <link rel="stylesheet" href="/vitriny-neural-admin.css?v=2">
+  <script src="/vitriny-neural-admin.js?v=2" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Pular para o conteúdo</a>
@@ -40,6 +40,47 @@
   </section>
 
   <div class="toolbar"><p id="status-line">Aguardando dados…</p><button id="refresh" type="button">Atualizar agora</button></div>
+
+  <section class="panel supervisor-panel" id="supervisor-panel" aria-labelledby="supervisor-title">
+    <div class="section-head"><div><p class="eyebrow">SUPERVISÃO · ESTRUTURA EXISTENTE</p><h2 id="supervisor-title">Supervisor Astra</h2></div><span id="supervisor-state" class="tag">CARREGANDO</span></div>
+    <p class="muted">Avalia a estrutura atual da Neural e propõe melhorias. O resultado é um plano candidato para revisão; esta seção não aplica mudanças nem troca o modelo principal ou o modo da plataforma.</p>
+    <div class="shadow-grid supervisor-metrics">
+      <article><span>MODELO CONSULTOR</span><strong id="supervisor-model">—</strong><small id="supervisor-connection">Conferindo configuração</small></article>
+      <article><span>ACESSO AO MODELO</span><strong id="supervisor-access">Não conferido</strong><small id="supervisor-checked">A conferência é uma ação manual.</small></article>
+      <article><span>ORÇAMENTO DE HOJE · USD</span><strong id="supervisor-budget">—</strong><small id="supervisor-day">Sem dados de custo</small></article>
+      <article><span>CUSTO MÁXIMO POR AVALIAÇÃO</span><strong id="supervisor-quote">—</strong><small id="supervisor-limits">Aguardando limite informado pelo servidor</small></article>
+    </div>
+    <p id="supervisor-notice" class="fine" role="status" aria-live="polite">Carregando o estado do supervisor, sem iniciar uma avaliação.</p>
+    <p id="supervisor-error" class="error" role="alert" hidden></p>
+    <details class="supervisor-settings">
+      <summary>Configuração e limite de custo</summary>
+      <form id="supervisor-config-form">
+        <label class="supervisor-check"><input id="supervisor-enabled" type="checkbox" disabled> Habilitar o Supervisor Astra</label>
+        <label class="supervisor-check"><input id="supervisor-automatic" type="checkbox" disabled> Habilitar uma avaliação diária consultiva, dentro do limite de custo</label>
+        <p id="supervisor-automatic-detail" class="fine">Desativada inicialmente. A rotina diária também produz somente planos candidatos.</p>
+        <label for="supervisor-daily-cap">Limite diário em dólares americanos (USD)</label>
+        <input id="supervisor-daily-cap" type="number" min="0" max="0.50" step="0.01" inputmode="decimal" required disabled aria-describedby="supervisor-cap-detail">
+        <p id="supervisor-cap-detail" class="fine">O limite controla o custo reservado e usado pelo supervisor. A rotina diária, quando habilitada, pode consultar a IA no próximo ciclo.</p>
+        <div class="supervisor-actions"><button id="supervisor-save" type="submit" disabled>Salvar configuração</button><button id="supervisor-check" type="button" disabled>Conferir acesso ao modelo</button><button id="supervisor-refresh" type="button">Atualizar estado</button></div>
+        <p class="fine">Conferir acesso consulta a disponibilidade do modelo, sem gerar uma resposta de IA.</p>
+      </form>
+    </details>
+    <form id="supervisor-evaluate-form">
+      <label for="supervisor-objective">O que você quer melhorar na estrutura atual?</label>
+      <textarea id="supervisor-objective" rows="3" minlength="12" maxlength="1000" required disabled placeholder="Ex.: Avalie como aproveitar as capacidades existentes para melhorar o atendimento da Lia. Não inclua dados de clientes ou credenciais." aria-describedby="supervisor-evaluation-detail"></textarea>
+      <div class="form-foot"><small id="supervisor-evaluation-detail">A avaliação manual é uma consulta paga, iniciada por este botão. O plano não executa suas recomendações.</small><button class="primary" id="supervisor-evaluate" type="submit" disabled>Avaliar com Astra</button></div>
+    </form>
+    <div id="supervisor-active" class="response" aria-busy="false" hidden>
+      <div class="response-head"><strong id="supervisor-run-state">Aguardando confirmação</strong><span id="supervisor-run-cost" class="fine">—</span></div>
+      <p id="supervisor-run-id" class="fine"></p>
+      <p id="supervisor-run-detail">O registro desta avaliação será conferido sem repetir o envio.</p>
+      <div id="supervisor-result" class="stack"></div>
+      <button id="supervisor-reconcile" type="button" hidden>Conferir avaliação existente</button>
+    </div>
+    <h3>Histórico e planos candidatos</h3>
+    <p class="fine">Uma avaliação concluída cria uma proposta. Aprovação, aplicação e resultados são etapas distintas.</p>
+    <div id="supervisor-history" class="stack"><p class="muted">Carregando histórico…</p></div>
+  </section>
 
   <div class="grid">
     <section class="panel test-panel" aria-labelledby="test-title">

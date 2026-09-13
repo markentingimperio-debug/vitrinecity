@@ -11,6 +11,24 @@ export function mountVitrinyNeuralAdmin({app,runtime=null,service=null,requireAd
   app.use(API,requireAdmin,(req,res,next)=>{res.set('Cache-Control','no-store');if(req.method==='GET')return next();return sameOriginOnly(req,res,next);});
   app.get(API+'/status',(_req,res)=>res.json(service?.status?service.status():activeRuntime.status()));
   app.get(API+'/skills',(_req,res)=>res.json(activeRuntime.skills.status()));
+  const supervisorRoute=fn=>async(req,res)=>{
+    try{
+      if(!service?.supervisor)return res.status(503).json({error:'astra_supervisor_unavailable'});
+      return await fn(req,res,service.supervisor);
+    }catch(error){
+      const code=/^astra_[a-z_]+$/.test(error?.code||'')?error.code:'astra_operation_failed';
+      const proof=error?.notSubmitted===true&&error?.retrySafe===true&&typeof error.requestId==='string'?{requestId:error.requestId,notSubmitted:true,retrySafe:true}:{};
+      return res.status([400,404,409,413,429,503].includes(error?.status)?error.status:503).json({error:code,...proof});
+    }
+  };
+  app.get(API+'/supervisor/status',supervisorRoute((_req,res,supervisor)=>res.json(supervisor.status())));
+  app.get(API+'/supervisor/runs/:id',supervisorRoute((req,res,supervisor)=>res.json({run:supervisor.run(req.params.id)})));
+  app.put(API+'/supervisor/config',supervisorRoute((req,res,supervisor)=>res.json(supervisor.configure(req.body))));
+  app.post(API+'/supervisor/check',supervisorRoute(async(req,res,supervisor)=>{
+    if(req.body&&Object.keys(req.body).length)return res.status(400).json({error:'astra_input_invalid'});
+    return res.json(await supervisor.checkAvailability());
+  }));
+  app.post(API+'/supervisor/evaluate',supervisorRoute(async(req,res,supervisor)=>res.json({run:await supervisor.evaluate(req.user?.id,req.body)})));
   app.get(API+'/readiness',(_req,res)=>res.json({ok:true,readiness:service?.readiness?service.readiness():assessNeuralReadiness({runtime:activeRuntime})}));
   app.get(API+'/models/qualifications',(_req,res)=>{
     if(!service?.qualifications?.list)return res.status(503).json({error:'Histórico de qualificação indisponível.'});
