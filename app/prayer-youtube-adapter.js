@@ -18,8 +18,10 @@ function safeSession(raw){
 // Durable one-video-per-day journal. A missing/expired session never starts a second upload.
 export function createPrayerYouTubeAdapter({db,dataDir,oauth,encrypt,decrypt,fetchImpl=fetch,inspect=inspectLocalVideo,now=Date.now}){
   db.exec(`CREATE TABLE IF NOT EXISTS prayer_youtube_uploads(day TEXT PRIMARY KEY,channel_id TEXT NOT NULL,binding TEXT NOT NULL,manifest_json TEXT NOT NULL,sha256 TEXT NOT NULL,bytes INTEGER NOT NULL,connection_revision TEXT NOT NULL,
-    phase TEXT NOT NULL,session_encrypted TEXT,video_id TEXT,error TEXT,attempt_count INTEGER NOT NULL DEFAULT 0,next_check_at INTEGER NOT NULL DEFAULT 0,remote_json TEXT,
+    phase TEXT NOT NULL,session_encrypted TEXT,video_id TEXT,error TEXT,attempt_count INTEGER NOT NULL DEFAULT 0,next_check_at INTEGER NOT NULL DEFAULT 0,remote_json TEXT,synthetic_media_requested INTEGER NOT NULL DEFAULT 0,
     claim_owner TEXT NOT NULL DEFAULT '',claim_until INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);`);
+  // Legacy journals cannot establish a separately recorded disclosure request.
+  if(!db.prepare('PRAGMA table_info(prayer_youtube_uploads)').all().some(column=>column.name==='synthetic_media_requested'))db.exec('ALTER TABLE prayer_youtube_uploads ADD COLUMN synthetic_media_requested INTEGER NOT NULL DEFAULT 0');
   const read=day=>db.prepare('SELECT * FROM prayer_youtube_uploads WHERE day=?').get(day);
   const sourceFormat=day=>{const row=read(day);return row?prayerManifestFormat(JSON.parse(row.manifest_json),day,dataDir):null;};
   const connection=()=>oauth.status();
@@ -33,7 +35,7 @@ export function createPrayerYouTubeAdapter({db,dataDir,oauth,encrypt,decrypt,fet
   function snapshot(day){const existing=manual(day);if(existing)return existing;const row=read(day);return row?{state:row.phase,providerId:row.video_id||null,permalink:row.phase==='published_verified'?'https://www.youtube.com/shorts/'+row.video_id:null,error:row.error||null,publicReachVerified:false,remote:row.remote_json?JSON.parse(row.remote_json):null}:null;}
   function claim(day,owner){return db.prepare("UPDATE prayer_youtube_uploads SET claim_owner=?,claim_until=? WHERE day=? AND (claim_owner='' OR claim_until<=?)").run(owner,now()+360000,day,now()).changes===1;}
   function save(day,owner,fields){
-    const allowed=new Set(['phase','session_encrypted','video_id','error','attempt_count','next_check_at','remote_json']);
+    const allowed=new Set(['phase','session_encrypted','video_id','error','attempt_count','next_check_at','remote_json','synthetic_media_requested']);
     if(Object.keys(fields).some(key=>!allowed.has(key)))throw fail('youtube_journal_invalid');
     const keys=Object.keys(fields);
     if(db.prepare(`UPDATE prayer_youtube_uploads SET ${keys.map(k=>k+'=?').join(',')},updated_at=? WHERE day=? AND claim_owner=? AND claim_until>?`).run(...keys.map(k=>fields[k]),now(),day,owner,now()).changes!==1)throw fail('youtube_claim_changed');
@@ -90,8 +92,14 @@ export function createPrayerYouTubeAdapter({db,dataDir,oauth,encrypt,decrypt,fet
         if(response.status===429||response.status>=500||(response.ok&&Array.isArray(data?.items)&&data.items.length===0))throw fail('youtube_verification_temporary');
         if(!response.ok||!Array.isArray(data?.items)||data.items.length!==1)throw fail('youtube_verification_unavailable');
         const video=data.items[0],s=video.status||{};
-        if(video.id!==row.video_id||video.snippet?.channelId!==YOUTUBE_PRAYER_CHANNEL||video.snippet?.title!==manifest.title||video.snippet?.description!==manifest.caption||s.selfDeclaredMadeForKids!==false||s.containsSyntheticMedia!==true)throw fail('youtube_receipt_binding_changed');
-        const remote={privacyStatus:s.privacyStatus||null,uploadStatus:s.uploadStatus||null,processingStatus:video.processingDetails?.processingStatus||null,checkedAt:new Date(now()).toISOString()};
+        // videos.list can omit containsSyntheticMedia although videos.insert
+        // accepted its disclosure request. Omission is not a provider confirmation.
+        const syntheticReturned=Object.hasOwn(s,'containsSyntheticMedia'),syntheticRequested=row.synthetic_media_requested===1;
+        if(video.id!==row.video_id||video.snippet?.channelId!==YOUTUBE_PRAYER_CHANNEL||video.snippet?.title!==manifest.title||video.snippet?.description!==manifest.caption||s.selfDeclaredMadeForKids!==false||
+          (syntheticReturned?s.containsSyntheticMedia!==true:!syntheticRequested))throw fail('youtube_receipt_binding_changed');
+        const remote={privacyStatus:s.privacyStatus||null,uploadStatus:s.uploadStatus||null,processingStatus:video.processingDetails?.processingStatus||null,
+          containsSyntheticMedia:syntheticReturned?s.containsSyntheticMedia:null,containsSyntheticMediaRequested:syntheticRequested,
+          syntheticMediaDisclosure:syntheticReturned?'confirmed_by_provider':'requested_not_returned',checkedAt:new Date(now()).toISOString()};
         const failed=['failed','rejected','deleted'].includes(s.uploadStatus)||video.processingDetails?.processingStatus==='failed';
         const phase=failed?'failed':s.privacyStatus==='private'||s.privacyStatus==='unlisted'?'private_requires_review':s.privacyStatus==='public'&&s.uploadStatus==='processed'?'published_verified':'processing';
         set({phase,remote_json:JSON.stringify(remote),error:phase==='private_requires_review'?'youtube_private_requires_review':failed?'youtube_processing_failed':null,next_check_at:now()+60000});
@@ -101,7 +109,7 @@ export function createPrayerYouTubeAdapter({db,dataDir,oauth,encrypt,decrypt,fet
         if(row.phase!=='prepared'){set({phase:'held_unknown',error:'youtube_session_result_unknown',next_check_at:now()+3600000});return snapshot(day);}
         if(!writable())return {...snapshot(day),error:'youtube_publication_paused'};
         // Persist intent before either a session request or any video bytes are submitted.
-        set({phase:'initiating',attempt_count:row.attempt_count+1});
+        set({phase:'initiating',attempt_count:row.attempt_count+1,synthetic_media_requested:1});
         if(!writable()){set({phase:'prepared',error:'youtube_publication_paused'});return snapshot(day);}
         const body={snippet:{title:manifest.title,description:manifest.caption,categoryId:'22',defaultLanguage:'pt-BR'},status:{privacyStatus:'public',selfDeclaredMadeForKids:false,containsSyntheticMedia:true}};
         const {response}=await request('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',{method:'POST',headers:{...auth,'Content-Type':'application/json','X-Upload-Content-Type':'video/mp4','X-Upload-Content-Length':String(row.bytes)},body:JSON.stringify(body)});

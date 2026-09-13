@@ -36,6 +36,34 @@ test('a reserved short YouTube upload cannot be rebound to the new master',async
 });
 test('upload records both intents before requests and verifies owner, metadata and public status',async t=>{let f;f=fixture(t,{fetchImpl:async(url,opts,s,remote)=>{const row=f.row();if(opts.method==='POST'){assert.equal(row.phase,'initiating');assert.equal(row.attempt_count,1);const meta=JSON.parse(opts.body);assert.equal(meta.status.containsSyntheticMedia,true);assert.equal(meta.status.selfDeclaredMadeForKids,false);assert.equal(meta.status.privacyStatus,'public');return response({},200,{location:SESSION});}if(opts.method==='PUT'){assert.equal(row.phase,'bytes_sending');assert.equal(row.attempt_count,2);assert.equal(decrypt(row.session_encrypted),SESSION);return response({id:VIDEO},201);}return response(remote());}});const r=await f.publish();assert.equal(r.state,'published_verified');assert.equal(r.providerId,VIDEO);assert.equal(r.publicReachVerified,false);assert.equal(r.permalink,'https://www.youtube.com/shorts/'+VIDEO);assert.doesNotMatch(JSON.stringify(r),/ACCESS_SECRET|SESSION_SECRET|protected:/);assert.equal(f.state.calls.length,3);await f.publish();assert.equal(f.state.calls.length,3);});
 test('private provider result is honest and terminal without another upload',async t=>{const f=fixture(t);f.state.privacy='private';const result=await f.publish();assert.equal(result.state,'private_requires_review');assert.equal(result.permalink,null);assert.equal(result.providerId,VIDEO);f.advance(86400000);await f.publish();assert.equal(f.state.calls.filter(c=>c.opts.method==='POST').length,1);assert.equal(f.service.pendingDays().length,0);});
+test('an omitted synthetic flag preserves a proved public receipt without claiming remote disclosure confirmation',async t=>{
+  let f;f=fixture(t,{fetchImpl:async(url,opts,s,remote)=>{
+    if(opts.method==='POST'){assert.equal(f.row().synthetic_media_requested,1);assert.equal(JSON.parse(opts.body).status.containsSyntheticMedia,true);return response({},200,{location:SESSION});}
+    if(opts.method==='PUT')return response({id:VIDEO},201);
+    const value=remote();delete value.items[0].status.containsSyntheticMedia;return response(value);
+  }});
+  const result=await f.publish();assert.equal(result.state,'published_verified');assert.equal(result.remote.containsSyntheticMedia,null);
+  assert.equal(result.remote.containsSyntheticMediaRequested,true);assert.equal(result.remote.syntheticMediaDisclosure,'requested_not_returned');
+  const calls=f.state.calls.length;await f.publish();assert.equal(f.state.calls.length,calls);assert.equal(f.state.calls.filter(c=>c.opts.method==='POST').length,1);
+});
+test('an explicit false, null or malformed synthetic flag still requires review',async t=>{
+  for(const value of [false,null,'true',1]){
+    const f=fixture(t);f.state.ai=value;const result=await f.publish();assert.equal(result.state,'needs_review');assert.equal(result.permalink,null);
+    assert.equal(result.error,'youtube_receipt_binding_changed');await f.publish();assert.equal(f.state.calls.filter(c=>c.opts.method==='POST').length,1);
+  }
+});
+test('missing provider disclosure cannot fabricate the request evidence of an old journal',async t=>{
+  const f=fixture(t);await f.publish();f.db.prepare("UPDATE prayer_youtube_uploads SET phase='processing',next_check_at=0,synthetic_media_requested=0 WHERE day=?").run(DAY);
+  f.state.ai=undefined;const result=await f.publish({mode:'status',manifest:undefined});
+  assert.equal(result.state,'needs_review');assert.equal(result.error,'youtube_receipt_binding_changed');assert.equal(result.permalink,null);
+  assert.equal(f.state.calls.filter(c=>c.opts.method==='POST').length,1);
+});
+test('migration leaves legacy disclosure evidence unknown and preserves the existing video',async t=>{
+  const f=fixture(t);await f.publish();f.db.exec('ALTER TABLE prayer_youtube_uploads DROP COLUMN synthetic_media_requested');
+  const before=f.row();createPrayerYouTubeAdapter({db:f.db,dataDir:f.dir,oauth:{status:()=>({connected:false})},encrypt,decrypt});
+  const after=f.row();assert.equal(after.synthetic_media_requested,0);delete after.synthetic_media_requested;assert.deepEqual(after,before);
+  assert.equal(f.state.calls.filter(c=>c.opts.method==='POST').length,1);
+});
 test('owner, disclosure, audience or caption mismatch never confirms publication',async t=>{for(const change of [s=>{s.owner='UCwrong';},s=>{s.ai=false;},s=>{s.kids=true;}]){const f=fixture(t);change(f.state);const result=await f.publish();assert.equal(result.state,'needs_review');assert.equal(result.permalink,null);assert.equal(result.providerId,VIDEO);}});
 test('lost session response and invalid redirect never create a replacement session',async t=>{for(const answer of [()=>{throw Error('UNKNOWN_SECRET');},()=>response({},200,{location:'https://evil.test/upload'})]){const f=fixture(t,{fetchImpl:async()=>answer()});assert.equal((await f.publish()).state,'held_unknown');f.advance(60001);await f.publish();assert.equal(f.state.calls.length,1);assert.equal(f.row().attempt_count,1);assert.equal(f.row().session_encrypted,null);}});
 test('lost byte response only resumes same session from confirmed range in an allowed step',async t=>{const f=fixture(t);f.state.transferFails=true;assert.equal((await f.publish()).state,'held_unknown');assert.ok(f.row().session_encrypted);f.state.transferFails=false;f.state.range='bytes=0-9';f.advance(60001);assert.equal((await f.publish()).state,'published_verified');const calls=f.state.calls;assert.equal(calls.filter(c=>c.opts.method==='POST').length,1);const transfers=calls.filter(c=>c.opts.method==='PUT'&&c.opts.body);assert.equal(transfers.length,2);assert.equal(transfers[1].url,SESSION);assert.equal(transfers[1].opts.headers['Content-Range'],`bytes 10-${f.buffer.length-1}/${f.buffer.length}`);assert.deepEqual(transfers[1].opts.body,f.buffer.subarray(10));});
