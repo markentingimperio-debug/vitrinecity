@@ -198,6 +198,86 @@ test('worker enforces 3 per pass, global 30 per São Paulo calendar day, 09:00�
   f.state.time=Date.parse('2026-09-11T23:00:00Z');await f.service.processPending();assert.equal(f.state.sends.length,33);
 });
 
+test('daily limit settings preserve 30 by default and require an explicit authorized integer update',async t=>{
+  const f=await fixture(t),initial=await f.request('/settings');
+  assert.equal(initial.status,200);assert.equal(initial.body.dailyLimit,30);assert.equal(initial.body.unlimited,false);
+  assert.deepEqual(initial.body.attemptsToday,{private:0,public:0,reaction:0});assert.deepEqual(initial.body.remainingToday,{private:30,public:30,reaction:30});
+  assert.equal(initial.body.batchSize,3);assert.equal(initial.body.timeZone,'America/Sao_Paulo');assert.equal(initial.body.startHour,9);assert.equal(initial.body.endHour,20);
+  assert.equal((await f.request('/settings','GET',undefined,{'x-admin':'no'})).status,401);
+  assert.equal((await f.request('/settings','PUT',{dailyLimit:0},{'x-admin':'no'})).status,401);
+  assert.equal((await f.request('/settings','PUT',{dailyLimit:0},{origin:'https://other.test'})).status,403);
+  for(const value of [null,true,'0',-1,.5,100001])assert.equal((await f.request('/settings','PUT',{dailyLimit:value})).status,400);
+  assert.equal((await f.request('/settings','PUT',{dailyLimit:0,startHour:0})).status,400);
+  assert.equal((await f.request('/settings')).body.dailyLimit,30);
+  const saved=await f.request('/settings','PUT',{dailyLimit:0});assert.equal(saved.status,200);assert.equal(saved.body.unlimited,true);
+  assert.deepEqual(saved.body.remainingToday,{private:null,public:null,reaction:null});
+  f.secondService();assert.equal((await f.request('/settings')).body.dailyLimit,0);
+  assert.deepEqual((await f.request('/settings','PUT',{dailyLimit:0})).body,saved.body);
+  assert.equal(f.state.sends.length+f.state.publicReplies.length+f.state.reactions.length,0);
+});
+
+test('zero daily ceiling processes more than 30 of each action while preserving three actions and private receipts first',async t=>{
+  const f=await fixture(t);await f.request('/settings','PUT',{dailyLimit:0});await f.activate({publicReplyEnabled:true,reactEnabled:true});
+  for(let i=0;i<35;i++)f.service.ingestWebhook(f.facebook({id:'unlimited_'+i,author:'person_'+i}));
+  const confirmedFirst=input=>{const row=f.db.prepare('SELECT status,provider_message_id FROM social_content_comment_events WHERE comment_id=?').get(input.commentId);assert.equal(row.status,'sent');assert.ok(row.provider_message_id);};
+  f.state.publicHook=async input=>{confirmedFirst(input);return {commentId:'public_'+f.state.publicReplies.length};};
+  f.state.reactionHook=async input=>{confirmedFirst(input);return {success:true};};
+  const second=f.secondService();
+  for(let i=0;i<36;i++){
+    const result=await (i%2?second:f.service).processPending();assert.ok(result.actions<=3);
+  }
+  assert.equal(f.state.sends.length,35);assert.equal(f.state.publicReplies.length,35);assert.equal(f.state.reactions.length,35);
+  assert.deepEqual((await f.request('/settings')).body.attemptsToday,{private:35,public:35,reaction:35});
+  assert.ok(f.rows().every(row=>row.status==='sent'&&row.public_status==='sent'&&row.reaction_status==='sent'));
+  await Promise.all([f.service.processPending(),second.processPending()]);assert.equal(f.state.sequence.length,105);
+});
+
+test('finite settings share the current day across campaigns and changing to zero releases only pending work',async t=>{
+  const f=await fixture(t);await f.request('/settings','PUT',{dailyLimit:2});await f.activate();await f.activate({postId:'100_901',sourceKey:'plant'});
+  for(let i=0;i<5;i++)f.service.ingestWebhook(f.facebook({id:'shared_'+i,author:'person_'+i,post:i%2?'100_901':'100_900'}));
+  await f.service.processPending();await f.service.processPending();assert.equal(f.state.sends.length,2);assert.equal(f.rows().filter(row=>row.status==='pending').length,3);
+  const limited=(await f.request('/settings')).body;assert.equal(limited.attemptsToday.private,2);assert.equal(limited.remainingToday.private,0);
+  await f.request('/settings','PUT',{dailyLimit:0});await f.service.processPending();assert.equal(f.state.sends.length,5);
+  await f.service.processPending();assert.equal(f.state.sends.length,5);
+});
+
+test('lowering a daily ceiling during readiness restores unsubmitted work without consuming another attempt',async t=>{
+  const f=await fixture(t);await f.request('/settings','PUT',{dailyLimit:0});await f.activate();
+  for(let i=0;i<5;i++)f.service.ingestWebhook(f.facebook({id:'change_'+i,author:'person_'+i}));
+  await f.service.processPending();assert.equal(f.state.sends.length,3);
+  f.state.inspectHook=async()=>{await f.request('/settings','PUT',{dailyLimit:1});return {ready:true};};
+  await f.service.processPending();assert.equal(f.state.sends.length,3);
+  assert.ok(f.rows().filter(row=>row.status==='pending').every(row=>row.claimed_at===null&&row.attempt_day===null));
+  assert.equal((await f.request('/settings')).body.attemptsToday.private,3);
+  f.state.inspectHook=null;await f.request('/settings','PUT',{dailyLimit:0});await f.service.processPending();assert.equal(f.state.sends.length,5);
+});
+
+test('a lower ceiling during public or reaction inspection preserves confirmed private replies and waits without a new attempt',async t=>{
+  for(const prefix of ['public','reaction']){
+    const f=await fixture(t);await f.request('/settings','PUT',{dailyLimit:0});await f.activate({publicReplyEnabled:true,reactEnabled:true});
+    f.service.ingestWebhook(f.facebook({id:'first',author:'first_person'}));await f.service.processPending();
+    f.service.ingestWebhook(f.facebook({id:'second',author:'second_person'}));
+    f.state.inspectHook=async()=>{if(f.rows().some(row=>row.comment_id==='second'&&row[prefix+'_status']==='processing'))await f.request('/settings','PUT',{dailyLimit:1});return {ready:true};};
+    await f.service.processPending();const waiting=f.rows().find(row=>row.comment_id==='second');
+    assert.equal(waiting.status,'sent');assert.ok(waiting.provider_message_id);assert.equal(waiting[prefix+'_status'],'pending');assert.equal(waiting[prefix+'_attempt_day'],null);assert.equal(waiting[prefix+'_claimed_at'],null);
+    assert.equal((await f.request('/settings')).body.attemptsToday[prefix],1);
+    f.state.inspectHook=null;await f.request('/settings','PUT',{dailyLimit:0});await f.service.processPending();
+    assert.equal(f.state.sends.length,2);assert.equal(f.state.publicReplies.length,2);assert.equal(f.state.reactions.length,2);
+  }
+});
+
+test('zero ceiling does not bypass hours, global pause, opt-out or uncertain-send protection',async t=>{
+  const f=await fixture(t,{sendTimeoutMs:10});await f.request('/settings','PUT',{dailyLimit:0});await f.activate({triggerMode:'any_comment'});
+  f.service.ingestWebhook(f.facebook({id:'optout',author:'refusing',text:'Não quero mensagens'}));
+  f.service.ingestWebhook(f.facebook({id:'unknown',author:'eligible',text:'Gostei'}));
+  f.state.time=Date.parse('2026-09-10T23:00:00Z');await f.service.processPending();assert.equal(f.state.sends.length,0);
+  f.state.time=Date.parse('2026-09-11T12:00:00Z');f.state.paused=true;await f.service.processPending();assert.equal(f.state.sends.length,0);
+  f.state.paused=false;f.state.sendHook=()=>new Promise(()=>{});await f.service.processPending();assert.equal(f.state.sends.length,1);
+  assert.equal(f.rows().find(row=>row.comment_id==='unknown').status,'unknown');
+  await f.request('/settings','PUT',{dailyLimit:30});await f.request('/settings','PUT',{dailyLimit:0});await f.service.processPending();assert.equal(f.state.sends.length,1);
+  assert.equal(f.rows().find(row=>row.comment_id==='optout').status,'ignored');
+});
+
 test('missing acknowledgment, ambiguous timeout and explicit rejection are terminal without retries',async t=>{
   for(const mode of ['missing','timeout','rejected']){
     const f=await fixture(t,{sendTimeoutMs:10});await f.activate();f.service.ingestWebhook(f.facebook());

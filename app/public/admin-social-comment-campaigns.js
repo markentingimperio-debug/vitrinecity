@@ -9,6 +9,7 @@ const triggerModes={keyword:'Somente a frase escolhida',any_comment:'Qualquer no
 const idPattern=/^[A-Za-z0-9_-]{1,100}$/;
 const compact=(value,max=2000)=>String(value??'').trim().slice(0,max);
 const normalized=value=>String(value??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+const LIMIT_IDS=['LimitForm','DailyLimit','LimitUnlimited','LimitSave','LimitReload','LimitStatus','LimitSummary'];
 
 export function suggestedCaption(source,keyword='EU QUERO',triggerMode='keyword') {
   const title=removePublicLinks(compact(source?.title,220));
@@ -51,7 +52,8 @@ export function socialImageUrl(value,origin) {
 export function mountSocialCampaigns(root,{document=root?.ownerDocument,window=document?.defaultView,fetcher=(...args)=>fetch(...args),randomUUID=()=>crypto.randomUUID(),setTimer=setTimeout,clearTimer=clearTimeout}={}) {
   if(!root||!document||!window)return {destroy(){}};
   const ids=['Form','Notice','Reload','Search','SearchCatalog','Source','SourceCount','SourceCard','Account','Surface','CheckConnection','ConnectionState','ConnectionTitle','ConnectionMissing','ConnectionChecks','PostId','GroupId','GroupField','TriggerMode','TriggerHint','KeywordField','Keyword','PublicReplyEnabled','ReactEnabled','ReactionHint','Caption','Suggest','Invite','Prepare','Preview','PreviewTitle','Summary','Readiness','Missing','Cover','PublicCaption','PrivateReply','PublicReplyCard','PublicReply','ReactionPreview','Copy','Counts','PublicCounts','ReactionCounts','PreviewNote','Activate','Pause','Refresh','History'];
-  const ui=Object.fromEntries(ids.map(id=>[id,root.querySelector('#sc'+id)])),origin=window.location.origin,keyFor=socialRequestKey(randomUUID),listeners=[],requests=new Set();
+  const ui=Object.fromEntries([...ids,...LIMIT_IDS].map(id=>[id,root.querySelector('#sc'+id)])),origin=window.location.origin,keyFor=socialRequestKey(randomUUID),listeners=[],requests=new Set();
+  const hasLimits=LIMIT_IDS.every(id=>ui[id]);let limitsReady=false,limitsBusy=false;
   let items=[],accounts=[],catalogQuery='',campaign=null,ready=false,busy=false,stale=false,destroyed=false,timer=null,readController=null,readVersion=0;
   const node=(tag,klass='',content)=>{const element=document.createElement(tag);if(klass)element.className=klass;if(content!==undefined)element.textContent=content;return element;};
   const listen=(target,event,fn)=>{target.addEventListener(event,fn);listeners.push(()=>target.removeEventListener(event,fn));};
@@ -71,6 +73,7 @@ export function mountSocialCampaigns(root,{document=root?.ownerDocument,window=d
     ui.ReactEnabled.disabled=busy||!ready||instagram;
     ui.ReactionHint.textContent=instagram?'O Instagram não oferece a ação de curtir comentários por esta integração.':'A curtida depende da permissão da Página no Facebook. A prévia verificará a conexão para as ações selecionadas.';
     ui.Form.setAttribute('aria-busy',String(busy));
+    if(hasLimits){ui.LimitUnlimited.disabled=limitsBusy||!limitsReady;ui.DailyLimit.disabled=limitsBusy||!limitsReady||ui.LimitUnlimited.checked;ui.LimitSave.disabled=limitsBusy||!limitsReady;ui.LimitReload.disabled=limitsBusy;ui.LimitForm.setAttribute('aria-busy',String(limitsBusy));}
   }
   function changed(){if(campaign){stale=true;ui.PreviewNote.textContent='O formulário mudou. Prepare uma nova prévia antes de ativar respostas.';}controls();}
   function imageLink(value,title){
@@ -92,13 +95,33 @@ export function mountSocialCampaigns(root,{document=root?.ownerDocument,window=d
     ui.Source.value=matches.some(item=>item.key===previous)?previous:'';ui.SourceCount.textContent=matches.length+' conteúdos encontrados';
     if(previous!==ui.Source.value)changed();sourceCard();
   }
-  async function request(path,{body,signal}={}){
+  async function request(path,{body,signal,method='POST'}={}){
     const controller=signal?null:new AbortController();if(controller)requests.add(controller);
-    try{const response=await fetcher(API+path,{credentials:'same-origin',cache:'no-store',signal:signal||controller.signal,...(body!==undefined?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
+    try{const response=await fetcher(API+path,{credentials:'same-origin',cache:'no-store',signal:signal||controller.signal,...(body!==undefined?{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
       let data;try{data=await response.json();}catch{throw Error('A central não respondeu como esperado. Atualize em instantes.');}
       if(!response.ok){const message=compact(data.message||data.error,300);throw Error(response.status===401?'Sua sessão expirou. Entre novamente no painel.':response.status===403?'Sua conta não tem permissão para esta ação.':message&&!/^[a-z0-9_]+$/.test(message)?message:'Não foi possível concluir. Confira os dados e a conexão Meta.');}return data;
     }catch(error){if(error.name==='AbortError')throw error;throw Error(error instanceof TypeError?'A conexão falhou. Atualize o andamento antes de tentar novamente.':error.message);}
     finally{if(controller)requests.delete(controller);}
+  }
+  function renderLimits(data){
+    if(!Number.isSafeInteger(data?.dailyLimit)||data.dailyLimit<0||data.dailyLimit>100000||data.unlimited!==(data.dailyLimit===0)||!['private','public','reaction'].every(key=>Number.isSafeInteger(data.attemptsToday?.[key])&&data.attemptsToday[key]>=0))throw Error('Não foi possível confirmar o limite salvo. Atualize antes de alterar.');
+    ui.LimitUnlimited.checked=data.unlimited;ui.DailyLimit.value=String(data.dailyLimit||30);limitsReady=true;
+    ui.LimitSummary.textContent=(data.unlimited?'Sem teto diário interno.':`Limite diário: ${data.dailyLimit} tentativas por tipo de interação.`)+` Hoje: ${data.attemptsToday.private} privadas, ${data.attemptsToday.public} públicas e ${data.attemptsToday.reaction} curtidas. Tentativas não comprovam entrega.`;
+  }
+  async function loadLimits(){
+    if(!hasLimits||limitsBusy||destroyed)return;limitsBusy=true;limitsReady=false;controls();ui.LimitStatus.textContent='Conferindo o limite salvo…';ui.LimitStatus.dataset.error='false';
+    try{const data=await request('/settings');if(destroyed)return;renderLimits(data);ui.LimitStatus.textContent='Limite consultado. Nenhuma configuração foi alterada.';}
+    catch(error){if(!destroyed&&error.name!=='AbortError'){ui.LimitStatus.textContent=error.message;ui.LimitStatus.dataset.error='true';}}
+    finally{limitsBusy=false;if(!destroyed)controls();}
+  }
+  async function saveLimits(event){
+    event.preventDefault();if(!hasLimits||limitsBusy||!limitsReady||destroyed)return;
+    const raw=ui.DailyLimit.value.trim(),dailyLimit=ui.LimitUnlimited.checked?0:/^\d+$/.test(raw)?Number(raw):NaN;
+    if(!Number.isSafeInteger(dailyLimit)||dailyLimit<0||dailyLimit>100000||(!ui.LimitUnlimited.checked&&dailyLimit===0)){ui.LimitStatus.textContent='Informe um inteiro de 1 a 100.000 ou marque Sem teto diário interno.';ui.LimitStatus.dataset.error='true';return;}
+    limitsBusy=true;controls();ui.LimitStatus.textContent='Salvando o limite…';ui.LimitStatus.dataset.error='false';
+    try{const data=await request('/settings',{method:'PUT',body:{dailyLimit}});if(destroyed)return;renderLimits(data);ui.LimitStatus.textContent='Limite salvo e confirmado. Campanhas e horários mantidos.';}
+    catch(error){if(!destroyed&&error.name!=='AbortError'){limitsReady=false;ui.LimitSummary.textContent='Limite salvo não confirmado.';ui.LimitStatus.textContent=error.message+' Atualize o limite salvo antes de tentar novamente.';ui.LimitStatus.dataset.error='true';}}
+    finally{limitsBusy=false;if(!destroyed)controls();}
   }
   function validCampaign(value){
     const data=value?.campaign||value;
@@ -175,6 +198,7 @@ export function mountSocialCampaigns(root,{document=root?.ownerDocument,window=d
   for(const id of ['PublicReplyEnabled','ReactEnabled'])listen(ui[id],'change',()=>{ui.ConnectionState.hidden=true;changed();});
   for(const id of ['Keyword','Invite'])listen(ui[id],'change',changed);for(const id of ['PostId','GroupId','Caption'])listen(ui[id],'input',changed);
   listen(ui.CheckConnection,'click',checkConnection);
+  if(hasLimits){listen(ui.LimitForm,'submit',saveLimits);listen(ui.LimitReload,'click',loadLimits);listen(ui.LimitUnlimited,'change',controls);loadLimits();}
   listen(ui.Activate,'click',()=>changeStatus('activate'));listen(ui.Pause,'click',()=>changeStatus('pause'));listen(ui.Refresh,'click',()=>refreshCampaign());
   listen(ui.Copy,'click',async()=>{if(!campaign||busy)return;try{await window.navigator.clipboard.writeText(campaign.caption);notice('Descrição copiada. Anexe a foto de capa ao publicar na rede.');}catch{ui.PublicCaption.focus();ui.PublicCaption.select();notice('Selecione e copie a descrição no campo acima.');}});
   listen(document,'visibilitychange',()=>{if(document.hidden)stopRead();else if(campaign)refreshCampaign(true);});
