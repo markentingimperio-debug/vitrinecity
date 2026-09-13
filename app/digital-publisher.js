@@ -68,6 +68,7 @@ const CSS = `*{box-sizing:border-box}body{margin:0;background:#f4f8ff;color:#071
 
 export function setupDigitalPublisher({
   app,
+  siteUrl=process.env.SITE_URL||"https://vitrinecity.com",
   db,
   requireAdmin,
   requireUser,
@@ -298,6 +299,8 @@ export function setupDigitalPublisher({
     },
   );
   app.get("/livros", (_q, res) => {
+    const canonical = new URL("/livros", siteUrl).href;
+    const description = "Conheça os livros e guias digitais publicados pela Editora VitrineCity. Confira os temas, leia uma amostra e veja as condições de acesso.";
     const items = db
       .prepare(
         "SELECT * FROM digital_books WHERE status='published' ORDER BY published_at DESC",
@@ -306,7 +309,7 @@ export function setupDigitalPublisher({
     res
       .type("html")
       .send(
-        `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Editora Digital VitrineCity</title><style>${CSS}main{display:grid;grid-template-columns:repeat(3,1fr)}article img{width:100%;aspect-ratio:2/3;object-fit:cover}article{background:#fff;padding:18px;border-radius:18px} @media(max-width:760px){main{grid-template-columns:1fr}}</style></head><body><header><a href="/">VitrineCity</a><b>Editora Digital</b></header><main>${items.map((i) => `<article><a href="/livro/${esc(i.slug)}"><img src="${esc(i.cover_url)}"><h2>${esc(i.title)}</h2><p>${esc(i.summary)}</p><b>R$ 9,99</b></a></article>`).join("") || "<p>Os primeiros livros estão em produção.</p>"}</main></body></html>`,
+        `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Editora Digital VitrineCity</title><meta name="description" content="${esc(description)}"><link rel="canonical" href="${esc(canonical)}"><style>${CSS}main{display:grid;grid-template-columns:repeat(3,1fr)}.catalog-intro{grid-column:1/-1}.catalog-intro p{max-width:760px;color:#536b8c;line-height:1.6}article img{width:100%;aspect-ratio:2/3;object-fit:cover}article{background:#fff;padding:18px;border-radius:18px} @media(max-width:760px){main{grid-template-columns:1fr}}</style></head><body><header><a href="/">VitrineCity</a><b>Editora Digital</b></header><main><section class="catalog-intro"><h1>Livros e guias digitais da VitrineCity</h1><p>${esc(description)}</p></section>${items.map((i) => `<article><a href="/livro/${esc(i.slug)}"><img src="${esc(i.cover_url)}"><h2>${esc(i.title)}</h2><p>${esc(i.summary)}</p><b>R$ 9,99</b></a></article>`).join("") || "<p>Os primeiros livros estão em produção.</p>"}</main></body></html>`,
       );
   });
   app.get("/livro/:slug", (req, res) => {

@@ -3,6 +3,7 @@ import { setupProductionHardening } from './production-hardening.js';
 import {cleanPublicRoutes} from './clean-public-routes.js';
 import {setupGamesAppRoutes,isGamesAppPath} from './games-app-routes.js';
 import { setupCatalogProductImages } from './catalog-product-images.js';
+import {publicMarketplaceProducts,renderMarketplaceCatalog} from './marketplace-catalog-ssr.js';
 import {setupCityMembership} from './city-membership.js';
 import {setupCampaignPreferences} from './campaign-preferences.js';
 import {setupCustomerRetention} from './customer-retention.js';
@@ -2807,9 +2808,11 @@ const enhancedPublicPage = (file, scripts = []) => (_req, res) => {
 };
 const publicErrorPage = (res, status) => res.status(status).sendFile(path.join(dir, 'public', `${status}.html`));
 app.get(['/social', '/social.html'], enhancedPublicPage('social.html', ['/social-empty-states.js']));
-app.get('/loja', (_req, res) => {
+app.get('/loja', (req, res) => {
   const page = fs.readFileSync(path.join(dir, 'public', 'loja.html'), 'utf8');
-  return res.type('html').send(page.replace('</body>', '<script src="/marketplace-terms.js"></script></body>'));
+  const products=publicMarketplaceProducts(db,req.query,{siteUrl:SITE_URL});
+  const catalog=renderMarketplaceCatalog(page,products,{siteUrl:SITE_URL,query:req.query});
+  return res.type('html').send(catalog.replace('</body>', '<script src="/marketplace-terms.js"></script></body>'));
 });
 app.get(['/entregas', '/entregas.html'], (_req,res)=>res.sendFile(path.join(dir,'public','entregas.html')));
 app.get('/descobrir', publicPage('descobrir.html'));
@@ -2938,7 +2941,7 @@ app.get('/sitemap.xml', (_req, res) => {
     '/contato.html', '/privacy.html', '/termos-predio-digital.html', '/termos-marketplace.html',
     '/politica-vendedor-marketplace.html', '/politica-comprador-marketplace.html',
     '/politica-devolucao-marketplace.html', '/politica-cancelamento-marketplace.html',
-    '/politica-disputas-marketplace.html', '/politica-fiscal-marketplace.html'
+    '/politica-disputas-marketplace.html'
   ];
   const stores = db.prepare(`SELECT order_reference,business_name FROM store_profiles
     WHERE review_status='published' ORDER BY order_reference`).all();
@@ -3837,22 +3840,7 @@ setupCatalogProductImages(app,{getProduct:id=>db.prepare(`SELECT p.image_url FRO
     AND p.price_cents>0 AND p.stock_quantity>0 AND s.review_status='published'`).get(id)});
 
 app.get('/api/marketplace/products', (req, res) => {
-  const category = String(req.query.category || '').trim().slice(0, 80);
-  const search = String(req.query.q || '').trim().slice(0, 80);
-  let delivery=String(req.query.delivery||'').trim().toLowerCase();
-  if(!delivery){try{delivery=new URL(String(req.get('referer')||''),SITE_URL).searchParams.get('delivery')||'';}catch{delivery='';}}
-  const products = db.prepare(`SELECT p.id,p.store_reference,p.name,p.description,p.category,p.price_cents,
-      p.image_url,p.product_url,p.sku,p.stock_quantity,p.variation_label,p.delivery_min_days,p.delivery_max_days,p.return_days,
-      p.product_type,p.menu_category_id,p.menu_sort_order,p.preparation_minutes,p.available,
-      s.business_name AS store_name,s.business_type AS store_business_type,s.preparation_min_minutes AS store_preparation_min_minutes,
-      s.preparation_max_minutes AS store_preparation_max_minutes,s.accepting_orders AS store_accepting_orders,s.fulfillment_mode AS store_fulfillment_mode,
-      COALESCE((SELECT ROUND(AVG(r.rating),1) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published'),0) rating_average,
-      (SELECT COUNT(*) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published') rating_count
-    FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
-    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.available=1 AND p.price_cents>0 AND p.stock_quantity>0
-      AND s.review_status='published' AND (?!='local' OR p.product_type='digital' OR s.fulfillment_mode IN ('delivery','local','both')) AND (?='' OR p.category=?)
-      AND (?='' OR p.name LIKE '%'||?||'%' OR p.description LIKE '%'||?||'%' OR s.business_name LIKE '%'||?||'%')
-    ORDER BY p.updated_at DESC,p.id DESC LIMIT 120`).all(delivery,category, category, search, search, search, search);
+  const products=publicMarketplaceProducts(db,req.query,{siteUrl:SITE_URL,referer:req.get('referer')});
   return res.json({ products });
 });
 
@@ -9982,10 +9970,15 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
 });
 
 app.get('/categoria/:slug', (req, res) => {
-  const categories = db.prepare(`SELECT DISTINCT category FROM store_products
-    WHERE active=1 AND marketplace_enabled=1 AND price_cents>0 AND stock_quantity>0 AND TRIM(category)<>''`).all();
-  const category = categories.map(row => row.category).find(value => marketplaceSlug(value, 'categoria') === req.params.slug);
+  const legacyCategory = req.params.slug === 'terra-e-substratos';
+  const requestedSlug = legacyCategory ? 'terras-e-substratos' : req.params.slug;
+  const categories = db.prepare(`SELECT DISTINCT p.category FROM store_products p
+    JOIN store_profiles s ON s.order_reference=p.store_reference
+    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0
+      AND s.review_status='published' AND TRIM(p.category)<>''`).all();
+  const category = categories.map(row => row.category).find(value => marketplaceSlug(value, 'categoria') === requestedSlug);
   if (!category) return res.status(404).send('Categoria não encontrada.');
+  if (legacyCategory) return res.redirect(301, '/categoria/terras-e-substratos' + (req.query.lia === '1' ? '?lia=1' : ''));
   const products = db.prepare(`SELECT p.id,p.name,p.description,p.price_cents,p.image_url,s.business_name
     FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
     WHERE p.category=? AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0
