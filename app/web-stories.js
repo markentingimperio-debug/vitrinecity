@@ -7,9 +7,9 @@ import {createWebStorySources} from './web-story-sources.js';
 import {storySourceCta} from './web-story-cta.js';
 import {storyEditorialPortal} from './web-story-categories.js';
 import {createWebStoryPromotions} from './web-story-promotions.js';
+import {webStorySourceHash as hashArticle} from './web-story-source-hash.js';
 
 const fail=(message,status=400)=>Object.assign(Error(message),{status});
-const hashArticle=a=>createHash('sha256').update(JSON.stringify([a.title,a.summary,a.body,a.image_url,a.updated_at,...(a.commercial?[a.facts,a.sourcePath]:[]),...(a.reuseBinding?[a.reuseBinding]:[])])).digest('hex');
 const companionHash=a=>createHash('sha256').update(JSON.stringify([a.title,a.summary,a.body,a.image_url,a.sources_json])).digest('hex');
 const text=(value,max,label,minimum=1)=>{
   if(typeof value!=='string'||value.trim().length<minimum||value.trim().length>max||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value))throw fail(`${label}: informe de ${minimum} a ${max} caracteres.`);

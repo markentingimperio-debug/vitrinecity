@@ -1,8 +1,9 @@
-const CACHE_NAME='vitrinecity-games-v1';
+const CACHE_NAME='vitrinecity-games-v2-share';
 const PUBLIC_PAGES=new Set(['/games/','/games/blocos','/games/jardim','/games/plantas']);
 const STATIC_ASSETS=new Set([
   '/games/manifest.webmanifest','/games/offline.html','/games/app.js','/games/app.css','/games/install.js','/games/install.css',
   '/games/plants.js','/games/plants.css','/games/plants-core.js',
+  '/public-share.js','/public-share.css','/vitriny-public-routes.js',
   '/vitriny-games.css','/vitriny-casual.css','/vitriny-casual.js','/vitriny-casual-storage.js','/vitriny-blocks-core.js','/vitriny-merge-core.js',
   '/assets/pwa-icon-192.png','/assets/pwa-icon-512.png','/assets/pwa-icon-maskable-512.png'
 ]);

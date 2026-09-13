@@ -19,6 +19,8 @@ export function gamesInstallDismissed(value, now = Date.now()) {
 export function mountGamesInstall({ document: doc = globalThis.document, window: win = globalThis.window,
   now = () => Date.now(), delayMs = 15000 } = {}) {
   if (!doc?.body || !win || !gamesInstallContext(win.location?.pathname)) return null;
+  // Sharing is optional offline; a new uncached enhancement must not prevent play.
+  if (doc.documentElement) import('../public-share.js?v=20260913-1').then(module => module.mountPublicShare({document:doc,window:win})).catch(() => {});
   try { if (win.top !== win.self) return null; } catch { return null; }
   if (doc.getElementById('vcgames-install')) return null;
   const context = gamesInstallContext(win.location.pathname);

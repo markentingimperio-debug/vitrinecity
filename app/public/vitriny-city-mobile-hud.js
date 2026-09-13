@@ -42,7 +42,7 @@ if(menu&&trigger){
   // Close before the existing action opens its own dialog or starts a conversation.
   menu.addEventListener('click',event=>{
     const action=event.target.closest('button,a');
-    if(action&&!action.hasAttribute('data-city-menu-close')&&action.id!=='pauseMotion')close(false);
+    if(action&&!action.hasAttribute('data-city-menu-close')&&action.id!=='pauseMotion'&&!action.closest('[data-city-menu-inline]'))close(false);
   },true);
   menu.querySelector('[data-city-menu-chat]').addEventListener('click',()=>{
     const chat=document.querySelector('[data-city-chat] .city-chat');
