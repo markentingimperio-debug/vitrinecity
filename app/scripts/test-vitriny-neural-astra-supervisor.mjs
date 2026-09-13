@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import Database from 'better-sqlite3';
 import express from 'express';
 import {createAstraSupervisor} from '../vitriny-neural/astra-supervisor.js';
@@ -246,8 +246,89 @@ test('real service supplies only aggregate benchmark and seven skills; candidate
   db.prepare("INSERT INTO neural_benchmark_runs(id,status,provider_id,model_name,total,passed,failed,score,report_json,created_at,completed_at) VALUES('qa','completed','jarvis-local','Qwen3-1.7B',12,2,10,.17,?,?,?)").run('{"raw":"RAW_PRIVATE_OUTPUT"}','2026-09-13T14:00:00Z','2026-09-13T14:01:00Z');
   assert.deepEqual(service.runtime.knowledge.retrieve(objective),[]);await service.supervisor.checkAvailability();service.supervisor.configure({enabled:true,dailyUsdLimit:.5,revision:1});
   const run=await service.supervisor.evaluate(4,{requestId:randomUUID(),objective});assert.equal(run.state,'completed');
-  const evidence=JSON.parse(paidBody.input).context.evaluation;assert.equal(evidence.qualification.score,.17);assert.equal(evidence.qualification.safetyScore,.33);assert.equal(evidence.qualification.productionEligible,false);
+  const evidence=JSON.parse(paidBody.input).context.evaluation;assert.equal(evidence.qualification.scorePercent,17);assert.equal(evidence.qualification.safetyScorePercent,33);assert.equal(evidence.qualification.scoreScale,'percent_0_to_100_rounded_1_decimal');assert.equal(evidence.qualification.productionEligible,false);
   assert.equal(evidence.benchmark.total,12);assert.equal(evidence.benchmark.passed,2);assert.equal(evidence.skills.length,7);assert.doesNotMatch(paidBody.input,/RAW_PRIVATE_OUTPUT|report_json/);
   assert.equal(db.prepare('SELECT status FROM neural_lessons WHERE id=?').get(run.candidateId).status,'candidate');
   assert.deepEqual(service.runtime.knowledge.retrieve(run.result.summary),[]);assert.equal(service.status().service.mode,'shadow');assert.equal(service.status().qualification.productionEligible,false);
+});
+
+const textResponse=text=>completed({output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text}]}]});
+test('all four-key JSON permutations are accepted; duplicates including escaped names stay rejected',async t=>{
+  const permutations=keys=>keys.length?keys.flatMap((key,i)=>permutations(keys.filter((_,index)=>index!==i)).map(rest=>[key,...rest])):[[]];
+  for(const keys of permutations(Object.keys(result))){
+    const raw=JSON.stringify(Object.fromEntries(keys.map(key=>[key,result[key]]))),f=fixture(t,{handler:async()=>response(textResponse(raw))});await f.ready();
+    const run=await f.request();assert.equal(run.state,'completed');assert.equal(run.validationReason,null);assert.deepEqual(run.result,result);
+  }
+  for(const raw of [JSON.stringify(result).replace('"summary":','"summary":"duplicada", "summary":'),JSON.stringify(result).replace('"summary":','"su\\u006dmary":"duplicada", "summary":')]){
+    const f=fixture(t,{handler:async()=>response(textResponse(raw))});await f.ready();const run=await f.request();assert.equal(run.validationReason,'json_duplicate_key');assert.equal(run.state,'failed');assert.equal(run.candidateId,null);
+  }
+  const literal={...result,summary:'Revisar o campo "summary": como texto literal, sem introduzir outra propriedade.'};
+  const f=fixture(t,{handler:async()=>response(textResponse(JSON.stringify(literal)))});await f.ready();assert.equal((await f.request()).state,'completed');
+});
+
+test('schema bounds match local limits and percent inputs are labeled/rounded without weakening privacy',async t=>{
+  const f=fixture(t,{getEvaluation:()=>({skills:['support.assistant'],qualification:{score:1/6,safetyScore:1/3,productionEligible:false}})});await f.ready();await f.request();
+  const body=JSON.parse(f.posts()[0].body),properties=body.text.format.schema.properties;
+  for(const [schema,min,max] of [[properties.summary,12,600],[properties.findings.items,5,350],[properties.recommendations.items,5,350]]){
+    const pattern=new RegExp(schema.pattern);assert.equal(pattern.test('x'.repeat(min-1)),false);assert.equal(pattern.test('x'.repeat(min)),true);assert.equal(pattern.test('x'.repeat(max)),true);assert.equal(pattern.test('x'.repeat(max+1)),false);
+  }
+  for(const key of ['findings','recommendations','evidenceIds']){assert.equal(properties[key].minItems,1);assert.equal(properties[key].maxItems,4);}
+  const q=JSON.parse(body.input).context.evaluation.qualification;assert.equal(q.scorePercent,16.7);assert.equal(q.safetyScorePercent,33.3);assert.equal(q.score,undefined);assert.equal(q.safetyScore,undefined);
+  const unsafe=fixture(t,{handler:async()=>response(textResponse(JSON.stringify({...result,summary:'Telefone do cliente 11987654321 não pode ser reaproveitado.'})))});await unsafe.ready();assert.equal((await unsafe.request()).validationReason,'unsafe_text');
+});
+
+test('rejection diagnostics retain only enum, bounded shape, lengths and output-text hash',async t=>{
+  const cases=[['summary_bounds',textResponse(JSON.stringify({...result,summary:'x'.repeat(601)}))],['findings_bounds',textResponse(JSON.stringify({...result,findings:['x'.repeat(351)]}))],['recommendations_bounds',textResponse(JSON.stringify({...result,recommendations:[]}))],
+    ['unsafe_text',textResponse(JSON.stringify({...result,summary:'PRIVATE_MARKER qa@example.invalid senha: hidden-secret'}))],['json_shape',textResponse(JSON.stringify({...result,unknown:'PRIVATE_MARKER'}))],['evidence_invalid',textResponse(JSON.stringify({...result,evidenceIds:['PRIVATE_MARKER']}))],
+    ['response_model',completed({model:'PRIVATE_MARKER'})],['response_status',completed({status:'incomplete'})],['message_count',completed({output:[]})],['message_shape',completed({output:[{type:'message',role:'assistant',status:'completed',content:[{type:'refusal',refusal:'PRIVATE_MARKER'}]}]})]];
+  for(const [reason,data] of cases){
+    data.output.unshift({type:'reasoning',summary:[{type:'summary_text',text:'REASONING_PRIVATE_MARKER'}]});
+    const f=fixture(t,{handler:async()=>response(data)});await f.ready();const run=await f.request();assert.equal(run.validationReason,reason);assert.equal(run.state,'failed');assert.equal(run.result,null);
+    assert.doesNotMatch(JSON.stringify(run),/PRIVATE_MARKER|qa@example|hidden-secret/);
+    const stored=f.db.prepare('SELECT result_json,response_shape_json,validation_reason FROM neural_astra_runs WHERE id=?').get(run.id);assert.equal(stored.result_json,null);assert.equal(stored.validation_reason,reason);assert.doesNotMatch(JSON.stringify(stored),/PRIVATE_MARKER|qa@example|hidden-secret/);
+    const raw=data.output.find(item=>item.type==='message')?.content?.[0]?.text;
+    if(raw)assert.equal(run.responseShape.textSha256,createHash('sha256').update(raw).digest('hex'));
+    assert.equal(run.actualUsd,.01);await f.request(run.id);assert.equal(f.posts().length,1);
+  }
+});
+
+test('legacy failed receipt remains unchanged when additive diagnostics are installed',async t=>{
+  const f=fixture(t,{handler:async()=>response(textResponse(JSON.stringify({...result,summary:'x'.repeat(601)})))});await f.ready();const run=await f.request();
+  f.db.exec('ALTER TABLE neural_astra_runs DROP COLUMN validation_reason; ALTER TABLE neural_astra_runs DROP COLUMN response_shape_json; ALTER TABLE neural_astra_runs DROP COLUMN reviewed_at; ALTER TABLE neural_astra_runs DROP COLUMN reviewed_by;');
+  const before=f.db.prepare('SELECT state,error,actual_micro,created_at,finished_at,submitted FROM neural_astra_runs WHERE id=?').get(run.id);
+  const restarted=createAstraSupervisor(f.options),read=restarted.run(run.id);assert.equal(read.validationReason,null);assert.equal(read.responseShape,null);assert.equal(read.reviewed,false);
+  assert.deepEqual(f.db.prepare('SELECT state,error,actual_micro,created_at,finished_at,submitted FROM neural_astra_runs WHERE id=?').get(run.id),before);assert.equal(f.posts().length,1);
+});
+
+test('explicit known-failure acknowledgement is idempotent and cannot reset state, spend or cooldown',async t=>{
+  const f=fixture(t,{handler:async()=>response(textResponse(JSON.stringify({...result,summary:'x'.repeat(601)})))});await f.ready();const run=await f.request();assert.equal(run.failureReviewable,true);assert.equal(run.reviewed,false);
+  const before=f.db.prepare('SELECT state,error,actual_micro,charged_micro,provider_id,input_tokens,output_tokens,created_at,finished_at FROM neural_astra_runs WHERE id=?').get(run.id);
+  assert.throws(()=>f.service.acknowledgeFailure(4,run.id,{confirmed:false}),{code:'astra_review_confirmation_required'});
+  const reviewed=f.service.acknowledgeFailure(4,run.id,{confirmed:true});assert.equal(reviewed.reviewed,true);assert.equal(reviewed.state,'failed');assert.equal(reviewed.result,null);
+  f.clock.time+=1000;const restarted=createAstraSupervisor(f.options);assert.deepEqual(restarted.acknowledgeFailure(5,run.id,{confirmed:true}),reviewed);assert.equal(f.db.prepare('SELECT reviewed_by FROM neural_astra_runs WHERE id=?').get(run.id).reviewed_by,4);
+  assert.deepEqual(f.db.prepare('SELECT state,error,actual_micro,charged_micro,provider_id,input_tokens,output_tokens,created_at,finished_at FROM neural_astra_runs WHERE id=?').get(run.id),before);
+  await assert.rejects(f.request(),{code:'astra_hourly_limit'});assert.equal(f.posts().length,1);
+  f.clock.time=before.created_at+3600001;const next=await f.request();assert.equal(next.state,'failed');assert.equal(f.posts().length,2);assert.equal(f.service.status().budget.reservedOrSpentUsd,.02);
+  for(const handler of [async()=>{throw Error('lost');},async()=>response(completed()),async()=>response(textResponse(JSON.stringify({...result,summary:'x'.repeat(601)})) )]){
+    const other=fixture(t,{handler});await other.ready();const candidate=await other.request();if(candidate.state==='failed')other.db.prepare('UPDATE neural_astra_runs SET actual_micro=NULL WHERE id=?').run(candidate.id);
+    assert.throws(()=>other.service.acknowledgeFailure(4,candidate.id,{confirmed:true}),{code:'astra_failure_not_reviewable'});assert.equal(other.service.run(candidate.id).reviewed,false);
+  }
+});
+
+test('failure acknowledgement HTTP requires admin, same origin and explicit confirmation, with zero additional provider calls',async t=>{
+  const f=fixture(t,{handler:async()=>response(textResponse(JSON.stringify({...result,summary:'x'.repeat(601)})))});await f.ready();const run=await f.request();
+  const app=express();app.use(express.json());mountVitrinyNeuralAdmin({app,service:{runtime:{neural:{},skills:{}},supervisor:f.service},requireAdmin(req,res,next){if(req.headers['x-admin']!=='fixture')return res.status(403).end();req.user={id:4};next();},sameOriginOnly(req,res,next){if(req.headers.origin!=='https://site.example')return res.status(403).end();next();}});
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const url=`http://127.0.0.1:${server.address().port}/api/admin/vitriny-neural/supervisor/runs/${run.id}/acknowledge-failure`;
+  const send=(body,headers={})=>fetch(url,{method:'POST',headers:{'content-type':'application/json','x-admin':'fixture',origin:'https://site.example',...headers},body:JSON.stringify(body)});
+  assert.equal((await send({confirmed:true},{'x-admin':'no'})).status,403);assert.equal((await send({confirmed:true},{origin:'https://foreign.example'})).status,403);assert.equal((await send({confirmed:false})).status,400);
+  assert.equal(f.service.run(run.id).reviewed,false);const accepted=await send({confirmed:true});assert.equal(accepted.status,200);assert.equal((await accepted.json()).run.reviewed,true);assert.equal(f.posts().length,1);
+});
+
+test('diagnostics keep only a strict public GPT model identifier and never email, controls or arbitrary strings',async t=>{
+  for(const [model,expected] of [['gpt-6-astra-preview','gpt-6-astra-preview'],['gpt-qa@example.invalid','other'],['gpt-6-astra\nprivate','other'],['Bearer sk-private-test','other'],['gpt-'+'a'.repeat(101),'other']]){
+    const f=fixture(t,{handler:async()=>response(completed({model}))});await f.ready();const run=await f.request();
+    assert.equal(run.state,'failed');assert.equal(run.validationReason,'response_model');assert.equal(run.responseShape.modelMatches,false);assert.equal(run.responseShape.modelId,expected);
+    assert.doesNotMatch(JSON.stringify(run.responseShape),/qa@example|private|Bearer/);
+  }
 });

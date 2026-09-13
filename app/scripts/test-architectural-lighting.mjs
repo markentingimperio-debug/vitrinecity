@@ -23,8 +23,9 @@ const injectionKey=Symbol.for('vitrinecity.architectural-lighting.test-adapters'
 globalThis[injectionKey]={THREE:fakeThree,HDRLoader:class{loadAsync(url){return activeFixture.load('hdr',url);}}};
 let source=await readFile(new URL('../public/vitriny-architectural-lighting.js',import.meta.url),'utf8');
 source=source.replace(/^import \* as THREE[^\n]+/m,"const THREE=globalThis[Symbol.for('vitrinecity.architectural-lighting.test-adapters')].THREE;")
-  .replace(/^import \{HDRLoader\}[^\n]+/m,"const HDRLoader=globalThis[Symbol.for('vitrinecity.architectural-lighting.test-adapters')].HDRLoader;");
-const {configureArchitecturalLighting}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+  .replace(/^import \{HDRLoader\}[^\n]+/m,"const HDRLoader=globalThis[Symbol.for('vitrinecity.architectural-lighting.test-adapters')].HDRLoader;")
+  .replace("'./vitriny-spatial-adaptive-experience.js'",JSON.stringify(new URL('../public/vitriny-spatial-adaptive-experience.js',import.meta.url).href));
+const {configureArchitecturalLighting,architecturalDaylight}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 delete globalThis[injectionKey];
 
 function fixture(mode){
@@ -70,7 +71,7 @@ function fixture(mode){
 
 const scenarios=[
   ['success','photographic lighting restores the prior scene and releases its own resources once'],
-  ['photo-failure','a failed sky photograph falls back to the HDR without losing lighting'],
+  ['photo-failure','a failed sky photograph keeps the clock-driven sky and HDR reflections'],
   ['hdr-failure','an HDR loading failure preserves the previous environment and lighting'],
   ['pmrem-failure','a GPU environment failure releases decoded textures and restores prior settings'],
   ['dispose-before-load','late image responses after teardown cannot attach a sky or allocate GPU resources']
@@ -98,8 +99,8 @@ for(const [mode,title] of scenarios)test(title,async()=>{
       assert.equal(state.scene.background,state.previousBackground,'The photograph must be sampled directly rather than creating an additional large background cube');
     }
     if(mode==='photo-failure'){
-      assert.equal(state.scene.background,state.hdr);assert.equal(state.scene.environment,state.target.texture);
-      assert.equal(state.scene.getObjectByName('architectural-photographic-sky'),undefined);
+      assert.equal(state.scene.background,state.previousBackground);assert.equal(state.scene.environment,state.target.texture);
+      assert.equal(state.scene.getObjectByName('architectural-photographic-sky').material.uniforms.photoMix.value,0);
     }
     if(!successful)assert.deepEqual(state.snapshot(),state.original,'Failure must restore settings before callers invoke dispose');
     lighting.dispose();lighting.dispose();
@@ -111,5 +112,34 @@ for(const [mode,title] of scenarios)test(title,async()=>{
     assert.equal(state.previousEnvironmentDisposals,0,'The borrowed fallback environment belongs to its original owner');
     assert.equal(geometryDisposals,mode==='success'?1:0);assert.equal(materialDisposals,mode==='success'?1:0);
     if(mode==='dispose-before-load')assert.equal(state.generators,0);
+  }
+});
+
+test('the same Brasilia clock drives daytime, sunset and readable night without reload',async()=>{
+  const state=fixture('success');activeFixture=state;
+  let date=new Date('2026-09-13T13:54:00Z'),callback,cleared=false;
+  const originalInterval=globalThis.setInterval,originalClear=globalThis.clearInterval;
+  globalThis.setInterval=fn=>{callback=fn;return 17;};globalThis.clearInterval=id=>{assert.equal(id,17);cleared=true;};
+  try{
+    const lighting=configureArchitecturalLighting({scene:state.scene,renderer:state.renderer,sun:state.sun,now:()=>date});
+    assert.equal(await lighting.ready,true);
+    const sky=state.scene.getObjectByName('architectural-photographic-sky');
+    assert.equal(state.scene.userData.dayPhase,'day');assert.equal(sky.material.uniforms.photoMix.value,0);
+    const dayIntensity=state.scene.children.find(light=>light.isHemisphereLight).intensity;
+    assert.ok(dayIntensity>=1.4);assert.ok(state.renderer.toneMappingExposure>=1);
+    date=new Date('2026-09-13T21:00:00Z');callback();
+    assert.equal(state.scene.userData.dayPhase,'dusk');assert.equal(sky.material.uniforms.photoMix.value,1);
+    date=new Date('2026-09-14T01:00:00Z');callback();
+    assert.equal(state.scene.userData.dayPhase,'night');assert.equal(sky.material.uniforms.photoMix.value,0);
+    assert.ok(state.scene.children.find(light=>light.isHemisphereLight).intensity>=.7);
+    assert.ok(state.sun.intensity<.4);assert.ok(state.scene.environmentIntensity<.3);
+    lighting.dispose();assert.equal(cleared,true);assert.deepEqual(state.snapshot(),state.original);
+  }finally{globalThis.setInterval=originalInterval;globalThis.clearInterval=originalClear;}
+});
+
+test('day transitions are continuous, including the midnight wrap',()=>{
+  for(const hour of [0,5,6,7,16,18,19,24]){
+    const before=architecturalDaylight(hour-.0001),after=architecturalDaylight(hour+.0001);
+    for(const key of ['exposure','hemi','sun','environment','photo'])assert.ok(Math.abs(before[key]-after[key])<.001,`${hour}: ${key}`);
   }
 });

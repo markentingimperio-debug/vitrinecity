@@ -112,11 +112,13 @@
   function exportTraining(split){location.assign(base+'/training/export?split='+encodeURIComponent(split));}
   // Astra is an explicit advisory action in this console. Never retry a paid POST.
   const supervisorStorageKey='vitriny-neural-supervisor-pending-v1';
+  const supervisorReviewStorageKey='vitriny-neural-supervisor-review-pending-v1';
   const supervisorId=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
   const supervisorMoney=value=>typeof value==='number'&&Number.isFinite(value)&&value>=0?new Intl.NumberFormat('pt-BR',{style:'currency',currency:'USD',maximumFractionDigits:4}).format(value):'Não informado';
   const supervisorStates={prepared:'Preparada',submitting:'Em avaliação',completed:'Concluída · plano candidato',unknown:'Resultado incerto',failed:'Falha · conferir resultado',blocked:'Não enviada',needs_review:'Precisa de revisão'};
-  let supervisorSnapshot=null,supervisorOperation='',supervisorLoading=false,supervisorRun=null,supervisorReadback=false,supervisorConfigUncertain=false,supervisorConfigDirty=false,supervisorPending=null;
+  let supervisorSnapshot=null,supervisorOperation='',supervisorLoading=false,supervisorRun=null,supervisorReadback=false,supervisorConfigUncertain=false,supervisorConfigDirty=false,supervisorPending=null,supervisorReviewPending=null;
   try{const saved=JSON.parse(sessionStorage.getItem(supervisorStorageKey)||'null');if(supervisorId(saved?.id))supervisorPending={id:saved.id,createdAt:saved.createdAt};}catch{}
+  try{const saved=JSON.parse(sessionStorage.getItem(supervisorReviewStorageKey)||'null');if(supervisorId(saved?.id)){supervisorReviewPending={id:saved.id,createdAt:saved.createdAt};if(!supervisorPending)supervisorPending={...supervisorReviewPending};}}catch{}
   function supervisorNotice(value){$('supervisor-notice').textContent=value;}
   function supervisorErrorText(value){
     const labels={astra_text_invalid:'Revise o objetivo: use texto sem links, dados pessoais ou credenciais.',astra_no_approved_context:'Ainda não há contexto aprovado para este objetivo.',
@@ -139,13 +141,21 @@
       supervisorPending=pending;return true;
     }catch{return false;}
   }
-  function supervisorConfirmed(run){return run?.state==='completed'||(run?.notSubmitted===true&&run?.retrySafe===true&&['blocked','failed'].includes(run.state));}
+  function supervisorRememberReview(pending){
+    try{if(pending){const text=JSON.stringify({id:pending.id,createdAt:pending.createdAt});sessionStorage.setItem(supervisorReviewStorageKey,text);if(sessionStorage.getItem(supervisorReviewStorageKey)!==text)throw Error('storage');}else sessionStorage.removeItem(supervisorReviewStorageKey);supervisorReviewPending=pending;return true;}catch{return false;}
+  }
+  const supervisorReviewable=run=>run?.state==='failed'&&run.failureReviewable===true&&run.applied===false&&run.notSubmitted!==true&&typeof run.actualUsd==='number'&&Number.isFinite(run.actualUsd)&&run.actualUsd>0;
+  const supervisorFailureReviewed=run=>supervisorReviewable(run)&&run.reviewed===true&&typeof run.reviewedAt==='string'&&Number.isFinite(Date.parse(run.reviewedAt));
+  const supervisorCanAcknowledge=run=>supervisorReviewable(run)&&run.reviewed===false;
+  const supervisorRunLabel=run=>supervisorFailureReviewed(run)?'Falha · revisão encerrada':supervisorStates[run.state];
+  function supervisorConfirmed(run){return run?.state==='completed'||supervisorFailureReviewed(run)||(run?.notSubmitted===true&&run?.retrySafe===true&&['blocked','failed'].includes(run.state));}
   function supervisorValidRun(run){return run&&supervisorId(run.id)&&Object.hasOwn(supervisorStates,run.state)&&run.applied===false;}
   function supervisorAccept(run,readback=false){
     if(!supervisorValidRun(run))throw Error('O registro da avaliação não pôde ser confirmado. Confira o histórico sem repetir o envio.');
     supervisorRun=run;supervisorReadback=readback;
+    if(supervisorReviewPending?.id===run.id&&supervisorFailureReviewed(run))supervisorRememberReview(null);
     if(supervisorPending?.id===run.id&&supervisorConfirmed(run)){
-      if(supervisorRemember(null))supervisorNotice(run.state==='completed'?'Plano candidato disponível para revisão. Nenhuma mudança foi aplicada.':'O servidor confirmou que esta avaliação não foi enviada.');
+      if(supervisorRemember(null))supervisorNotice(run.state==='completed'?'Plano candidato disponível para revisão. Nenhuma mudança foi aplicada.':supervisorFailureReviewed(run)?'Revisão encerrada. A falha, o custo e o intervalo continuam registrados; nenhuma avaliação foi repetida.':'O servidor confirmou que esta avaliação não foi enviada.');
       else supervisorNotice('Resultado conferido. Atualize o estado antes de iniciar outra avaliação.');
     }
     renderSupervisorRun();
@@ -153,6 +163,7 @@
   function supervisorReason(){
     const s=supervisorSnapshot,quote=s?.quote?.maximumUsd;
     if(supervisorOperation||supervisorLoading)return 'Aguarde a operação atual.';
+    if(supervisorReviewPending)return 'Confira o encerramento da revisão existente. Nenhuma avaliação será repetida.';
     if(supervisorPending)return 'Confira a avaliação existente antes de iniciar outra. O envio não será repetido.';
     if(supervisorConfigUncertain)return 'Atualize o estado para confirmar a configuração salva.';
     if(!s)return 'Estado do supervisor indisponível.';
@@ -176,15 +187,20 @@
     $('supervisor-save').disabled=busy||!s||supervisorConfigUncertain;
     $('supervisor-check').disabled=busy||!s?.configured;
     $('supervisor-refresh').disabled=busy;
-    $('supervisor-reconcile').hidden=!supervisorPending;$('supervisor-reconcile').disabled=busy;
+    $('supervisor-reconcile').hidden=!supervisorPending&&!supervisorReviewPending;$('supervisor-reconcile').disabled=busy;
+    const reviewable=supervisorCanAcknowledge(supervisorRun);
+    $('supervisor-acknowledge').hidden=!reviewable;$('supervisor-acknowledge').disabled=busy||Boolean(supervisorReviewPending)||!reviewable;
+    $('supervisor-review-detail').hidden=!reviewable;$('supervisor-acknowledge').textContent=supervisorOperation==='acknowledge'?'Encerrando revisão…':'Encerrar revisão desta falha';
     $('supervisor-active').setAttribute('aria-busy',supervisorOperation==='evaluate'?'true':'false');
   }
   function renderSupervisorRun(){
     const r=supervisorRun,pending=supervisorPending;$('supervisor-active').hidden=!r&&!pending;
-    $('supervisor-run-state').textContent=r?(supervisorReadback?'Avaliação existente · ':'')+supervisorStates[r.state]:'Aguardando confirmação do envio';
+    $('supervisor-run-state').textContent=r?(supervisorReadback?'Avaliação existente · ':'')+supervisorRunLabel(r):'Aguardando confirmação do envio';
     $('supervisor-run-id').textContent='Registro: '+(r?.id||pending?.id||'—');
     $('supervisor-run-cost').textContent=r?`Custo calculado: ${supervisorMoney(r.actualUsd)} · máximo reservado: ${supervisorMoney(r.maximumUsd)}`:'O custo será calculado a partir do uso registrado no servidor.';
     $('supervisor-run-detail').textContent=r?.state==='completed'?'Proposta candidata, não aplicada. Reaproveite a estrutura existente e revise as recomendações.':
+      supervisorFailureReviewed(r)?'Esta falha teve a revisão encerrada. O custo calculado continua no orçamento e o intervalo para uma nova avaliação não foi alterado.':
+      supervisorReviewable(r)?'A resposta chegou, mas não passou na validação. O servidor registrou o recibo e o uso; você pode encerrar a revisão desta falha sem repetir a avaliação.':
       r?.notSubmitted===true?'O servidor informa que não houve envio ao modelo.':
       'Aguarde ou confira esta avaliação existente. Uma falha de conexão não confirma que o modelo deixou de receber o pedido.';
     const target=$('supervisor-result');target.replaceChildren();
@@ -218,7 +234,7 @@
     if(!recent.length)history.append(node('p','Nenhuma avaliação registrada.','muted'));
     for(const run of recent){
       const card=node('article',null,'qualification supervisor-history-item'),top=node('div',null,'item-top');
-      top.append(node('strong',supervisorStates[run.state]),node('span','NÃO APLICADO','tag'));card.append(top,
+      top.append(node('strong',supervisorRunLabel(run)),node('span','NÃO APLICADO','tag'));card.append(top,
         node('p',typeof run.objective==='string'?run.objective.slice(0,2000):'Avaliação da estrutura atual.'),
         node('small',`${date(run.createdAt)} · custo calculado: ${supervisorMoney(run.actualUsd)} · máximo: ${supervisorMoney(run.maximumUsd)}`,'muted'));
       const open=node('button',run.state==='completed'?'Ver plano existente':'Conferir registro');open.type='button';open.disabled=Boolean(supervisorOperation||supervisorLoading)||(supervisorPending&&supervisorPending.id!==run.id);
@@ -266,6 +282,18 @@
     catch(error){supervisorError(error.status===404?'O registro ainda não foi encontrado. O envio não será repetido; confira novamente mais tarde.':error.message);}
     finally{supervisorOperation='';renderSupervisor();}
   }
+  async function acknowledgeSupervisorFailure(){
+    const run=supervisorRun;
+    if(supervisorOperation||supervisorLoading||supervisorReviewPending||!supervisorCanAcknowledge(run))return;
+    if(!supervisorRememberReview({id:run.id,createdAt:new Date().toISOString()})){supervisorError('Não foi possível guardar a confirmação nesta aba. A revisão não foi enviada.');return;}
+    supervisorOperation='acknowledge';supervisorControls();supervisorError('');
+    try{
+      const data=await api('/supervisor/runs/'+encodeURIComponent(run.id)+'/acknowledge-failure','POST',{confirmed:true});
+      if(data.run?.id!==run.id||!supervisorValidRun(data.run)||!supervisorFailureReviewed(data.run))throw Error('O encerramento desta revisão não pôde ser confirmado.');
+      supervisorAccept(data.run,true);await loadSupervisor();
+    }catch(error){supervisorError(error.message);supervisorNotice('O encerramento ainda não foi confirmado. Use “Conferir avaliação existente”; esta ação não será repetida automaticamente.');}
+    finally{supervisorOperation='';renderSupervisor();}
+  }
   async function evaluateSupervisor(event){
     event.preventDefault();if(supervisorReason())return;
     const objective=$('supervisor-objective').value.trim();if(objective.length<12||objective.length>1000){supervisorError('Descreva o objetivo da avaliação, de 12 a 1.000 caracteres.');return;}
@@ -287,7 +315,8 @@
   if($('supervisor-panel')){
     $('supervisor-config-form').onsubmit=saveSupervisor;$('supervisor-evaluate-form').onsubmit=evaluateSupervisor;
     $('supervisor-check').onclick=checkSupervisor;$('supervisor-refresh').onclick=()=>loadSupervisor(true);
-    $('supervisor-reconcile').onclick=()=>{if(supervisorPending)readSupervisorRun(supervisorPending.id);};
+    $('supervisor-reconcile').onclick=()=>{const pending=supervisorReviewPending||supervisorPending;if(pending)readSupervisorRun(pending.id);};
+    $('supervisor-acknowledge').onclick=acknowledgeSupervisorFailure;
     $('supervisor-enabled').onchange=$('supervisor-automatic').onchange=$('supervisor-daily-cap').oninput=()=>{supervisorConfigDirty=true;};
     loadSupervisor(true);
   }

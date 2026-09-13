@@ -29,6 +29,7 @@ export function mountVitrinyNeuralAdmin({app,runtime=null,service=null,requireAd
     return res.json(await supervisor.checkAvailability());
   }));
   app.post(API+'/supervisor/evaluate',supervisorRoute(async(req,res,supervisor)=>res.json({run:await supervisor.evaluate(req.user?.id,req.body)})));
+  app.post(API+'/supervisor/runs/:id/acknowledge-failure',supervisorRoute((req,res,supervisor)=>res.json({run:supervisor.acknowledgeFailure(req.user?.id,req.params.id,req.body)})));
   app.get(API+'/readiness',(_req,res)=>res.json({ok:true,readiness:service?.readiness?service.readiness():assessNeuralReadiness({runtime:activeRuntime})}));
   app.get(API+'/models/qualifications',(_req,res)=>{
     if(!service?.qualifications?.list)return res.status(503).json({error:'Histórico de qualificação indisponível.'});

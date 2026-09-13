@@ -7,6 +7,7 @@ const html=readFileSync(new URL('../public/admin-vitriny-neural.html',import.met
 const script=readFileSync(new URL('../public/vitriny-neural-admin.js',import.meta.url),'utf8');
 const css=readFileSync(new URL('../public/vitriny-neural-admin.css',import.meta.url),'utf8');
 const key='vitriny-neural-supervisor-pending-v1',id='12345678-1234-4123-8123-123456789abc',otherId='22345678-1234-4123-8123-123456789abc';
+const reviewKey='vitriny-neural-supervisor-review-pending-v1';
 const objective='Avalie como melhorar o atendimento com as capacidades existentes.';
 const response=(data,status=200)=>({ok:status>=200&&status<300,status,json:async()=>structuredClone(data)});
 const tick=async()=>{for(let n=0;n<5;n++)await new Promise(resolve=>setImmediate(resolve));};
@@ -202,6 +203,69 @@ test('invalid input or unavailable local request storage causes no evaluation PO
   }
   const f=fixture({storageFails:true});await tick();f.edit('supervisor-objective',objective);await f.submit('supervisor-evaluate-form');
   assert.equal(f.evaluations().length,0);assert.match(f.$('supervisor-error').textContent,/Nenhuma avaliação foi enviada/);
+});
+
+const knownFailure=(extra={})=>run('failed',{failureReviewable:true,reviewed:false,reviewedAt:null,actualUsd:.07,error:'astra_response_invalid',...extra});
+test('known-failure review is explicit and single, preserving failed state, recorded cost and cooldown',async()=>{
+  const pending=deferred();let existing=knownFailure();const nextAt=new Date(Date.now()+3600000).toISOString();
+  const current=()=>status({recent:[existing],budget:{day:'2026-09-13',reservedOrSpentUsd:.07,remainingUsd:.43,nextEvaluationAt:nextAt}});
+  const f=fixture({fetcher:(call,{storage})=>{
+    if(call.path==='/supervisor/status')return response(current());
+    if(call.path.endsWith('/acknowledge-failure')){assert.equal(JSON.parse(storage.get(reviewKey)).id,id);return pending.promise;}
+    if(call.path==='/supervisor/runs/'+id)return response({run:existing});
+  }});await tick();
+  assert.equal(f.mutations().length,0);assert.equal(f.$('supervisor-acknowledge').hidden,false);assert.match(f.$('supervisor-run-detail').textContent,/recibo e o uso/);
+  const first=f.click('supervisor-acknowledge'),second=f.click('supervisor-acknowledge');assert.equal(f.mutations().length,1);
+  assert.equal(f.mutations()[0].path,'/supervisor/runs/'+id+'/acknowledge-failure');assert.deepEqual(f.mutations()[0].body,{confirmed:true});
+  assert.deepEqual(Object.keys(JSON.parse(f.storage.get(reviewKey))).sort(),['createdAt','id']);
+  existing=knownFailure({reviewed:true,reviewedAt:'2026-09-13T13:00:00Z'});pending.resolve(response({run:existing}));await first;await second;
+  assert.equal(f.storage.has(reviewKey),false);assert.equal(f.storage.has(key),false);assert.equal(f.evaluations().length,0);
+  assert.match(f.$('supervisor-run-state').textContent,/Falha · revisão encerrada/);assert.match(f.$('supervisor-history').textContent,/Falha · revisão encerrada/);
+  assert.match(f.$('supervisor-budget').textContent,/0,07/);assert.match(f.$('supervisor-run-cost').textContent,/0,07/);
+  assert.equal(f.$('supervisor-evaluate').disabled,true);assert.match(f.$('supervisor-evaluation-detail').textContent,/Próxima avaliação/);
+});
+
+test('unknown, incomplete and unproven failures never offer or dispatch acknowledgement',async()=>{
+  for(const existing of [run('unknown',{failureReviewable:true,actualUsd:.07}),run('submitting',{failureReviewable:true,actualUsd:.07}),knownFailure({failureReviewable:false}),knownFailure({actualUsd:null}),knownFailure({notSubmitted:true}),knownFailure({reviewed:undefined}),knownFailure({reviewed:true,reviewedAt:null}),run('needs_review',{failureReviewable:true,actualUsd:.07})]){
+    const f=fixture({initial:status({recent:[existing]}),fetcher:call=>call.path==='/supervisor/runs/'+id?response({run:existing}):undefined});await tick();
+    assert.equal(f.$('supervisor-acknowledge').hidden,true);await f.click('supervisor-acknowledge');assert.equal(f.mutations().length,0);
+  }
+});
+
+test('uncertain acknowledgement survives reload and only reviewed GET readback releases it without another POST',async()=>{
+  let existing=knownFailure();const storage=new Map();const fetcher=call=>{
+    if(call.path==='/supervisor/status')return response(status({recent:[existing]}));
+    if(call.path==='/supervisor/runs/'+id)return response({run:existing});
+    if(call.path.endsWith('/acknowledge-failure'))throw Error('Conexão interrompida');
+  };
+  const first=fixture({storage,fetcher});await tick();await first.click('supervisor-acknowledge');await first.click('supervisor-acknowledge');
+  assert.equal(first.mutations().length,1);assert.equal(storage.has(reviewKey),true);assert.equal(first.$('supervisor-acknowledge').disabled,true);
+  const reload=fixture({storage,fetcher});await tick();assert.equal(reload.mutations().length,0);
+  await reload.click('supervisor-acknowledge');await reload.click('supervisor-reconcile');assert.equal(reload.mutations().length,0);assert.equal(storage.has(reviewKey),true);
+  existing=knownFailure({reviewed:true,reviewedAt:'2026-09-13T13:00:00Z'});await reload.click('supervisor-reconcile');
+  assert.equal(storage.has(reviewKey),false);assert.equal(storage.has(key),false);assert.equal(reload.mutations().length,0);
+  assert.equal(reload.$('supervisor-evaluate').disabled,false);assert.match(reload.$('supervisor-run-state').textContent,/Falha · revisão encerrada/);
+});
+
+test('acknowledgement does not accept a different ID, unknown result or missing review confirmation',async()=>{
+  for(const result of [knownFailure({reviewed:true,reviewedAt:'2026-09-13T13:00:00Z',id:otherId}),knownFailure(),knownFailure({reviewed:true,reviewedAt:null}),run('unknown',{failureReviewable:true,reviewed:true,reviewedAt:'2026-09-13T13:00:00Z',actualUsd:.07})]){
+    const existing=knownFailure();const f=fixture({initial:status({recent:[existing]}),fetcher:call=>{
+      if(call.path.endsWith('/acknowledge-failure'))return response({run:result});
+      if(call.path==='/supervisor/runs/'+id)return response({run:existing});
+    }});await tick();await f.click('supervisor-acknowledge');assert.equal(f.storage.has(reviewKey),true);assert.equal(f.$('supervisor-evaluate').disabled,true);
+    await f.click('supervisor-acknowledge');assert.equal(f.mutations().length,1);
+  }
+});
+
+test('reviewed failure from server history is not treated as completed or automatically acknowledged again',async()=>{
+  const existing=knownFailure({reviewed:true,reviewedAt:'2026-09-13T13:00:00Z'});const f=fixture({initial:status({recent:[existing]})});await tick();
+  assert.equal(f.storage.has(key),false);assert.equal(f.$('supervisor-acknowledge').hidden,true);assert.equal(f.mutations().length,0);
+  assert.match(f.$('supervisor-history').textContent,/Falha · revisão encerrada/);assert.doesNotMatch(f.$('supervisor-history').textContent,/Concluída/);
+});
+
+test('unavailable storage blocks an acknowledgement before sending any mutation',async()=>{
+  const existing=knownFailure();const f=fixture({storageFails:true,initial:status({recent:[existing]}),fetcher:call=>call.path==='/supervisor/runs/'+id?response({run:existing}):undefined});await tick();
+  await f.click('supervisor-acknowledge');assert.equal(f.mutations().length,0);assert.match(f.$('supervisor-error').textContent,/revisão não foi enviada/);
 });
 
 test('markup keeps accessible labels and scoped mobile controls without an apply or promotion action',()=>{

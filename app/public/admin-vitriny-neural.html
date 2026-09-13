@@ -6,7 +6,7 @@
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>Vitriny Neural · Console de IA | VitrineCity</title>
   <link rel="stylesheet" href="/vitriny-neural-admin.css?v=2">
-  <script src="/vitriny-neural-admin.js?v=2" defer></script>
+  <script src="/vitriny-neural-admin.js?v=3" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Pular para o conteúdo</a>
@@ -75,6 +75,8 @@
       <p id="supervisor-run-id" class="fine"></p>
       <p id="supervisor-run-detail">O registro desta avaliação será conferido sem repetir o envio.</p>
       <div id="supervisor-result" class="stack"></div>
+      <p id="supervisor-review-detail" class="fine" hidden>Encerrar esta revisão registra que você conferiu a falha. O custo e o intervalo continuam válidos; esta ação não solicita outra avaliação nem aplica mudanças.</p>
+      <button id="supervisor-acknowledge" type="button" aria-describedby="supervisor-review-detail" hidden>Encerrar revisão desta falha</button>
       <button id="supervisor-reconcile" type="button" hidden>Conferir avaliação existente</button>
     </div>
     <h3>Histórico e planos candidatos</h3>

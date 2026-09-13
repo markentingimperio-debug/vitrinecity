@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import * as THREE from 'three';
-import {combineSpatialLodFactors,createSpatialDistanceLodController,createSpatialLodController,premiumSpatialSlotState,resolveSpatialDayPhase,spatialLodFactors} from '../public/vitriny-spatial-adaptive-experience.js';
+import {combineSpatialLodFactors,createSpatialDistanceLodController,createSpatialLodController,premiumSpatialSlotState,resolveSpatialDayPhase,spatialCityHour,spatialLodFactors} from '../public/vitriny-spatial-adaptive-experience.js';
 
 assert.equal(resolveSpatialDayPhase(6).id,'dawn');
 assert.equal(resolveSpatialDayPhase(12).id,'day');
 assert.equal(resolveSpatialDayPhase(18).id,'dusk');
 assert.equal(resolveSpatialDayPhase(23).id,'night');
 assert.equal(resolveSpatialDayPhase(-1).id,'night');
+assert.equal(spatialCityHour(new Date('2026-09-13T13:54:00Z')),10.9);
+assert.equal(spatialCityHour(new Date('2026-09-14T02:30:00Z')),23.5);
+assert.equal(spatialCityHour(new Date('2026-09-14T03:00:00Z')),0);
 assert.equal(spatialLodFactors(99).furniture,0);
 
 const lod=createSpatialLodController({profile:'STANDARD',stableSamples:2});
@@ -59,7 +62,7 @@ const {mountSpatialCityEnvironment}=await import(await browserModuleUrl('vitriny
 const globalKeys=['Date','document','requestAnimationFrame','cancelAnimationFrame','setInterval','clearInterval'];
 const originals=new Map(globalKeys.map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
 const OriginalDate=Date,intervals=new Map(),frames=new Set();let currentHour=12,nextHandle=1;
-globalThis.Date=class extends OriginalDate{getHours(){return currentHour;}};
+globalThis.Date=class extends OriginalDate{constructor(...args){super(...(args.length?args:[OriginalDate.UTC(2026,8,13,currentHour+3)]));}};
 globalThis.document={hidden:false};
 globalThis.requestAnimationFrame=()=>{const handle=nextHandle++;frames.add(handle);return handle;};
 globalThis.cancelAnimationFrame=handle=>frames.delete(handle);
@@ -77,10 +80,10 @@ try{
   for(const hour of [6,12,18,23]){
     currentHour=hour;const {scene,hemi,sun}=lightingScene();
     const mounted=await mountSpatialCityEnvironment({scene,cityId:'vitrine-city',fixedArchitecturalLighting:true,fetchImpl});
-    assert.equal(mounted.phase,'dusk');assert.equal(intervals.size,0,'A fixed sunset must not schedule clock-based lighting changes');
+    assert.equal(mounted.phase,resolveSpatialDayPhase(hour).id);assert.equal(intervals.size,1,'Fixtures follow the shared clock while architectural lighting owns the sun');
     assert.deepEqual([hemi.intensity,sun.intensity,scene.fog.density],[.3,4,.0005]);
     const bulbs=mounted.group.getObjectByName('urban-light-bulbs');
-    assert.equal(bulbs.material.opacity,.45+.5*resolveSpatialDayPhase(18).emissive);
+    assert.equal(bulbs.material.opacity,.45+.5*resolveSpatialDayPhase(hour).emissive);
     // The architectural owner may finish loading its HDR after this mount.
     hemi.intensity=.27;sun.intensity=2.1;scene.fog.density=.0002;currentHour=(hour+11)%24;
     mounted.dispose();

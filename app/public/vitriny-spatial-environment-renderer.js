@@ -74,9 +74,9 @@ export async function mountSpatialCityEnvironment({scene,camera=null,cityId,iden
   const original={hemi:hemi?.intensity??null,directional:directional?.intensity??null,fog:scene.fog?.density??null};
   let currentPhase=null;
   function applyPhase(){
-    const phase=resolveSpatialDayPhase(fixedArchitecturalLighting?18:new Date().getHours());if(currentPhase?.id===phase.id)return;currentPhase=phase;group.userData.dayPhase=phase.id;
-    // A photographic sunset owns its sun, ambient light and haze independently
-    // from the visitor's clock. Only decorative fixtures use this dusk phase.
+    const phase=resolveSpatialDayPhase();if(currentPhase?.id===phase.id)return;currentPhase=phase;group.userData.dayPhase=phase.id;
+    // The architectural controller owns sun/ambient/haze. Decorative fixtures
+    // follow the same Brasilia clock without competing for those scene lights.
     if(!fixedArchitecturalLighting){
       if(hemi&&original.hemi!=null)hemi.intensity=original.hemi*phase.ambient;
       if(directional&&original.directional!=null)directional.intensity=original.directional*phase.sun;
@@ -86,7 +86,7 @@ export async function mountSpatialCityEnvironment({scene,camera=null,cityId,iden
     if(meshes.lights?.material){meshes.lights.material.opacity=.45+.5*phase.emissive;meshes.lights.material.transparent=true;}
     if(meshes.districtLights?.material)meshes.districtLights.material.opacity=.52+.46*phase.emissive;
   }
-  applyPhase();const phaseTimer=fixedArchitecturalLighting?null:setInterval(applyPhase,60000);
+  applyPhase();const phaseTimer=setInterval(applyPhase,30000);
 
   const fpsLod=createSpatialLodController({profile:profileId});
   const distanceLod=createSpatialDistanceLodController({profile:profileId,initialDistance:cameraDistance(camera)});
