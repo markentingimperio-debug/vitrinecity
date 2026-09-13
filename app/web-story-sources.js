@@ -3,6 +3,8 @@ import path from 'node:path';
 import {marketplaceSlug,publicStorePath} from './marketplace-public.js';
 import {validAffiliateUrl,platforms} from './affiliate-catalog.js';
 import {CITY_GUIDE_ITEMS} from './public/vitriny-city-guide-core.js';
+import {originalCourse} from './course-content.js';
+import {COURSE_LANDING_SLUGS} from './course-demonstrations.js';
 
 const groups=new Set(['all','products','services','news','recipes','sports','trends']);
 const kindOrder={article:0,product:1,service:2,course:3,affiliate:4,city:5,store:6,page:7};
@@ -20,6 +22,18 @@ const basicBody=(description,...facts)=>[plain(description),...facts].filter(nam
 const htmlText=value=>plain(value).replace(/<[^>]*>/g,' ').replace(/&#(x[0-9a-f]+|\d+);/gi,(_all,value)=>{const code=value[0].toLowerCase()==='x'?parseInt(value.slice(1),16):Number(value);return code>0&&code<=0x10ffff?String.fromCodePoint(code):'';}).replace(/&(amp|lt|gt|quot|apos|nbsp);/g,(_all,name)=>({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",nbsp:' '}[name])).replace(/\s+/g,' ').trim();
 const htmlAttributes=tag=>Object.fromEntries([...tag.matchAll(/([a-zA-Z][\w:-]*)\s*=\s*(["'])(.*?)\2/gs)].map(match=>[match[1].toLowerCase(),htmlText(match[3])]));
 const cityGuideIds=new Set(['pesquisar','vitrines','descobrir','centros','entregas','cursos','jardim','jogos','musica','cinema','social','acessos','meu-predio','como-funciona','sobre','contato']);
+const publicCourseSlugs=new Set(COURSE_LANDING_SLUGS);
+
+function publicCourseProgram(slug){
+  if(!publicCourseSlugs.has(slug))return '';
+  const course=originalCourse(slug);
+  if(!course?.lessons?.length)return '';
+  // Match only the curriculum fields already rendered by renderCourseLanding.
+  // Lesson sections, answers, downloads and private materials are never sources.
+  return basicBody('Programa público do curso: objetivos e atividades',...course.lessons.map(lesson=>
+    basicBody(lesson.title,lesson.objective,named(lesson.activity)?'Na prática: '+lesson.activity:'')
+  ));
+}
 
 function publicSourceUrl(value){
   if(typeof value!=='string'||value.length>2000||/[\\\x00-\x20\x7f]/.test(value))return null;
@@ -84,7 +98,8 @@ export function createWebStorySources({db,services=()=>[],courses=()=>[],publicD
       const row=current?.get(item.slug),value=(column,fallback)=>row&&cols.has(column)?row[column]:fallback,title=value('title',item.title);
       if(!named(title))return [];
       const description=plain(value('description',item.description)),audience=plain(value('audience',item.audience)),priceCents=finiteNumber(value('price_cents',item.priceCents)),modules=finiteNumber(value('modules',item.modules)),sourcePath='/centro-educacional#'+encodeURIComponent(item.slug),key='course:'+item.slug;
-      return [{id:key,key,kind:'course',group:'services',slug:item.slug,title,summary:description,body:basicBody(description,audience?'Público indicado: '+audience:'',modules===undefined?'':'Módulos: '+modules,priceText(priceCents)),image_url:plain(value('cover_url',item.coverUrl??item.imageUrl)),portal:'cursos',updated_at:plain(value('updated_at',item.updated_at??item.updatedAt)),sourcePath,sources:citations(title,sourcePath),facts:compact({audience,modules,priceCents}),commercial:true}];
+      const program=publicCourseProgram(item.slug),references=program?[{title:'Programa público: '+title,url:'/cursos/'+item.slug}]:[];
+      return [{id:key,key,kind:'course',group:'services',slug:item.slug,title,summary:description,body:basicBody(description,audience?'Público indicado: '+audience:'',modules===undefined?'':'Módulos: '+modules,priceText(priceCents),program),image_url:plain(value('cover_url',item.coverUrl??item.imageUrl)),portal:'cursos',updated_at:plain(value('updated_at',item.updated_at??item.updatedAt)),sourcePath,sources:citations(title,sourcePath,references),facts:compact({audience,modules,priceCents}),commercial:true}];
     });
   }
   function affiliates(key){
