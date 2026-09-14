@@ -8,11 +8,13 @@ const originalFetch=globalThis.fetch;
 const originalKey=process.env.OPENROUTER_API_KEY;
 const originalOpenAiKey=process.env.OPENAI_API_KEY;
 const originalGoogleKey=process.env.GEMINI_API_KEY;
+const originalKlingKey=process.env.KLING_API_KEY;
 
 try{
   process.env.OPENROUTER_API_KEY='audit-secret-example';
   process.env.OPENAI_API_KEY='audit-openai-example';
   process.env.GEMINI_API_KEY='audit-google-example';
+  process.env.KLING_API_KEY='audit-kling-example';
   globalThis.fetch=async(input,init={})=>{
     calls.push({url:String(typeof input==='string'?input:input.url),headers:new Headers(init.headers||(input instanceof Request?input.headers:undefined)),method:init.method,body:init.body});
     return new Response('ok',{status:200});
@@ -58,6 +60,14 @@ try{
   assert.equal(calls.at(-1).headers.get('x-goog-api-key'),null,'Mislabelled OpenAI key cannot be sent to Google');
 
   const pkg=JSON.parse(readFileSync(`${appRoot}/package.json`,'utf8'));
+  for(const url of ['https://cdn.example.invalid/video.mp4','https://api.openai.com/v1/responses','http://api-singapore.klingai.com/tasks','https://api-singapore.klingai.com.attacker.invalid/tasks','https://api-singapore.klingai.com:8443/tasks','https://kling.ai/mcp']){
+    await globalThis.fetch(url,{headers:{Authorization:'Bearer audit-kling-example'}});
+    assert.equal(calls.at(-1).headers.get('authorization'),null,'Commercial Kling key cannot reach Studio or another origin');
+  }
+  await globalThis.fetch('https://api-singapore.klingai.com/account/costs',{headers:{Authorization:'Bearer audit-kling-example'}});
+  assert.equal(calls.at(-1).headers.get('authorization'),'Bearer audit-kling-example');
+  await globalThis.fetch('https://api-singapore.klingai.com/account/costs',{headers:{Authorization:'Bearer audit-openai-example'}});
+  assert.equal(calls.at(-1).headers.get('authorization'),null);
   const dockerfile=readFileSync(`${appRoot}/Dockerfile`,'utf8');
   assert.match(pkg.scripts.start,/--import \.\/security-fetch-guard\.js/);
   assert.match(dockerfile,/"--import", "\.\/security-fetch-guard\.js"/);
@@ -67,4 +77,5 @@ try{
   if(originalKey===undefined)delete process.env.OPENROUTER_API_KEY;else process.env.OPENROUTER_API_KEY=originalKey;
   if(originalOpenAiKey===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=originalOpenAiKey;
   if(originalGoogleKey===undefined)delete process.env.GEMINI_API_KEY;else process.env.GEMINI_API_KEY=originalGoogleKey;
+  if(originalKlingKey===undefined)delete process.env.KLING_API_KEY;else process.env.KLING_API_KEY=originalKlingKey;
 }

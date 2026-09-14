@@ -1,0 +1,24 @@
+.kling-panel{min-width:0;border-color:#38586d;scroll-margin-top:7rem}
+.kling-panel [hidden]{display:none!important}
+.kling-panel :is(article,.section-head>div,li){min-width:0}
+.kling-panel :is(p,span,strong,a){overflow-wrap:anywhere}
+.kling-panel h3{font-size:1rem;margin:0 0 .55rem}
+.kling-panel p{line-height:1.6}
+.kling-overview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin:1.2rem 0}
+.kling-overview article{padding:1rem;border:1px solid var(--line);border-radius:13px;background:#0a0f16}
+.kling-overview p{margin:0;color:var(--muted);font-size:.9rem}
+.kling-stage{display:inline-block;max-width:100%;padding:.5rem .75rem;border:1px solid var(--line);border-radius:12px;color:var(--warn);font-size:.8rem;line-height:1.45;font-weight:700}
+.kling-stage[data-state=access_verified]{color:var(--accent);border-color:#34606b}
+.kling-stage[data-state=error],.kling-stage[data-state=credentials_rejected],.kling-stage[data-state=unavailable]{color:var(--danger);border-color:#7f1d1d}
+.kling-status{border-left:3px solid var(--accent2);padding:.5rem .85rem;background:#0a0f16}
+.kling-checklist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.7rem;list-style:none;padding:0;margin:1.2rem 0}
+.kling-checklist li{display:flex;flex-direction:column;gap:.4rem;border:1px solid var(--line);border-radius:12px;padding:.9rem}
+.kling-checklist li:last-child{grid-column:1/-1}
+.kling-checklist strong{font-size:.87rem}.kling-checklist span{font-size:.85rem;line-height:1.55;color:var(--muted)}
+.kling-actions{display:flex;gap:.7rem;flex-wrap:wrap;margin-top:1rem}
+.kling-actions button,.kling-links a,.kling-login{min-height:44px}
+.kling-actions button{white-space:normal;max-width:100%;text-align:left}
+.kling-links{gap:.6rem;margin-top:1.1rem}
+.kling-links a,.kling-login{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:10px;padding:.65rem .8rem;color:var(--accent);text-decoration:underline;text-underline-offset:.2em;font-size:.85rem}
+.kling-panel :is(button,a):focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+@media(max-width:650px){.kling-overview,.kling-checklist{grid-template-columns:minmax(0,1fr)}.kling-panel .section-head{align-items:flex-start;flex-direction:column}.kling-actions,.kling-links{display:grid;grid-template-columns:minmax(0,1fr)}.kling-actions button,.kling-links a{width:100%}.kling-panel{scroll-margin-top:1rem}}
