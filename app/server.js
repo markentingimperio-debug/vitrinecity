@@ -36,6 +36,7 @@ import {createEditorialCoverGenerator} from './editorial-cover-generation.js';
 import {createEditorialSourceSearch} from './editorial-source-search.js';
 import { createCryptoObservability, mountCryptoObservability } from './crypto-observability.js';
 import { mountJarvis } from './jarvis-core.js';
+import { mountNeuralTasksApi } from './vitriny-neural/tasks-api.js';
 import { mountJarvisPublic } from './jarvis-public.js';
 import { setupDiscoverySearch } from './discovery-search.js';
 import { setupMetasearch } from './metasearch.js';
@@ -2653,7 +2654,16 @@ setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, publicDir: path.joi
 const cryptoObservability = createCryptoObservability(db);
 cryptoObservability.seedLatest();
 mountCryptoObservability({ app, requireAdmin, observability: cryptoObservability });
-mountJarvis({ app, db, requireAdmin, sameOriginOnly, researchSchedule: true });
+const platformJarvis = mountJarvis({ app, db, requireAdmin, sameOriginOnly, researchSchedule: true });
+mountNeuralTasksApi({app,tasks:platformJarvis.neural?.service?.tasks,requireAdmin,sameOriginOnly,
+  getAuthorizedStore(req,res){
+    const access=storePortalAccess(req,res);
+    if(!access)return null;
+    const profile=db.prepare('SELECT order_reference FROM store_profiles WHERE order_reference=?').get(access.order.reference);
+    if(!profile){res.status(404).json({error:'Loja não encontrada.'});return null;}
+    return {storeReference:profile.order_reference};
+  }
+});
 setupOrganicAcquisition({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
 setupBusinessProspecting({ app, db, requireAdmin, sameOriginOnly, allowAttempt });
 const affiliateCatalog = setupAffiliateCatalog({ app, db, requireAdmin, requireUser, sameOriginOnly, siteUrl: SITE_URL, publicDir: path.join(dir, 'public') });
