@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>Vitriny Neural · Console de IA | VitrineCity</title>
-  <link rel="stylesheet" href="/vitriny-neural-admin.css?v=2">
-  <script src="/vitriny-neural-admin.js?v=3" defer></script>
+  <link rel="stylesheet" href="/vitriny-neural-admin.css?v=3">
+  <script src="/vitriny-neural-admin.js?v=5" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Pular para o conteúdo</a>
@@ -16,6 +16,8 @@
     <a href="/admin">Central</a>
     <a href="/admin-agentes.html">Edifício neural</a>
     <a href="/admin-jarvis.html">Jarvis</a>
+    <a href="/neural-workspace.html">Chat de tarefas · piloto</a>
+    <a href="/neural-billing.html">Planos e créditos de IA</a>
     <a href="/admin-vitriny-neural.html" aria-current="page">Vitriny Neural</a>
   </nav>
 </header>
@@ -40,6 +42,30 @@
   </section>
 
   <div class="toolbar"><p id="status-line">Aguardando dados…</p><button id="refresh" type="button">Atualizar agora</button></div>
+
+  <section class="panel factual-panel" aria-labelledby="factual-title">
+    <div class="section-head"><div><p class="eyebrow">PREPARAR UM TEXTO</p><h2 id="factual-title">Rascunho com dados confirmados</h2></div><span id="factual-state" class="tag">PRONTO PARA USAR</span></div>
+    <p class="muted">Usa somente os dados que você informar. Organiza suas frases no formato escolhido, preservando o texto de cada uma.</p>
+    <form id="factual-form">
+      <label for="factual-facts">Dados para o rascunho · um fato por linha</label>
+      <textarea id="factual-facts" rows="5" maxlength="15060" required placeholder="Capa para almofada de algodão.&#10;Medida: 45 × 45 cm.&#10;Enchimento não incluso." aria-describedby="factual-facts-help"></textarea>
+      <p id="factual-facts-help" class="fine">Até 30 fatos diferentes, com até 500 caracteres em cada linha.</p>
+      <label for="factual-format">Formato do texto</label>
+      <select id="factual-format">
+        <option value="lines">Linhas</option>
+        <option value="paragraphs">Parágrafos</option>
+        <option value="bullets">Tópicos</option>
+      </select>
+      <div class="form-foot"><small class="fine">Disponível sem consultar um modelo de IA.</small><button class="primary" id="factual-generate" type="submit">Preparar rascunho</button></div>
+    </form>
+    <p id="factual-error" class="error" role="alert" hidden></p>
+    <div class="response" id="factual-response" aria-busy="false">
+      <div class="response-head"><strong>Seu rascunho</strong><button id="factual-copy" type="button" disabled>Copiar texto</button></div>
+      <p id="factual-source" class="fine">Fonte: dados informados por você; sem verificação externa.</p>
+      <pre id="factual-output" tabindex="0">O texto preparado aparecerá aqui.</pre>
+      <p id="factual-notice" class="fine" role="status" aria-live="polite"></p>
+    </div>
+  </section>
 
   <section class="panel supervisor-panel" id="supervisor-panel" aria-labelledby="supervisor-title">
     <div class="section-head"><div><p class="eyebrow">SUPERVISÃO · ESTRUTURA EXISTENTE</p><h2 id="supervisor-title">Supervisor Astra</h2></div><span id="supervisor-state" class="tag">CARREGANDO</span></div>
@@ -84,6 +110,13 @@
     <div id="supervisor-history" class="stack"><p class="muted">Carregando histórico…</p></div>
   </section>
 
+  <section class="panel" aria-labelledby="model-preflight-title">
+    <div class="section-head"><h2 id="model-preflight-title">Diagnóstico do modelo local</h2><button id="model-preflight" type="button">Verificar modelo local</button></div>
+    <p class="muted">Consulta disponibilidade e pré-requisitos do chat sem gerar conteúdo ou consumir tokens de inferência. Não altera permissões nem habilita recursos.</p>
+    <div id="model-preflight-result" aria-live="polite"><p>Verificação ainda não realizada. Conectividade não comprova que uma tarefa será concluída corretamente.</p></div>
+    <p class="fine">Resultados de conectividade são reutilizados por até 10 segundos. O teste real de tarefas é uma etapa separada.</p>
+  </section>
+
   <div class="grid">
     <section class="panel test-panel" aria-labelledby="test-title">
       <div class="section-head"><div><p class="eyebrow">01 / TESTAR IA</p><h2 id="test-title">Converse com uma habilidade</h2></div><span class="tag">SEM AÇÃO AUTOMÁTICA</span></div>
@@ -99,8 +132,22 @@
           <option value="ranking">Ranking</option>
           <option value="media">Imagem / vídeo / áudio</option>
         </select>
+        <div id="growth-action-field" hidden>
+          <label for="growth-action">Tipo de pedido de marketing</label>
+          <select id="growth-action" required disabled aria-describedby="growth-action-help">
+            <option value="" selected>Selecione o tipo de pedido</option>
+            <option value="diagnose">Diagnóstico</option>
+            <option value="campaign-plan">Plano de campanha</option>
+            <option value="content-plan">Rascunho de conteúdo</option>
+            <option value="seo-plan">Plano de SEO</option>
+            <option value="experiment">Experimento</option>
+            <option value="metric-review">Revisão de métricas</option>
+          </select>
+          <p id="growth-action-help" class="fine">Escolha a entrega desejada. Nenhuma opção publica conteúdo ou executa uma campanha.</p>
+        </div>
         <label for="prompt">Pedido para a Neural</label>
-        <textarea id="prompt" rows="5" maxlength="5000" minlength="3" required placeholder="Ex.: Analise como aumentar a conversão das lojas locais sem aumentar o desperdício de anúncios."></textarea>
+        <textarea id="prompt" rows="5" maxlength="6000" minlength="3" required placeholder="Ex.: Analise como aumentar a conversão das lojas locais sem aumentar o desperdício de anúncios." aria-describedby="test-limit test-hint"></textarea>
+        <p id="test-limit" class="fine">Até 6000 caracteres para esta área.</p>
         <div class="form-foot"><small id="test-hint">A resposta é apenas para avaliação administrativa.</small><button class="primary" id="run-test" type="submit">Executar teste ↗</button></div>
       </form>
       <div class="response" id="test-response" aria-busy="false">

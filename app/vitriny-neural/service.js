@@ -10,8 +10,17 @@ import {createNeuralBenchmarkManager} from './benchmark-manager.js';
 import {createNeuralWebResearchEngine} from './web-research-engine.js';
 import {createNeuralDatasetBuilder} from './dataset-builder.js';
 import {createAstraSupervisor} from './astra-supervisor.js';
+import {createNeuralTaskEngine} from './task-engine.js';
+import {createNeuralBilling} from './billing.js';
+import {createNeuralTaskDiagnostics} from './task-diagnostics.js';
 
 function primaryProviderId(runtime){const providers=runtime.skills.status().providers||[];return providers.find(provider=>provider.policy?.enabled!==false)?.id||providers[0]?.id||null;}
+function qualificationMatchesProvider(provider,record){
+  // Generic adapters without a configured model keep legacy provider-level
+  // qualifications. Named model adapters must match the exact recorded alias;
+  // task execution independently requires a nonempty, matching model identity.
+  return Boolean(provider&&record&&record.providerId===provider.id&&(!provider.modelName||record.modelName===provider.modelName));
+}
 
 export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalThis.fetch,now=Date.now,nodeId='service',providers=null,pseudonymSalt='vitriny-neural-v1',logger=console}={}){
   if(!db)throw new TypeError('Vitriny Neural service requer banco.');
@@ -21,18 +30,22 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
   const budget=createNeuralActionBudget({db,now,limit:config.maxDailyAutoActions});
   const observer=createShadowObserver({db,neural:runtime.neural,now,intervalMs:config.observerIntervalMs,logger,onSample:()=>supervisor.tick()});
 
-  function applyQualificationPolicy(providerId,qualification,source='qualification'){
-    if(!runtime.skills.setProviderPolicy||!qualification)return null;
-    return runtime.skills.setProviderPolicy(providerId,{enabled:qualification.productionEligible===true,allowedCapabilities:qualification.allowedCapabilities||[],source});
+  function applyQualificationPolicy(providerId,record,source='qualification'){
+    if(!runtime.skills.setProviderPolicy||!record?.qualification)return null;
+    const provider=runtime.skills.status().providers.find(item=>item.id===providerId);
+    const matches=qualificationMatchesProvider(provider,record),qualification=record.qualification;
+    return runtime.skills.setProviderPolicy(providerId,{enabled:matches&&qualification.productionEligible===true,allowedCapabilities:matches?qualification.allowedCapabilities||[]:[],source:matches?source:'qualification_model_mismatch'});
   }
   for(const provider of runtime.skills.status().providers){
     const saved=qualifications.latest(provider.id);
-    if(saved?.qualification)applyQualificationPolicy(provider.id,saved.qualification,'persisted_qualification');
+    if(saved?.qualification)applyQualificationPolicy(provider.id,saved,'persisted_qualification');
   }
 
   function activeQualificationRecord(){
     const providerId=primaryProviderId(runtime);
-    return providerId?qualifications.latest(providerId):null;
+    if(!providerId)return null;
+    const provider=runtime.skills.status().providers.find(item=>item.id===providerId),record=qualifications.latest(providerId);
+    return qualificationMatchesProvider(provider,record)?record:null;
   }
   function activeQualification(){return activeQualificationRecord()?.qualification||null;}
 
@@ -42,7 +55,7 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
     if(!providerId)throw new Error('Nenhum provider Neural disponível para qualificação.');
     const qualification=qualifyModel(report,{thresholds:{overall:config.benchmarkMinScore,safety:config.benchmarkMinSafety}});
     const saved=qualifications.save({providerId,modelName,suite,report,qualification,at:new Date(Number(now())).toISOString()});
-    applyQualificationPolicy(providerId,qualification,'semantic_benchmark');
+    applyQualificationPolicy(providerId,saved,'semantic_benchmark');
     return saved;
   }
 
@@ -62,6 +75,10 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
     const exists=db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ecosystem_policy'").get();
     return !exists||db.prepare('SELECT paused FROM ecosystem_policy WHERE id=1').get()?.paused===0;
   }});
+  const billing=createNeuralBilling({db,env,now});
+  const tasks=createNeuralTaskEngine({db,skills:runtime.skills,qualifications,config,billing,env,now});
+  const taskDiagnostics=createNeuralTaskDiagnostics({probeLocalProviders:runtime.probeLocalProviders,
+    getProviders:()=>runtime.skills.status().providers,getQualification:qualifications.latest,getTaskStatus:()=>tasks.status('admin',{reapExpired:false}),now});
 
   function readiness(){return assessNeuralReadiness({runtime,qualification:activeQualification()});}
 
@@ -86,9 +103,10 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
       webResearch:webResearch.status(),
       training:training.status(),
       supervisor:supervisor.status(),
+      tasks:tasks.status('admin'),
       benchmark:{activeId:benchmarks.status().activeId,recent:benchmarks.list(5).map(item=>({id:item.id,status:item.status,providerId:item.providerId,modelName:item.modelName,score:item.score,grade:item.grade,createdAt:item.createdAt,completedAt:item.completedAt}))}
     };
   }
 
-  return{runtime,config,qualifications,budget,observer,benchmarks,webResearch,training,supervisor,execution,recordQualification,readiness,capture,authorize,commitAction,releaseAction,status};
+  return{runtime,config,qualifications,budget,observer,benchmarks,webResearch,training,supervisor,tasks,billing,taskDiagnostics,execution,recordQualification,readiness,capture,authorize,commitAction,releaseAction,status};
 }
