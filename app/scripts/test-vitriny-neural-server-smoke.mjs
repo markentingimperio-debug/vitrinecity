@@ -25,15 +25,24 @@ const storeToken=reference=>createHmac('sha256',secret).update(`store:${referenc
 // No configured credentials are inherited and no production database is opened.
 const bootstrap=`
   import net from 'node:net';
+  import fs from 'node:fs';
+  import path from 'node:path';
   const blocked=()=>{throw new Error('external_network_disabled_in_smoke');};
   net.Socket.prototype.connect=blocked;
   globalThis.fetch=async()=>blocked();
+  const mkdir=fs.mkdirSync;
+  fs.mkdirSync=(folder,options)=>{
+    const target=path.resolve(String(folder)),root=process.env.DATA_DIR;
+    if(target!==root&&!target.startsWith(root+path.sep))throw new Error('directory_outside_smoke_fixture');
+    return mkdir(folder,options);
+  };
   await import('./server.js');
 `;
 const child=spawn(process.execPath,['--input-type=module','--eval',bootstrap],{
   cwd:appDir,
   env:{
     PATH:process.env.PATH,NODE_ENV:'test',DATA_DIR:dataDir,PORT:String(port),SITE_URL:origin,
+    LIVE_STUDIO_DIR:path.join(dataDir,'live-studio'),
     STORE_PORTAL_SECRET:secret,ADMIN_EMAILS:'',JARVIS_LOCAL_MODEL:'0',
     VITRINY_NEURAL_ENABLED:'0',VITRINY_NEURAL_TASKS_ENABLED:'0',
     VITRINY_NEURAL_TASKS_STORES:'smoke-store-a,smoke-store-mfa,smoke-store-no-profile',
