@@ -127,7 +127,12 @@ export function createOpenAICompatibleProvider({id='local-model',baseUrl,apiKey=
       const reason=data?.choices?.[0]?.finish_reason;
       const finishReason=['stop','length','content_filter','tool_calls','function_call'].includes(reason)?reason:null;
       const incomplete=finishReason==='length'||finishReason==='content_filter';
-      return {text:normalizeContent(data,{incomplete}),model:data?.model??null,usage:data?.usage||null,finishReason,incomplete};
+      // Preserve only the presence marker. Plain-chat callers must reject tool
+      // attempts even when a provider incorrectly labels their finish as stop.
+      // Tool names/arguments are not promoted into executable instructions.
+      const message=data?.choices?.[0]?.message;
+      const toolCallsPresent=message?.tool_calls!=null||message?.function_call!=null;
+      return {text:normalizeContent(data,{incomplete}),model:data?.model??null,usage:data?.usage||null,finishReason,incomplete,...(toolCallsPresent?{toolCallsPresent:true}:{})};
     }
   };
 }

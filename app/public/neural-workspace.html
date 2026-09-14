@@ -2,81 +2,73 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <meta name="referrer" content="same-origin">
-  <title>Vitrini Neural · Espaço de trabalho</title>
+  <title>Lia · IA da VitrineCity</title>
   <link rel="stylesheet" href="/neural-workspace.css">
   <script type="module" src="/neural-workspace.js"></script>
 </head>
 <body>
-  <a class="skip-link" href="#command">Pular para o comando</a>
-  <header class="topbar">
-    <a class="brand" href="/">V<span aria-hidden="true">✦</span><span>Vitrini <strong>Neural</strong></span></a>
-    <div class="header-meta"><span id="account-label">Administração</span><span class="pill">Piloto · rascunhos</span></div>
-  </header>
-  <main class="workspace">
-    <aside class="sidebar" aria-labelledby="history-title">
-      <div class="sidebar-heading"><h2 id="history-title">Suas tarefas</h2><button id="refresh" type="button" class="quiet">Atualizar</button></div>
-      <p class="muted small">O histórico é recuperado do servidor. Reabrir a página não inicia tarefas novamente.</p>
-      <p id="history-empty" class="empty">Nenhuma tarefa carregada.</p>
-      <ul id="task-list" class="task-list"></ul>
+  <a class="skip-link" href="#command">Pular para a mensagem</a>
+  <div class="workspace">
+    <aside id="history-panel" class="sidebar" aria-labelledby="history-title">
+      <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">✦</span><strong>Lia</strong><span> · VitrineCity</span></a>
+      <button id="new-conversation" type="button" class="new-conversation">＋ Nova conversa</button>
+      <div class="sidebar-heading"><h2 id="history-title">Suas conversas</h2><button id="refresh" type="button" class="quiet" aria-label="Atualizar conversas">↻</button></div>
+      <p id="history-empty" class="small muted">Nenhuma conversa carregada.</p>
+      <ul id="conversation-list" class="conversation-list"></ul>
       <div class="connection">
-        <p id="service-status" role="status">Consultando disponibilidade…</p>
-        <p id="quota-status" class="small muted">As cotas do acesso aparecerão aqui.</p>
-        <p id="execution-mode" class="small muted">Sem publicação automática.</p>
-        <p id="billing-status" class="small muted">Créditos de IA consultados com o acesso.</p>
-        <a id="billing-link" href="/neural-billing.html" class="small">Plano e extrato de IA</a>
+        <p id="service-status" class="small" role="status">Conferindo disponibilidade…</p>
+        <p id="billing-status" class="small muted">Gerações pagas não estão ativas neste chat.</p>
+        <a id="billing-link" href="/neural-billing.html">Créditos IA</a>
+        <a id="tasks-link" href="/neural-tasks.html">Tarefas e rascunhos do piloto</a>
+        <a id="advanced-link" href="/admin-vitriny-neural.html">Administração avançada</a>
+        <a id="admin-login" href="/admin-login.html" hidden>Entrar na administração</a>
       </div>
-      <a id="admin-login" class="small" href="/admin-login.html" hidden>Entrar na administração</a>
     </aside>
-    <section class="conversation" aria-labelledby="workspace-title">
-      <div class="intro">
-        <p class="eyebrow">UM COMANDO. UM ESPAÇO DE TRABALHO.</p>
-        <h1 id="workspace-title">O que vamos criar?</h1>
-        <p>Descreva seu objetivo. A Neural identifica o tipo de tarefa e acompanha as etapas, sem você escolher um modelo.</p>
-        <p class="pilot-notice">Este piloto cria rascunhos de textos e código. Navegação em sites, publicação em redes sociais e geração de imagens e vídeos dependem de integrações ainda indisponíveis. Código gerado não foi executado nem testado; revise os arquivos antes de usar.</p>
-      </div>
+    <main class="chat-shell">
+      <header class="topbar">
+        <button id="history-toggle" type="button" class="quiet history-toggle" aria-label="Mostrar conversas" aria-expanded="false" aria-controls="history-panel">☰</button>
+        <div class="header-title"><h1 id="conversation-title">Lia</h1><p id="account-label">IA da VitrineCity</p></div>
+        <span id="mode-label" class="pill">Chat</span>
+      </header>
       <section id="store-access" class="access-card" aria-labelledby="access-title" hidden>
-        <h2 id="access-title">Acesso da sua loja</h2>
-        <p class="small muted">Use a senha de acesso do portal. Ela fica apenas na memória desta página e será solicitada novamente ao reabrir.</p>
-        <form id="access-form">
-          <label for="access-token">Senha de acesso</label>
-          <div class="access-row"><input id="access-token" type="password" autocomplete="current-password" required maxlength="512"><button id="connect" type="submit">Conectar</button><button id="disconnect" type="button" class="quiet" hidden>Esquecer acesso</button></div>
-        </form>
+        <h2 id="access-title">Conectar sua loja</h2>
+        <p class="small muted">O acesso fica apenas na memória desta página. Ao reabrir, conecte novamente.</p>
+        <form id="access-form"><label for="access-token">Senha de acesso do portal</label><div class="access-row"><input id="access-token" type="password" autocomplete="current-password" required maxlength="512"><button id="connect" type="submit">Conectar</button><button id="disconnect" type="button" class="quiet" hidden>Esquecer acesso</button></div></form>
         <p id="access-status" class="small muted" role="status">Aguardando autenticação.</p>
       </section>
-      <p id="error" class="error" role="alert" hidden></p>
-      <p id="announcement" class="sr-only" role="status" aria-live="polite"></p>
-      <div id="welcome" class="welcome">
-        <span class="neural-mark" aria-hidden="true">✦</span>
-        <h2>Conte o que você precisa</h2>
-        <p class="muted">Comece com um pedido de texto ou um rascunho de site.</p>
-        <div class="examples" aria-label="Exemplos de comandos">
-          <button type="button" data-example="Crie um roteiro de 30 segundos para apresentar os produtos da minha loja, com uma chamada final para conhecer o catálogo.">Roteiro para minha loja</button>
-          <button type="button" data-example="Crie os arquivos de um site simples para uma loja de jardinagem, com apresentação, produtos e contato. Use apenas dados de exemplo e identifique-os.">Rascunho de um site</button>
-          <button type="button" data-example="Escreva três descrições curtas para um adubo orgânico. Não invente composição, certificações nem resultados garantidos.">Descrições de produtos</button>
-        </div>
+      <div id="conversation-scroll" class="conversation-scroll">
+        <section id="welcome" class="welcome" aria-labelledby="welcome-title">
+          <span class="welcome-mark" aria-hidden="true">✦</span>
+          <h2 id="welcome-title">O que vamos fazer hoje?</h2>
+          <p>Escreva do seu jeito. Eu identifico o pedido e uso os recursos disponíveis, sem você escolher uma área.</p>
+          <div class="examples" aria-label="Ideias para começar">
+            <button type="button" data-example="Me ajude a organizar uma ideia para minha loja.">Organizar uma ideia</button>
+            <button type="button" data-example="Vou anexar um documento. Resuma o texto e destaque os próximos passos.">Entender um documento</button>
+            <button type="button" data-example="Escreva uma apresentação curta da minha loja. Pergunte quais informações precisa antes de inventar detalhes.">Preparar um texto</button>
+          </div>
+        </section>
+        <ol id="messages" class="messages" aria-label="Mensagens desta conversa"></ol>
       </div>
-      <article id="task-detail" class="task-detail" aria-labelledby="task-title" hidden>
-        <div class="message user-message"><p class="message-label">Seu comando</p><h2 id="task-title">Detalhes da tarefa</h2></div>
-        <div class="message assistant-message">
-          <div class="task-heading"><p class="message-label">Vitrini Neural</p><span id="task-status" class="pill"></span></div>
-          <p id="task-meta" class="small muted"></p>
-          <p id="task-guidance" class="task-guidance"></p>
-          <ol id="task-events" class="task-events" aria-label="Etapas registradas"></ol>
-          <pre id="task-output" class="task-output"></pre>
-          <div id="task-files" class="task-files" aria-label="Arquivos para baixar"></div>
-          <div class="task-actions"><button id="start-task" type="button" hidden>Iniciar rascunho</button><button id="cancel-task" type="button" class="quiet" hidden>Cancelar tarefa</button></div>
-        </div>
-      </article>
-      <form id="command-form" class="composer">
-        <label for="command">Seu próximo comando</label>
-        <textarea id="command" name="instruction" rows="3" minlength="3" maxlength="6000" required placeholder="Ex.: crie um roteiro para apresentar os produtos da minha loja…" aria-describedby="command-hint"></textarea>
-        <div class="composer-footer"><p id="command-hint" class="small muted">Não inclua senhas, chaves de API ou dados pessoais desnecessários.</p><button id="send" class="primary" type="submit" disabled>Enviar comando <span aria-hidden="true">↑</span></button></div>
-      </form>
-      <p class="footer-note">Resultados de IA podem conter erros. Revise conteúdo e arquivos. Recursos e cotas dependem do acesso habilitado para sua conta.</p>
-    </section>
-  </main>
+      <div class="composer-dock">
+        <p id="capability-notice" class="capability-notice" hidden>Seu envio será salvo no histórico privado, mas o modelo ainda não está habilitado para responder. Você pode organizar conversas e anexar arquivos. Nenhuma geração paga será realizada.</p>
+        <p id="error" class="error" role="alert" hidden></p>
+        <div id="recovery" class="recovery" hidden><p>O recebimento do último envio ainda não foi confirmado. Vamos conferir o registro, sem enviar outra vez.</p><button id="recover-request" type="button">Conferir envio</button><p id="retry-note" hidden>O registro ainda não foi encontrado. Se você escolher tentar, enviaremos exatamente a mensagem e as referências aos mesmos anexos, com o mesmo identificador para evitar duplicidade. Os arquivos não serão enviados novamente.</p><button id="retry-request" type="button" aria-describedby="retry-note" hidden>Tentar o mesmo envio</button></div>
+        <p id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+        <form id="command-form" class="composer">
+          <ul id="attachment-previews" class="attachment-previews" aria-label="Arquivos para enviar"></ul>
+          <label for="command" class="sr-only">Mensagem para a Lia</label>
+          <textarea id="command" name="message" rows="2" minlength="1" maxlength="6000" required placeholder="Pergunte, peça uma ideia ou adicione um arquivo…" aria-describedby="command-hint attachment-hint error"></textarea>
+          <div class="composer-footer">
+            <div class="composer-tools"><button id="attach" type="button" class="attach-button" aria-label="Adicionar imagem ou documento" title="Adicionar imagem ou documento" disabled>＋</button><label for="attachment-input" class="sr-only">Escolha até três imagens ou documentos de texto</label><input id="attachment-input" type="file" accept="image/png,image/jpeg,image/webp,.txt,.md,.csv" multiple hidden><span id="command-hint" class="small muted">Enter envia · Shift + Enter quebra a linha</span></div>
+            <div class="send-controls"><button id="cancel-request" type="button" class="quiet" hidden>Parar</button><button id="send" type="submit" class="primary send-button" aria-label="Enviar mensagem" title="Enviar mensagem" disabled>↑</button></div>
+          </div>
+        </form>
+        <details class="chat-notice"><summary>Sobre os arquivos e recursos deste chat</summary><p id="attachment-hint">Até 3 arquivos: PNG, JPEG ou WebP até 2 MB cada; TXT, MD ou CSV até 64 KB cada. PDF e DOCX ainda não são aceitos. Ao enviar, mensagens e arquivos ficam no histórico privado deste acesso. Imagens podem ser anexadas, mas o chat ainda não interpreta seu conteúdo visual nem gera imagens ou vídeos. Para contextualizar uma imagem, descreva-a na mensagem. Documentos de texto podem servir de contexto.</p><p>Não envie senhas, chaves de API ou dados pessoais desnecessários. Resultados de IA podem conter erros. O chat não publica, movimenta dinheiro nem executa código automaticamente.</p></details>
+      </div>
+    </main>
+  </div>
 </body>
 </html>

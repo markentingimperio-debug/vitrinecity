@@ -59,6 +59,7 @@ import {createEditorialSourceSearch} from './editorial-source-search.js';
 import { createCryptoObservability, mountCryptoObservability } from './crypto-observability.js';
 import { mountJarvis } from './jarvis-core.js';
 import { mountNeuralTasksApi } from './vitriny-neural/tasks-api.js';
+import { mountNeuralChatApi } from './vitriny-neural/chat-api.js';
 import { mountNeuralBillingApi } from './vitriny-neural/billing-api.js';
 import { mountJarvisPublic } from './jarvis-public.js';
 import { setupDiscoverySearch } from './discovery-search.js';
@@ -2734,6 +2735,7 @@ function neuralAuthorizedStore(req,res){
     return {storeReference:profile.order_reference};
 }
 mountNeuralTasksApi({app,tasks:jarvisCore.neural?.service?.tasks,requireAdmin,sameOriginOnly,getAuthorizedStore:neuralAuthorizedStore});
+mountNeuralChatApi({app,chat:jarvisCore.neural?.service?.chat,requireAdmin,sameOriginOnly,getAuthorizedStore:neuralAuthorizedStore});
 mountNeuralBillingApi({app,billing:jarvisCore.neural?.service?.billing,tasks:jarvisCore.neural?.service?.tasks,
   requireAdmin,sameOriginOnly,getAuthorizedStore:neuralAuthorizedStore,
   storeExists:reference=>Boolean(db.prepare('SELECT 1 FROM store_profiles p JOIN lot_orders o ON o.reference=p.order_reference WHERE p.order_reference=?').get(reference))

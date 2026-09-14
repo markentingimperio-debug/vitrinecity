@@ -18,6 +18,8 @@ const origin=`http://127.0.0.1:${port}`;
 const secret='neural-smoke-store-secret-fixture-only';
 const adminBase='/api/admin/vitriny-neural/tasks';
 const storeBase=reference=>`/api/store-portal/${reference}/neural/tasks`;
+const adminChat='/api/admin/vitriny-neural/chat';
+const storeChat=reference=>`/api/store-portal/${reference}/neural/chat`;
 const digest=value=>createHash('sha256').update(value).digest('hex');
 const storeToken=reference=>createHmac('sha256',secret).update(`store:${reference}`).digest('base64url');
 
@@ -46,6 +48,7 @@ const child=spawn(process.execPath,['--input-type=module','--eval',bootstrap],{
     STORE_PORTAL_SECRET:secret,ADMIN_EMAILS:'',JARVIS_LOCAL_MODEL:'0',
     VITRINY_NEURAL_ENABLED:'0',VITRINY_NEURAL_TASKS_ENABLED:'0',
     VITRINY_NEURAL_TASKS_STORES:'smoke-store-a,smoke-store-mfa,smoke-store-no-profile',
+    VITRINY_NEURAL_CHAT_STORES:'smoke-store-a,smoke-store-b,smoke-store-mfa,smoke-store-no-profile',
     META_SOCIAL_METRICS_AUTO_SYNC:'0'
   },stdio:['ignore','pipe','pipe']
 });
@@ -76,9 +79,9 @@ async function request(route,{method='GET',body,headers={}}={}){
   if(route.startsWith('/api/'))assert.equal(response.headers.get('cache-control'),'no-store',`${method} ${route} cache policy`);
   return{response,status:response.status,text,json};
 }
-function seedUser(isAdmin){
+function seedUser(isAdmin,suffix=''){
   const id=Number(db.prepare('INSERT INTO users(name,email,password_hash,is_admin) VALUES(?,?,?,?)')
-    .run(isAdmin?'Smoke Admin':'Smoke Customer',isAdmin?'admin@smoke.invalid':'customer@smoke.invalid','fixture-no-password-login',isAdmin?1:0).lastInsertRowid);
+    .run(isAdmin?'Smoke Admin':'Smoke Customer',`${isAdmin?'admin':'customer'}${suffix}@smoke.invalid`,'fixture-no-password-login',isAdmin?1:0).lastInsertRowid);
   const token=randomBytes(32).toString('base64url');
   db.prepare('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)').run(digest(token),id,Date.now()+60000);
   return `vc_session=${token}`;
@@ -93,7 +96,7 @@ function seedStore(reference,{profile=true,status='approved',operation='active'}
 try{
   await waitForServer();
   db=new Database(path.join(dataDir,'vitrinecity.db'));
-  const adminCookie=seedUser(true),customerCookie=seedUser(false);
+  const adminCookie=seedUser(true),customerCookie=seedUser(false),secondAdminCookie=seedUser(true,'-second');
   seedStore('smoke-store-a');seedStore('smoke-store-b');
   seedStore('smoke-store-no-profile',{profile:false});
   seedStore('smoke-store-inactive',{operation:'restricted'});
@@ -110,6 +113,45 @@ try{
   assert.equal(result.status,200);assert.deepEqual(result.json.items,[]);
   result=await request(adminBase,{method:'POST',headers:{cookie:adminCookie},body:{instruction:'Crie um texto da loja.',idempotencyKey:'admin_smoke_disabled_1'}});
   assert.equal(result.status,503);assert.equal(result.json.code,'task_disabled');
+
+  // Chat routes run through the real server's session/admin middleware, not a
+  // test replacement. Storing context is distinct from enabling inference.
+  result=await request(adminChat+'/status');assert.equal(result.status,401);
+  result=await request(adminChat+'/status',{headers:{cookie:customerCookie}});assert.equal(result.status,403);
+  result=await request(adminChat+'/status',{headers:{cookie:adminCookie}});
+  assert.equal(result.status,200);assert.equal(result.json.ok,true);
+  assert.equal(result.json.capabilities.text,false);assert.equal(result.json.paidGenerationEnabled,false);
+  const adminAttachmentBody={name:'contexto-privado.txt',mimeType:'text/plain',dataBase64:Buffer.from('Contexto privado do primeiro administrador.').toString('base64')};
+  result=await request(adminChat+'/attachments',{method:'POST',headers:{cookie:customerCookie},body:adminAttachmentBody});assert.equal(result.status,403);
+  result=await request(adminChat+'/attachments',{method:'POST',headers:{cookie:adminCookie,origin:'https://foreign.invalid'},body:adminAttachmentBody});assert.equal(result.status,403);
+  result=await request(adminChat+'/attachments',{method:'POST',headers:{cookie:adminCookie,'x-neural-request':''},body:adminAttachmentBody});assert.equal(result.status,403);
+  result=await request(adminChat+'/attachments',{method:'POST',headers:{cookie:adminCookie},body:adminAttachmentBody});
+  assert.equal(result.status,201);const adminAttachment=result.json.attachment;
+  assert.equal(adminAttachment.textAvailable,true);assert.equal(adminAttachment.kind,'text');assert.ok(!Object.hasOwn(adminAttachment,'data'));
+  const adminMessageBody={message:'Resuma este documento.',attachmentIds:[adminAttachment.id],idempotencyKey:'smoke_admin_chat_001'};
+  result=await request(adminChat+'/messages',{method:'POST',headers:{cookie:adminCookie},body:adminMessageBody});
+  assert.equal(result.status,202);assert.equal(result.json.status,'unavailable');const adminRequest=result.json;
+  result=await request(adminChat+'/conversations/'+adminRequest.conversationId,{headers:{cookie:adminCookie}});
+  assert.equal(result.status,200);assert.equal(result.json.messages.length,2);
+  assert.equal(result.json.messages[0].text,adminMessageBody.message);assert.equal(result.json.messages[0].attachments[0].id,adminAttachment.id);
+  assert.equal(result.json.messages[1].status,'unavailable');assert.match(result.json.messages[1].text,/nenhuma API paga/i);
+  result=await request(adminChat+'/requests/by-key/'+adminMessageBody.idempotencyKey,{headers:{cookie:adminCookie}});
+  assert.equal(result.status,200);assert.equal(result.json.request.id,adminRequest.requestId);
+  result=await request(adminChat+'/messages',{method:'POST',headers:{cookie:adminCookie},body:adminMessageBody});
+  assert.equal(result.status,200);assert.equal(result.json.duplicate,true);assert.equal(result.json.requestId,adminRequest.requestId);
+  result=await request(adminChat+'/attachments/'+adminAttachment.id,{headers:{cookie:adminCookie}});
+  assert.equal(result.status,200);assert.equal(result.text,'Contexto privado do primeiro administrador.');
+  assert.equal(result.response.headers.get('x-content-type-options'),'nosniff');assert.match(result.response.headers.get('content-security-policy'),/sandbox/);
+  assert.match(result.response.headers.get('content-disposition'),/^attachment;/);
+  result=await request(adminChat+'/conversations',{headers:{cookie:secondAdminCookie}});assert.equal(result.status,200);assert.deepEqual(result.json.items,[]);
+  for(const route of ['/attachments/'+adminAttachment.id,'/conversations/'+adminRequest.conversationId,'/requests/'+adminRequest.requestId,'/requests/by-key/'+adminMessageBody.idempotencyKey]){
+    result=await request(adminChat+route,{headers:{cookie:secondAdminCookie}});assert.equal(result.status,404,'one admin cannot read another admin private chat');
+  }
+  result=await request(adminChat+'/requests/'+adminRequest.requestId+'/cancel',{method:'POST',headers:{cookie:secondAdminCookie},body:{}});assert.equal(result.status,404);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM neural_chat_conversations').get().n,1);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM neural_chat_requests').get().n,1);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM neural_chat_messages').get().n,2);
+  assert.equal(db.prepare('SELECT typeof(data) type FROM neural_chat_attachments WHERE id=?').get(adminAttachment.id).type,'blob');
 
   const factualRoute='/api/admin/vitriny-neural/factual-draft';
   const factualBody={facts:[{id:'f1',text:'Capa de almofada em algodão cru, com zíper.'},{id:'f2',text:'Não acompanha enchimento.'}],format:'paragraphs'};
@@ -134,6 +176,30 @@ try{
   result=await request(storeBase('smoke-store-b')+'/status',{headers:{'x-store-token':storeToken('smoke-store-b')}});
   assert.equal(result.status,403);assert.equal(result.json.code,'task_scope_denied','valid portal auth does not override Neural store allowlist');
 
+  result=await request(storeChat('smoke-store-a')+'/status');assert.equal(result.status,403);
+  result=await request(storeChat('smoke-store-a')+'/status',{headers:merchantHeaders});
+  assert.equal(result.status,200);assert.equal(result.json.capabilities.text,false);assert.equal(result.json.paidGenerationEnabled,false);
+  result=await request(storeChat('smoke-store-b')+'/status',{headers:merchantHeaders});assert.equal(result.status,403,'store A credential is not valid for chat B');
+  const merchantBHeaders={'x-store-token':storeToken('smoke-store-b')};
+  result=await request(storeChat('smoke-store-b')+'/status',{headers:merchantBHeaders});assert.equal(result.status,200,'chat B is explicitly enrolled for isolation checks');
+  result=await request(storeChat('smoke-store-a')+'/attachments',{method:'POST',headers:merchantHeaders,body:{name:'loja-a.md',mimeType:'text/markdown',dataBase64:Buffer.from('Referência privada da loja A.').toString('base64')}});
+  assert.equal(result.status,201);const storeAttachment=result.json.attachment;
+  result=await request(storeChat('smoke-store-a')+'/messages',{method:'POST',headers:merchantHeaders,body:{message:'Resuma este material.',attachmentIds:[storeAttachment.id],idempotencyKey:'smoke_store_chat_a_001'}});
+  assert.equal(result.status,202);assert.equal(result.json.status,'unavailable');const storeRequest=result.json;
+  result=await request(storeChat('smoke-store-a')+'/conversations/'+storeRequest.conversationId,{headers:merchantHeaders});
+  assert.equal(result.status,200);assert.equal(result.json.messages[0].attachments[0].id,storeAttachment.id);
+  result=await request(storeChat('smoke-store-a')+'/attachments/'+storeAttachment.id,{headers:merchantHeaders});
+  assert.equal(result.status,200);assert.equal(result.text,'Referência privada da loja A.');
+  result=await request(storeChat('smoke-store-b')+'/conversations',{headers:merchantBHeaders});assert.equal(result.status,200);assert.deepEqual(result.json.items,[]);
+  for(const route of ['/attachments/'+storeAttachment.id,'/conversations/'+storeRequest.conversationId,'/requests/'+storeRequest.requestId]){
+    result=await request(storeChat('smoke-store-b')+route,{headers:merchantBHeaders});assert.equal(result.status,404,'authenticated store B cannot read chat A');
+    result=await request(adminChat+route,{headers:{cookie:adminCookie}});assert.equal(result.status,404,'admin private chat route does not bypass store ownership');
+  }
+  result=await request(storeChat('smoke-store-a')+'/attachments/'+adminAttachment.id,{headers:merchantHeaders});assert.equal(result.status,404);
+  result=await request(storeChat('smoke-store-b')+'/messages',{method:'POST',headers:merchantBHeaders,body:{message:'Use esse anexo.',attachmentIds:[storeAttachment.id],idempotencyKey:'smoke_store_chat_b_001'}});
+  assert.equal(result.status,404,'foreign attachment cannot be assigned to a new request');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM neural_chat_requests').get().n,2);
+
   for(const [reference,expected]of [['smoke-store-absent',404],['smoke-store-no-profile',404],['smoke-store-inactive',403],['smoke-store-unpaid',409]]){
     result=await request(storeBase(reference)+'/status',{headers:{'x-store-token':storeToken(reference)}});
     assert.equal(result.status,expected,reference);
@@ -150,20 +216,25 @@ try{
   const mfaHeaders={'x-store-token':storeToken('smoke-store-mfa')};
   result=await request(storeBase('smoke-store-mfa')+'/status',{headers:mfaHeaders});
   assert.equal(result.status,428);assert.equal(result.json.mfaRequired,true);
+  result=await request(storeChat('smoke-store-mfa')+'/status',{headers:mfaHeaders});assert.equal(result.status,428);assert.equal(result.json.mfaRequired,true);
+  result=await request(storeChat('smoke-store-mfa')+'/attachments',{method:'POST',headers:mfaHeaders,body:adminAttachmentBody});assert.equal(result.status,428);
   const mfaToken=randomBytes(32).toString('base64url');
   db.prepare('INSERT INTO seller_mfa_sessions(session_hash,store_reference,expires_at) VALUES(?,?,?)')
     .run(digest(mfaToken),'smoke-store-mfa',Date.now()+60000);
   mfaHeaders.cookie=`vc_store_mfa_${digest('smoke-store-mfa').slice(0,12)}=${mfaToken}`;
   result=await request(storeBase('smoke-store-mfa')+'/status',{headers:mfaHeaders});
   assert.equal(result.status,200);assert.equal(result.json.enabled,false);
+  result=await request(storeChat('smoke-store-mfa')+'/status',{headers:mfaHeaders});assert.equal(result.status,200);assert.equal(result.json.capabilities.text,false);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM neural_tasks').get().n,0,'disabled/invalid calls must not persist tasks');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM neural_task_attempts').get().n,0,'new chat requests do not create task inference attempts');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM neural_chat_requests WHERE status<>'unavailable'").get().n,0,'no model or paid generation was enabled by the chat');
 
   result=await request('/neural-workspace.html');
   assert.equal(result.status,200);assert.match(result.response.headers.get('content-type'),/text\/html/);
   assert.match(result.text,/id="command"/);assert.match(result.text,/neural-workspace\.js/);
   result=await request('/neural-workspace.js');assert.equal(result.status,200);assert.match(result.text,/x-neural-request/i);
   result=await request('/neural-workspace.css');assert.equal(result.status,200);assert.match(result.response.headers.get('content-type'),/text\/css/);
-  console.log(JSON.stringify({ok:true,suite:'vitriny-neural-server-smoke',server:'real app/server.js',tasks:'disabled',database:'temporary',externalNetwork:'blocked in child',checks:['admin auth and no-store','merchant portal and canonical reference','inactive/unpaid/missing profile','store allowlist','MFA','disabled/invalid submissions','static workspace assets']}));
+  console.log(JSON.stringify({ok:true,suite:'vitriny-neural-server-smoke',server:'real app/server.js',tasks:'disabled',database:'temporary',externalNetwork:'blocked in child',checks:['admin auth and no-store','merchant portal and canonical reference','inactive/unpaid/missing profile','store allowlist','MFA','disabled/invalid submissions','private chat admin isolation','private chat merchant isolation','private attachment blob storage','chat idempotency and durable recovery','chat MFA','no inference or paid generation','static workspace assets']}));
 }finally{
   db?.close();
   if(child.exitCode===null&&!spawnError)child.kill('SIGTERM');
