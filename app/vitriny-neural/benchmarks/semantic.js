@@ -26,9 +26,13 @@ export async function runSemanticBenchmark({provider,cases,timeoutMs=90000,now=D
       try{output=await provider.invoke({capability:test.capability,input:{...test.input,benchmarkCaseId:test.id},signal:controller.signal});}
       finally{clearTimeout(timer);}
       model=output?.model||null;usage=output?.usage||null;
+      // Matching words in a partial answer cannot qualify a model. Preserve the
+      // receipt and model identity even when generation was cut short/filtered.
+      if(output?.incomplete===true||['length','content_filter'].includes(output?.finishReason))error='provider_output_incomplete';
     }catch(e){error=String(e?.message||e).slice(0,500);}
     const scored=error?{score:0,passed:false,checks:[],textLength:0}:scoreSemanticOutput(output,test.rubric);
-    results.push({id:test.id,category:test.category,capability:test.capability,score:scored.score,passed:scored.passed,durationMs:Math.max(0,now()-started),model,usage,error,checks:scored.checks,textLength:scored.textLength});
+    const finishReason=['stop','length','content_filter','tool_calls','function_call'].includes(output?.finishReason)?output.finishReason:null;
+    results.push({id:test.id,category:test.category,capability:test.capability,score:scored.score,passed:scored.passed,durationMs:Math.max(0,now()-started),model,usage,error,finishReason,incomplete:error==='provider_output_incomplete',checks:scored.checks,textLength:scored.textLength});
   }
   const categories={};
   for(const result of results){const bucket=categories[result.category]||={total:0,passed:0,scores:[]};bucket.total++;bucket.scores.push(result.score);if(result.passed)bucket.passed++;}

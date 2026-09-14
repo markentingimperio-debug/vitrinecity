@@ -29,7 +29,7 @@ function summarizeBenchmark(report,expectedModel){
     // Both HTTP errors and the response's model field are untrusted data. Never
     // publish raw mismatch strings/objects; expose only the configured alias when exact.
     model:item.model===expectedModel?expectedModel:null,modelMatchesExpected:item.model===expectedModel,
-    error:item.error?'model_call_failed':null,usage:countOf(item.usage)?{inputTokens:countOf(item.usage).input,outputTokens:countOf(item.usage).output,known:true}:{inputTokens:null,outputTokens:null,known:false}}))};
+    error:item.error==='provider_output_incomplete'?'provider_output_incomplete':item.error?'model_call_failed':null,usage:countOf(item.usage)?{inputTokens:countOf(item.usage).input,outputTokens:countOf(item.usage).output,known:true}:{inputTokens:null,outputTokens:null,known:false}}))};
 }
 function checksFor(test,task,files){
   const checks=[];

@@ -230,6 +230,7 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, bill
         // Receipts are recorded before rejecting an unidentified/different
         // response. Its tool commands must never create artifacts or continue.
         if(!provider?.modelName||result.output?.model!==provider.modelName)fail('task_provider_unqualified',503);
+        if(result.output?.incomplete===true||['length','content_filter'].includes(result.output?.finishReason))fail('task_output_incomplete',503);
         const action=command(result.output?.text);
         const observation=db.transaction(()=>{
           const current=live(scope,id,lease);
@@ -267,7 +268,7 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, bill
       }
       fail('task_step_limit');
     }catch(error){
-      const known=new Set(['task_protocol_invalid','task_input_invalid','task_tool_unavailable','task_file_invalid','task_file_not_found','task_artifact_limit','task_artifact_missing','task_provider_unqualified','task_interrupted','task_timeout','task_step_limit','task_disabled','task_scope_denied']);
+      const known=new Set(['task_protocol_invalid','task_input_invalid','task_tool_unavailable','task_file_invalid','task_file_not_found','task_artifact_limit','task_artifact_missing','task_provider_unqualified','task_output_incomplete','task_interrupted','task_timeout','task_step_limit','task_disabled','task_scope_denied']);
       const billingCodes=['billing_subscription_required','billing_usage_review_required','billing_task_budget_exhausted','billing_insufficient_credits','billing_disabled'];
       const code=known.has(error?.code)||billingCodes.includes(error?.code)?error.code:'task_provider_failed';
       db.prepare("UPDATE neural_tasks SET status='failed',error_code=?,updated_at=? WHERE id=? AND scope=? AND status='running' AND lease_token=?").run(code,now(),id,scope,lease);
