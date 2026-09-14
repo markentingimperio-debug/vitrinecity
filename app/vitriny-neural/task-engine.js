@@ -26,7 +26,7 @@ function command(value) {
 }
 /** A bounded draft workbench, NOT an OS/container sandbox. Artifacts are inert
  * SQLite text rows and never evaluated, served as HTML, or written to the host. */
-export function createNeuralTaskEngine({db, skills, qualifications, config, env=process.env, now=Date.now}={}) {
+export function createNeuralTaskEngine({db, skills, qualifications, config, billing=null, env=process.env, now=Date.now}={}) {
   if(!db || !skills?.invoke || !qualifications?.latest || !config) throw new TypeError('Task engine requires Neural service.');
   const enabled=truthy(env.VITRINY_NEURAL_TASKS_ENABLED);
   const stores=new Set(String(env.VITRINY_NEURAL_TASKS_STORES||'').split(',').map(x=>x.trim()).filter(Boolean));
@@ -48,7 +48,12 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, env=
       PRIMARY KEY(task_id,path,revision));
     CREATE TABLE IF NOT EXISTS neural_task_steps (
       task_id TEXT NOT NULL, step INTEGER NOT NULL, provider TEXT NOT NULL, tool TEXT NOT NULL,
-      outcome TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(task_id,step));`);
+      outcome TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(task_id,step));
+    CREATE TABLE IF NOT EXISTS neural_task_attempts (
+      id TEXT PRIMARY KEY, task_id TEXT NOT NULL, provider TEXT NOT NULL, model_name TEXT NOT NULL,
+      state TEXT NOT NULL, input_tokens INTEGER, output_tokens INTEGER, known INTEGER NOT NULL DEFAULT 0,
+      duration_ms INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_neural_task_attempts_task ON neural_task_attempts(task_id);`);
   db.transaction(()=>{
     if(!db.prepare('PRAGMA table_info(neural_tasks)').all().some(column=>column.name==='started_at')){
       db.exec('ALTER TABLE neural_tasks ADD COLUMN started_at INTEGER');
@@ -60,16 +65,21 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, env=
       CREATE INDEX IF NOT EXISTS idx_neural_tasks_started ON neural_tasks(started_at);`);
   }).immediate();
   const dayStart=()=>Date.parse(new Date(now()).toISOString().slice(0,10)+'T00:00:00Z');
+  const billable=scope=>billing?.enabled===true&&scope!=='admin';
   function scopeCheck(scope) {
-    if(scope !== 'admin' && (typeof scope !== 'string' || !scope.startsWith('store:') || !stores.has(scope.slice(6)))) fail('task_scope_denied',403);
+    if(scope !== 'admin' && (typeof scope !== 'string' || !/^store:[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(scope) || (!billing?.enabled&&!stores.has(scope.slice(6))))) fail('task_scope_denied',403);
   }
   function featureCheck(scope) {
     scopeCheck(scope);
     if(!enabled || !config.enabled || !['advisory','low_risk_auto'].includes(config.mode)) fail('task_disabled',503);
+    if(billable(scope))billing.assertActive(scope);
   }
+  function settleCredits(scope,id){if(billable(scope)&&billing.report(scope,id))return billing.settle(scope,id);}
   function reap() {
     // Never replay an uncertain model call following a restart or lease expiry.
+    const expired=db.prepare("SELECT id,scope FROM neural_tasks WHERE status='running' AND lease_until<=?").all(now());
     db.prepare("UPDATE neural_tasks SET status='interrupted', error_code='task_interrupted', lease_token=NULL, updated_at=? WHERE status='running' AND lease_until<=?").run(now(),now());
+    for(const item of expired)settleCredits(item.scope,item.id);
   }
   function row(scope,id) {
     scopeCheck(scope);
@@ -83,9 +93,13 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, env=
       .map(file=>({...file,bytes:db.prepare('SELECT bytes FROM neural_task_files WHERE task_id=? AND path=? AND revision=?').get(id,file.path,file.revision).bytes}));
   }
   function view(item) {
+    const attempts=db.prepare('SELECT id,provider,model_name modelName,state,input_tokens inputTokens,output_tokens outputTokens,known,duration_ms durationMs FROM neural_task_attempts WHERE task_id=? ORDER BY created_at,id').all(item.id);
     return {id:item.id,status:item.status,kind:item.kind||null,instruction:item.instruction,stepCount:item.step_count,
       resultText:item.result_text,errorCode:item.error_code||null,createdAt:item.created_at,updatedAt:item.updated_at,
-      draftOnly:true,requiresReview:true,files:files(item.id),usage:{inputTokens:item.input_tokens,outputTokens:item.output_tokens},
+      draftOnly:true,requiresReview:true,files:files(item.id),usage:{inputTokens:item.input_tokens,outputTokens:item.output_tokens,
+        complete:attempts.length>0&&attempts.every(attempt=>attempt.known===1&&attempt.state!=='started')},
+      billing:billable(item.scope)?billing.report(item.scope,item.id):null,
+      attempts:attempts.map(attempt=>({...attempt,known:attempt.known===1})),
       events:db.prepare('SELECT step,provider,tool,outcome,created_at createdAt FROM neural_task_steps WHERE task_id=? ORDER BY step').all(item.id)};
   }
   function get(scope,id) {reap(); return view(row(scope,id));}
@@ -97,7 +111,8 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, env=
     const runs=db.prepare('SELECT COUNT(*) n FROM neural_tasks WHERE scope=? AND started_at>=?').get(scope,today).n;
     return {enabled:enabled&&config.enabled&&['advisory','low_risk_auto'].includes(config.mode),localOnly:true,draftOnly:true,
       tools:TOOLS,kinds:['website','content'],unavailable:['browser','shell','image.generate','video.generate','social.publish'],limits,
-      usage:{dailyTasks:used,remaining:Math.max(0,limits.dailyTasks-used),dailyRuns:runs,remainingRuns:Math.max(0,limits.dailyTasks-runs)}};
+      usage:{dailyTasks:used,remaining:Math.max(0,limits.dailyTasks-used),dailyRuns:runs,remainingRuns:Math.max(0,limits.dailyTasks-runs)},
+      billing:billable(scope)?billing.periodStatus(scope):{enabled:false}};
   }
   const submit=db.transaction((scope,input={})=>{
     featureCheck(scope);
@@ -141,11 +156,25 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, env=
       // Keep the reservation until the in-flight inference acknowledges cancellation.
       db.prepare("UPDATE neural_tasks SET status='cancelled',updated_at=? WHERE id=? AND scope=?").run(now(),id,scope);
       controllers.get(id)?.abort(Object.assign(new Error('task_cancelled'),{code:'task_cancelled'}));
+      settleCredits(scope,id);
     }
     return get(scope,id);
   }
   function releaseLease(scope,id,lease) {
     if(!modelCalls.has(id))db.prepare('UPDATE neural_tasks SET lease_token=NULL WHERE id=? AND scope=? AND lease_token=?').run(id,scope,lease);
+  }
+  function recordAttempt(scope,id,event){
+    db.transaction(()=>{
+      row(scope,id);
+      if(billable(scope))billing.recordAttempt(scope,id,event);
+      if(event.type==='started'){
+        db.prepare("INSERT INTO neural_task_attempts(id,task_id,provider,model_name,state,created_at,updated_at) VALUES(?,?,?,?,'started',?,?)").run(event.attemptId,id,event.provider,event.modelName||'',now(),now());
+      }else{
+        const changed=db.prepare("UPDATE neural_task_attempts SET state=?,input_tokens=?,output_tokens=?,known=?,duration_ms=?,updated_at=? WHERE id=? AND task_id=? AND state='started'")
+          .run(event.type,event.inputTokens,event.outputTokens,event.known?1:0,event.durationMs,now(),event.attemptId,id).changes;
+        if(changed&&event.known)db.prepare('UPDATE neural_tasks SET input_tokens=input_tokens+?,output_tokens=output_tokens+? WHERE id=? AND scope=?').run(event.inputTokens,event.outputTokens,id,scope);
+      }
+    }).immediate();
   }
   async function drive(scope,id,lease,controller) {
     const history=[];
@@ -153,15 +182,16 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, env=
       for(let step=1;step<=limits.maxSteps;step++){
         const item=live(scope,id,lease),capability=item.kind==='content'?'growth.content-plan':'code.plan',allowedProviders=qualified(capability);
         if(!allowedProviders.length)fail('task_provider_unqualified',503);
+        if(billable(scope))billing.assertRunnable(scope,id);
         const timeout=Math.min(limits.modelTimeoutMs,item.lease_until-now());
         let timer;
         const pending=skills.invoke(capability,{task:item.instruction,contract:CONTRACT,kind:item.kind||'route_required',draftFiles:files(id),history:history.slice(-3)},
           // Task deadline fires first, preventing per-attempt timeout from starting another inference.
-          {localOnly:true,allowedProviders,timeoutMs:timeout+1000,evaluation:false,maxTokens:1200,signal:controller.signal,taskProtocol:'draft-v1'});
+          {localOnly:true,allowedProviders,timeoutMs:timeout+1000,evaluation:false,maxTokens:1200,signal:controller.signal,taskProtocol:'draft-v1',onAttempt:event=>recordAttempt(scope,id,event)});
         modelCalls.set(id,{scope,pending});
         pending.finally(()=>{
           modelCalls.delete(id);
-          if(row(scope,id).status!=='running')releaseLease(scope,id,lease);
+          if(row(scope,id).status!=='running'){releaseLease(scope,id,lease);settleCredits(scope,id);}
         }).catch(()=>{});
         const result=await Promise.race([pending,
           new Promise((_,reject)=>{timer=setTimeout(()=>{
@@ -170,9 +200,8 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, env=
           },timeout);})
         ]).finally(()=>clearTimeout(timer));
         live(scope,id,lease);
-        // Aggregate usage only; provider error payloads, credentials and raw model replies are not audit entries.
-        const tokens=n=>Number.isSafeInteger(Number(n))&&Number(n)>=0?Number(n):0;
-        db.prepare('UPDATE neural_tasks SET input_tokens=input_tokens+?,output_tokens=output_tokens+? WHERE id=? AND scope=?').run(tokens(result.usage?.inputTokens),tokens(result.usage?.outputTokens),id,scope);
+        // Unknown usage is not zero, and cannot silently spend another inference.
+        if(billable(scope)&&billing.report(scope,id)?.state==='review_required')fail('billing_usage_review_required',409);
         const action=command(result.output?.text);
         const observation=db.transaction(()=>{
           const current=live(scope,id,lease);
@@ -211,11 +240,13 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, env=
       fail('task_step_limit');
     }catch(error){
       const known=new Set(['task_protocol_invalid','task_input_invalid','task_tool_unavailable','task_file_invalid','task_file_not_found','task_artifact_limit','task_artifact_missing','task_provider_unqualified','task_interrupted','task_timeout','task_step_limit','task_disabled','task_scope_denied']);
-      const code=known.has(error?.code)?error.code:'task_provider_failed';
+      const billingCodes=['billing_subscription_required','billing_usage_review_required','billing_task_budget_exhausted','billing_insufficient_credits','billing_disabled'];
+      const code=known.has(error?.code)||billingCodes.includes(error?.code)?error.code:'task_provider_failed';
       db.prepare("UPDATE neural_tasks SET status='failed',error_code=?,updated_at=? WHERE id=? AND scope=? AND status='running' AND lease_token=?").run(code,now(),id,scope,lease);
     }finally{
       controllers.delete(id);
       releaseLease(scope,id,lease);
+      settleCredits(scope,id);
     }
   }
   function start(scope,id) {
@@ -233,6 +264,7 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, env=
         db.prepare('SELECT 1 FROM neural_tasks WHERE lease_token IS NOT NULL AND lease_until>? AND scope=?').get(now(),scope))fail('task_busy',429);
       const lease=randomUUID();
       const startedAt=now();
+      if(billable(scope))billing.reserve(scope,id);
       db.prepare("UPDATE neural_tasks SET status='running',lease_token=?,lease_until=?,updated_at=?,started_at=? WHERE id=? AND scope=? AND status='queued'").run(lease,startedAt+limits.timeoutMs,startedAt,startedAt,id,scope);
       return lease;
     }).immediate();
@@ -245,6 +277,11 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, env=
     }
     return get(scope,id);
   }
-  return {status,submit:(scope,input)=>submit.immediate(scope,input),list,get,start,cancel,readFile,
+  function billingCanResolve(scope,id){
+    let item;try{item=row(scope,id);}catch(error){if(error?.code==='task_not_found')return false;throw error;}
+    return TERMINAL.has(item.status)&&!modelCalls.has(id)&&!inflight.has(id)&&
+      (!db.prepare("SELECT 1 FROM neural_task_attempts WHERE task_id=? AND state='started'").get(id)||item.lease_until<=now());
+  }
+  return {status,submit:(scope,input)=>submit.immediate(scope,input),list,get,start,cancel,readFile,billingCanResolve,
     wait:async(id)=>{await inflight.get(id);},limits};
 }

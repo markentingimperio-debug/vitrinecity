@@ -161,6 +161,19 @@ await exhausted.submit('command-form');
 assert.equal(exhausted.calls.filter(call => call.options.method === 'POST').length, 0);
 
 let attempts = 0;
+for(const billing of [
+  {enabled:true,active:false,availableCredits:100,plan:{taskReserveCredits:10}},
+  {enabled:true,active:true,availableCredits:9,reservedCredits:10,usedCredits:1,plan:{taskReserveCredits:10}}
+]){
+  const blocked=harness({respond:url=>url.endsWith('/status')?{data:{ok:true,enabled:true,billing}}:{data:{ok:true,items:[task]}}});
+  await settle();assert.equal(blocked.elements.get('send').disabled,true);assert.equal(blocked.elements.get('start-task').disabled,true);
+  assert.equal(blocked.elements.get('refresh').disabled,false);assert.equal(blocked.elements.get('task-list').children.length,1);
+  blocked.elements.get('command').value='Novo pedido';await blocked.submit('command-form');assert.equal(blocked.calls.filter(call=>call.options.method==='POST').length,0);
+}
+const paid=harness({respond:url=>url.endsWith('/status')?{data:{ok:true,enabled:true,billing:{enabled:true,active:true,availableCredits:50,reservedCredits:10,usedCredits:40,plan:{taskReserveCredits:10}}}}:{data:{ok:true,items:[]}}});
+await settle();assert.equal(paid.elements.get('send').disabled,false);assert.match(paid.elements.get('billing-status').textContent,/50 créditos disponíveis/);
+assert.equal(store.elements.get('billing-link').href,'/neural-billing.html?store=loja%2Fum');
+
 const retry = harness({ respond: (url, options) => {
   if (url.endsWith('/status')) return { data: { ok: true, enabled: true } };
   if (options.method === 'GET') return { data: { ok: true, items: [] } };

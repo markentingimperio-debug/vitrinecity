@@ -2,6 +2,8 @@
 
 ## O que esta entrega implementa
 
+Atualização: o controle opt-in de planos/créditos e a medição por tentativa estão descritos em [VITRINY_NEURAL_AI_CREDITS.md](VITRINY_NEURAL_AI_CREDITS.md). Ele substitui a allowlist por períodos explícitos quando habilitado e separa uso desconhecido de zero. Continua sem cobrança automática, preços em reais ou integração de pagamento de plano de IA. As limitações abaixo sobre faturamento exato do piloto original não equivalem a ausência do novo ledger.
+
 O administrador e as lojas autorizadas enviam um comando em português, sem escolher modelo ou tipo de tarefa. Um modelo local qualificado decide entre rascunho de site/código, texto/roteiro e pedido não suportado. O motor valida cada ação, mantém versões dos arquivos em SQLite e mostra o resultado para revisão humana.
 
 Isto é uma API própria de orquestração e um chat de rascunhos. Não é um novo modelo fundacional, treinamento de pesos, computação quântica ou uma réplica do Codex. Não incorpora pesos ou prompts privados de outros fornecedores. A redução de custos ainda precisa ser medida com hardware, consumo, qualidade e volume reais; não há garantia de economia de 90% ou de eficácia de 100%.
