@@ -1,5 +1,8 @@
-(() => {
-  'use strict';
+export function mountNeuralWorkspace(environment = globalThis) {
+  const { document, location, window, URLSearchParams, URL, Blob, AbortController, crypto } = environment;
+  const fetch = environment.fetch.bind(environment);
+  const setTimeout = environment.setTimeout.bind(environment);
+  const clearTimeout = environment.clearTimeout.bind(environment);
   const $ = id => document.getElementById(id);
   const storeReference = new URLSearchParams(location.search).get('store') || '';
   const base = storeReference
@@ -284,4 +287,6 @@
   window.addEventListener('pageshow', event => { if (event.persisted) { if (storeReference) forgetAccess(); else loadTasks(); } });
   if (storeReference) { $('account-label').textContent = 'Espaço da sua loja'; $('store-access').hidden = false; render(); }
   else loadTasks();
-})();
+}
+
+if (typeof window !== 'undefined' && typeof document !== 'undefined') mountNeuralWorkspace();

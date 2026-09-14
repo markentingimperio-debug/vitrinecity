@@ -1,5 +1,8 @@
-(() => {
-  'use strict';
+export function mountNeuralBilling(environment = globalThis) {
+  const { document, location, window, URLSearchParams, AbortController, crypto } = environment;
+  const fetch = environment.fetch.bind(environment);
+  const setTimeout = environment.setTimeout.bind(environment);
+  const clearTimeout = environment.clearTimeout.bind(environment);
   const $ = id => document.getElementById(id);
   const storeReference = new URLSearchParams(location.search).get('store') || '';
   const isStore = Boolean(storeReference);
@@ -205,4 +208,6 @@
   $('account-label').textContent = isStore ? 'CRÉDITOS DA SUA LOJA' : 'ADMINISTRAÇÃO';
   $('chat-link').href = '/neural-workspace.html' + (isStore ? '?store=' + encodeURIComponent(storeReference) : '');
   controls(); if (!isStore) load();
-})();
+}
+
+if (typeof window !== 'undefined' && typeof document !== 'undefined') mountNeuralBilling();

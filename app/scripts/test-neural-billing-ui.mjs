@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { runInNewContext } from 'node:vm';
+import { mountNeuralBilling } from '../public/neural-billing.js';
 
 const publicFile = name => new URL('../public/' + name, import.meta.url);
 const html = readFileSync(publicFile('neural-billing.html'), 'utf8');
@@ -11,6 +11,7 @@ const css = readFileSync(publicFile('neural-billing.css'), 'utf8');
 execFileSync(process.execPath, ['--check', fileURLToPath(publicFile('neural-billing.js'))]);
 assert.match(html, /lang="pt-BR"/);
 assert.match(html, /name="viewport"/);
+assert.match(html, /<script type="module" src="\/neural-billing\.js"><\/script>/);
 assert.match(html, /type="password"/);
 assert.match(html, /role="alert"/);
 assert.match(html, /aria-live="polite"/);
@@ -45,7 +46,7 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 function harness({ search = '', respond, confirm = () => true }) {
   const elements = new Map([...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, new Element()]));
   const created = [], calls = [], timers = new Map(), windowListeners = new Map(); let timerId = 0, uuid = 0;
-  runInNewContext(js, {
+  mountNeuralBilling({
     document: { getElementById: id => elements.get(id), createElement: tag => { const element = new Element(tag); created.push(element); return element; } },
     location: { search }, URLSearchParams, AbortController,
     window: { addEventListener: (name, listener) => windowListeners.set(name, listener), confirm },

@@ -58,7 +58,7 @@ test('all supported token aliases including nested output preserve strict known 
 });
 
 test('absent, null, strings, fractional, negative, nonfinite and unsafe counts remain unknown',async()=>{
-  const invalid=[undefined,null,'0',true,-1,.5,NaN,Infinity,Number.MAX_SAFE_INTEGER+1];
+  const invalid=[undefined,null,'0',true,-1,.5,Number.NaN,Infinity,Number.MAX_SAFE_INTEGER+1];
   const usages=[undefined,null,{},...invalid.flatMap(value=>[{prompt_tokens:value,completion_tokens:1},{prompt_tokens:1,completion_tokens:value}]),
     {prompt_tokens:null,input_tokens:10,completion_tokens:3},
     {prompt_tokens:Number.MAX_SAFE_INTEGER,completion_tokens:1}];
@@ -125,7 +125,10 @@ test('failure-hook error propagates without allowing fallback or counting a prov
 
 test('async and thenable hooks are rejected and never open fallback',async()=>{
   for(const stage of ['started','completed','failed']){
-    for(const hookResult of [()=>Promise.resolve(),()=>Promise.reject(new Error('async ledger rejected')),()=>({then:resolve=>resolve()})]){
+    // Promise.prototype exposes a native then method without being a Promise
+    // instance. This exercises malformed thenables without constructing an
+    // object that might accidentally be assimilated as a successful hook.
+    for(const hookResult of [()=>Promise.resolve(),()=>Promise.reject(new Error('async ledger rejected')),()=>Promise.prototype]){
       const events=[],{registry,calls}=fixture({backup:true,invoke:async()=>{if(stage==='failed')throw new Error('offline');return {usage:{prompt_tokens:1,completion_tokens:1}};}});
       await assert.rejects(registry.invoke(capability,input,{onAttempt:event=>{events.push(event);if(event.type===stage)return hookResult();}}),/onAttempt precisa concluir/);
       assert.deepEqual(calls,stage==='started'?[]:['local-primary']);

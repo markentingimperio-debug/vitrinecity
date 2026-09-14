@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { runInNewContext } from 'node:vm';
+import { mountNeuralWorkspace } from '../public/neural-workspace.js';
 
 const publicFile = name => new URL('../public/' + name, import.meta.url);
 const html = readFileSync(publicFile('neural-workspace.html'), 'utf8');
@@ -11,6 +11,7 @@ const css = readFileSync(publicFile('neural-workspace.css'), 'utf8');
 execFileSync(process.execPath, ['--check', fileURLToPath(publicFile('neural-workspace.js'))]);
 assert.match(html, /lang="pt-BR"/);
 assert.match(html, /name="viewport"/);
+assert.match(html, /<script type="module" src="\/neural-workspace\.js"><\/script>/);
 assert.match(html, /type="password"/);
 assert.match(html, /maxlength="6000"/);
 assert.match(html, /role="alert"/);
@@ -67,7 +68,7 @@ function harness({ search = '', respond }) {
     static createObjectURL(blob) { blobs.push(blob); return 'blob:workspace-test'; }
     static revokeObjectURL() {}
   }
-  runInNewContext(js, {
+  mountNeuralWorkspace({
     document, location: { search }, URLSearchParams, URL: FakeURL, Blob, AbortController,
     window: { addEventListener: (name, listener) => windowListeners.set(name, listener) },
     crypto: { randomUUID: () => 'task-request-' + (++uuid) },

@@ -19,10 +19,10 @@ const scripted=actions=>(_request,n)=>JSON.stringify(actions[n-1]);
 test('adaptador HTTP recebe contrato confiável e completa ciclo de arquivos sem rede real',async()=>{
   const db=new Database(':memory:'),requests=[];
   const actions=[{tool:'route',kind:'website',message:'Rascunho.'},{tool:'files.write',path:'index.html',content:'<!doctype html><h1>Loja teste</h1>'},{tool:'finish',message:'Revisar antes de publicar.'}];
-  const provider=createOpenAICompatibleProvider({id:'adapter-local',baseUrl:'http://fixture.invalid',model:'fixture-v1',local:true,
+  const provider=createOpenAICompatibleProvider({id:'adapter-local',baseUrl:'https://fixture.invalid',model:'fixture-v1',local:true,
     fetchImpl:async(url,init)=>{
       const body=JSON.parse(init.body);requests.push(body);
-      assert.equal(url,'http://fixture.invalid/v1/chat/completions');
+      assert.equal(url,'https://fixture.invalid/v1/chat/completions');
       assert.match(body.messages[0].content,/Contrato interno de tarefas/);
       assert.equal(body.max_tokens,1200);
       assert.equal(init.signal.aborted,false);

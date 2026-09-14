@@ -46,7 +46,7 @@ test('strict numeric, scope and metadata validation; immutable plans',()=>{
     assert.throws(()=>billing.createPlan({...PLAN,monthlyCredits:200},ADMIN),{code:'billing_plan_conflict'});
     assert.throws(()=>billing.createPlan({...PLAN,code:'new-plan'},'Bearer abcdefghijklmnopqrstuvwxyz'),{code:'billing_input_invalid'});
     for(const scope of ['admin','shop-a','store:../other',null]) assert.throws(()=>billing.periodStatus(scope),{code:'billing_scope_denied'});
-    for(const patch of [{periodStart:String(START)},{periodEnd:START},{periodEnd:START+367*DAY},{periodEnd:NaN},{idempotencyKey:'x'},{actorId:'injected'}])
+    for(const patch of [{periodStart:String(START)},{periodEnd:START},{periodEnd:START+367*DAY},{periodEnd:Number.NaN},{idempotencyKey:'x'},{actorId:'injected'}])
       assert.throws(()=>grant(billing,SCOPE,patch),{code:'billing_input_invalid'});
   } finally {db.close();}
 });

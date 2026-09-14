@@ -7,7 +7,7 @@
   <meta name="referrer" content="same-origin">
   <title>Vitrini Neural · Espaço de trabalho</title>
   <link rel="stylesheet" href="/neural-workspace.css">
-  <script src="/neural-workspace.js" defer></script>
+  <script type="module" src="/neural-workspace.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#command">Pular para o comando</a>
@@ -59,7 +59,7 @@
         </div>
       </div>
       <article id="task-detail" class="task-detail" aria-labelledby="task-title" hidden>
-        <div class="message user-message"><p class="message-label">Seu comando</p><h2 id="task-title"></h2></div>
+        <div class="message user-message"><p class="message-label">Seu comando</p><h2 id="task-title">Detalhes da tarefa</h2></div>
         <div class="message assistant-message">
           <div class="task-heading"><p class="message-label">Vitrini Neural</p><span id="task-status" class="pill"></span></div>
           <p id="task-meta" class="small muted"></p>
