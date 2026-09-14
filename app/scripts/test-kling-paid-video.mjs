@@ -123,6 +123,15 @@ test('missing, empty, malformed or imprecise billing is unknown rather than free
   assert.equal(r.status,'failed');assert.equal(r.ok,false);assert.equal(r.remoteTerminal,true);assert.equal(r.billingDisposition,'reconcile');assert.deepEqual(r.billing.entries,[cash()]);assert.doesNotMatch(JSON.stringify(r),/PRIVATE/);
 });
 
+test('new states and malformed timestamps retain identity-bound billing evidence but never prove settlement',async()=>{
+  const saved=await receipt();
+  for(const extra of [{status:'status-new'},{update_time:'1000'},{create_time:-1},{update_time:START-1}]){
+    const r=await fixture({fetchImpl:async()=>response([item({status:'succeeded',billing:[cash()],outputs:[output()],...extra})])}).adapter.poll({receipt:saved});
+    assert.equal(r.ok,false);assert.equal(r.remoteTerminal,null);assert.equal(r.providerReceiptId,'task-fixture-001');assert.equal(r.output,null);held(r);
+    assert.equal(r.billing.known,true);assert.deepEqual(r.billing.entries,[cash()]);
+  }
+});
+
 test('unsafe or malformed outputs are not delivered but terminal receipt and valid billing are retained',async()=>{
   const saved=await receipt();
   for(const outputs of [undefined,[],[output(),output()],[{...output(),type:'image'}],[{...output(),url:'http://media.invalid/file'}],[{...output(),url:'https://user:password@media.invalid/file'}],[{...output(),url:'https://media.invalid:8080/file'}],[{...output(),url:'https://media.invalid/file\n'}],[{...output(),duration:5}]]){

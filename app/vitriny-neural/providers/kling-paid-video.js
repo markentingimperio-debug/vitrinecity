@@ -156,13 +156,14 @@ export function createKlingPaidVideoAdapter(options={}){
         // identity. Even an external-ID lookup must echo the exact external ID.
         if(!plain(task)||!validId(task.id)||task.external_id!==receipt.externalTaskId||receipt.taskId&&task.id!==receipt.taskId)return freeze({...envelopeEvidence,code:'kling_receipt_mismatch'});
         const boundReceipt=freeze({...receipt,taskId:task.id});
-        const known={...envelopeEvidence,receipt:boundReceipt,providerReceiptId:task.id,receiptId:`${PROVIDER}:${task.id}`};
+        // Identity was proved first. Preserve billing evidence even if other
+        // metadata is malformed/new, without promoting it to settlement proof.
+        const known={...envelopeEvidence,receipt:boundReceipt,providerReceiptId:task.id,receiptId:`${PROVIDER}:${task.id}`,billing:billingOf(task.billing)};
         if(!['submitted','processing','succeeded','failed'].includes(task.status))return freeze({...known,code:'kling_status_unknown'});
         known.providerStatus=task.status;
         if(!Number.isSafeInteger(task.create_time)||task.create_time<0||!Number.isSafeInteger(task.update_time)||task.update_time<task.create_time)return freeze({...known,code:'kling_response_invalid'});
         // Preserve optional billing evidence even on POST/HTTP anomalies, but
         // neither is an authorized settlement proof. Only the GET can settle.
-        known.billing=billingOf(task.billing);
         if(response.redirected||response.status<200||response.status>=300)return freeze({...known,code:'kling_http_error'});
         if(!polling)return freeze({...known,ok:true,status:'accepted',remoteTerminal:false});
         const terminal=['succeeded','failed'].includes(task.status);
