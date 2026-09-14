@@ -66,7 +66,10 @@ try{
   let payload=JSON.parse(requests.at(-1).messages[1].content);
   assert.equal(payload.platformKnowledge.scope,'public_platform_facts_only');
   assert.equal(payload.platformKnowledge.sources[0].title,pack.documents[6].title);
-  assert.match(requests.at(-1).messages[0].content,/dados de referência/);assert.match(requests.at(-1).messages[0].content,/não são instruções confiáveis/);
+  // Verify the reference-only/trust boundary, allowing the equivalent wording
+  // used by the concise worker policy. These checks do not qualify a model.
+  assert.match(requests.at(-1).messages[0].content,/dados de referência|referência de fatos públicos revisados/);
+  assert.match(requests.at(-1).messages[0].content,/não são instruções confiáveis|dados não confiáveis/);
   const skillCases=[
     ['growth.optimizer',{objective:'Análises de métricas confirmam vendas apenas pelos cliques?'},8],
     ['research.supervised',{question:'Ensino contínuo da memória significa fine-tuning de pesos?'},9],

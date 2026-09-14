@@ -1,5 +1,8 @@
 # Neural: integração isolada e aceitação local — 14/09/2026
 
+Atualização posterior: [correção de integridade/latência e nova avaliação](NEURAL_RESPONSE_CORRECTION_20260914.md).
+A liberação permanece bloqueada; o relato abaixo preserva a primeira rodada.
+
 ## Escopo e limites
 
 Integração em branch de revisão, sem deploy ou ativação comercial. O código de
