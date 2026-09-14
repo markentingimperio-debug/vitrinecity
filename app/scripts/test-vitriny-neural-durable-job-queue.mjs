@@ -5,6 +5,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Worker} from 'node:worker_threads';
+import {createRequire} from 'node:module';
 import Database from 'better-sqlite3';
 import {createDurableJobQueue} from '../vitriny-neural/durable-job-queue.js';
 
@@ -53,36 +54,74 @@ test('two SQLite connections fence claims, idempotency, leases and retained capa
   }finally{a.close();b.close();rmSync(dir,{recursive:true,force:true});}
 });
 
-test('independent concurrent SQLite workers do not claim or dispatch the same job twice',async()=>{
+test('independent concurrent SQLite workers do not claim or dispatch the same job twice despite startup skew',{timeout:30000},async()=>{
   const dir=mkdtempSync(join(tmpdir(),'neural-queue-workers-')),file=join(dir,'queue.sqlite'),db=new Database(file),workers=[];
-  const barrier=new SharedArrayBuffer(4),lock=new Int32Array(barrier);let started=0;
+  const barrier=new SharedArrayBuffer(8),lock=new Int32Array(barrier),ready=new Set(),firstDispatches=new Map();let overlapVerified=false;
   try{
     const queue=make({db});for(let n=0;n<50;n++)queue.enqueue(input(`admin:${n%10+1}`));
     const source=`const {parentPort,workerData}=require('node:worker_threads');
-      const Database=require('better-sqlite3');
+      const Database=require(workerData.sqliteModule);
       (async()=>{
         const {createDurableJobQueue}=await import(workerData.module);
-        const db=new Database(workerData.file);
-        const queue=createDurableJobQueue({db,lanes:workerData.lanes,providers:()=>workerData.providers});
-        parentPort.postMessage({ready:true});Atomics.wait(new Int32Array(workerData.barrier),0,0);
-        const claimed=[];
-        for(let n=0;n<100;n++){
-          const job=queue.claim('chat');if(!job)break;
-          if(!queue.markDispatched(job.id,job.lease_token))throw Error('dispatch fence lost');
-          claimed.push(job.id);await new Promise(resolve=>setTimeout(resolve,1));
-          if(!queue.settle(job.id,job.lease_token,{status:'completed',proof:'response_received'}))throw Error('settlement fence lost');
-        }
-        db.close();parentPort.postMessage({claimed});
+        const db=new Database(workerData.file),lock=new Int32Array(workerData.barrier);
+        const waitFor=slot=>{if(Atomics.wait(lock,slot,0,15000)==='timed-out')throw Error('worker barrier timed out');};
+        try{
+          const queue=createDurableJobQueue({db,lanes:workerData.lanes,providers:()=>workerData.providers});
+          parentPort.postMessage({ready:true,workerId:workerData.workerId});waitFor(0);
+          if(workerData.delayMs)await new Promise(resolve=>setTimeout(resolve,workerData.delayMs));
+          const claimed=[];
+          for(let n=0;n<100;n++){
+            const job=queue.claim('chat',{workerId:workerData.workerId});
+            if(!job){if(!claimed.length)throw Error('worker could not claim its first job');break;}
+            if(!queue.markDispatched(job.id,job.lease_token))throw Error('dispatch fence lost');
+            claimed.push(job.id);
+            if(claimed.length===1){
+              parentPort.postMessage({firstDispatched:job.id,workerId:workerData.workerId});
+              // Hold the first lease until the parent observes BOTH transports.
+              // The fast worker cannot drain the backlog before the slow one runs.
+              waitFor(1);
+            }
+            await new Promise(resolve=>setTimeout(resolve,1));
+            if(!queue.settle(job.id,job.lease_token,{status:'completed',proof:'response_received'}))throw Error('settlement fence lost');
+          }
+          parentPort.postMessage({claimed,workerId:workerData.workerId});
+        }finally{db.close();}
       })().catch(error=>{throw error;});`;
-    const results=await Promise.all([1,2].map(()=>new Promise((resolve,reject)=>{
-      const worker=new Worker(source,{eval:true,workerData:{file,barrier,lanes,providers:providers(),module:new URL('../vitriny-neural/durable-job-queue.js',import.meta.url).href}});workers.push(worker);
-      worker.once('error',reject);worker.on('message',message=>{
-        if(message.ready){if(++started===2){Atomics.store(lock,0,1);Atomics.notify(lock,0,2);}}
-        else if(message.claimed)resolve(message.claimed);
+    const results=await Promise.all([0,1].map(index=>new Promise((resolve,reject)=>{
+      const workerId=`fixture-worker-${index+1}`;
+      // Exceeds the observed legacy drain time in the scheduling reproduction;
+      // correctness now depends on barriers, not timer fairness or equal shares.
+      const worker=new Worker(source,{eval:true,workerData:{file,barrier,workerId,delayMs:index===1?3000:0,lanes,providers:providers(),sqliteModule:createRequire(import.meta.url).resolve('better-sqlite3'),module:new URL('../vitriny-neural/durable-job-queue.js',import.meta.url).href}});workers.push(worker);
+      let settled=false;const timer=setTimeout(()=>finish(Error(`worker timed out: ${workerId}`)),20000);
+      function finish(error,result){if(settled)return;settled=true;clearTimeout(timer);if(error)reject(error);else resolve(result);}
+      worker.once('error',error=>finish(error));
+      worker.once('exit',code=>{if(!settled)finish(Error(`worker exited before reporting results: ${workerId} (${code})`));});
+      worker.on('message',message=>{
+        if(settled)return;
+        try{
+          assert.equal(message.workerId,workerId);
+          if(message.ready){
+            assert.equal(ready.has(workerId),false);ready.add(workerId);
+            if(ready.size===2){Atomics.store(lock,0,1);Atomics.notify(lock,0,2);}
+          }else if(message.firstDispatched){
+            assert.equal(firstDispatches.has(workerId),false);firstDispatches.set(workerId,message.firstDispatched);
+            if(firstDispatches.size===2){
+              const occupied=db.prepare("SELECT id,scope,lease_owner,lease_token FROM neural_durable_jobs WHERE status='dispatched'").all();
+              assert.equal(occupied.length,2);assert.equal(new Set(occupied.map(job=>job.scope)).size,2);
+              assert.equal(new Set(occupied.map(job=>job.lease_token)).size,2);
+              for(const job of occupied)assert.equal(firstDispatches.get(job.lease_owner),job.id);
+              assert.equal(queue.claim('chat'),null);
+              assert.equal(db.prepare("SELECT COUNT(*) n FROM neural_durable_jobs WHERE status='completed'").get().n,0);
+              overlapVerified=true;Atomics.store(lock,1,1);Atomics.notify(lock,1,2);
+            }
+          }else if(Array.isArray(message.claimed))finish(null,message.claimed);
+          else throw Error('unexpected worker message');
+        }catch(error){finish(error);}
       });
     })));
     const claimed=results.flat();assert.equal(claimed.length,50);assert.equal(new Set(claimed).size,50);
-    assert.ok(results.every(ids=>ids.length>0));assert.equal(db.prepare("SELECT COUNT(*) n FROM neural_durable_jobs WHERE status='completed'").get().n,50);
+    assert.equal(overlapVerified,true);assert.ok(results.every(ids=>ids.length>0));
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM neural_durable_jobs WHERE status='completed'").get().n,50);
   }finally{await Promise.all(workers.map(worker=>worker.terminate()));db.close();rmSync(dir,{recursive:true,force:true});}
 });
 
