@@ -26,6 +26,8 @@ Cada plano contém:
 
 Os valores são inteiros, validados no servidor. Alterar uma tabela de conversão exige um novo código de plano. Os períodos e reservas mantêm cópias das regras originais: uma mudança futura não reprecifica uso passado. Um período possui início inclusivo e fim exclusivo, em epoch milissegundos, com duração máxima de 366 dias. Não há pró-rata, renovação automática, acúmulo automático nem transferência de saldo entre períodos. O nome `monthlyCredits` não força uma cobrança mensal: quem concede deve escolher datas coerentes com o acordo comercial.
 
+As taxas são regras internas de créditos, não preços de APIs externas. Diferenças por modelo, cache, infraestrutura ociosa, imagens, vídeos e outros itens de uma fatura externa não são reconciliadas automaticamente por essa conversão.
+
 ## Medição, reserva e liquidação
 
 1. Ao iniciar uma tarefa, uma transação SQLite valida plano, prazo, saldo, cotas e concorrência, reserva `taskReserveCredits` e reivindica a tarefa. Não há inferência se essa reserva falhar.
