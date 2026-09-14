@@ -12,6 +12,7 @@ import {createNeuralDatasetBuilder} from './dataset-builder.js';
 import {createAstraSupervisor} from './astra-supervisor.js';
 import {createNeuralTaskEngine} from './task-engine.js';
 import {createNeuralBilling} from './billing.js';
+import {createNeuralTaskDiagnostics} from './task-diagnostics.js';
 
 function primaryProviderId(runtime){const providers=runtime.skills.status().providers||[];return providers.find(provider=>provider.policy?.enabled!==false)?.id||providers[0]?.id||null;}
 
@@ -66,6 +67,8 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
   }});
   const billing=createNeuralBilling({db,env,now});
   const tasks=createNeuralTaskEngine({db,skills:runtime.skills,qualifications,config,billing,env,now});
+  const taskDiagnostics=createNeuralTaskDiagnostics({probeLocalProviders:runtime.probeLocalProviders,
+    getProviders:()=>runtime.skills.status().providers,getQualification:qualifications.latest,getTaskStatus:()=>tasks.status('admin',{reapExpired:false}),now});
 
   function readiness(){return assessNeuralReadiness({runtime,qualification:activeQualification()});}
 
@@ -95,5 +98,5 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
     };
   }
 
-  return{runtime,config,qualifications,budget,observer,benchmarks,webResearch,training,supervisor,tasks,billing,execution,recordQualification,readiness,capture,authorize,commitAction,releaseAction,status};
+  return{runtime,config,qualifications,budget,observer,benchmarks,webResearch,training,supervisor,tasks,billing,taskDiagnostics,execution,recordQualification,readiness,capture,authorize,commitAction,releaseAction,status};
 }

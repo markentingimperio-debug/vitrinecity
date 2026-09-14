@@ -31,6 +31,13 @@ export function mountVitrinyNeuralAdmin({app,runtime=null,service=null,requireAd
   app.post(API+'/supervisor/evaluate',supervisorRoute(async(req,res,supervisor)=>res.json({run:await supervisor.evaluate(req.user?.id,req.body)})));
   app.post(API+'/supervisor/runs/:id/acknowledge-failure',supervisorRoute((req,res,supervisor)=>res.json({run:supervisor.acknowledgeFailure(req.user?.id,req.params.id,req.body)})));
   app.get(API+'/readiness',(_req,res)=>res.json({ok:true,readiness:service?.readiness?service.readiness():assessNeuralReadiness({runtime:activeRuntime})}));
+  app.post(API+'/model/preflight',async(req,res)=>{
+    if(req.get('x-neural-request')!=='1'||!req.is('application/json'))return res.status(403).json({ok:false,error:'Requisição de diagnóstico não autorizada.'});
+    if(!req.body||typeof req.body!=='object'||Array.isArray(req.body)||Object.keys(req.body).length||Object.keys(req.query||{}).length)return res.status(400).json({ok:false,error:'O diagnóstico não aceita parâmetros de modelo, destino ou execução.'});
+    if(!service?.taskDiagnostics?.check)return res.status(503).json({ok:false,error:'Diagnóstico do modelo local indisponível.'});
+    try{return res.json({ok:true,...await service.taskDiagnostics.check()});}
+    catch{return res.status(503).json({ok:false,error:'Não foi possível verificar o modelo local. Nenhuma geração foi solicitada.'});}
+  });
   app.get(API+'/models/qualifications',(_req,res)=>{
     if(!service?.qualifications?.list)return res.status(503).json({error:'Histórico de qualificação indisponível.'});
     return res.json({ok:true,items:service.qualifications.list({limit:50})});

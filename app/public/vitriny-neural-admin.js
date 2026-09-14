@@ -1,7 +1,7 @@
 (()=>{
   'use strict';
   const $=id=>document.getElementById(id),base='/api/admin/vitriny-neural';
-  let snapshot=null,skillsSnapshot=null,qualifications=[],benchmarkTimer=null,runningTest=false,researchSnapshot=null,researchCandidates=[],researchRunning=false,trainingSnapshot=null,trainingCandidates=[],trainingSaving=false;
+  let snapshot=null,skillsSnapshot=null,qualifications=[],benchmarkTimer=null,runningTest=false,researchSnapshot=null,researchCandidates=[],researchRunning=false,trainingSnapshot=null,trainingCandidates=[],trainingSaving=false,preflightRunning=false;
   const node=(tag,text,cls)=>{const el=document.createElement(tag);if(text!=null)el.textContent=text;if(cls)el.className=cls;return el;};
   const pct=v=>`${Math.round((Number(v)||0)*100)}%`;
   const date=v=>v?new Date(v).toLocaleString('pt-BR'):'—';
@@ -9,12 +9,38 @@
   function showError(error){$('error').textContent=error?.message||'Não foi possível consultar a Vitriny Neural.';$('error').hidden=false;}
   function clearError(){$('error').hidden=true;}
   async function api(path,method='GET',body,timeout=15000){
-    const response=await fetch(base+path,{method,credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(timeout),headers:method==='GET'?{}:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+    const response=await fetch(base+path,{method,credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(timeout),headers:method==='GET'?{}:{'content-type':'application/json','x-neural-request':'1'},...(body?{body:JSON.stringify(body)}:{})});
     if(response.status===401){location.assign('/admin-login.html');throw Error('Sessão expirada.');}
     let data={};try{data=await response.json();}catch{}
     if(!response.ok)throw Object.assign(Error(data.error||`Falha HTTP ${response.status}.`),{status:response.status,responseData:data});return data;
   }
   function modeLabel(value){return({disabled:'DESLIGADA',shadow:'SHADOW',advisory:'ADVISORY',low_risk_auto:'LOW-RISK AUTO'})[value]||String(value||'—').toUpperCase();}
+  async function verifyLocalModel(){
+    if(preflightRunning)return;
+    preflightRunning=true;$('model-preflight').disabled=true;
+    const target=$('model-preflight-result');target.setAttribute('aria-busy','true');target.replaceChildren(node('p','Consultando o serviço local sem gerar conteúdo…'));
+    try{
+      const result=await api('/model/preflight','POST',{});
+      if(result.ok!==true||!Array.isArray(result.providers))throw Error('Resposta de diagnóstico inválida.');
+      target.replaceChildren(node('p',result.readyForTaskAttempt?'Pré-requisitos encontrados para tentar tarefas de rascunho. A qualidade ainda precisa de validação real.':'Ainda faltam pré-requisitos para tentar tarefas no chat.'));
+      target.append(node('p',`Chat ${result.tasksEnabled?'habilitado':'desabilitado'} · cota ${result.taskQuotaAvailable?'disponível':'esgotada'} · verificação ${date(result.checkedAt)}${result.cached?' (conectividade em cache)':''}.`));
+      if(!result.providers.length)target.append(node('p','Nenhum modelo local configurado.'));
+      for(const provider of result.providers){
+        const reasons=[];
+        if(!provider.enabled)reasons.push('provedor bloqueado pela política');
+        if(!provider.circuitClosed)reasons.push('circuito de falhas aberto');
+        if(!provider.reachable)reasons.push('serviço sem resposta');
+        else if(!provider.modelAvailable)reasons.push('modelo configurado indisponível');
+        if(!provider.qualificationPresent)reasons.push('benchmark ainda não registrado');
+        else if(!provider.qualificationModelMatches)reasons.push('nome do modelo diferente da qualificação');
+        if(provider.blockedCapabilities?.length)reasons.push('faltam capacidades qualificadas: '+provider.blockedCapabilities.join(', '));
+        target.append(node('p',`${provider.providerId} · ${provider.modelName||'modelo não informado'}: ${reasons.length?reasons.join('; '):'conectividade e qualificação verificadas'}.`));
+      }
+      target.append(node('p','Nenhuma inferência realizada. Aceitação de tarefa real ainda não executada por esta verificação.','fine'));
+      announce('Diagnóstico do modelo local concluído.');
+    }catch{target.replaceChildren(node('p','Não foi possível verificar o modelo local. A disponibilidade continua não confirmada.'));}
+    finally{preflightRunning=false;$('model-preflight').disabled=false;target.setAttribute('aria-busy','false');}
+  }
   function scoreClass(v){return Number(v)>=.9?'ok':Number(v)>=.75?'warn':'danger';}
   function renderSummary(){
     const s=snapshot||{},svc=s.service||{},ready=s.readiness||{},providerRows=s.skills?.providers||skillsSnapshot?.providers||[],primary=providerRows.find(p=>p.id===svc.primaryProviderId)||providerRows[0];
@@ -323,5 +349,6 @@
   async function loadAll(withBenchmark=true){clearError();try{const [status,skills,qs]=await Promise.all([api('/status'),api('/skills'),api('/models/qualifications')]);snapshot=status;skillsSnapshot=skills;qualifications=qs.items||[];renderSummary();renderShadow();renderSkills();renderLearning();renderQualifications();await Promise.all([loadWebResearch(),loadTraining()]);if(withBenchmark)await loadBenchmark();}catch(e){showError(e);}}
   $('refresh').onclick=()=>loadAll();$('test-form').onsubmit=runTest;$('benchmark-start').onclick=startBenchmark;$('web-research-form').onsubmit=startWebResearch;$('training-form').onsubmit=saveTraining;$('training-export-all').onclick=()=>exportTraining('all');$('training-export-train').onclick=()=>exportTraining('train');$('training-export-validation').onclick=()=>exportTraining('validation');$('area').onchange=()=>{$('test-hint').textContent=$('area').value==='media'?'Este teste exige um provider de imagem; o Qwen de texto pode não suportar esta capacidade.':'A resposta é apenas para avaliação administrativa. Providers reprovados em benchmark continuam testáveis aqui, mas bloqueados para operação.';};
   $('refresh').onclick=()=>{loadAll();if($('supervisor-panel'))loadSupervisor(true);};
+  $('model-preflight').onclick=verifyLocalModel;
   loadAll();setInterval(()=>loadAll(false),30000);
 })();
