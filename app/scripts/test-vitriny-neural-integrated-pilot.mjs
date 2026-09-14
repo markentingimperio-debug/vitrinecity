@@ -38,6 +38,8 @@ test('merged console and boot share the existing Jarvis instance and retain both
 
 test('deployable image includes the explicit opt-in acceptance runner',()=>{
   const docker=read('../Dockerfile');
+  const ignore=read('../.dockerignore');
   assert.match(docker,/COPY scripts\/run-vitriny-neural-task-acceptance\.mjs \.\/scripts\/run-vitriny-neural-task-acceptance\.mjs/);
+  assert.match(ignore,/^!scripts\/run-vitriny-neural-task-acceptance\.mjs\r?$/m);
   assert.doesNotMatch(docker,/RUN[^\n]*(?:acceptance:neural|--run-local)/);
 });
