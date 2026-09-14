@@ -1,7 +1,7 @@
-import {assertKlingReadiness} from '../public/neural-kling-contract.js';
+import {KLING_READINESS_VERSION,assertKlingReadiness} from '../public/neural-kling-contract.js';
 
 // Official free read endpoint, QPS <= 1; remaining quantities may lag 12 hours.
-// https://kling.ai/document-api/api/assets/account-info
+// https://kling.ai/document-api/api/assets/account-usage
 const ENDPOINT = 'https://api-singapore.klingai.com/account/costs';
 const LIMIT = 262144;
 const plain = value => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -18,7 +18,7 @@ export function createKlingReadiness({env = process.env, fetchImpl = globalThis.
   let latest = null, flight = null, validUntil = 0;
   const clock = () => { const time = now(); if (!Number.isSafeInteger(time) || time < 3600000 || time > 8640000000000000) throw new TypeError('kling_readiness_clock_invalid'); return time; };
   const result = (stage, checkedAt = null, packageCount = null) => Object.freeze(assertKlingReadiness({
-    version: 1, provider: 'kling_api', stage, configured, checkedAt,
+    version: KLING_READINESS_VERSION, provider: 'kling_api', stage, configured, checkedAt,
     generationEnabled: false, customerBillingEnabled: false, studioCreditsShared: false,
     balanceFreshness: 'up_to_12_hours', packageCount
   }));
@@ -57,8 +57,10 @@ export function createKlingReadiness({env = process.env, fetchImpl = globalThis.
           chunks.push(part.value);
         }
         const body = JSON.parse(new TextDecoder('utf-8', {fatal:true}).decode(Buffer.concat(chunks, bytes)));
-        const packs = body?.data?.resource_pack_subscribe_infos;
-        if (!plain(body) || body.code !== 0 || !plain(body.data) || body.data.code !== 0 || !Array.isArray(packs) || packs.length > 10000 || !packs.every(plain)) return unavailable();
+        if (!plain(body) || body.code !== 0 || !plain(body.data) || body.data.code !== 0) return unavailable();
+        if (!Object.hasOwn(body.data,'resource_pack_subscribe_infos')) return result('access_verified', checkedAt);
+        const packs = body.data.resource_pack_subscribe_infos;
+        if (!Array.isArray(packs) || packs.length > 10000 || !packs.every(plain)) return unavailable();
         return result('access_verified', checkedAt, packs.length);
       } catch { return unavailable(); }
       finally { try { if (reader) Promise.resolve(reader.cancel()).catch(() => {}); else discard(response); } catch {} }

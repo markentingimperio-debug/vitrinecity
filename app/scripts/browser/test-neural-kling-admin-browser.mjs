@@ -3,11 +3,11 @@ import {createServer} from 'node:http';
 import {readFile,mkdir} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {KLING_API_LINKS,assertKlingReadiness} from '../../public/neural-kling-contract.js';
+import {KLING_READINESS_VERSION,KLING_API_LINKS,assertKlingReadiness} from '../../public/neural-kling-contract.js';
 
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(process.env.PLAYWRIGHT_MODULE).href:'playwright');
 const publicRoot=fileURLToPath(new URL('../../public/',import.meta.url));
-const receipts=stage=>assertKlingReadiness({version:1,provider:'kling_api',stage,configured:stage!=='credentials_missing',checkedAt:stage==='not_checked'||stage==='credentials_missing'?null:'2026-09-15T12:00:00.000Z',generationEnabled:false,customerBillingEnabled:false,studioCreditsShared:false,balanceFreshness:'up_to_12_hours',packageCount:stage==='access_verified'?2:null});
+const receipts=(stage,overrides={})=>assertKlingReadiness({version:KLING_READINESS_VERSION,provider:'kling_api',stage,configured:stage!=='credentials_missing',checkedAt:stage==='not_checked'||stage==='credentials_missing'?null:'2026-09-15T12:00:00.000Z',generationEnabled:false,customerBillingEnabled:false,studioCreditsShared:false,balanceFreshness:'up_to_12_hours',packageCount:stage==='access_verified'?2:null,...overrides});
 let current=receipts('not_checked'),releaseCheck=null,rejectCheck=false,checks=0;
 const calls=[],external=[],errors=[],measurements=[];
 const legacy={
@@ -75,7 +75,16 @@ try{
   assert.match(await page.locator('#kling-commercial').innerText(),/ainda precisam ser confirmados/);
   assert.match(await panel.innerText(),/Assinatura e créditos do Studio não são compartilhados/);
   assert.match(await page.locator('#kling-billing').innerText(),/^Desativada/);
+  current=receipts('access_verified',{packageCount:null});await page.locator('#kling-refresh').click();
+  await page.waitForFunction(()=>document.getElementById('kling-package-count').textContent.includes('Quantidade de pacotes não informada pela API'));
+  assert.equal(await page.locator('#kling-stage').getAttribute('data-state'),'access_verified');
+  assert.match(await page.locator('#kling-package-count').innerText(),/saldo disponível continua não confirmado/);
+  assert.doesNotMatch(await page.locator('#kling-package-count').innerText(),/null|undefined|\b0\b|\b2\b/);
+  assert.equal(checks,1,'unknown quantity loads through GET without another account check');
   if(process.env.NEURAL_QA_OUTPUT){await mkdir(process.env.NEURAL_QA_OUTPUT,{recursive:true});await panel.screenshot({path:path.join(process.env.NEURAL_QA_OUTPUT,'kling-admin-verified-mobile.png')});}
+  current=receipts('access_verified',{version:1,packageCount:0});await page.locator('#kling-refresh').click();
+  await page.waitForFunction(()=>document.getElementById('kling-package-count').textContent.includes('Pacotes retornados pela API: 0.'));
+  assert.equal(await page.locator('#kling-stage').getAttribute('data-state'),'access_verified');
   rejectCheck=true;await page.locator('#kling-check').click();
   await page.waitForFunction(()=>document.getElementById('kling-stage').dataset.state==='error');
   assert.equal(await page.locator('#kling-stage').innerText(),'Estado não confirmado');assert.equal(await page.locator('#kling-package-count').isVisible(),false);
@@ -86,5 +95,5 @@ try{
   current=receipts('credentials_missing');await page.reload();await page.waitForFunction(()=>document.getElementById('kling-stage').dataset.state==='credentials_missing');
   assert.equal(await page.locator('#kling-check').isDisabled(),true);assert.equal(checks,2);
   assert.ok(calls.filter(call=>call.method==='POST').every(call=>call.route==='/kling/check'));assert.deepEqual(external,[]);assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({ok:true,measurements,officialLinkNavigation:true,readOnlyInitialGet:true,explicitCheckOnly:true,failedCheckClearsPriorEvidence:true,studioSeparate:true,readinessNotGeneration:true,paidCalls:0,externalRequests:0}));
+  console.log(JSON.stringify({ok:true,measurements,officialLinkNavigation:true,readOnlyInitialGet:true,explicitCheckOnly:true,unknownPackageQuantity:true,legacyKnownZeroSupported:true,failedCheckClearsPriorEvidence:true,studioSeparate:true,readinessNotGeneration:true,paidCalls:0,externalRequests:0}));
 }finally{releaseCheck?.();if(browser)await browser.close();await new Promise(resolve=>server.close(resolve));}

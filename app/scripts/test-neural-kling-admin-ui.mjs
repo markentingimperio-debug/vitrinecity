@@ -2,14 +2,14 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
 import {mountNeuralKlingAdmin} from '../public/neural-kling-admin.js';
-import {KLING_API_LINKS,KLING_READINESS_STATES,assertKlingReadiness} from '../public/neural-kling-contract.js';
+import {KLING_READINESS_VERSION,KLING_API_LINKS,KLING_READINESS_STATES,assertKlingReadiness} from '../public/neural-kling-contract.js';
 
 const html=readFileSync(new URL('../public/admin-vitriny-neural.html',import.meta.url),'utf8');
 const script=readFileSync(new URL('../public/neural-kling-admin.js',import.meta.url),'utf8');
 const css=readFileSync(new URL('../public/neural-kling-admin.css',import.meta.url),'utf8');
 const BASE='/api/admin/vitriny-neural/kling';
-function readiness(stage='not_checked'){
-  return assertKlingReadiness({version:1,provider:'kling_api',stage,configured:stage!=='credentials_missing',checkedAt:['not_checked','credentials_missing'].includes(stage)?null:'2026-09-15T12:00:00.000Z',generationEnabled:false,customerBillingEnabled:false,studioCreditsShared:false,balanceFreshness:'up_to_12_hours',packageCount:stage==='access_verified'?2:null});
+function readiness(stage='not_checked',overrides={}){
+  return assertKlingReadiness({version:KLING_READINESS_VERSION,provider:'kling_api',stage,configured:stage!=='credentials_missing',checkedAt:['not_checked','credentials_missing'].includes(stage)?null:'2026-09-15T12:00:00.000Z',generationEnabled:false,customerBillingEnabled:false,studioCreditsShared:false,balanceFreshness:'up_to_12_hours',packageCount:stage==='access_verified'?2:null,...overrides});
 }
 const response=(value,status=200)=>({ok:status>=200&&status<300,status,json:async()=>structuredClone(value)});
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {resolve,reject,promise};};
@@ -87,6 +87,30 @@ test('all canonical stages render honestly and missing credentials cannot launch
     assert.equal(f.$('kling-error').hidden,!['credentials_rejected','unavailable'].includes(stage));
     if(stage==='credentials_missing'){await f.$('kling-check').click();assert.equal(f.calls.length,1);assert.equal(f.$('kling-check').disabled,true);}
   }
+});
+
+test('v2 unknown package quantity replaces prior count without claiming zero or available balance',async()=>{
+  let current=readiness('access_verified');
+  const f=fixture(()=>response({ok:true,status:current}));await tick();
+  assert.match(f.$('kling-package-count').textContent,/Pacotes retornados pela API: 2/);
+  current=readiness('access_verified',{packageCount:null});await f.$('kling-refresh').click();
+  assert.equal(f.$('kling-stage').getAttribute('data-state'),'access_verified');assert.equal(f.$('kling-package-count').hidden,false);
+  assert.match(f.$('kling-package-count').textContent,/Quantidade de pacotes não informada pela API/);
+  assert.match(f.$('kling-package-count').textContent,/saldo disponível continua não confirmado/);
+  assert.doesNotMatch(f.$('kling-package-count').textContent,/null|undefined|\b0\b|\b2\b/);
+  assert.match(f.$('kling-commercial').textContent,/ainda precisam ser confirmados/);
+  assert.match(f.$('kling-status').textContent,/Nenhum vídeo foi gerado/);
+  assert.equal(f.$('kling-error').hidden,true);assert(f.calls.every(call=>call.options.method==='GET'));
+});
+
+test('consumer supports v1 and v2 known zero counts but refuses a v1 unknown count',async()=>{
+  for(const version of [1,KLING_READINESS_VERSION]){
+    const f=fixture(()=>response({ok:true,status:readiness('access_verified',{version,packageCount:0})}));await tick();
+    assert.equal(f.$('kling-stage').getAttribute('data-state'),'access_verified');
+    assert.match(f.$('kling-package-count').textContent,/Pacotes retornados pela API: 0\. Isso não confirma saldo/);
+  }
+  const f=fixture(()=>response({ok:true,status:{...readiness('access_verified'),version:1,packageCount:null}}));await tick();
+  assert.equal(f.$('kling-stage').getAttribute('data-state'),'error');assert.equal(f.$('kling-package-count').hidden,true);
 });
 
 test('failed checks invalidate former success, suppress remote payloads and recover by explicit GET only',async()=>{

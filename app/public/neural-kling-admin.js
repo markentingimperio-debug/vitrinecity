@@ -43,7 +43,9 @@ export function mountNeuralKlingAdmin(environment=globalThis){
       $('kling-checked-at').textContent='Última conferência: '+checked+' · horário de Brasília.';
     }
     if(value.stage==='access_verified'){
-      $('kling-package-count').textContent='Pacotes retornados pela API: '+value.packageCount+'. Isso não confirma saldo disponível.';
+      $('kling-package-count').textContent=value.packageCount===null
+        ? 'Quantidade de pacotes não informada pela API. O saldo disponível continua não confirmado.'
+        : 'Pacotes retornados pela API: '+value.packageCount+'. Isso não confirma saldo disponível.';
       $('kling-package-count').hidden=false;
       $('kling-commercial').textContent='Acesso conferido; créditos disponíveis e condições comerciais ainda precisam ser confirmados na conta da API.';
     }
