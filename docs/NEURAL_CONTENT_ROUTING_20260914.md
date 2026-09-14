@@ -108,4 +108,5 @@ Após esse resultado, o administrador pediu novamente a correção imediata no
 contexto da pergunta de autorização para avaliar um modelo maior. Foi iniciada
 somente a preparação isolada do Qwen3-4B-Instruct-2507-Q8_0: sem substituição do
 modelo atual, API paga, alteração de orçamento, qualificação ou autonomia em
-produção. O resultado dessa nova avaliação deve ser registrado separadamente.
+produção. A avaliação foi concluída sem promoção; resultados e encerramento em
+[NEURAL_MODEL4B_EVALUATION_20260914.md](NEURAL_MODEL4B_EVALUATION_20260914.md).
