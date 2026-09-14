@@ -15,7 +15,7 @@ HTML/JS gerado nunca é executado. As verificações são estruturais; qualidade
 O relatório JSON vai para stdout e o progresso para stderr; não há importação de relatórios externos.
 
 Configuração: VITRINY_NEURAL_MODEL_ORIGIN, VITRINY_NEURAL_MODEL_NAME e API key opcional.
-Alternativa: JARVIS_LOCAL_MODEL=1 e JARVIS_MODEL_ORIGIN.
+Alternativa: JARVIS_LOCAL_MODEL=1 e JARVIS_MODEL_ORIGIN explícito.
 Fallback remoto é ignorado. Origem deve ser loopback, IP privado ou nome interno
 jarvis-model/ollama/llama/vllm. Isso verifica configuração; não prova isolamento de DNS/rede.
 VITRINY_NEURAL_BENCHMARK_TIMEOUT_MS: 1000..300000; padrão 90000 por caso.
@@ -42,7 +42,9 @@ function localOrigin(value){
 async function main(){
   if(args.length!==1||args[0]!=='--run-local')return emit({status:'blocked',reason:'explicit_run_local_required',productionChanged:false},2);
   const env=process.env;
-  const origin=String(env.VITRINY_NEURAL_MODEL_ORIGIN||(truthy(env.JARVIS_LOCAL_MODEL)?env.JARVIS_MODEL_ORIGIN||'http://jarvis-model:8080':'')).trim();
+  // An operator must select the destination explicitly for this live diagnostic.
+  // Do not inherit the application's implicit internal endpoint here.
+  const origin=String(env.VITRINY_NEURAL_MODEL_ORIGIN||(truthy(env.JARVIS_LOCAL_MODEL)?env.JARVIS_MODEL_ORIGIN||'':'')).trim();
   if(!origin||truthy(env.VITRINY_NEURAL_MODEL_REMOTE)||!localOrigin(origin))return emit({status:'blocked',reason:'local_origin_required',productionChanged:false},2);
   // Copy only model fields; do not inherit DB, web tools, feature flags or fallback credentials.
   const modelEnv={};

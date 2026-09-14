@@ -129,7 +129,7 @@ test('probe exceptions and arbitrary returned codes are sanitized by runtime',as
 });
 
 test('admin endpoint requires authenticated same-origin JSON request and cannot select provider or infer',async()=>{
-  const app=express();app.use(express.json());let checks=0,fail=false;
+  const app=express();app.disable('x-powered-by');app.use(express.json());let checks=0,fail=false;
   const service={runtime:{neural:{},skills:{}},taskDiagnostics:{check:async()=>{checks++;if(fail)throw Error(secret);return{readyForTaskAttempt:false,noInference:true,liveTaskAcceptance:'not_run_here',providers:[]};}}};
   mountVitrinyNeuralAdmin({app,service,
     requireAdmin:(req,res,next)=>req.get('x-fixture-admin')==='yes'?next():res.status(401).json({error:'admin_required'}),

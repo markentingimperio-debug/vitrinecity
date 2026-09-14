@@ -47,7 +47,7 @@ function checksFor(test,task,files){
     const script=task.resultText;
     check('substantial_script',script.length>=120);
     check('three_scenes',/cena\s*1/i.test(script)&&/cena\s*2/i.test(script)&&/cena\s*3/i.test(script));
-    check('timing_present',/\d+\s*(?:s\b|segundo)/i.test(script));
+    check('timing_present',/(?<!\d)\d{1,5}[ \t]{0,8}(?:s\b|segundos?\b)/i.test(script));
     check('call_to_action',/chamada|cta\b|visite|conheça|acesse|compre|confira/i.test(script));
   }else{
     const html=files.find(file=>file.path==='index.html')?.content||'';

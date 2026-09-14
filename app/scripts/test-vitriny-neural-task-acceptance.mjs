@@ -61,6 +61,8 @@ test('CLI ajuda não gera inferência e origem remota é recusada sem revelar cr
   const blocked=spawnSync(process.execPath,[cli.pathname,'--run-local'],{encoding:'utf8',env:{PATH:process.env.PATH,VITRINY_NEURAL_MODEL_ORIGIN:'https://remote.invalid',VITRINY_NEURAL_MODEL_API_KEY:'secret-do-not-print'}});
   assert.equal(blocked.status,2);assert.equal(JSON.parse(blocked.stdout).reason,'local_origin_required');
   assert.doesNotMatch(blocked.stdout+blocked.stderr,/secret-do-not-print/);
+  const implicit=spawnSync(process.execPath,[cli.pathname,'--run-local'],{encoding:'utf8',env:{PATH:process.env.PATH,JARVIS_LOCAL_MODEL:'1'}});
+  assert.equal(implicit.status,2);assert.equal(JSON.parse(implicit.stdout).reason,'local_origin_required','Live acceptance must not infer an operator destination from the Jarvis flag alone');
 });
 test('provider não local e limiares rebaixados falham antes de inferência',async()=>{
   const f=fixture();

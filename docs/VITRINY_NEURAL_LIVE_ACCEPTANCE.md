@@ -34,7 +34,7 @@ docker compose exec -T app npm run acceptance:neural -- --run-local
 
 Esses comandos são operacionais para uso após reconciliar a instalação; não foram executados contra a VPS nesta entrega. O ensaio gera inferência local e consome recursos. Executar primeiro em homologação, sem chats ou benchmarks concorrentes. Concorrência 1 do ensaio não limita outros serviços. O Compose existente declara um modelo com uma sequência, 2 CPUs e 4 GiB; isso descreve o arquivo do repositório, não comprova os recursos efetivos da VPS.
 
-O ensaio usa somente o provider local primário configurado por `VITRINY_NEURAL_MODEL_ORIGIN` e `VITRINY_NEURAL_MODEL_NAME`, ou por `JARVIS_LOCAL_MODEL` e `JARVIS_MODEL_ORIGIN`. Ignora fallback e rejeita origem fora de loopback, IP privado ou nomes internos previstos na ajuda. Chaves permanecem no ambiente do processo. Não importar relatórios ou qualificações artificiais para liberar o teste.
+O ensaio usa somente o provider local primário configurado por `VITRINY_NEURAL_MODEL_ORIGIN` e `VITRINY_NEURAL_MODEL_NAME`, ou por `JARVIS_LOCAL_MODEL` e `JARVIS_MODEL_ORIGIN` explícito. A flag Jarvis sozinha não seleciona um endereço para o ensaio: o operador deve fornecer a origem efetivamente conferida. Ignora fallback e rejeita origem fora de loopback, IP privado ou nomes internos previstos na ajuda. Chaves permanecem no ambiente do processo. Não importar relatórios ou qualificações artificiais para liberar o teste.
 
 Sequência:
 
