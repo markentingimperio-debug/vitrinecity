@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { mountNeuralWorkspace, validateNeuralAttachment } from '../public/neural-workspace.js';
 import { CHAT_MESSAGE_STATES, CHAT_ACTIVE_STATES, isChatActive, assertChatReceipt, assertChatQueueStatus } from '../public/neural-chat-contract.js';
+import {assertCoinStatus,VITRINE_COINS_POLICY} from '../public/vitrine-coins-contract.js';
 const receipt = (overrides={}) => {
   const requestId=overrides.requestId||'request-fixture';
   return assertChatReceipt({id:requestId,requestId,conversationId:'conversation-1',messageId:'message-fixture',status:'completed',createdAt:1,updatedAt:1,...overrides});
@@ -14,7 +15,7 @@ assert.match(html, /name="viewport"/);
 assert.match(html, /<script type="module" src="\/neural-workspace\.js"><\/script>/);
 assert.match(html, /Lia/);
 assert.match(html, /PDF e DOCX ainda não/);
-assert.match(html, /ainda não interpreta seu conteúdo visual/);
+assert.match(html, /media-capability-note/);
 assert.match(html, /histórico privado/);
 assert.match(html, /role="alert"/);
 assert.match(html, /aria-live="polite"/);
@@ -43,26 +44,27 @@ assert.throws(()=>validateNeuralAttachment({name:'large.txt',type:'text/plain',s
 
 class Element {
   constructor(tag='div') { this.tagName=tag;this.textContent='';this.value='';this.hidden=false;this.disabled=false;this.children=[];this.attributes={};this.listeners={};this.dataset={};this.style={};this.scrollHeight=100;this.scrollTop=0;this.clientHeight=100;this.classList={toggle:(name,value)=>{this.attributes[name]=value;}}; }
-  append(...items){this.children.push(...items);}
-  replaceChildren(...items){this.children=items;}
+  append(...items){for(const item of items){item.remove();item.parent=this;this.children.push(item);}}
+  insertBefore(item,before){item.remove();item.parent=this;const index=before?this.children.indexOf(before):-1;if(index<0)this.children.push(item);else this.children.splice(index,0,item);}
+  replaceChildren(...items){for(const item of this.children)item.parent=null;this.children=[];this.append(...items);}
   setAttribute(k,v){this.attributes[k]=v;}
   getAttribute(k){return this.attributes[k]??null;}
   addEventListener(k,f){this.listeners[k]=f;}
-  remove(){this.removed=true;}
+  remove(){this.removed=true;if(this.parent){this.parent.children=this.parent.children.filter(item=>item!==this);this.parent=null;}}
   focus(){this.focused=true;}
   click(){return this.listeners.click?.({preventDefault(){}});}
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 async function settled(){for(let i=0;i<5;i++)await settle();}
-function harness({search='',respond}){
+function harness({search='',respond,coinStatus=null}){
   const elements=new Map([...html.matchAll(/id="([^"]+)"/g)].map(([,id])=>[id,new Element()]));
   elements.get('history-toggle').attributes['aria-expanded']='false';
   const calls=[],timers=new Map(),listeners=new Map(),created=[],revoked=[];let uuid=0,timer=0;
   class FakeURL extends URL {static createObjectURL(){return 'blob:private-'+(++uuid);}static revokeObjectURL(url){revoked.push(url);}}
   class Reader{readAsDataURL(){this.result='data:text/plain;base64,aGVsbG8=';this.onload();}}
   mountNeuralWorkspace({document:{getElementById:id=>elements.get(id),createElement:tag=>{const e=new Element(tag);created.push(e);return e;},querySelectorAll:()=>[],body:new Element('body')},window:{addEventListener:(k,v)=>listeners.set(k,v)},location:{search},URLSearchParams,URL:FakeURL,Blob,AbortController,FileReader:Reader,crypto:{randomUUID:()=> 'message-request-'+(++uuid)},setTimeout:(f,ms)=>{timers.set(++timer,{f,ms});return timer;},clearTimeout:id=>timers.delete(id),fetch:async(url,options)=>{
-    calls.push({url,options});const result=await respond(url,options);
-    return {ok:(!result.status||result.status<400),status:result.status||200,json:async()=>result.data,blob:async()=>new Blob([result.body||'photo'],{type:result.mime||'image/png'})};
+    calls.push({url,options});const result=url==='/api/coins/status'?(coinStatus?{data:coinStatus}:{status:503,data:{ok:false}}):await respond(url,options);
+    return {ok:(!result.status||result.status<400),status:result.status||200,headers:{get:key=>key==='content-type'?(result.mime||'image/png'):null},json:async()=>result.data,blob:async()=>new Blob([result.body||'photo'],{type:result.mime||'image/png'})};
   }});
   return {elements,calls,timers,listeners,created,revoked,submit:()=>elements.get('command-form').listeners.submit({preventDefault(){}})};
 }
@@ -79,7 +81,7 @@ const app=harness({respond:async(url,options)=>{
   throw Error('Unexpected '+url);
 }});
 await settled();
-assert.equal(app.calls.length,2);
+assert.equal(app.calls.length,3);
 app.elements.get('command').value='Crie uma descrição';
 const first=app.submit();await app.submit();await first;
 assert.equal(posts,1,'double send must not duplicate');
@@ -358,3 +360,73 @@ assert.equal(switched.elements.get('command').value,'Rascunho do novo acesso');
 assert.equal(switched.elements.get('cancel-request').hidden,true);
 assert.notEqual(switched.elements.get('announcement').textContent,'Cancelamento confirmado.');
 console.log('Lia chat UI: canonical receipts, durable queue lifecycle/cancellation, invalid-history fail-closed, missing-message receipt recovery, scoped review holds, stale cancellation isolation, context, IME, GET recovery, exact retry and readiness transparency passed.');
+
+// Paid operations have an explicit quote boundary; polls and reloads are GET-only.
+const quotedPayment={quoteId:'quote-paid',currency:'BRL',amountMicro:1150000,expiresAt:Date.now()+600000,kind:'video',summary:'Vídeo de 5 segundos',state:'quoted',chargedMicro:null};
+const paidWallet={currency:'BRL',availableMicro:5000000,reservedMicro:0};
+const paidStatus={...status,paidGenerationEnabled:true,capabilities:{text:true,image:true,video:true},wallet:paidWallet};
+const paidArtifacts=[{id:'artifact-video',requestId:'request-paid',kind:'video',name:'video.mp4',mimeType:'video/mp4',bytes:5,durationSeconds:5,availability:'ready'}, {id:'artifact-image',requestId:'request-paid',kind:'image',name:'imagem.png',mimeType:'image/png',bytes:5,availability:'ready'}];
+let paidState='awaiting_confirmation',confirmPosts=0,loseConfirmation=true,paidDownloadReads=0;
+const paymentView=()=>({...quotedPayment,state:paidState==='completed'?'settled':paidState==='awaiting_confirmation'?'quoted':'reserved',chargedMicro:paidState==='completed'?1000000:null});
+const paidReceipt=()=>receipt({requestId:'request-paid',status:paidState,payment:paymentView()});
+const paidMessages=()=>[{id:'paid-message',requestId:'request-paid',role:'assistant',text:paidState==='completed'?'Aqui está seu resultado.':'Confira o valor antes de gerar.',status:paidState,payment:paymentView(),artifacts:paidState==='completed'?paidArtifacts:[]}];
+const paid=harness({respond:async(url,options)=>{
+  if(url.endsWith('/status'))return {data:paidStatus};
+  if(url.endsWith('/conversations'))return {data:{ok:true,items:[conversation]}};
+  if(url.endsWith('/conversations/'+conversation.id))return {data:{ok:true,conversation,messages:paidMessages()}};
+  if(url.endsWith('/requests/request-paid/confirm')){confirmPosts++;assert.deepEqual(Object.keys(JSON.parse(options.body)).sort(),['idempotencyKey','quoteId']);if(loseConfirmation){loseConfirmation=false;throw Error('lost confirmation response');}paidState='queued';return {data:{ok:true,...paidReceipt()}};}
+  if(url.endsWith('/requests/request-paid'))return {data:{ok:true,request:paidReceipt()}};
+  if(url.includes('/artifacts/')){if(url.endsWith('/download'))paidDownloadReads++;const artifact=paidArtifacts.find(item=>url.includes(item.id));assert.ok(artifact);return {body:'photo',mime:artifact.mimeType};}
+  throw Error('unexpected paid route '+url);
+}});
+await settled();assert.match(paid.elements.get('billing-status').textContent,/5,00.*0,00/);
+assert.equal(confirmPosts,0);assert.equal(paid.elements.get('cancel-request').textContent,'Cancelar pedido');
+const confirmButton=paid.created.find(element=>element.dataset.confirmPayment==='true');assert.ok(confirmButton&&!confirmButton.disabled);
+await confirmButton.click();assert.equal(confirmPosts,1);assert.equal(paid.elements.get('recovery').hidden,false);
+await paid.elements.get('recover-request').click();assert.equal(confirmPosts,1);assert.equal(paid.elements.get('recovery').hidden,false,'awaiting state cannot prove an in-flight confirmation was rejected');
+await confirmButton.click();assert.equal(confirmPosts,1,'uncertain confirm is never repeated');
+paidState='queued';await paid.elements.get('recover-request').click();assert.equal(paid.elements.get('recovery').hidden,true);assert.equal(confirmPosts,1);
+paidState='completed';await [...paid.timers.values()].find(timer=>timer.ms===2000).f();await settled();
+const videoNode=paid.created.find(element=>element.tagName==='video');assert.ok(videoNode);assert.equal(videoNode.controls,true);assert.equal(videoNode.playsInline,true);assert.equal(videoNode.preload,'metadata');assert.equal(videoNode.autoplay,undefined);assert.ok(videoNode.src.startsWith('blob:'));
+assert.equal(paid.created.filter(element=>element.tagName==='video').length,1);
+await paid.elements.get('refresh').click();await settled();
+assert.equal(paid.created.filter(element=>element.tagName==='video').length,1,'refresh retains the same player DOM node');
+assert.equal(paid.calls.filter(call=>call.url.endsWith('/artifacts/artifact-video/content')).length,1,'same artifact is not fetched on every history poll');
+const downloadButton=paid.created.find(element=>element.textContent==='Baixar vídeo');await downloadButton.click();assert.equal(paidDownloadReads,1);
+assert.equal(paid.calls.filter(call=>call.options.method==='POST').length,1,'view/download/refresh never generate or charge');
+const oldVideoUrl=videoNode.src;paid.listeners.get('pagehide')();assert.ok(paid.revoked.includes(oldVideoUrl));assert.equal(paid.elements.get('messages').children.length,0);
+for(const invalid of ['wallet','payment','artifact']){
+  const invalidPaid=harness({respond:async url=>{
+    if(url.endsWith('/status'))return {data:invalid==='wallet'?{...paidStatus,wallet:{...paidWallet,availableMicro:-1}}:paidStatus};
+    if(url.endsWith('/conversations'))return {data:{ok:true,items:[conversation]}};
+    const message={...paidMessages()[0]};
+    if(invalid==='payment')message.payment={...quotedPayment,amountMicro:NaN};
+    if(invalid==='artifact')message.artifacts=[{...paidArtifacts[0],url:'https://untrusted.example/video'}];
+    return {data:{ok:true,conversation,messages:[message]}};
+  }});await settled();invalidPaid.elements.get('command').value='Não repetir';invalidPaid.elements.get('command').listeners.input();assert.equal(invalidPaid.elements.get('send').disabled,true);assert.equal(invalidPaid.created.filter(element=>element.tagName==='video').length,0);assert.equal(invalidPaid.calls.filter(call=>call.options.method==='POST').length,0);
+}
+console.log('Lia paid media UI: explicit quote, exact confirmation, no repeat on uncertainty, microBRL wallet, retained private player, download, cleanup and malformed-data fail-closed passed.');
+
+const unifiedCoins=assertCoinStatus({ok:true,currency:'VITRINE_COINS',policyVersion:VITRINE_COINS_POLICY.version,unified:true,frozen:false,availableAtoms:'816000000',reservedAtoms:'96000000',chargedAtoms:'0',expiredAtoms:'0'});
+const purchaseFixture={ok:true,currency:'BRL',availableMicro:0,reservedMicro:0,chargedMicro:0,expiredMicro:0,frozenMicro:0,frozen:false,canPurchase:true,presetsCents:[1000,2500,5000,10000],terms:{version:VITRINE_COINS_POLICY.version,validityDays:60,summary:'Vitrine Coins válidas por 60 dias.',refunds:'Direitos legais preservados.',feeStage:'topup',topupFeeBps:1500,usageMarkupBps:0,coinsPerBRL:'9.6'},coinWallet:unifiedCoins,orders:[]};
+let purchaseAttempts=0;const purchasePayloads=[];
+const checkout=harness({coinStatus:unifiedCoins,search:'?personal=1',respond:async(url,options)=>{
+  assert.ok(url.startsWith('/api/neural/chat/'),'personal mode uses authenticated personal chat, never admin/store');
+  if(url.endsWith('/credits/status'))return {data:purchaseFixture};
+  if(url.endsWith('/status'))return {data:paidStatus};
+  if(url.endsWith('/conversations'))return {data:{ok:true,items:[]}};
+  if(url.endsWith('/credits/checkout')){
+    purchaseAttempts++;purchasePayloads.push(options.body);if(purchaseAttempts===1)throw Error('response lost after checkout might exist');
+    return {data:{ok:true,order:{reference:'ai_55555555-5555-4555-8555-555555555555',status:'pending',amountCents:1000,checkoutUrl:'https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=fixture',createdAt:1,expiresAt:Date.now()+600000}}};
+  }
+  throw Error('unexpected checkout '+url);
+}});
+await settled();assert.equal(checkout.calls.some(call=>call.url.includes('/credits')),false,'initial chat does not start purchase checks');
+await checkout.elements.get('credits-toggle').click();await settled();assert.equal(purchaseAttempts,0);
+let amountButton=checkout.created.find(element=>element.dataset.creditAmount==='1000');await amountButton.click();assert.equal(purchaseAttempts,0,'unchecked terms cannot create checkout even by programmatic click');
+checkout.elements.get('credits-terms').checked=true;await amountButton.click();assert.equal(purchaseAttempts,1);assert.equal(checkout.elements.get('credits-retry').hidden,false);
+await amountButton.click();assert.equal(purchaseAttempts,1,'uncertain checkout does not create new key');
+await checkout.elements.get('credits-refresh').click();assert.equal(purchaseAttempts,1,'status GET never repeats checkout');
+await checkout.elements.get('credits-retry').click();assert.equal(purchaseAttempts,2);assert.equal(purchasePayloads[0],purchasePayloads[1],'explicit recovery uses exact purchase key, amount and accepted terms');
+assert.equal(checkout.elements.get('credits-retry').hidden,true);assert.ok(checkout.created.some(element=>element.tagName==='a'&&element.href?.startsWith('https://www.mercadopago.com.br/')&&element.rel==='noopener noreferrer'));
+console.log('Lia credit purchase UI: explicit consent, no automatic checkout, immutable same-key recovery and official payment link passed.');

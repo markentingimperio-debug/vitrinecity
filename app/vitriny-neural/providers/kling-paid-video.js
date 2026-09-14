@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {rasterSize} from '../../web-story-assets.js';
 
 // Official current API schemas, read 2026-09-14 (not the Studio OAuth/CLI):
 // https://kling.ai/document-api/api/video/3-0-omni/text-to-video
@@ -11,7 +12,7 @@ const SCOPE=/^(?:store|admin|user):[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const HASH=/^[a-f0-9]{64}$/;
 const CONTROL=/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const DECIMAL=/^(?:0|[1-9]\d{0,17})(?:\.\d{1,18})?$/;
-const CONTENT_KEYS=['prompt','resolution','aspectRatio','durationSeconds','externalTaskId'];
+const CONTENT_KEYS=['prompt','resolution','aspectRatio','durationSeconds','externalTaskId','referenceImageBase64'];
 const PERMIT_KEYS=['authorized','scope','requestId','requestHash','model','accountBinding','policyRevision','externalTaskId','reservationId','quoteId','maximumMicroBrl','expiresAt'];
 const RECEIPT_KEYS=['provider','model','scope','requestId','requestHash','accountBinding','policyRevision','externalTaskId','reservationId','quoteId','maximumMicroBrl','durationSeconds','taskId'];
 const PRE_CODES=new Set(['kling_disabled','kling_key_missing','kling_binding_missing','kling_authorization_required','kling_input_invalid','kling_cancelled_before_dispatch','kling_authorization_invalid','kling_authorization_expired','kling_authorization_denied','kling_receipt_invalid','kling_poll_authorization_required','kling_poll_authorization_denied']);
@@ -39,7 +40,17 @@ function payloadFor(input){
   const {prompt,resolution,aspectRatio,durationSeconds,externalTaskId}=input;
   if(typeof prompt!=='string'||!prompt.trim()||prompt.length>3072||!prompt.isWellFormed()||CONTROL.test(prompt)||!['720p','1080p'].includes(resolution)||!['16:9','9:16','1:1'].includes(aspectRatio)||!validId(externalTaskId))fail('kling_input_invalid');
   integer(durationSeconds,3,15,'kling_input_invalid');
-  return {prompt,settings:{resolution,aspect_ratio:aspectRatio,duration:durationSeconds,audio:'off',multi_shot:false},options:{external_task_id:externalTaskId,watermark_info:{enabled:false}}};
+  const options={external_task_id:externalTaskId,watermark_info:{enabled:false}};
+  if(input.referenceImageBase64!==undefined){
+    const value=input.referenceImageBase64;
+    if(typeof value!=='string'||value.length>2800000||value.length%4||! /^[A-Za-z0-9+/]+={0,2}$/.test(value))fail('kling_input_invalid');
+    const bytes=Buffer.from(value,'base64');let size;try{size=rasterSize(bytes);}catch{fail('kling_input_invalid');}
+    if(bytes.toString('base64')!==value||!['png','jpeg'].includes(size.type)||size.width<300||size.height<300||size.width/size.height<0.4||size.width/size.height>2.5)fail('kling_input_invalid');
+    // Official image-to-video contract accepts the private reference as bare
+    // Base64. It is never published or turned into a public attachment URL.
+    return {contents:[{type:'prompt',text:prompt},{type:'first_frame',url:value}],settings:{resolution,duration:durationSeconds,audio:'off',multi_shot:false},options};
+  }
+  return {prompt,settings:{resolution,aspect_ratio:aspectRatio,duration:durationSeconds,audio:'off',multi_shot:false},options};
 }
 
 /** The server prices/reserves this exact body hash, including the unique external
@@ -203,7 +214,7 @@ export function createKlingPaidVideoAdapter(options={}){
       if(permit.expiresAt<=clock())fail('kling_authorization_expired');
       if(signal?.aborted)fail('kling_cancelled_before_dispatch');
     }catch(error){return safePre(error,base());}
-    return exchange(`${ORIGIN}/text-to-video/${MODEL}`,{body,signal,receipt,polling:false});
+    return exchange(`${ORIGIN}/${input.referenceImageBase64===undefined?'text-to-video':'image-to-video'}/${MODEL}`,{body,signal,receipt,polling:false});
   }
 
   async function poll(input){

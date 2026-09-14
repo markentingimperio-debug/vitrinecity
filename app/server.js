@@ -43,6 +43,9 @@ import {ADS_TERMS_VERSION,ADS_VALIDITY_DAYS,creditExpiryForOrder} from './credit
 import {setupCityChat} from './city-chat.js';
 import {setupCityExploration,decorateExplorationPage} from './city-exploration.js';
 import {setupCityRewards} from './city-rewards.js';
+import {createCoinWallet} from './vitrine-coins-wallet.js';
+import {migrateLegacyCoins} from './vitrine-coins-migration.js';
+import {assertCoinStatus,atomsFromLegacyAdsUnits,quoteCoinTopup,VITRINE_COINS_POLICY} from './public/vitrine-coins-contract.js';
 import {setupPrayerSupport} from './prayer-support.js';
 import {createPrayerDailyHandler} from './prayer-daily.js';
 import {createPrayerVideoHandler} from './prayer-videos.js';
@@ -60,6 +63,7 @@ import { createCryptoObservability, mountCryptoObservability } from './crypto-ob
 import { mountJarvis } from './jarvis-core.js';
 import { mountNeuralTasksApi } from './vitriny-neural/tasks-api.js';
 import { mountNeuralChatApi } from './vitriny-neural/chat-api.js';
+import { createAiCreditPurchases,mountAiCreditPurchases } from './vitriny-neural/ai-credit-purchases.js';
 import { createKlingReadiness, mountKlingReadinessApi } from './vitriny-neural/kling-readiness.js';
 import { mountNeuralBillingApi } from './vitriny-neural/billing-api.js';
 import { mountJarvisPublic } from './jarvis-public.js';
@@ -1848,6 +1852,18 @@ const LOT_CATALOG = Object.freeze({
 const AVAILABLE_LOTS = new Set(Object.keys(LOT_CATALOG));
 const LOT_HOLD_MINUTES = 45;
 const ADS_CREDITS_PER_REAL = 9.6;
+// Disabled deployments keep the legacy books unchanged. Cutover reconciliation
+// runs after every legacy schema has been initialized and before requests start.
+const coinsEnabled=process.env.VITRINE_COINS_ENABLED==='true';
+if(!coinsEnabled&&db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='vitrine_coin_migrations'").get()&&db.prepare('SELECT 1 FROM vitrine_coin_migrations LIMIT 1').get())throw Error('coin_cutover_requires_unified_wallet');
+const coinWallet = createCoinWallet({db,enabled:coinsEnabled});
+if(coinWallet.enabled)db.exec(`CREATE TABLE IF NOT EXISTS vitrine_coin_legacy_payments(
+  payment_id TEXT PRIMARY KEY,order_reference TEXT NOT NULL UNIQUE REFERENCES credit_orders(reference),
+  user_id INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+function walletBalanceUnits(userId) {
+  if(coinWallet.enabled){const status=assertCoinStatus(coinWallet.status(userId));return status.frozen?0:Number(BigInt(status.availableAtoms)/100000n);}
+  return db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId)?.balance_units||0;
+}
 const ADS_MANAGEMENT_RATE = 0.15;
 const ADS_MIN_TOPUP_CENTS = 3000;
 const ADS_MAX_TOPUP_CENTS = 500000;
@@ -1894,12 +1910,15 @@ function adsCreditQuote(dailyCreditsValue,durationValue) {
     feeCents=Math.round(amountCents*ADS_MANAGEMENT_RATE);mediaCents=amountCents-feeCents;
     grossCreditUnits=Math.round(amountCents*ADS_CREDITS_PER_REAL);
     managementCreditUnits=Math.round(grossCreditUnits*ADS_MANAGEMENT_RATE);netCreditUnits=grossCreditUnits-managementCreditUnits;
+    if(coinWallet.enabled){netCreditUnits=Number(BigInt(quoteCoinTopup(amountCents).netAtoms)/100000n);managementCreditUnits=grossCreditUnits-netCreditUnits;}
     if(mediaCents>=dailyBudgetCents*durationDays&&netCreditUnits>=requestedNetUnits)break;amountCents++;
   }while(amountCents<=ADS_MAX_TOPUP_CENTS);
   if(amountCents>ADS_MAX_TOPUP_CENTS)throw new Error('amount_limit');
   return {dailyCredits,durationDays,dailyBudgetCents,requestedNetUnits,amountCents,feeCents,mediaCents,
     grossCreditUnits,managementCreditUnits,netCreditUnits,creditsPerReal:ADS_CREDITS_PER_REAL,managementRatePercent:ADS_MANAGEMENT_RATE*100,
-    validityDays:Math.round(CREDIT_VALIDITY_MS/(24*60*60*1000))};
+    validityDays:Math.round(CREDIT_VALIDITY_MS/(24*60*60*1000)),
+    ...(coinWallet.enabled?{unified:true,termsVersion:VITRINE_COINS_POLICY.version,netAtoms:quoteCoinTopup(amountCents).netAtoms,netCoins:quoteCoinTopup(amountCents).netCoins,
+      grossAtoms:(BigInt(amountCents)*960000n).toString(),feeAtoms:(BigInt(feeCents)*960000n).toString()}: {})};
 }
 const COURSES = Object.freeze({
   'geladinhos-gourmet': Object.freeze({
@@ -2611,6 +2630,7 @@ function updateLotFromPixOrder(mpOrder) {
 }
 
 const expireCreditBatches = db.transaction((userId) => {
+  if(coinWallet.enabled)return;
   const now = Date.now();
   const expired = db.prepare(`SELECT * FROM credit_batches
     WHERE user_id=? AND status='active' AND remaining_units>0 AND expires_at<=?`).all(userId, now);
@@ -2628,6 +2648,12 @@ const expireCreditBatches = db.transaction((userId) => {
 });
 
 function publicWallet(userId) {
+  if(coinWallet.enabled){
+    const status=assertCoinStatus(coinWallet.status(userId));
+    const history=coinWallet.history(userId);
+    return {balanceUnits:Number(status.availableAtoms)/100000,updatedAt:null,validityDays:VITRINE_COINS_POLICY.validityDays,
+      nextExpirationAt:null,batches:[],transactions:[],coins:status,coinHistory:history};
+  }
   expireCreditBatches(userId);
   const wallet = db.prepare('SELECT balance_units,updated_at FROM wallets WHERE user_id=?').get(userId);
   const transactions = db.prepare(`SELECT delta_units,kind,description,created_at
@@ -2689,7 +2715,7 @@ app.use((req, res, next) => {
   next();
 });
 setupGamesAppRoutes(app,{publicDir:path.join(dir,'public'),currentUser,isAdministrativeUser});
-const cityRewards=setupCityRewards({app,db,requireUser,requireAdmin,sameOriginOnly,publicDir:path.join(dir,'public'),
+const cityRewards=setupCityRewards({app,db,coinWallet,requireUser,requireAdmin,sameOriginOnly,publicDir:path.join(dir,'public'),
   affiliateFor:req=>referralAffiliate(req,req.user.email,req.user.id)?.id||null,
   getCourse:slug=>{const c=managedCourse(slug);return c?.status==='active'&&courseReady(slug)?c:null;},
   paymentReady:()=>!!(process.env.MERCADOPAGO_ACCESS_TOKEN&&process.env.MERCADOPAGO_WEBHOOK_SECRET),
@@ -2706,6 +2732,12 @@ const cityRewards=setupCityRewards({app,db,requireUser,requireAdmin,sameOriginOn
       auto_return:'approved',statement_descriptor:'VITRINECITY',expires:true,expiration_date_from:new Date().toISOString(),expiration_date_to:new Date(Date.now()+24*60*60*1000).toISOString()}),signal:AbortSignal.timeout(12000)});
     const data=await response.json();if(!response.ok)throw Error('Pagamento indisponível');return data;}
 });
+if(coinWallet.enabled){const migration=migrateLegacyCoins({db,wallet:coinWallet,dryRun:false});if(!migration.completed)throw Error('coin_migration_incomplete');}
+app.get('/api/coins/status',requireUser,(req,res)=>{
+  if(!coinWallet.enabled)return res.status(503).json({error:'A carteira unificada ainda não está ativa.',code:'coins_unavailable'});
+  try{return res.set('Cache-Control','private,no-store').json({ok:true,...assertCoinStatus(coinWallet.status(req.user.id))});}
+  catch{return res.status(503).json({error:'Não foi possível conferir sua carteira.',code:'coins_unavailable'});}
+});
 const cityExploration=setupCityExploration({app,db,requireUser,sameOriginOnly,rewards:cityRewards});
 setupPrayerSupport({app,db,siteUrl:SITE_URL,sameOriginOnly,
   allowAttempt:ip=>allowAttempt(checkoutAttempts,`prayer-support:${ip}`,5,10*60*1000),
@@ -2715,7 +2747,7 @@ setupCourierAccount({app,db,requireCourier,requireAdmin,sameOriginOnly,hashPassw
   allowAttempt:(key,limit,windowMs)=>allowAttempt(authAttempts,key,limit,windowMs),
   sendMail:mailTransport?message=>mailTransport.sendMail({from:process.env.EMAIL_FROM||`VitrineCity <${SMTP_USER}>`,...message}):null,
   siteUrl:SITE_URL,publicDir:path.join(dir,'public'),redispatch:dispatchNextCourier});
-setupCityMembership(app,{db,currentUser,requireUser,sameOriginOnly,isAdministrativeUser,grantGameReward:cityRewards.grantGame});
+setupCityMembership(app,{db,currentUser,requireUser,sameOriginOnly,isAdministrativeUser,grantGameReward:cityRewards.grantGame,rewardSettings:()=>cityRewards.settings()});
 const campaignPreferences=setupCampaignPreferences(app,{db,requireUser,sameOriginOnly,recordConsent});
 const customerRetention=setupCustomerRetention({app,db,requireAdmin,requireUser,sameOriginOnly,publicDir:path.join(dir,'public'),siteUrl:SITE_URL,campaignPreferences,
   signingSecret:managementSecret,allowAttempt:(key,limit,windowMs)=>allowAttempt(authAttempts,key,limit,windowMs),
@@ -2727,7 +2759,7 @@ setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, publicDir: path.joi
 const cryptoObservability = createCryptoObservability(db);
 cryptoObservability.seedLatest();
 mountCryptoObservability({ app, requireAdmin, observability: cryptoObservability });
-const jarvisCore = mountJarvis({ app, db, requireAdmin, sameOriginOnly, researchSchedule: true });
+const jarvisCore = mountJarvis({ app, db, coinWallet, requireAdmin, sameOriginOnly, researchSchedule: true });
 function neuralAuthorizedStore(req,res){
     const access=storePortalAccess(req,res);
     if(!access)return null;
@@ -2736,7 +2768,26 @@ function neuralAuthorizedStore(req,res){
     return {storeReference:profile.order_reference};
 }
 mountNeuralTasksApi({app,tasks:jarvisCore.neural?.service?.tasks,requireAdmin,sameOriginOnly,getAuthorizedStore:neuralAuthorizedStore});
-mountNeuralChatApi({app,chat:jarvisCore.neural?.service?.chat,requireAdmin,sameOriginOnly,getAuthorizedStore:neuralAuthorizedStore});
+mountNeuralChatApi({app,chat:jarvisCore.neural?.service?.chat,artifacts:jarvisCore.neural?.service?.paidArtifacts,requireAdmin,requireUser,sameOriginOnly,getAuthorizedStore:neuralAuthorizedStore});
+const neuralAiPurchases=jarvisCore.neural?.service?.paidWallet?createAiCreditPurchases({db,wallet:jarvisCore.neural.service.paidWallet,
+  enabled:process.env.VITRINY_NEURAL_AI_PURCHASES_ENABLED==='true',expectedCollectorId:process.env.VITRINY_NEURAL_AI_MP_COLLECTOR_ID,
+  paymentReady:()=>Boolean(process.env.MERCADOPAGO_ACCESS_TOKEN&&process.env.MERCADOPAGO_WEBHOOK_SECRET),
+  createPreference:async order=>{
+    const response=await fetch('https://api.mercadopago.com/checkout/preferences',{method:'POST',redirect:'error',headers:{...mpHeaders(),'X-Idempotency-Key':order.reference},
+      body:JSON.stringify({items:[{id:order.reference,title:order.title,quantity:1,currency_id:'BRL',unit_price:order.amountCents/100}],external_reference:order.reference,
+        notification_url:`${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(order.reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(order.reference))}`,
+        back_urls:{success:SITE_URL+order.returnPath,pending:SITE_URL+order.returnPath,failure:SITE_URL+order.returnPath},auto_return:'approved',statement_descriptor:'VITRINECITY',
+        expires:true,expiration_date_from:new Date().toISOString(),expiration_date_to:new Date(order.expiresAt).toISOString(),metadata:{product:'neural_ai_prepaid',terms_version:order.termsVersion}}),signal:AbortSignal.timeout(12000)});
+    if(!response.ok)throw Error('AI purchase provider unavailable');return response.json();
+  },
+  fetchPayment:async id=>{if(!/^\d{1,30}$/.test(String(id)))throw Error('Invalid payment id');const response=await fetch('https://api.mercadopago.com/v1/payments/'+id,{redirect:'error',headers:mpHeaders(),signal:AbortSignal.timeout(10000)});if(!response.ok)throw Error('Payment unavailable');return response.json();},
+  searchPayments:async({reference})=>{const query=new URLSearchParams({external_reference:reference,limit:'50',sort:'date_last_updated',criteria:'desc'});const response=await fetch('https://api.mercadopago.com/v1/payments/search?'+query,{redirect:'error',headers:mpHeaders(),signal:AbortSignal.timeout(10000)});if(!response.ok)throw Error('Payment search unavailable');return response.json();}
+}):null;
+if(neuralAiPurchases)mountAiCreditPurchases({app,purchases:neuralAiPurchases,requireUser,requireAdmin:(req,res,next)=>requireAdmin(req,res,()=>{
+  try{jarvisCore.neural.service.chat.status(`admin:${req.user.id}`);next();}catch{res.status(403).json({ok:false,error:'Chat indisponível para este acesso.'});}
+}),sameOriginOnly,getAuthorizedStore:(req,res)=>{
+  const authorized=neuralAuthorizedStore(req,res);if(authorized)jarvisCore.neural.service.chat.status(`store:${authorized.storeReference}`);return authorized;
+}});
 mountKlingReadinessApi({app,requireAdmin,sameOriginOnly,readiness:createKlingReadiness()});
 mountNeuralBillingApi({app,billing:jarvisCore.neural?.service?.billing,tasks:jarvisCore.neural?.service?.tasks,
   requireAdmin,sameOriginOnly,getAuthorizedStore:neuralAuthorizedStore,
@@ -3670,9 +3721,10 @@ app.get('/api/ads/serve', (req, res) => {
       AND (c.target_city='' OR ?='' OR LOWER(c.target_city)=?)
     GROUP BY c.id HAVING COALESCE(spent_units,0)<c.net_credits
       AND COALESCE(spent_today,0)<ROUND(c.daily_budget_cents*?)
-      AND COALESCE(w.balance_units,0)>=?
-    LIMIT 80`).all(today, placement, today, today, city, city, ADS_CREDITS_PER_REAL, ADS_INTERNAL_CLICK_COST_UNITS)
+      AND (${coinWallet.enabled?'1=1':'COALESCE(w.balance_units,0)>=?'})
+    LIMIT 80`).all(today, placement, today, today, city, city, ADS_CREDITS_PER_REAL,...(coinWallet.enabled?[]:[ADS_INTERNAL_CLICK_COST_UNITS]))
     .filter(campaign => {
+      if(coinWallet.enabled&&walletBalanceUnits(campaign.user_id)<ADS_INTERNAL_CLICK_COST_UNITS)return false;
       if(viewer&&Number(campaign.user_id)===Number(viewer.id))return false;
       if(placement !== 'search'&&!context)return true;
       const targets = normalizedAdTerms(`${campaign.keywords} ${campaign.category} ${campaign.creative_title} ${campaign.creative_text}`);
@@ -3719,7 +3771,7 @@ app.get('/api/ads/:id/click', (req, res) => {
       const result = db.prepare(`INSERT OR IGNORE INTO ad_delivery_events
         (campaign_id,event_type,event_token,visitor_key,query_text,cost_units,event_day)
         VALUES (?,'click',?,?,?,?,?)`).run(id, token, visitorKey, '', ADS_INTERNAL_CLICK_COST_UNITS, new Date().toISOString().slice(0, 10));
-      if (result.changes){consumeMessageCredits(impression.user_id, ADS_INTERNAL_CLICK_COST_UNITS, `Clique patrocinado — campanha ${id}`, 'sponsored_click');charged=true;}
+      if (result.changes){consumeMessageCredits(impression.user_id, ADS_INTERNAL_CLICK_COST_UNITS, `Clique patrocinado — campanha ${id}`, 'sponsored_click',`ad-click:${result.lastInsertRowid}`);charged=true;}
     });
     chargeClick();
   } catch (_) {
@@ -4707,7 +4759,19 @@ app.get('/api/marketplace/orders', requireUser, (req, res) => {
 });
 app.get('/api/marketplace/orders/:reference/tracking',requireUser,(req,res)=>{const order=db.prepare('SELECT reference FROM marketplace_orders WHERE reference=? AND buyer_user_id=?').get(req.params.reference,req.user.id);return order?res.json({tracking:deliveryTracking(order.reference)}):res.status(404).json({error:'Pedido não encontrado.'});});
 function reviewReputation(targetType,targetReference){const aggregate=db.prepare(`SELECT COUNT(*) rating_count,COALESCE(SUM(rating),0) rating_sum,COALESCE(AVG(CASE WHEN created_at>=datetime('now','-90 days') THEN rating END),0) recent_average FROM verified_delivery_reviews WHERE target_type=? AND target_reference=? AND moderation_status='published'`).get(targetType,String(targetReference));let onTimeRate=.9,cancellationRate=.05;if(targetType==='courier'){const ops=db.prepare(`SELECT COUNT(*) total,SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) delivered,SUM(CASE WHEN status='cancelled' THEN 1 ELSE 0 END) cancelled FROM local_delivery_jobs WHERE courier_id=?`).get(Number(targetReference));onTimeRate=ops.total?Number(ops.delivered||0)/ops.total:.9;cancellationRate=ops.total?Number(ops.cancelled||0)/ops.total:.05;}else{const ops=db.prepare(`SELECT COUNT(*) total,SUM(CASE WHEN fulfillment_status IN ('delivered','food_handed_off') THEN 1 ELSE 0 END) delivered,SUM(CASE WHEN fulfillment_status='cancelled' THEN 1 ELSE 0 END) cancelled FROM marketplace_orders WHERE store_reference=?`).get(String(targetReference));onTimeRate=ops.total?Number(ops.delivered||0)/ops.total:.9;cancellationRate=ops.total?Number(ops.cancelled||0)/ops.total:.05;}return {ratingCount:Number(aggregate.rating_count),bayesianRating:bayesianRating({ratingSum:aggregate.rating_sum,ratingCount:aggregate.rating_count}),recentAverage:Number(aggregate.recent_average||0),onTimeRate,cancellationRate,qualityScore:reputationScore({ratingSum:aggregate.rating_sum,ratingCount:aggregate.rating_count,recentAverage:aggregate.recent_average,onTimeRate,cancellationRate})};}
-function grantReviewReward(userId,reviewId,idempotencyKey){const rewardOrder=db.prepare('SELECT order_reference FROM verified_delivery_reviews WHERE id=?').get(reviewId);idempotencyKey=rewardOrder?`delivery-review:${rewardOrder.order_reference}`:idempotencyKey;const exists=db.prepare('SELECT 1 FROM review_rewards WHERE review_id=? OR idempotency_key=?').get(reviewId,idempotencyKey);if(exists)return false;db.prepare('INSERT OR IGNORE INTO wallets(user_id,balance_units) VALUES (?,0)').run(userId);const current=Number(db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId)?.balance_units||0),after=current+500;db.prepare('UPDATE wallets SET balance_units=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(after,userId);db.prepare("INSERT INTO wallet_ledger(user_id,delta_units,balance_after_units,kind,description,order_reference) VALUES (?,?,?,'verified_review_reward','Recompensa por avaliação verificada',?)").run(userId,500,after,rewardOrder?.order_reference||`review:${reviewId}`);db.prepare('INSERT INTO review_rewards(review_id,user_id,reward_units,idempotency_key) VALUES (?,?,500,?)').run(reviewId,userId,idempotencyKey);return true;}
+function grantReviewReward(userId,reviewId,idempotencyKey){return db.transaction(()=>{
+  const rewardOrder=db.prepare('SELECT order_reference FROM verified_delivery_reviews WHERE id=?').get(reviewId);
+  idempotencyKey=rewardOrder?`delivery-review:${rewardOrder.order_reference}`:idempotencyKey;
+  if(db.prepare('SELECT 1 FROM review_rewards WHERE review_id=? OR idempotency_key=?').get(reviewId,idempotencyKey))return false;
+  if(coinWallet.enabled){const createdAt=Date.now();coinWallet.grant(userId,{sourceId:`review:${idempotencyKey}`,amountAtoms:atomsFromLegacyAdsUnits(500),origin:'verified_review_reward',createdAt,expiresAt:createdAt+60*86400000,termsVersion:VITRINE_COINS_POLICY.version});}
+  else{
+    db.prepare('INSERT OR IGNORE INTO wallets(user_id,balance_units) VALUES (?,0)').run(userId);
+    const current=Number(db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId)?.balance_units||0),after=current+500;
+    db.prepare('UPDATE wallets SET balance_units=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(after,userId);
+    db.prepare("INSERT INTO wallet_ledger(user_id,delta_units,balance_after_units,kind,description,order_reference) VALUES (?,?,?,'verified_review_reward','Recompensa por avaliação verificada',?)").run(userId,500,after,rewardOrder?.order_reference||`review:${reviewId}`);
+  }
+  db.prepare('INSERT INTO review_rewards(review_id,user_id,reward_units,idempotency_key) VALUES (?,?,500,?)').run(reviewId,userId,idempotencyKey);return true;
+})();}
 app.post('/api/marketplace/orders/:reference/reviews',requireUser,sameOriginOnly,(req,res)=>{const order=db.prepare(`SELECT o.*,j.courier_id FROM marketplace_orders o LEFT JOIN local_delivery_jobs j ON j.order_reference=o.reference WHERE o.reference=? AND o.buyer_user_id=? AND o.payment_status='approved' AND o.customer_confirmed_at IS NOT NULL`).get(req.params.reference,req.user.id);if(!order)return res.status(409).json({error:'A avaliação é liberada após confirmar a entrega.'});const targetType=String(req.body?.targetType||''),targetReference=targetType==='store'?order.store_reference:targetType==='courier'&&order.courier_id?String(order.courier_id):'';const rating=Math.trunc(Number(req.body?.rating)),comment=sanitizeReviewComment(req.body?.comment),key=String(req.get('idempotency-key')||req.body?.idempotencyKey||'').trim().slice(0,120);if(!targetReference||rating<1||rating>5||!/^[A-Za-z0-9._:-]{12,120}$/.test(key))return res.status(400).json({error:'Informe alvo, nota e chave de idempotência válidos.'});const fingerprint=createHmac('sha256',managementSecret()||'reviews').update(`${req.user.id}|${req.ip}|${String(req.get('user-agent')||'').slice(0,100)}`).digest('hex'),stats=db.prepare("SELECT COUNT(*) daily,SUM(CASE WHEN comment=? AND comment<>'' THEN 1 ELSE 0 END) duplicates FROM verified_delivery_reviews WHERE reviewer_user_id=? AND created_at>=datetime('now','-1 day')").get(comment,req.user.id),age=db.prepare("SELECT (julianday('now')-julianday(created_at))*24 hours FROM users WHERE id=?").get(req.user.id)?.hours,flags=basicReviewFraud({reviewsLastDay:stats.daily,sameCommentCount:stats.duplicates,accountAgeHours:age,comment});try{const result=db.transaction(()=>{const inserted=db.prepare(`INSERT INTO verified_delivery_reviews(order_reference,reviewer_user_id,target_type,target_reference,rating,comment,moderation_status,fraud_flags,reviewer_fingerprint) VALUES (?,?,?,?,?,?,?, ?,?)`).run(order.reference,req.user.id,targetType,targetReference,rating,comment,flags.length?'pending':'published',JSON.stringify(flags),fingerprint);const id=Number(inserted.lastInsertRowid),rewarded=grantReviewReward(req.user.id,id,key);return {id,rewarded};})();return res.status(201).json({ok:true,...result,rewardCoins:result.rewarded?5:0,moderationStatus:flags.length?'pending':'published'});}catch{const prior=db.prepare('SELECT id,moderation_status FROM verified_delivery_reviews WHERE order_reference=? AND target_type=?').get(order.reference,targetType);return prior?res.json({ok:true,id:prior.id,replayed:true,rewardCoins:0,moderationStatus:prior.moderation_status}):res.status(409).json({error:'Não foi possível registrar a avaliação.'});}});
 app.get('/api/reputation/:type/:reference',(req,res)=>{const type=String(req.params.type);if(!['store','courier'].includes(type))return res.status(400).json({error:'Tipo inválido.'});const reviews=db.prepare(`SELECT id,rating,comment,response_text responseText,created_at createdAt,responded_at respondedAt FROM verified_delivery_reviews WHERE target_type=? AND target_reference=? AND moderation_status='published' ORDER BY id DESC LIMIT 100`).all(type,String(req.params.reference));return res.json({reputation:reviewReputation(type,req.params.reference),reviews});});
 app.post('/api/reviews/:id/reports',requireUser,sameOriginOnly,(req,res)=>{const reason=sanitizeReviewComment(req.body?.reason,500);if(reason.length<10)return res.status(400).json({error:'Explique a denúncia.'});try{const result=db.prepare('INSERT INTO review_reports(review_id,reporter_user_id,reason) VALUES (?,?,?)').run(Number(req.params.id),req.user.id,reason);return res.status(201).json({ok:true,id:Number(result.lastInsertRowid)});}catch{return res.status(409).json({error:'Denúncia já registrada ou avaliação inválida.'});}});
@@ -5384,7 +5448,7 @@ function aiOperationalSnapshot() {
   const lotRevenue = db.prepare(`SELECT COUNT(*) AS orders,COALESCE(SUM(value_cents),0) AS value_cents FROM (
     SELECT amount_cents value_cents FROM lot_orders WHERE status='approved' AND billing_type<>'recurring'
     UNION ALL SELECT amount_cents value_cents FROM building_subscription_receipts WHERE status='approved')`).get();
-  const wallet = db.prepare('SELECT COUNT(*) AS wallets,COALESCE(SUM(balance_units),0) AS credits FROM wallets').get();
+  const wallet = coinWallet.enabled?db.prepare('SELECT id FROM users').all().reduce((total,row)=>({wallets:total.wallets+1,credits:total.credits+walletBalanceUnits(row.id)}),{wallets:0,credits:0}):db.prepare('SELECT COUNT(*) AS wallets,COALESCE(SUM(balance_units),0) AS credits FROM wallets').get();
   return {
     generatedAt: new Date().toISOString(),
     registeredUsers: Number(db.prepare('SELECT COUNT(*) AS total FROM users').get().total || 0),
@@ -5682,7 +5746,8 @@ function decryptWhatsAppToken(value) {
   return Buffer.concat([decipher.update(Buffer.from(encryptedText, 'base64url')), decipher.final()]).toString('utf8');
 }
 
-const consumeMessageCredits = db.transaction((userId, units, description, kind = 'whatsapp_message') => {
+const consumeMessageCredits = db.transaction((userId, units, description, kind = 'whatsapp_message', requestId = `local:${randomUUID()}`) => {
+  if(coinWallet.enabled){const debit=coinWallet.spend(userId,{requestId,amountAtoms:atomsFromLegacyAdsUnits(units),service:kind,description});if(debit.state!=='settled')throw Error('coin_spend_not_settled');return walletBalanceUnits(userId);}
   expireCreditBatches(userId);
   const wallet = db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId);
   if (!wallet || wallet.balance_units < units) throw new Error('Saldo insuficiente para enviar a mensagem.');
@@ -5834,7 +5899,7 @@ ${String(account.business_context || 'Nenhum contexto cadastrado.').slice(0, 800
   }
 });
 
-app.post('/api/whatsapp/conversations/:contactId/send', requireUser, async (req, res) => {
+app.post('/api/whatsapp/conversations/:contactId/send', requireUser, sameOriginOnly, async (req, res) => {
   const body = String(req.body?.message || '').trim().slice(0, 4000);
   if (!body) return res.status(400).json({ error: 'Escreva uma mensagem.' });
   const account = db.prepare(`SELECT a.*,c.wa_id,c.id contact_id FROM whatsapp_accounts a
@@ -5847,11 +5912,28 @@ app.post('/api/whatsapp/conversations/:contactId/send', requireUser, async (req,
   if (usedToday + chargeUnits > Number(account.daily_credit_limit || 0)) {
     return res.status(409).json({ error: 'O limite diário de créditos para mensagens foi atingido.' });
   }
-  if (chargeUnits && (db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(req.user.id)?.balance_units || 0) < chargeUnits) {
+  if (chargeUnits && walletBalanceUnits(req.user.id) < chargeUnits) {
     return res.status(402).json({ error: 'Saldo insuficiente. Cada mensagem enviada utiliza 1 Crédito.' });
   }
+  const coinRequestId=`whatsapp:${randomUUID()}`;
+  let coinReserved=false,providerDispatched=false;
   try {
     const token = decryptWhatsAppToken(account.token_encrypted);
+    if(coinWallet.enabled&&chargeUnits){
+      db.transaction(()=>{
+        const current=db.prepare('SELECT status,usage_day,credits_used_today,daily_credit_limit FROM whatsapp_accounts WHERE id=? AND user_id=?').get(account.id,req.user.id);
+        if(!current||current.status!=='connected')throw Error('whatsapp_account_unavailable');
+        const used=current.usage_day===today?Number(current.credits_used_today||0):0;
+        if(used+chargeUnits>Number(current.daily_credit_limit||0))throw Object.assign(Error('whatsapp_daily_limit'),{status:409});
+        coinWallet.reserve(req.user.id,{requestId:coinRequestId,maximumAtoms:atomsFromLegacyAdsUnits(chargeUnits),quoteId:coinRequestId,
+          requestHash:createHash('sha256').update(JSON.stringify({accountId:account.id,contactId:account.contact_id,body})).digest('hex'),service:'whatsapp_message'});
+        // Claim the allowance before yielding to the provider. Uncertain sends
+        // keep this claim; concurrent requests cannot consume the same last slot.
+        db.prepare('UPDATE whatsapp_accounts SET credits_used_today=?,usage_day=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(used+chargeUnits,today,account.id);
+      })();
+      coinReserved=true;
+    }
+    providerDispatched=true;
     const data = await metaJson(`https://graph.facebook.com/${whatsappVersion()}/${account.phone_number_id}/messages`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -5860,17 +5942,20 @@ app.post('/api/whatsapp/conversations/:contactId/send', requireUser, async (req,
     });
     const messageId = String(data?.messages?.[0]?.id || '');
     if (!messageId) throw new Error('A Meta não confirmou o envio.');
-    if (chargeUnits) consumeMessageCredits(req.user.id, chargeUnits, 'Mensagem enviada pelo WhatsApp VitrineCity');
+    if(coinReserved)coinWallet.settle(req.user.id,coinRequestId,{actualAtoms:atomsFromLegacyAdsUnits(chargeUnits),receiptId:'meta:'+createHash('sha256').update(messageId).digest('hex')});
+    else if (chargeUnits) consumeMessageCredits(req.user.id, chargeUnits, 'Mensagem enviada pelo WhatsApp VitrineCity');
     db.prepare(`INSERT INTO whatsapp_messages
       (account_id,contact_id,meta_message_id,direction,body,status,credit_units)
       VALUES (?,?,?,'outbound',?,'sent',?)`).run(account.id, account.contact_id, messageId, body, chargeUnits);
-    db.prepare(`UPDATE whatsapp_accounts SET credits_used_today=?,usage_day=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    if(!coinReserved)db.prepare(`UPDATE whatsapp_accounts SET credits_used_today=?,usage_day=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
       .run(usedToday + chargeUnits, today, account.id);
     db.prepare('UPDATE whatsapp_contacts SET last_message_at=CURRENT_TIMESTAMP WHERE id=?').run(account.contact_id);
     return res.status(201).json({ ok: true, messageId, chargedCredits: chargeUnits / 100 });
   } catch (error) {
+    if(coinReserved){try{if(providerDispatched)coinWallet.settle(req.user.id,coinRequestId,{actualAtoms:null,receiptId:coinRequestId});else db.transaction(()=>{coinWallet.release(req.user.id,coinRequestId,{reason:'not_dispatched',noConsumptionConfirmed:true});db.prepare('UPDATE whatsapp_accounts SET credits_used_today=MAX(0,credits_used_today-?) WHERE id=? AND usage_day=?').run(chargeUnits,account.id,today);})();}catch{/* Preserve the reservation when reconciliation is uncertain. */}}
+    if(!providerDispatched&&[402,409,423].includes(error.status))return res.status(error.status).json({error:error.status===409?'O limite diário de mensagens foi atingido.':'Confira o saldo disponível na carteira antes de enviar.'});
     console.error('WhatsApp send error', error?.message || 'unknown');
-    return res.status(502).json({ error: 'Mensagem não enviada: ' + String(error?.message || '').slice(0, 180) });
+    return res.status(502).json({ error: providerDispatched?'Não foi possível confirmar o envio. Confira o histórico antes de tentar novamente.':'Não foi possível preparar a mensagem.' });
   }
 });
 
@@ -6521,7 +6606,7 @@ app.get('/api/admin/ad-campaigns', requireAdmin, (req, res) => {
     c.admin_notes,c.reviewed_at,c.activated_at,c.completed_at,c.created_at,c.updated_at,c.campaign_channel,
     c.external_campaign_id,c.external_platform_status,
     u.name AS customer_name,u.email,u.whatsapp,o.amount_cents,o.fee_cents,o.status AS payment_status,
-    w.balance_units
+      w.balance_units,c.user_id
     FROM ad_campaigns c
     JOIN users u ON u.id=c.user_id
     JOIN credit_orders o ON o.reference=c.order_reference
@@ -6541,7 +6626,7 @@ app.get('/api/admin/ad-campaigns', requireAdmin, (req, res) => {
     FROM ad_campaigns`).get();
   return res.json({
     summary: Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, Number(value || 0)])),
-    campaigns: campaigns.map(item => ({ ...item, status_label: AD_CAMPAIGN_STATUS_LABELS[item.status] || item.status }))
+    campaigns: campaigns.map(item => ({ ...item,...(coinWallet.enabled?{balance_units:walletBalanceUnits(item.user_id)}:{}), status_label: AD_CAMPAIGN_STATUS_LABELS[item.status] || item.status }))
   });
 });
 
@@ -6905,7 +6990,10 @@ app.post('/api/credits/quote', requireUser, sameOriginOnly, (req,res) => {
 });
 
 app.post('/api/credits/checkout', requireUser, sameOriginOnly, async (req, res) => {
-  if(req.body?.termsVersion!==ADS_TERMS_VERSION)return res.status(409).json({error:'Os termos dos créditos foram atualizados. Atualize a página e confira o prazo de 60 dias antes de pagar.'});
+  const termsVersion=coinWallet.enabled?VITRINE_COINS_POLICY.version:ADS_TERMS_VERSION;
+  if(coinWallet.enabled&&!/^\d{1,30}$/.test(String(process.env.VITRINY_NEURAL_AI_MP_COLLECTOR_ID||'')))return res.status(503).json({error:'Pagamento temporariamente indisponível.'});
+  if(coinWallet.enabled&&coinWallet.status(req.user.id).frozen)return res.status(423).json({error:'Sua carteira precisa de conferência antes de uma nova recarga.'});
+  if(req.body?.termsVersion!==termsVersion)return res.status(409).json({error:'Os termos dos créditos foram atualizados. Atualize a página e confira o prazo de 60 dias antes de pagar.'});
   if (!process.env.MERCADOPAGO_ACCESS_TOKEN || !process.env.MERCADOPAGO_WEBHOOK_SECRET) {
     return res.status(503).json({ error: 'Pagamento temporariamente indisponível.' });
   }
@@ -6914,7 +7002,7 @@ app.post('/api/credits/checkout', requireUser, sameOriginOnly, async (req, res) 
     return res.status(403).json({ error: 'Verifique sua maioridade em Minha conta antes de comprar Créditos Ads.', verificationRequired: true });
   }
   if (!req.body?.termsAccepted) return res.status(400).json({ error: 'Aceite os termos dos Créditos Ads.' });
-  recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'ads_credits_terms',version:ADS_TERMS_VERSION,source:'credits_checkout'});
+  recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'ads_credits_terms',version:termsVersion,source:'credits_checkout'});
   if (!allowAttempt(checkoutAttempts, `credits:${req.user.id}`, 5, 10 * 60 * 1000)) {
     return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
   }
@@ -6991,8 +7079,8 @@ app.post('/api/credits/checkout', requireUser, sameOriginOnly, async (req, res) 
   const createOrder = db.transaction(() => {
     db.prepare(`INSERT INTO credit_orders
       (reference,user_id,amount_cents,fee_cents,credit_units,status,terms_version,terms_accepted_at)
-      VALUES (?,?,?,?,?,'created','2026-09-08-ads-60',CURRENT_TIMESTAMP)`)
-      .run(reference, req.user.id, amountCents, feeCents, netCredits);
+      VALUES (?,?,?,?,?,'created',?,CURRENT_TIMESTAMP)`)
+      .run(reference, req.user.id, amountCents, feeCents, netCredits,termsVersion);
     db.prepare(`INSERT INTO ad_campaigns
       (user_id,order_reference,objective,destination_type,destination_url,daily_budget_cents,duration_days,
        gross_credits,management_credits,net_credits,creative_title,creative_text,image_url,keywords,category,target_city,
@@ -7010,7 +7098,7 @@ app.post('/api/credits/checkout', requireUser, sameOriginOnly, async (req, res) 
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
       body: JSON.stringify({
-        items: [{ id: 'vitrinecity-ads-credits', title: `${(netCredits / 100).toFixed(2)} Créditos Ads líquidos`,
+        items: [{ id: 'vitrinecity-ads-credits', title: coinWallet.enabled?`${authoritativeQuote.netCoins} Vitrine Coins líquidas`:`${(netCredits / 100).toFixed(2)} Créditos Ads líquidos`,
           description: '1 real = 9,6 créditos brutos; gestão de 15%; validade de 60 dias',
           category_id: 'services', quantity: 1, currency_id: 'BRL', unit_price: amountCents / 100 }],
         payer: { name: req.user.name, email: req.user.email },
@@ -7110,31 +7198,15 @@ app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
 });
 
 const buyCourseWithCoins = db.transaction((userId, course) => {
-  expireCreditBatches(userId);
   if (activeEnrollment(userId, course.slug)) return { alreadyEnrolled:true };
-  const wallet=db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId);
-  const requiredUnits=course.priceCents;
-  if(!wallet || wallet.balance_units<requiredUnits) throw new Error('Saldo insuficiente de VitrinyCoins.');
-  const reference=`course_coin_${randomUUID()}`;
-  db.prepare(`INSERT INTO course_orders(reference,user_id,course_slug,course_title,amount_cents,status,mp_payment_id)
-    VALUES (?,?,?,?,?,'approved','vitrinycoins')`).run(reference,userId,course.slug,course.title,course.priceCents);
-  let remaining=requiredUnits;
-  const batches=db.prepare(`SELECT id,remaining_units FROM credit_batches WHERE user_id=? AND status='active' AND remaining_units>0 ORDER BY expires_at,id`).all(userId);
-  for(const batch of batches){if(!remaining)break;const used=Math.min(remaining,batch.remaining_units),next=batch.remaining_units-used;
-    db.prepare(`UPDATE credit_batches SET remaining_units=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(next,next?'active':'used',batch.id);remaining-=used;}
-  const balanceAfter=wallet.balance_units-requiredUnits;
-  db.prepare('UPDATE wallets SET balance_units=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(balanceAfter,userId);
-  db.prepare(`INSERT INTO wallet_ledger(user_id,delta_units,balance_after_units,kind,description,order_reference)
-    VALUES (?,?,?,?,?,?)`).run(userId,-requiredUnits,balanceAfter,'course_purchase',`Curso: ${course.title}`,reference);
-  db.prepare(`INSERT INTO course_enrollments(user_id,course_slug,order_reference,status) VALUES (?,?,?,'active')`).run(userId,course.slug,reference);
-  return {reference,balanceAfter};
+  return {discountOnly:true};
 });
 app.post('/api/courses/:slug/checkout-coins',requireUser,sameOriginOnly,(req,res)=>{
   const course=managedCourse(req.params.slug);
   if(!course||course.status!=='active'||!courseReady(course.slug))return res.status(404).json({error:'Curso indisponível.'});
   if(!req.body?.termsAccepted)return res.status(400).json({error:'Aceite os termos da compra para continuar.'});
   try{const purchase=buyCourseWithCoins(req.user.id,course);if(purchase.alreadyEnrolled)return res.json({ok:true,alreadyEnrolled:true,accessUrl:'/meus-cursos.html'});
-    adminAnalytics.recordPurchase(purchase.reference,'course_coins',course.priceCents);return res.status(201).json({ok:true,reference:purchase.reference,accessUrl:'/meus-cursos.html',balanceCoins:purchase.balanceAfter/100});
+    return res.status(409).json({error:'Vitrine Coins oferecem até 30% de desconto neste curso. Confira o restante a pagar.',code:'course_coins_discount_only',maxDiscountPercent:30,nextUrl:'/central-creditos.html?curso='+encodeURIComponent(course.slug)});
   }catch(error){return res.status(402).json({error:error.message||'Não foi possível concluir com moedas.',requiredCoins:course.priceCents/100});}
 });
 
@@ -7252,6 +7324,37 @@ function validMercadoPagoSignature(req, dataId, secret = process.env.MERCADOPAGO
 }
 
 const applyCreditPayment = db.transaction((order, payment) => {
+  if(coinWallet.enabled){
+    const current=db.prepare('SELECT * FROM credit_orders WHERE reference=?').get(order.reference);
+    const paymentId=String(payment.id||''),collector=String(process.env.VITRINY_NEURAL_AI_MP_COLLECTOR_ID||'');
+    const amount=String(payment.transaction_amount??''),matched=amount.match(/^(\d+)(?:\.(\d{1,2}))?$/);
+    const amountCents=matched?BigInt(matched[1])*100n+BigInt((matched[2]||'').padEnd(2,'0')):-1n;
+    if(!current||!/^\d{1,30}$/.test(paymentId)||!/^\d+$/.test(collector)||String(payment.collector_id)!==collector||payment.live_mode!==true||payment.external_reference!==current.reference||payment.currency_id!=='BRL'||amountCents!==BigInt(current.amount_cents))throw Error('coin_payment_mismatch');
+    const status=String(payment.status||''),terminal=new Set(['refunded','charged_back','cancelled','rejected']);
+    if(!['pending','authorized','in_process','in_mediation','approved',...terminal].includes(status))throw Error('coin_payment_status_invalid');
+    if(current.mp_payment_id&&current.mp_payment_id!==paymentId&&(current.credited_units>0||['approved','refunded','charged_back'].includes(current.status)))throw Error('coin_payment_binding_mismatch');
+    const previous=db.prepare('SELECT order_reference,user_id FROM vitrine_coin_legacy_payments WHERE payment_id=?').get(paymentId);
+    if(previous&&(previous.order_reference!==current.reference||previous.user_id!==current.user_id))throw Error('coin_payment_reused');
+    const bound=db.prepare('SELECT payment_id FROM vitrine_coin_legacy_payments WHERE order_reference=?').get(current.reference);
+    if(bound&&bound.payment_id!==paymentId)throw Error('coin_payment_binding_mismatch');
+    if((['refunded','charged_back'].includes(current.status)||terminal.has(current.status)&&bound)&&!terminal.has(status))return;
+    if(current.status==='approved'&&!terminal.has(status)&&!['approved','in_mediation'].includes(status))return;
+    if(status==='approved'||current.credited_units>0){
+      db.prepare('INSERT OR IGNORE INTO vitrine_coin_legacy_payments(payment_id,order_reference,user_id) VALUES(?,?,?)').run(paymentId,current.reference,current.user_id);
+    }
+    if(status==='approved'&&!current.credited_units){
+      const parsed=Date.parse(payment.date_approved||''),createdAt=Number.isFinite(parsed)?parsed:Date.now();
+      const canonical=current.terms_version===VITRINE_COINS_POLICY.version;
+      coinWallet.grant(current.user_id,{sourceId:`legacy-ads:${current.reference}`,amountAtoms:canonical?quoteCoinTopup(current.amount_cents).netAtoms:atomsFromLegacyAdsUnits(current.credit_units),origin:'legacy_ads',createdAt,
+        expiresAt:canonical?createdAt+60*86400000:creditExpiryForOrder(current,createdAt),termsVersion:current.terms_version,paymentReference:`mercadopago:${paymentId}`});
+    }
+    if((current.credited_units>0||status==='approved')&&(terminal.has(status)||status==='in_mediation'||Number(payment.transaction_amount_refunded||0)>0))coinWallet.freeze(current.user_id,{paymentReference:`mercadopago:${paymentId}`,reason:'legacy_payment_reversed_or_disputed'});
+    const credited=status==='approved'?current.credit_units:terminal.has(status)?0:current.credited_units;
+    db.prepare('UPDATE credit_orders SET status=?,credited_units=?,mp_payment_id=?,updated_at=CURRENT_TIMESTAMP WHERE reference=?').run(status,credited,paymentId,current.reference);
+    if(status==='approved'&&!current.credited_units)db.prepare("UPDATE ad_campaigns SET status='funded',updated_at=CURRENT_TIMESTAMP WHERE order_reference=? AND status='awaiting_payment'").run(current.reference);
+    if(terminal.has(status)||status==='in_mediation')db.prepare("UPDATE ad_campaigns SET status='reversed',updated_at=CURRENT_TIMESTAMP WHERE order_reference=?").run(current.reference);
+    return;
+  }
   const status = String(payment.status || 'unknown');
   const reversalStatuses = new Set(['refunded', 'charged_back', 'cancelled', 'rejected']);
   const desiredUnits = status === 'approved' ? order.credit_units : reversalStatuses.has(status) ? 0 : order.credited_units;
@@ -7348,6 +7451,11 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
     const payment = await response.json();
     const reference = String(payment.external_reference || '');
     if(hintedReference&&reference!==hintedReference)return res.sendStatus(400);
+    if(reference.startsWith('ai_')){
+      if(!neuralAiPurchases)return res.sendStatus(503);
+      if(String(payment.id)!==String(dataId))return res.sendStatus(400);
+      neuralAiPurchases.reconcileVerifiedPayment(payment);return res.sendStatus(200);
+    }
     const amountCents = Math.round(Number(payment.transaction_amount) * 100);
     if (reference.startsWith('shop_')) {
       const order = db.prepare('SELECT * FROM marketplace_orders WHERE reference=?').get(reference);
@@ -7424,10 +7532,10 @@ app.post('/api/payments/mercadopago/webhook', async (req, res) => {
       if(result?.status==='approved')adminAnalytics.recordPurchase(result.reference,result.kind==='avatar'?'avatar_premium':'course',result.pay_cents);
       return res.sendStatus(200);
     }
-    if (reference.startsWith('coin_')) {
+    if (reference.startsWith('coin_') || reference.startsWith('ads_')) {
       const order = db.prepare('SELECT * FROM credit_orders WHERE reference=?').get(reference);
       if (!order) return res.sendStatus(200);
-      if (amountCents !== order.amount_cents || payment.currency_id !== 'BRL') return res.sendStatus(400);
+      if (String(payment.id)!==String(dataId)||amountCents !== order.amount_cents || payment.currency_id !== 'BRL') return res.sendStatus(400);
       applyCreditPayment(order, payment);
       if (String(payment.status) === 'approved') adminAnalytics.recordPurchase(order.reference, 'credits', order.amount_cents);
       return res.sendStatus(200);
@@ -8325,6 +8433,7 @@ function validSocialUrl(value) {
 }
 
 const chargeSocialLink = db.transaction((postId, userId) => {
+  if(coinWallet.enabled){const debit=coinWallet.spend(userId,{requestId:`social-link:${postId}`,amountAtoms:atomsFromLegacyAdsUnits(SOCIAL_LINK_PRICE_UNITS),service:'social_link',description:`Link comercial no vídeo ${postId}`});if(debit.state!=='settled')throw Error('coin_spend_not_settled');db.prepare("UPDATE social_posts SET cta_charge_status='paid' WHERE id=?").run(postId);return;}
   expireCreditBatches(userId);
   const wallet = db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId);
   if (!wallet || wallet.balance_units < SOCIAL_LINK_PRICE_UNITS) throw new Error('Saldo insuficiente. Um vídeo com link custa 5 moedas.');
@@ -8351,6 +8460,7 @@ const chargeSocialLink = db.transaction((postId, userId) => {
 const refundSocialLink = db.transaction((postId, reason) => {
   const post = db.prepare("SELECT user_id,cta_charge_units,cta_charge_status FROM social_posts WHERE id=?").get(postId);
   if (!post || post.cta_charge_status !== 'paid' || !post.cta_charge_units) return;
+  if(coinWallet.enabled){coinWallet.restore(post.user_id,`social-link:${postId}`,{reason});db.prepare("UPDATE social_posts SET cta_charge_status='refunded' WHERE id=?").run(postId);return;}
   const allocations = db.prepare('SELECT batch_id,units FROM social_credit_allocations WHERE post_id=?').all(postId);
   for (const allocation of allocations) {
     db.prepare(`UPDATE credit_batches SET remaining_units=remaining_units+?,status='active',updated_at=CURRENT_TIMESTAMP WHERE id=?`)
@@ -8844,7 +8954,7 @@ app.post('/api/social/uploads', requireActiveSocialUser, sameOriginOnly, async (
   const chargeUnits = ctaUrl ? SOCIAL_LINK_PRICE_UNITS : 0;
   if (chargeUnits) {
     expireCreditBatches(req.user.id);
-    const balance = db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(req.user.id)?.balance_units || 0;
+    const balance = walletBalanceUnits(req.user.id);
     if (balance < chargeUnits) return res.status(402).json({ error: 'Saldo insuficiente. Adicionar link ao vídeo custa 5 moedas.', requiredCoins: 5, balanceCoins: balance / 100 });
   }
   socialHandle(req.user);
@@ -9721,6 +9831,7 @@ function notifyFollowers(actorId, type, message, contentId) {
 }
 
 const chargeStoryLink = db.transaction((storyId,userId) => {
+  if(coinWallet.enabled){const debit=coinWallet.spend(userId,{requestId:`story-link:${storyId}`,amountAtoms:atomsFromLegacyAdsUnits(SOCIAL_LINK_PRICE_UNITS),service:'story_link',description:`Link comercial no Story ${storyId}`});if(debit.state!=='settled')throw Error('coin_spend_not_settled');db.prepare("UPDATE social_stories SET cta_charge_status='paid' WHERE id=?").run(storyId);return;}
   expireCreditBatches(userId);
   const wallet = db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId);
   if (!wallet || wallet.balance_units < SOCIAL_LINK_PRICE_UNITS) throw new Error('Saldo insuficiente. Um Story com link custa 5 moedas.');
@@ -9743,6 +9854,7 @@ const chargeStoryLink = db.transaction((storyId,userId) => {
 const refundStoryLink = db.transaction((storyId,reason) => {
   const story=db.prepare('SELECT * FROM social_stories WHERE id=?').get(storyId);
   if(!story||story.cta_charge_status!=='paid'||!story.cta_charge_units)return;
+  if(coinWallet.enabled){coinWallet.restore(story.user_id,`story-link:${storyId}`,{reason});db.prepare("UPDATE social_stories SET cta_charge_status='refunded' WHERE id=?").run(storyId);return;}
   for(const item of db.prepare('SELECT batch_id,units FROM social_story_credit_allocations WHERE story_id=?').all(storyId))
     db.prepare("UPDATE credit_batches SET remaining_units=remaining_units+?,status='active',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(item.units,item.batch_id);
   const current=db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(story.user_id)?.balance_units||0;
@@ -9795,7 +9907,7 @@ app.post('/api/social/stories', requireActiveSocialUser, sameOriginOnly, (req,re
   const caption=String(req.body?.caption||'').trim().slice(0,300),ctaUrl=String(req.body?.ctaUrl||'').trim().slice(0,500);
   const ctaLabel=String(req.body?.ctaLabel||'').trim().slice(0,40);
   if(ctaUrl&&!validSocialUrl(ctaUrl))return res.status(400).json({error:'Informe um link público e seguro.'});
-  if(ctaUrl){expireCreditBatches(req.user.id);const balance=db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(req.user.id)?.balance_units||0;
+  if(ctaUrl){expireCreditBatches(req.user.id);const balance=walletBalanceUnits(req.user.id);
     if(balance<SOCIAL_LINK_PRICE_UNITS)return res.status(402).json({error:'Saldo insuficiente. O link no Story custa 5 moedas.',requiredCoins:5,balanceCoins:balance/100});}
   const id=randomUUID(),charge=ctaUrl?SOCIAL_LINK_PRICE_UNITS:0; socialHandle(req.user);
   db.transaction(()=>{db.prepare(`INSERT INTO social_stories

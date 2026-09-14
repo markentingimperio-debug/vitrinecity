@@ -6,10 +6,11 @@
  * source. Never construct it from a request body. Per-call input can select an
  * exact snapshot version but cannot supply/override rates, FX or the markup.
  * All monetary inputs are decimal STRINGS; results use strings for JSON safety.
- * New customer calculations apply the approved 15% uplift exactly once to the
- * provider cost after FX conversion. Credit purchases/legacy receipts are not
- * repriced here. Internal production costs must not debit customer wallets.
+ * Legacy v2 snapshots retain their 15% usage uplift. Unified Coins snapshots
+ * explicitly select topup-15-v1 and pass through provider cost after FX, because
+ * the recharge already took the fee. Historical receipts are never repriced.
  */
+import {VITRINE_COINS_POLICY,atomsFromMicroBRL,coinsFromAtoms} from '../public/vitrine-coins-contract.js';
 const MICRO=1_000_000n, MARKUP_NUMERATOR=23n, MARKUP_DENOMINATOR=20n;
 const VALIDITY_MS=60n*24n*60n*60n*1000n;
 const fail=code=>{throw Object.assign(new Error(code),{code});};
@@ -113,12 +114,15 @@ function snapshots(values,read,key,duplicate){
  * this calculator. Repeated calls here only return the same calculation.
  */
 export function createAiCreditPricing(config={}){
-  object(config,['tariffs','fxSnapshots','mediaQuotes','creditConversion'],'pricing_config_invalid');
+  object(config,['tariffs','fxSnapshots','mediaQuotes','creditConversion','billingPolicyVersion'],'pricing_config_invalid');
+  const unified=config.billingPolicyVersion===VITRINE_COINS_POLICY.version;
+  if(config.billingPolicyVersion!==undefined&&!unified&&config.billingPolicyVersion!==AI_CREDIT_POLICY.version)fail('pricing_policy_invalid');
   const tariffs=snapshots(config.tariffs??[],readTariff,s=>tariffKey(s.providerId,s.modelId,s.version),'tariff_duplicate');
   const rates=snapshots(config.fxSnapshots??[],readFx,s=>s.version,'fx_duplicate');
   const quotes=snapshots(config.mediaQuotes??[],readQuote,s=>s.quoteId,'quote_duplicate');
-  const supplied=config.creditConversion??PROPOSED_CREDIT_CONVERSION;
-  object(supplied,['version','status','creditsPerBRL'],'credit_conversion_invalid');creditRate(supplied.creditsPerBRL);
+  const supplied=config.creditConversion??(unified?{version:VITRINE_COINS_POLICY.version,status:'configured',creditsPerBRL:'9.6'}:PROPOSED_CREDIT_CONVERSION);
+  object(supplied,['version','status','creditsPerBRL'],'credit_conversion_invalid');
+  if(unified){if(supplied.creditsPerBRL!=='9.6'||supplied.status!=='configured')fail('credit_conversion_invalid');}else creditRate(supplied.creditsPerBRL);
   if(!['proposed','configured'].includes(supplied.status))fail('credit_conversion_invalid');
   const conversion=freeze({version:id(supplied.version,'credit_conversion_invalid'),status:supplied.status,creditsPerBRL:supplied.creditsPerBRL});
   function common(input,keys){
@@ -128,12 +132,13 @@ export function createAiCreditPricing(config={}){
     if(!fx)fail('fx_not_found');if(fx.at>at)fail('fx_not_effective');return {at,fx};
   }
   function finish(kind,costUsd,fx,audit,extra){
-    const costBrl=multiply(costUsd,fx.rate),customerBrl=multiply(costBrl,{n:MARKUP_NUMERATOR,d:MARKUP_DENOMINATOR});
+    const costBrl=multiply(costUsd,fx.rate),customerBrl=unified?costBrl:multiply(costBrl,{n:MARKUP_NUMERATOR,d:MARKUP_DENOMINATOR});
     const microBRL=roundRationalToMicroBRL({numerator:customerBrl.n,denominator:customerBrl.d});
     return freeze({kind,...extra,costUsdExact:receiptFraction(costUsd),costBrlExact:receiptFraction(costBrl),customerBrlExact:receiptFraction(customerBrl),
-      customerMicroBRL:microBRL.toString(),customerBRL:scaledText(microBRL),credits:creditsFromMicroBRL(microBRL,conversion.creditsPerBRL),
+      customerMicroBRL:microBRL.toString(),customerBRL:scaledText(microBRL),credits:unified?coinsFromAtoms(atomsFromMicroBRL(microBRL.toString())):creditsFromMicroBRL(microBRL,conversion.creditsPerBRL),
       audit:{...audit,fxVersion:fx.snapshot.version,fxObservedAt:fx.snapshot.observedAt,usdToBrl:fx.snapshot.usdToBrl,
-        markupNumerator:AI_CREDIT_POLICY.markupNumerator,markupDenominator:AI_CREDIT_POLICY.markupDenominator,rounding:'half_up_at_final_microBRL',policyVersion:AI_CREDIT_POLICY.version,
+        markupNumerator:unified?'1':AI_CREDIT_POLICY.markupNumerator,markupDenominator:unified?'1':AI_CREDIT_POLICY.markupDenominator,rounding:'half_up_at_final_microBRL',policyVersion:unified?VITRINE_COINS_POLICY.version:AI_CREDIT_POLICY.version,
+        ...(unified?{feeStage:'topup',topupFeeBps:1500,usageMarkupBps:0}:{}),
         creditConversionVersion:conversion.version,creditConversionStatus:conversion.status,creditsPerBRL:conversion.creditsPerBRL}});
   }
   function priceChat(input){

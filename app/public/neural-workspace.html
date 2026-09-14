@@ -21,7 +21,19 @@
       <div class="connection">
         <p id="service-status" class="small" role="status">Conferindo disponibilidade…</p>
         <p id="billing-status" class="small muted">Gerações pagas não estão ativas neste chat.</p>
-        <a id="billing-link" href="/neural-billing.html">Créditos IA</a>
+        <p id="coin-wallet-notice" class="small muted" role="status">Conferindo Vitrine Coins…</p>
+        <button id="credits-toggle" type="button" aria-expanded="false" aria-controls="credits-panel">Adicionar Vitrine Coins</button>
+        <section id="credits-panel" class="credits-panel" aria-label="Compra de Vitrine Coins" hidden>
+          <p id="credits-summary" class="small" role="status">Conferindo suas Vitrine Coins…</p>
+          <details><summary>Condições das Vitrine Coins</summary><p id="credits-terms-text" class="small"></p></details>
+          <label class="credits-consent"><input id="credits-terms" type="checkbox">Li e aceito as condições das Vitrine Coins.</label>
+          <div id="credits-options" class="credits-options"></div>
+          <button id="credits-refresh" type="button">Atualizar saldo e compras</button>
+          <button id="credits-retry" type="button" hidden>Recuperar o mesmo pedido de compra</button>
+          <p class="small muted">O pagamento é feito no Mercado Pago. O saldo líquido só é liberado após confirmação. A taxa de 15% aparece na recarga e não é repetida no consumo de IA da carteira unificada.</p>
+          <ul id="credits-orders" class="credits-orders"></ul>
+        </section>
+        <a id="billing-link" href="/central-creditos.html">Minha carteira Vitrine Coins</a>
         <a id="tasks-link" href="/neural-tasks.html">Tarefas e rascunhos do piloto</a>
         <a id="advanced-link" href="/admin-vitriny-neural.html">Administração avançada</a>
         <a id="admin-login" href="/admin-login.html" hidden>Entrar na administração</a>
@@ -67,7 +79,7 @@
             <div class="send-controls"><button id="cancel-request" type="button" class="quiet" hidden>Parar</button><button id="send" type="submit" class="primary send-button" aria-label="Enviar mensagem" title="Enviar mensagem" disabled>↑</button></div>
           </div>
         </form>
-        <details class="chat-notice"><summary>Sobre os arquivos e recursos deste chat</summary><p id="attachment-hint">Até 3 arquivos: PNG, JPEG ou WebP até 2 MB cada; TXT, MD ou CSV até 64 KB cada. PDF e DOCX ainda não são aceitos. Ao enviar, mensagens e arquivos ficam no histórico privado deste acesso. Imagens podem ser anexadas, mas o chat ainda não interpreta seu conteúdo visual nem gera imagens ou vídeos. Para contextualizar uma imagem, descreva-a na mensagem. Documentos de texto podem servir de contexto.</p><p>Não envie senhas, chaves de API ou dados pessoais desnecessários. Resultados de IA podem conter erros. O chat não publica, movimenta dinheiro nem executa código automaticamente.</p></details>
+        <details class="chat-notice"><summary>Sobre os arquivos e recursos deste chat</summary><p id="attachment-hint">Até 3 arquivos: PNG, JPEG ou WebP até 2 MB cada; TXT, MD ou CSV até 64 KB cada. PDF e DOCX ainda não são aceitos. Ao enviar, mensagens e arquivos ficam no histórico privado deste acesso. Documentos de texto podem servir de contexto.</p><p id="media-capability-note">A disponibilidade de geração de imagens e vídeos será confirmada para este acesso.</p><p>Não envie senhas, chaves de API ou dados pessoais desnecessários. Resultados de IA podem conter erros. O chat não publica, movimenta dinheiro nem executa código automaticamente.</p></details>
       </div>
     </main>
   </div>

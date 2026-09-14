@@ -54,8 +54,9 @@ function hasToolAttempt(output){
     ['tool_calls','function_call','toolCalls','functionCall'].some(key=>Object.hasOwn(value,key)&&value[key]!=null)));
 }
 
-/** A private, read-only local chat. It does not execute code, generate media, publish or spend API credits. */
-export function createNeuralChatEngine({db,skills,qualifications,config,env=process.env,now=Date.now,timeoutMs=LIMITS.timeoutMs,queueOptions={}}={}){
+/** Private conversational surface. Optional paid runtime is separately gated by
+ * a prepaid wallet and explicit per-request quote confirmation. */
+export function createNeuralChatEngine({db,skills,qualifications,config,env=process.env,now=Date.now,timeoutMs=LIMITS.timeoutMs,queueOptions={},paidRuntime=null}={}){
   if(!db||!skills?.invoke||!skills?.status||!qualifications?.latest||!config)throw new TypeError('Chat requires Neural runtime.');
   const attachments=createChatAttachments({db,now}),active=new Map();
   const deadlineMs=Math.max(100,Math.min(LIMITS.timeoutMs,Number(timeoutMs)||LIMITS.timeoutMs));
@@ -77,7 +78,8 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
       text TEXT NOT NULL,status TEXT NOT NULL,sequence INTEGER NOT NULL,created_at INTEGER NOT NULL,UNIQUE(conversation_id,sequence));
     CREATE TABLE IF NOT EXISTS neural_chat_message_attachments(message_id TEXT NOT NULL,attachment_id TEXT NOT NULL,position INTEGER NOT NULL,PRIMARY KEY(message_id,attachment_id));`);
   if(!db.prepare('PRAGMA table_info(neural_chat_requests)').all().some(column=>column.name==='intent_kind'))db.exec("ALTER TABLE neural_chat_requests ADD COLUMN intent_kind TEXT NOT NULL DEFAULT 'text'");
-  function scopeCheck(scope){validateChatScope(scope);if(scope.startsWith('store:')&&!stores.has(scope.slice(6)))throw chatError('chat_access_denied',403);}
+  function scopeCheck(scope){validateChatScope(scope);if(scope.startsWith('store:')&&!stores.has(scope.slice(6))||scope.startsWith('user:')&&env.VITRINE_COINS_ENABLED!=='true')throw chatError('chat_access_denied',403);}
+  paidRuntime?.setScopeAuthorizer(scope=>{scopeCheck(scope);return !closed;});
   function qualified(capability){
     return skills.status().providers.filter(provider=>{
       const record=qualifications.latest(provider.id);
@@ -99,7 +101,8 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
   function conversationRow(scope,id){scopeCheck(scope);chatId(id);const c=db.prepare('SELECT * FROM neural_chat_conversations WHERE id=? AND scope=?').get(id,scope);if(!c)throw chatError('chat_not_found',404);return c;}
   const summary=c=>({id:c.id,title:c.title,createdAt:c.created_at,updatedAt:c.updated_at});
   const receipt=r=>({id:r.id,requestId:r.id,conversationId:r.conversation_id,messageId:r.user_message_id,status:r.status,createdAt:r.created_at,updatedAt:r.updated_at,
-    ...(['queued','running'].includes(r.status)?{queue:{lane:'chat',position:null}}:{})});
+    ...(paidRuntime?.owns(r.scope,r.id)?{payment:paidRuntime.payment(r.scope,r.id),artifacts:paidRuntime.artifacts(r.scope,r.id)}:{}),
+    ...(['queued','running'].includes(r.status)?{queue:{lane:paidRuntime?.owns(r.scope,r.id)?(r.intent_kind==='text'?'chat':r.intent_kind):'chat',position:null}}:{})});
   function finish(scope,id,status,text,lease){
     return db.transaction(()=>{
       // Internal cleanup must settle already-persisted work even if that store
@@ -116,6 +119,7 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
     if(closed||!db.open)return;
     queue.recover();
     for(const r of db.prepare("SELECT * FROM neural_chat_requests WHERE status IN ('queued','running')").all()){
+      if(paidRuntime?.owns(r.scope,r.id))continue;
       let job;try{job=queue.get(r.scope,r.id);}catch{
         if(r.status==='running')job=queue.adoptUnknown({id:r.id,scope:r.scope,lane:'chat',capability:r.capability,idempotencyKey:r.idempotency_key,requestHash:r.request_hash,groupKey:r.conversation_id});
         else{finish(r.scope,r.id,'failed','O pedido não pôde ser recuperado com segurança. Não foi reenviado.');continue;}
@@ -134,13 +138,14 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
   }
   function status(scope){scopeCheck(scope);reap();const available=enabled()&&['support.draft-reply','growth.content-plan','research.summarize','code.plan','commerce.seller-diagnose','ranking.evaluate'].some(capability=>qualified(capability).length>0);
     const queueStatus={enabled:available&&chatConcurrency>0,...queue.summary(scope)};
+    if(paidRuntime?.enabled){const paid=paidRuntime.status(scope);return {enabled:true,mode:'hybrid',operationalMode:config.mode,paidGenerationEnabled:Object.values(paid.capabilities).some(Boolean),capabilities:{text:available||paid.capabilities.chat,image:paid.capabilities.image,video:paid.capabilities.video},wallet:paid.wallet,attachments:CHAT_ATTACHMENT_LIMITS,limits:{...LIMITS,concurrent:chatConcurrency},queue:{...queueStatus,enabled:true},notice:paid.notice};}
     return {enabled:true,mode:'local',operationalMode:config.mode,paidGenerationEnabled:false,capabilities:{text:available,image:false,video:false},attachments:CHAT_ATTACHMENT_LIMITS,
       limits:{...LIMITS,concurrent:chatConcurrency},queue:queueStatus,
       notice:queueStatus.requiresReview?'Há um pedido desta conta sem confirmação de término. A capacidade permanece reservada e precisa de revisão segura; não haverá reenvio automático.':
         'Chat local com contexto privado e fila persistente. Sem geração paga, navegação, execução de código ou publicação automática.'};}
   function list(scope){scopeCheck(scope);reap();return db.prepare('SELECT * FROM neural_chat_conversations WHERE scope=? ORDER BY updated_at DESC,id DESC LIMIT 100').all(scope).map(summary);}
   function messageAttachments(scope,id){return db.prepare('SELECT attachment_id FROM neural_chat_message_attachments WHERE message_id=? ORDER BY position').all(id).map(x=>attachments.metadata(scope,x.attachment_id));}
-  function conversation(scope,id){reap();const c=conversationRow(scope,id);return {conversation:summary(c),messages:db.prepare('SELECT * FROM neural_chat_messages WHERE conversation_id=? ORDER BY sequence').all(id).map(m=>({id:m.id,role:m.role,text:m.text,status:m.status,requestId:m.request_id,createdAt:m.created_at,attachments:messageAttachments(scope,m.id),...(['queued','running'].includes(m.status)?{queue:{lane:'chat',position:null}}:{})}))};}
+  function conversation(scope,id){reap();const c=conversationRow(scope,id);return {conversation:summary(c),messages:db.prepare('SELECT * FROM neural_chat_messages WHERE conversation_id=? ORDER BY sequence').all(id).map(m=>({id:m.id,role:m.role,text:m.text,status:m.status,requestId:m.request_id,createdAt:m.created_at,attachments:messageAttachments(scope,m.id),...(m.role==='assistant'&&paidRuntime?.owns(scope,m.request_id)?{payment:paidRuntime.payment(scope,m.request_id),artifacts:paidRuntime.artifacts(scope,m.request_id)}:{}),...(['queued','running'].includes(m.status)?{queue:{lane:paidRuntime?.owns(scope,m.request_id)?paidRuntime.payment(scope,m.request_id).kind:'chat',position:null}}:{})}))};}
   function untrustedContext(scope,r){
     const rows=db.prepare('SELECT * FROM neural_chat_messages WHERE conversation_id=? AND sequence<(SELECT sequence FROM neural_chat_messages WHERE id=?) ORDER BY sequence DESC LIMIT ?').all(r.conversation_id,r.user_message_id,LIMITS.historyMessages).reverse();
     let remaining=LIMITS.contextCharacters,truncated=false;const seen=new Set();
@@ -234,7 +239,7 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
     const hash=createHash('sha256').update(JSON.stringify({message:message.trim(),conversationId:input.conversationId||null,attachmentIds:ids})).digest('hex');
     const prior=db.prepare('SELECT * FROM neural_chat_requests WHERE scope=? AND idempotency_key=?').get(scope,key);
     if(prior){if(prior.request_hash!==hash)throw chatError('chat_conflict',409);return {...receipt(prior),duplicate:true};}
-    if(input.conversationId&&db.prepare("SELECT 1 FROM neural_chat_requests WHERE scope=? AND conversation_id=? AND status IN ('queued','running')").get(scope,input.conversationId))throw chatError('chat_busy',409);
+    if(input.conversationId&&db.prepare("SELECT 1 FROM neural_chat_requests WHERE scope=? AND conversation_id=? AND status IN ('awaiting_confirmation','queued','running')").get(scope,input.conversationId))throw chatError('chat_busy',409);
     const day=Date.parse(new Date(now()).toISOString().slice(0,10)+'T00:00:00Z');
     if(db.prepare('SELECT COUNT(*) n FROM neural_chat_requests WHERE scope=? AND created_at>=?').get(scope,day).n>=LIMITS.dailyRequests||db.prepare('SELECT COUNT(*) n FROM neural_chat_requests WHERE created_at>=?').get(day).n>=LIMITS.globalDailyRequests||db.prepare('SELECT COUNT(*) n FROM neural_chat_requests WHERE scope=?').get(scope).n>=LIMITS.retainedRequests||db.prepare('SELECT COUNT(*) n FROM neural_chat_requests').get().n>=LIMITS.globalRequests)throw chatError('chat_quota',429);
     const conversationId=input.conversationId||randomUUID();
@@ -256,6 +261,16 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
     insert.run(assistantId,conversationId,requestId,'assistant',unavailable?UNAVAILABLE[unavailable]:'',state,count+2,now());
     ids.forEach((id,i)=>db.prepare('INSERT INTO neural_chat_message_attachments(message_id,attachment_id,position) VALUES(?,?,?)').run(messageId,id,i));
     db.prepare('UPDATE neural_chat_conversations SET updated_at=? WHERE id=? AND scope=?').run(now(),conversationId,scope);
+    if(paidRuntime?.enabled&&unavailable&&['text','image','video'].includes(intent.kind)&&!(intent.kind==='text'&&referencedImage)){
+      const imageReferences=selected.filter(a=>a.kind==='image');
+      if(!imageReferences.length&&referencedImage&&previous)imageReferences.push(...messageAttachments(scope,previous.user_message_id).filter(a=>a.kind==='image'));
+      if(imageReferences.length>1)throw chatError('chat_media_reference_invalid');
+      const payment=paidRuntime.prepare(scope,{requestId,conversationId,kind:intent.kind==='text'?'chat':intent.kind,message:message.trim(),context:untrustedContext(scope,row(scope,requestId)),referenceImage:imageReferences.length?attachments.read(scope,imageReferences[0].id):null});
+      if(payment){
+        db.prepare("UPDATE neural_chat_requests SET status='awaiting_confirmation' WHERE id=? AND scope=?").run(requestId,scope);
+        db.prepare("UPDATE neural_chat_messages SET status='awaiting_confirmation',text=? WHERE id=? AND request_id=?").run('Seu pedido está pronto. Confira o valor máximo e confirme para reservar seu saldo. Nenhuma geração paga foi enviada ainda.',assistantId,requestId);
+      }
+    }
     if(state==='queued'){
       try{queue.enqueue({id:requestId,scope,lane:'chat',capability:intent.capability,idempotencyKey:key,requestHash:hash,groupKey:conversationId});}
       catch(error){throw chatError(error.code==='queue_quota'?'chat_quota':'chat_busy',error.code==='queue_quota'?429:409);}
@@ -284,12 +299,13 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
     reap();const result=prepare.immediate(scope,input);
     if(result.status==='queued')kick();return result;
   }
-  function cancel(scope,id){const r=row(scope,id);if(['queued','running'].includes(r.status)){
+  function cancel(scope,id){const r=row(scope,id);if(paidRuntime?.owns(scope,id)){paidRuntime.cancel(scope,id);return receipt(row(scope,id));}if(['queued','running'].includes(r.status)){
     db.transaction(()=>{queue.cancel(scope,id);finish(scope,id,'cancelled','Resposta cancelada. Seu pedido e os anexos continuam na conversa.');}).immediate();
     active.get(id)?.controller.abort();kick();
   }return receipt(row(scope,id));}
   function close(){
     if(closed)return;closed=true;clearInterval(workerTimer);
+    paidRuntime?.close();
     // Preserve queued requests for resume. Held transports become unknown, not
     // replayable; no callbacks may use a DB after the owner's stop()/close().
     for(const [id,run]of active){
@@ -299,6 +315,8 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
     }
   }
   async function wait(id){
+    const paidRow=db.open?db.prepare('SELECT scope FROM neural_chat_requests WHERE id=?').get(id):null;
+    if(paidRow&&paidRuntime?.owns(paidRow.scope,id)){await paidRuntime.wait(id);return;}
     for(let count=0;count<LIMITS.globalDailyRequests+1;count++){
       kick();await new Promise(resolve=>setImmediate(resolve));
       const run=active.get(id);if(run){await run.pending;return;}
@@ -310,6 +328,7 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
   }
   workerTimer=setInterval(()=>{if(!db.open){clearInterval(workerTimer);return;}kick();},pollMs);workerTimer.unref?.();kick();
   return {status,list,conversation,submit,cancel,
+    confirm:(scope,id,input)=>{row(scope,id);if(!paidRuntime?.owns(scope,id))throw chatError('chat_not_found',404);paidRuntime.confirm(scope,id,input);return receipt(row(scope,id));},
     request:(scope,id)=>{reap();return receipt(row(scope,id));},
     requestByKey:(scope,key)=>{scopeCheck(scope);reap();idempotencyKey(key);const r=db.prepare('SELECT * FROM neural_chat_requests WHERE scope=? AND idempotency_key=?').get(scope,key);if(!r)throw chatError('chat_not_found',404);return receipt(r);},
     upload:(scope,input)=>{scopeCheck(scope);return attachments.upload(scope,input);},readAttachment:(scope,id)=>{scopeCheck(scope);return attachments.read(scope,id);},

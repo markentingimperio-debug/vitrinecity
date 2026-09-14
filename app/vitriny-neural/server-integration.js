@@ -9,10 +9,10 @@ function pseudonymSalt(env){
   return value||'disabled-neural-no-personal-events';
 }
 
-export function setupVitrinyNeural({app,db,requireAdmin,sameOriginOnly,env=process.env,fetchImpl=globalThis.fetch,logger=console,nodeId='vitrinecity-api'}={}){
+export function setupVitrinyNeural({app,db,coinWallet,requireAdmin,sameOriginOnly,env=process.env,fetchImpl=globalThis.fetch,logger=console,nodeId='vitrinecity-api'}={}){
   if(!app||!db||typeof requireAdmin!=='function'||typeof sameOriginOnly!=='function')throw new TypeError('Integração Neural requer app, db e middlewares administrativos.');
   try{
-    const service=createVitrinyNeuralService({db,env,fetchImpl,nodeId,pseudonymSalt:pseudonymSalt(env),logger});
+    const service=createVitrinyNeuralService({db,coinWallet,env,fetchImpl,nodeId,pseudonymSalt:pseudonymSalt(env),logger});
     mountVitrinyNeuralAdmin({app,service,requireAdmin,sameOriginOnly});
     if(service.config.enabled){service.observer.start();service.webResearch?.schedule?.();}
     const capture=(event)=>{

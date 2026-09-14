@@ -6,7 +6,7 @@ export const CHAT_ATTACHMENT_LIMITS=Object.freeze({maxPerMessage:3,imageMaxBytes
   allowedMimeTypes:Object.freeze(['text/plain','text/markdown','text/csv','image/png','image/jpeg','image/webp'])});
 export function chatError(code,status=400){return Object.assign(new Error(code),{code,status});}
 export function validateChatScope(scope){
-  if(typeof scope!=='string'||!(/^(?:admin|store):[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/).test(scope))throw chatError('chat_access_denied',403);
+  if(typeof scope!=='string'||!(/^(?:(?:admin|store):[A-Za-z0-9][A-Za-z0-9._:-]{0,159}|user:[1-9]\d{0,14})$/).test(scope))throw chatError('chat_access_denied',403);
   return scope;
 }
 export function chatId(id){if(typeof id!=='string'||!(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/).test(id))throw chatError('chat_not_found',404);return id;}

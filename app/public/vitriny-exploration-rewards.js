@@ -1,3 +1,5 @@
+import {assertCoinStatus,coinAtoms} from './vitrine-coins-contract.js';
+import {formatCoins} from './vitrine-coins-ui.js';
 const BASE='/api/rewards/exploration',KEY='vitrinecity:store-visit:';
 const UNAVAILABLE='Não foi possível carregar suas conquistas agora. Tente novamente em instantes.';
 async function api(suffix='',body){
@@ -16,21 +18,22 @@ export function mountStoreReward({storeReference,productId=null,container=null}=
   const banner=document.createElement('aside');banner.className='exploration-reward';banner.setAttribute('aria-label','Recompensa da visita');
   const icon=document.createElement('span');icon.className='exploration-coin';icon.textContent='V';icon.setAttribute('aria-hidden','true');
   const content=document.createElement('div'),title=document.createElement('strong'),message=document.createElement('p'),actions=document.createElement('div');actions.className='exploration-actions';
-  title.textContent='Uma descoberta. Uma moeda.';message.setAttribute('role','status');content.append(title,message,actions);banner.append(icon,content);
+  title.textContent='Descubra lojas e conquiste recompensas.';message.setAttribute('role','status');content.append(title,message,actions);banner.append(icon,content);
   (container||document.querySelector('main')||document.body).prepend(banner);
   const key=KEY+storeReference;let timer=null,stopped=false,observer=null;
-  const done=data=>{title.textContent=data.awarded?'+1 Vitrine Coin conquistada':'Você já ganhou a moeda desta loja hoje';message.textContent='Volte amanhã para conquistar outra. Limite de uma moeda por loja por dia, no horário de Brasília.';actions.replaceChildren();const link=document.createElement('a');link.href='/central-creditos.html';link.textContent='Ver minhas moedas e fase';actions.append(link);if(data.awarded)publish(data);};
+  const done=data=>{title.textContent=data.awarded?(data.unified&&data.rewardAtoms?'+'+formatCoins(data.rewardAtoms)+' Vitrine Coins conquistadas':'+1 ponto de recompensa conquistado'):'Você já recebeu a recompensa desta loja hoje';message.textContent='Volte amanhã para uma nova descoberta. Uma recompensa por loja por dia, no horário de Brasília.';actions.replaceChildren();const link=document.createElement('a');link.href='/central-creditos.html';link.textContent='Ver minhas moedas e fase';actions.append(link);if(data.awarded)publish(data);};
   async function start(){
     if(!productId){
       const result=await api('/start',{storeReference});if(stopped)return;
       if(!result.eligible){title.textContent='Conheça esta loja';message.textContent=result.message;return;}
       try{sessionStorage.setItem(key,JSON.stringify({token:result.token,day:result.day}));}catch{}
       if(result.alreadyClaimed){done(result);return;}
-      message.textContent='Abra um produto e conheça seus detalhes por 10 segundos para liberar 1 moeda. Uma vez por loja, a cada dia.';return;
+      const reward=result.unified&&result.rewardAtomsPerStore?formatCoins(result.rewardAtomsPerStore)+' Vitrine Coins':'1 ponto de recompensa';
+      message.textContent='Abra um produto e conheça seus detalhes por 10 segundos para liberar '+reward+'. Uma vez por loja, a cada dia.';return;
     }
     let visit;try{visit=JSON.parse(sessionStorage.getItem(key)||'null');}catch{}
     if(!visit?.token){
-      title.textContent='Comece sua descoberta pela loja';message.textContent='Entre na loja e depois abra um produto para conquistar 1 moeda.';
+      title.textContent='Comece sua descoberta pela loja';message.textContent='Entre na loja e depois abra um produto para conquistar a recompensa da visita.';
       const link=document.createElement('a');link.href='/loja/'+encodeURIComponent(storeReference);link.textContent='Visitar a loja';actions.append(link);return;
     }
     const result=await api('/view',{token:visit.token,productId});if(stopped)return;if(result.alreadyClaimed){done(result);return;}
@@ -71,7 +74,7 @@ export function mountExplorationProgress(container,{compact=false,checkIn=true,o
       hasSummary=false;goal.hidden=true;progress.hidden=true;progress.style.display='none';detail.textContent='';copy.textContent='Começou um novo dia. Atualizando suas conquistas…';onSummary(null);
       if(active&&document.visibilityState!=='hidden')refresh();
     },wait+100);
-    heading.textContent=`Fase ${summary.level} · ${summary.name}`;copy.textContent=`${summary.balance} ${summary.balance===1?'moeda':'moedas'} · ${summary.visits} ${summary.visits===1?'loja descoberta':'lojas descobertas'} hoje`;
+    heading.textContent=`Fase ${summary.level} · ${summary.name}`;copy.textContent=`${summary.balanceLabel} · ${summary.visits} ${summary.visits===1?'loja descoberta':'lojas descobertas'} hoje`;
     progress.value=summary.progress;progress.hidden=false;progress.style.display='';detail.textContent=`${summary.streak} ${summary.streak===1?'dia seguido':'dias seguidos'} · ${summary.remainingXp} XP para a próxima fase`;
     const daily=summary.dailyGoal;goal.hidden=!daily;
     if(daily){
@@ -79,7 +82,7 @@ export function mountExplorationProgress(container,{compact=false,checkIn=true,o
       goalTitle.textContent=daily.achieved?'Meta de hoje concluída':daily.available?'Sua meta de hoje':'Novas descobertas em breve';
       goalProgress.hidden=!daily.available;goalProgress.max=Math.max(1,daily.target);goalProgress.value=daily.completed;
       goalCopy.textContent=paused?'As recompensas estão pausadas. Suas moedas já conquistadas continuam no saldo.':!daily.available?'Ainda não há lojas com produtos disponíveis para esta meta.':daily.achieved?`${daily.completed} de ${daily.target} lojas. Parabéns pelas descobertas!`:limited?'Você atingiu o limite de moedas de hoje entre visitas e fazenda. Volte amanhã para continuar.':`${daily.completed} de ${daily.target} lojas · ${daily.remaining===1?'falta 1 loja':`faltam ${daily.remaining} lojas`}`;
-      goalRules.textContent='Entre na loja e veja um produto por 10 segundos. Ganhe 1 moeda por loja diferente, por dia, dentro do limite diário. A meta não acrescenta moedas extras. Novo dia à meia-noite de Brasília.';
+      goalRules.textContent='Entre na loja e veja um produto por 10 segundos. Ganhe '+summary.rewardLabel+' por loja diferente, por dia, dentro do limite diário. A meta não acrescenta moedas extras. Novo dia à meia-noite de Brasília.';
       dailyStores.textContent='';for(const store of summary.dailyStores){const a=document.createElement('a');a.href='/loja/'+encodeURIComponent(store.reference);a.textContent=(store.completed?'✓ ':'Visitar ')+store.name+(store.completed?' · concluída hoje':' →');dailyStores.append(a);}
     }
     onSummary(summary);
@@ -88,7 +91,7 @@ export function mountExplorationProgress(container,{compact=false,checkIn=true,o
   const unavailable=error=>{
     if(hasSummary&&error?.status!==401)return;
     hasSummary=false;goal.hidden=true;dailyStores.textContent='';clearTimeout(dayTimer);dayTimer=null;onSummary(null);
-    heading.textContent='Suas conquistas na cidade';progress.hidden=true;progress.style.display='none';detail.textContent='Visitas completas: +1 moeda e +10 XP. Entrada diária: +5 XP.';
+    heading.textContent='Suas conquistas na cidade';progress.hidden=true;progress.style.display='none';detail.textContent='Visitas completas geram recompensas validadas e +10 XP. Entrada diária: +5 XP.';
     copy.textContent=error?.status===401?'Entre na sua conta para participar.':UNAVAILABLE;
     if(error?.status===401){const login=loginLink();link.href=login.href;link.textContent=login.textContent;}
   };
@@ -115,7 +118,9 @@ function progressSummary(data){
     if(g&&[g.target,g.completed,g.remaining].every(Number.isSafeInteger)&&g.target>=0&&g.target<=3&&g.completed===Math.min(g.target,visitedToday.length)&&g.remaining===g.target-g.completed&&g.available===(g.target>0)&&g.achieved===(g.target>0&&g.completed===g.target)&&g.rewardCoinsPerStore===1&&g.bonusCoins===0)dailyGoal=g;
     if(r&&[r.limit,r.earned,r.remaining].every(Number.isSafeInteger)&&r.limit>=0&&r.earned>=0&&r.remaining===Math.max(0,r.limit-r.earned))dailyRewards=r;
     const dailyStores=Array.isArray(data.dailyStores)?data.dailyStores.filter(s=>s&&typeof s.name==='string'&&s.name.trim()&&s.name.length<=200&&typeof s.reference==='string'&&/^[a-zA-Z0-9_-]{1,120}$/.test(s.reference)&&s.completed===visitedToday.includes(s.reference)).slice(0,6):[];
-    return {level,name:name.trim(),balance,visits:visitedToday.length,progress,streak,remainingXp:nextLevelXp-xp,dailyGoal,dailyRewards,dailyStores,enabled:data.enabled};
+    let balanceLabel=`${balance} pontos anteriores`,rewardLabel='1 ponto de recompensa';
+    if(data.unified){const wallet=assertCoinStatus(data.coinWallet);coinAtoms(data.rewardAtomsPerStore);balanceLabel=formatCoins(wallet.availableAtoms)+' Vitrine Coins';rewardLabel=formatCoins(data.rewardAtomsPerStore)+' Vitrine Coins';}
+    return {level,name:name.trim(),balance,balanceLabel,rewardLabel,visits:visitedToday.length,progress,streak,remainingXp:nextLevelXp-xp,dailyGoal,dailyRewards,dailyStores,enabled:data.enabled};
   }catch{return null;}
 }
 
@@ -125,7 +130,7 @@ const goalButton=document.getElementById('openExplorationGoal'),goalDialog=docum
 if(goalButton&&goalDialog){
   mountExplorationProgress(goalDialog.querySelector('[data-goal-content]'),{refreshOn:goalButton,onSummary:summary=>{
     if(!summary){goalButton.textContent='Moedas e meta diária';return;}
-    const daily=summary.dailyGoal;goalButton.textContent=summary.enabled===false?`${summary.balance} moedas · conquistas`:daily?.available?`${daily.achieved?'✓ ':''}Meta ${daily.completed}/${daily.target} · ${summary.balance} moedas`:`${summary.balance} moedas · minhas conquistas`;
+    const daily=summary.dailyGoal;goalButton.textContent=summary.enabled===false?`${summary.balanceLabel} · conquistas`:daily?.available?`${daily.achieved?'✓ ':''}Meta ${daily.completed}/${daily.target} · ${summary.balanceLabel}`:`${summary.balanceLabel} · minhas conquistas`;
   }});
   goalButton.addEventListener('click',()=>goalDialog.showModal());
   goalDialog.querySelector('[data-close]').addEventListener('click',()=>goalDialog.close());

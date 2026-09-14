@@ -6,6 +6,19 @@ import {setupCityExploration,explorationDay,explorationLevel,EXPLORATION_VIEW_MS
 import {setupCityRewards} from '../city-rewards.js';
 import {memberReturn} from '../public/vitriny-membership-core.js';
 
+test('unified exploration exposes exact atoms without changing the one-point legacy award',async()=>{
+  const db=new Database(':memory:');db.exec("CREATE TABLE users(id INTEGER PRIMARY KEY);INSERT INTO users VALUES(1);CREATE TABLE store_profiles(order_reference TEXT PRIMARY KEY,business_name TEXT,review_status TEXT);CREATE TABLE store_products(id INTEGER PRIMARY KEY,store_reference TEXT,active INTEGER,marketplace_enabled INTEGER,stock_quantity INTEGER,price_cents INTEGER);INSERT INTO store_profiles VALUES('agro','Agro','published');INSERT INTO store_products VALUES(1,'agro',1,1,2,1000);");
+  const coinWallet={currency:'VITRINE_COINS',policyVersion:'vitrine-coins-topup-15-v1',unified:true,frozen:false,availableAtoms:'816000001',reservedAtoms:'0',chargedAtoms:'0',expiredAtoms:'0'};
+  let time=Date.parse('2026-09-14T12:00:00Z');const grants=[],app=express();app.use(express.json());
+  const auth=(req,res,next)=>{req.user={id:1};next();};
+  const rewards={settings:()=>({enabled:true,unified:true,coinsPerReal:100}),available:()=>({points:850,coins:coinWallet}),dailyAllowance:()=>({limit:100,earned:0,remaining:100}),grantGame:(id,points)=>{grants.push({id,points});return points;}};
+  const exploration=setupCityExploration({app,db,requireUser:auth,sameOriginOnly:auth,rewards,now:()=>time});
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));const base=`http://127.0.0.1:${server.address().port}/api/rewards/exploration`;
+  const post=async(path,body)=>{const response=await fetch(base+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});assert.equal(response.status,200);return response.json();};
+  try{const start=await post('/start',{storeReference:'agro'});assert.equal(start.rewardAtomsPerStore,'960000');await post('/view',{token:start.token,productId:1});time+=EXPLORATION_VIEW_MS;const done=await post('/complete',{token:start.token,productId:1});assert.equal(done.coins,1);assert.equal(done.rewardAtoms,'960000');assert.equal(done.coinWallet.availableAtoms,'816000001');assert.equal(done.balance,850);assert.equal(done.xp,10);assert.deepEqual(grants,[{id:1,points:1}]);assert.equal(exploration.summary(1).dailyGoal.rewardCoinsPerStore,1,'Compatibility field is unchanged');}
+  finally{await new Promise(resolve=>server.close(resolve));db.close();}
+});
+
 test('Brasilia dates and phase boundaries are determined independently of the client clock',()=>{
   assert.equal(explorationDay(Date.parse('2026-09-11T02:59:59Z')),'2026-09-10');
   assert.equal(explorationDay(Date.parse('2026-09-11T03:00:00Z')),'2026-09-11');
