@@ -1,4 +1,4 @@
-import { measurementContext } from './measurement-policy.js';
+import { measurementContext } from './measurement-policy.js?v=20260914';
 import { flushReceipts, clearPendingReceipts } from './measurement-receipts.js';
 
 // Public measurement ID, verified in the Vitrine City web stream (not an API secret).

@@ -26,7 +26,7 @@ export function setupVitrinyNeural({app,db,requireAdmin,sameOriginOnly,env=proce
     logger?.info?.(`[vitriny-neural] initialized mode=${service.config.mode} enabled=${service.config.enabled} webResearch=${service.webResearch?.status?.().enabled===true} spatialBridge=${Boolean(spatialBridge)}`);
     return{
       enabled:service.config.enabled,service,capture,spatialBridge,status:()=>service.status(),
-      stop:()=>{spatialBridge?.stop?.();service.observer.stop();service.webResearch?.stop?.();return true;}
+      stop:()=>{spatialBridge?.stop?.();service.observer.stop();service.webResearch?.stop?.();service.chat?.close?.();return true;}
     };
   }catch(error){
     logger?.error?.('[vitriny-neural] initialization failed',String(error?.message||error));

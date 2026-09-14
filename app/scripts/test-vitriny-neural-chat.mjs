@@ -1,23 +1,41 @@
 import assert from 'node:assert/strict';
-import {test} from 'node:test';
+import {test,afterEach} from 'node:test';
 import Database from 'better-sqlite3';
 import {createNeuralChatEngine, routeChatIntent} from '../vitriny-neural/chat-engine.js';
 import {createOpenAICompatibleProvider} from '../vitriny-neural/providers/openai-compatible.js';
 
 const capabilities=['support.draft-reply','support.summarize','growth.content-plan','growth.campaign-plan','growth.seo-plan','growth.diagnose','code.plan','research.verify','research.summarize','commerce.seller-diagnose','ranking.evaluate'];
-function fixture({respond,qualified=true,config={enabled:true,mode:'advisory'},now=Date.now,timeoutMs,env={},db=new Database(':memory:')}={}){
+const fixtures=[];afterEach(()=>{for(const fixture of fixtures.splice(0))fixture.chat.close();});
+function fixture({respond,qualified=true,config={enabled:true,mode:'advisory'},now=Date.now,timeoutMs,queueOptions,env={},db=new Database(':memory:')}={}){
   const calls=[];
   const provider={id:'local-fixture',modelName:'fixture-v1',local:true,policy:{enabled:true,allowedCapabilities:capabilities},capabilities};
   const qualifications={latest:()=>qualified?{modelName:provider.modelName,qualification:{productionEligible:true,allowedCapabilities:capabilities}}:null};
   const skills={status:()=>({providers:[provider,{...provider,id:'paid-fixture',local:false}]}),invoke:async(capability,input,options)=>{
+    options.onAttempt?.({type:'started',provider:provider.id,modelName:provider.modelName});
     calls.push({capability,input,options});
-    return respond?respond({capability,input,options}):{provider:provider.id,output:{model:provider.modelName,text:'Resposta baseada no contexto fornecido.'}};
+    const result=await(respond?respond({capability,input,options}):{provider:provider.id,output:{model:provider.modelName,text:'Resposta baseada no contexto fornecido.'}});
+    options.onAttempt?.({type:'completed',provider:provider.id,modelName:provider.modelName});return result;
   }};
-  const chat=createNeuralChatEngine({db,skills,qualifications,config,now,timeoutMs,env:{VITRINY_NEURAL_TASKS_STORES:'shop-a,shop-b',...env}});
-  return {chat,calls,db};
+  const chat=createNeuralChatEngine({db,skills,qualifications,config,now,timeoutMs,queueOptions,env:{VITRINY_NEURAL_TASKS_STORES:'shop-a,shop-b',...env}});
+  const result={chat,calls,db};fixtures.push(result);return result;
 }
 const request=(chat,message='Crie um texto para minha loja.',key='request-chat-test-001',extra={})=>chat.submit('admin:1',{message,idempotencyKey:key,...extra});
 const upload=(chat,name='contexto.txt',value='O produto pesa 2 kg.',scope='admin:1')=>chat.upload(scope,{name,mimeType:'text/plain',dataBase64:Buffer.from(value).toString('base64')});
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+const answer={provider:'local-fixture',output:{model:'fixture-v1',text:'Resposta final recebida.'}};
+// Keeps the registry's pre-dispatch phase and its transport separately
+// controllable, so cross-worker races do not depend on timing a real network.
+function stagedFixture({db=new Database(':memory:'),now=Date.now,timeoutMs=1000}={}){
+  let resolve,reject,options,starts=0;
+  const transport=new Promise((yes,no)=>{resolve=yes;reject=no;});
+  const provider={id:'local-fixture',modelName:'fixture-v1',local:true,policy:{enabled:true,allowedCapabilities:capabilities},capabilities};
+  const chat=createNeuralChatEngine({db,now,timeoutMs,config:{enabled:true,mode:'advisory'},env:{},
+    qualifications:{latest:()=>({modelName:'fixture-v1',qualification:{productionEligible:true,allowedCapabilities:capabilities}})},
+    skills:{status:()=>({providers:[provider]}),invoke:(_capability,_input,context)=>{options=context;return transport;}}});
+  const result={chat,db,transport,resolve,reject,start(){options.onAttempt({type:'started',provider:'local-fixture',modelName:'fixture-v1'});starts++;},
+    complete(){options.onAttempt({type:'completed',provider:'local-fixture',modelName:'fixture-v1'});resolve(answer);},get starts(){return starts;}};
+  fixtures.push(result);return result;
+}
 
 test('intent routing is internal and media never falls back to a text script',()=>{
   assert.equal(routeChatIntent('Gere um vídeo a partir desta imagem').kind,'video');
@@ -102,7 +120,8 @@ test('expired lease retains concurrency until the cancelled transport really set
     const first=request(f.chat);await new Promise(resolve=>setImmediate(resolve));clock+=46000;
     assert.equal(f.chat.requestByKey('admin:1','request-chat-test-001').status,'interrupted');
     assert.equal(f.calls[0].options.signal.aborted,true);
-    assert.throws(()=>request(f.chat,'Mais uma resposta.','request-after-timeout'),{code:'chat_busy'});
+    const next=request(f.chat,'Mais uma resposta.','request-after-timeout');assert.equal(next.status,'queued');assert.equal(f.calls.length,1);
+    assert.equal(f.chat.status('admin:1').queue.requiresReview,true);f.chat.cancel('admin:1',next.id);
     release({provider:'local-fixture',output:{model:'fixture-v1',text:'Late ignored'}});await f.chat.wait(first.requestId);
     assert.doesNotMatch(JSON.stringify(f.chat.conversation('admin:1',first.conversationId)),/Late ignored/);
   }finally{f.db.close();}
@@ -112,7 +131,8 @@ test('deadline returns interrupted but does not free an unacknowledged transport
   let release;const f=fixture({timeoutMs:100,respond:()=>new Promise(resolve=>{release=resolve;})});try{
     const first=request(f.chat);await new Promise(resolve=>setTimeout(resolve,150));
     assert.equal(f.chat.requestByKey('admin:1','request-chat-test-001').status,'interrupted');
-    assert.throws(()=>request(f.chat,'Mais uma resposta.','request-deadline-new'),{code:'chat_busy'});
+    const queued=request(f.chat,'Mais uma resposta.','request-deadline-new');assert.equal(queued.status,'queued');assert.equal(f.calls.length,1);
+    assert.equal(f.chat.status('admin:1').queue.unresolved,1);f.chat.cancel('admin:1',queued.id);
     release({provider:'local-fixture',output:{model:'fixture-v1',text:'Late ignored'}});await f.chat.wait(first.requestId);
     const next=request(f.chat,'Gere uma imagem.','request-deadline-fresh');assert.equal(next.status,'unavailable');
   }finally{f.db.close();}
@@ -232,4 +252,83 @@ test('real model adapter preserves a tool-attempt marker even when raw finish_re
     fetchImpl:async()=>new Response(JSON.stringify({model:'fixture-v1',choices:[{finish_reason:'stop',message:{content:'Suposto sucesso externo.',tool_calls:[{type:'function',function:{name:'send_message',arguments:'{}'}}]}}]}),{headers:{'content-type':'application/json'}})});
   const f=fixture({respond:async({capability,input,options})=>({provider:'local-fixture',output:await adapter.invoke({capability,input,options,signal:options.signal})})});
   try{const item=request(f.chat);await f.chat.wait(item.requestId);assert.equal(f.chat.conversation('admin:1',item.conversationId).messages[1].status,'failed');}finally{f.db.close();}
+});
+
+test('fifty requests from ten accounts persist queued and resume exactly once after restart',async()=>{
+  const first=fixture(),items=[];try{
+    for(let scope=1;scope<=10;scope++)for(let n=0;n<5;n++){
+      const item=first.chat.submit(`admin:${scope}`,{message:`Escreva o texto ${n}.`,idempotencyKey:`request-backlog-${scope}-${n}`});
+      assert.equal(item.status,'queued');assert.deepEqual(item.queue,{lane:'chat',position:null});items.push(item);
+    }
+    assert.equal(first.calls.length,0);first.chat.close();
+    const reopened=fixture({db:first.db});await reopened.chat.wait(items.at(-1).id);
+    assert.equal(reopened.calls.length,50);assert.equal(first.calls.length,0);
+    assert.equal(first.db.prepare("SELECT COUNT(*) n FROM neural_chat_requests WHERE status='completed'").get().n,50);
+    assert.equal(first.db.prepare("SELECT COUNT(*) n FROM neural_durable_jobs WHERE status='completed'").get().n,50);
+    const recovered=reopened.chat.submit('admin:1',{message:'Escreva o texto 0.',idempotencyKey:'request-backlog-1-0'});
+    assert.equal(recovered.id,items[0].id);assert.equal(recovered.duplicate,true);assert.equal(reopened.calls.length,50);
+    assert.equal(reopened.chat.status('admin:1').queue.pending,0);
+  }finally{first.db.close();}
+});
+
+test('one active request per conversation and queued cancellation never invokes a provider',async()=>{
+  let release;const f=fixture({respond:()=>new Promise(resolve=>{release=resolve;})});try{
+    const first=request(f.chat);assert.equal(first.status,'queued');
+    assert.throws(()=>request(f.chat,'Outro texto.','request-same-conversation',{conversationId:first.conversationId}),{code:'chat_busy'});
+    const next=request(f.chat,'Outro texto.','request-other-conversation');assert.equal(next.status,'queued');
+    assert.equal(f.chat.cancel('admin:1',next.id).status,'cancelled');await tick();assert.equal(f.calls.length,1);
+    release(answer);await f.chat.wait(first.id);assert.equal(f.calls.length,1);
+    assert.equal(f.chat.requestByKey('admin:1','request-other-conversation').status,'cancelled');
+  }finally{f.db.close();}
+});
+
+test('transport rejection remains unknown across restart and only scoped status discloses it',async()=>{
+  const first=fixture({respond:()=>{throw Error('transport outcome unknown');}});try{
+    const item=request(first.chat);await first.chat.wait(item.id);
+    assert.equal(first.chat.request('admin:1',item.id).status,'failed');
+    const held=first.chat.status('admin:1');assert.equal(held.queue.requiresReview,true);assert.equal(held.queue.unresolved,1);assert.match(held.notice,/revisão segura/);
+    assert.deepEqual(first.chat.status('admin:2').queue,{enabled:true,pending:0,running:0,unresolved:0,requiresReview:false});
+    first.chat.close();const reopened=fixture({db:first.db});
+    const queued=request(reopened.chat,'Outro texto.','request-unknown-after-restart');await tick();
+    assert.equal(queued.status,'queued');assert.equal(reopened.calls.length,0);assert.equal(reopened.chat.status('admin:1').queue.unresolved,1);
+    assert.equal(reopened.chat.request('admin:1',item.id).status,'failed');
+    assert.equal(first.db.prepare('SELECT status FROM neural_durable_jobs WHERE id=?').get(item.id).status,'unknown');
+  }finally{first.db.close();}
+});
+
+test('restart with revoked store cancels never-dispatched work without blocking admin reads',async()=>{
+  const first=fixture();try{
+    const item=first.chat.submit('store:shop-a',{message:'Escreva o texto.',idempotencyKey:'request-revoked-queued'});first.chat.close();
+    const reopened=fixture({db:first.db,env:{VITRINY_NEURAL_TASKS_STORES:'shop-b'}});await tick();
+    assert.doesNotThrow(()=>reopened.chat.status('admin:1'));assert.deepEqual(reopened.chat.list('admin:1'),[]);
+    assert.equal(first.db.prepare('SELECT status FROM neural_chat_requests WHERE id=?').get(item.id).status,'unavailable');
+    assert.equal(first.db.prepare('SELECT status FROM neural_durable_jobs WHERE id=?').get(item.id).status,'cancelled');
+    assert.throws(()=>reopened.chat.request('store:shop-a',item.id),{code:'chat_access_denied'});assert.equal(reopened.calls.length,0);assert.equal(first.calls.length,0);
+  }finally{first.db.close();}
+});
+
+test('another engine reaping between transport resolution and answer commit does not discard success',async()=>{
+  const first=stagedFixture();try{
+    const item=request(first.chat);await tick();first.start();const second=fixture({db:first.db});
+    let observed;
+    first.transport.then(()=>{second.chat.status('admin:1');observed=first.db.prepare('SELECT status FROM neural_chat_requests WHERE id=?').get(item.id).status;});
+    first.complete();await first.chat.wait(item.id);
+    assert.equal(observed,'running');assert.equal(second.chat.request('admin:1',item.id).status,'completed');
+    assert.equal(second.chat.conversation('admin:1',item.conversationId).messages[1].text,answer.output.text);
+    assert.equal(second.calls.length,0);assert.equal(first.starts,1);
+  }finally{first.db.close();}
+});
+
+test('an expired pre-dispatch worker cannot fail a newer lease or make a provider call',async()=>{
+  let clock=1000;const first=stagedFixture({now:()=>clock});try{
+    const item=request(first.chat);await tick();
+    const oldToken=first.db.prepare('SELECT lease_token FROM neural_durable_jobs WHERE id=?').get(item.id).lease_token;
+    clock+=1001;const second=stagedFixture({db:first.db,now:()=>clock});await tick();
+    const newToken=first.db.prepare('SELECT lease_token FROM neural_durable_jobs WHERE id=?').get(item.id).lease_token;assert.notEqual(newToken,oldToken);
+    let rejected;try{first.start();}catch(error){rejected=error;}assert.ok(rejected);first.reject(rejected);await first.chat.wait(item.id);
+    assert.equal(first.starts,0);assert.equal(second.chat.request('admin:1',item.id).status,'queued');
+    assert.equal(first.db.prepare('SELECT lease_token FROM neural_durable_jobs WHERE id=?').get(item.id).lease_token,newToken);
+    second.start();second.complete();await second.chat.wait(item.id);assert.equal(second.chat.request('admin:1',item.id).status,'completed');
+    assert.equal(second.starts,1);
+  }finally{first.db.close();}
 });

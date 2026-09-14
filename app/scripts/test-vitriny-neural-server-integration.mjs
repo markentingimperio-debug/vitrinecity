@@ -65,4 +65,4 @@ try{
   const exportedLine=JSON.parse((await exported.text()).trim());assert.equal(exportedLine.messages[2].role,'assistant');
 
   console.log(JSON.stringify({ok:true,service:status.json.service,readiness:qualified.json.readiness,actionBudget:actions.json.usage,training:trainingStatus.json.counts}));
-}finally{await new Promise(resolve=>server.close(resolve));db.close();}
+}finally{integration.stop();await new Promise(resolve=>server.close(resolve));db.close();}

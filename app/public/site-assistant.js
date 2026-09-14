@@ -1,4 +1,4 @@
-import { classifySiteAssistantPath, siteAssistantContextPath, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS } from './site-assistant-policy.js';
+import { classifySiteAssistantPath, siteAssistantContextPath, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS } from './site-assistant-policy.js?v=20260914';
 import { createSiteAssistantContent, siteAssistantDestination } from './site-assistant-content.js';
 
 const DISMISS_KEY = 'vc-assistant-dismiss-until-v1';
@@ -46,7 +46,8 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   const inviteText = make('p', 'vc-assistant-invite-text');
   const inviteOpen = button('Conversar agora', 'vc-assistant-primary', () => open());
   const inviteLater = button('Agora não', 'vc-assistant-quiet', () => dismiss());
-  const inviteButtons = make('div', 'vc-assistant-invite-actions'); inviteButtons.append(inviteOpen, inviteLater);
+  const inviteButtons = make('div', 'vc-assistant-invite-actions'); const inviteExplore = button('Conhecer a plataforma', 'vc-assistant-quiet', () => { open(); submit('Quero conhecer melhor a plataforma VitrineCity. O que posso encontrar aqui?'); });
+  inviteButtons.append(inviteOpen, inviteLater, inviteExplore);
   invite.append(inviteClose, inviteTitle, inviteText, inviteButtons);
 
   const panel = make('section', 'vc-assistant-panel'); panel.id = 'vc-assistant-panel'; panel.hidden = true;

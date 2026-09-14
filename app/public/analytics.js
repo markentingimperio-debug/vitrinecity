@@ -43,7 +43,7 @@
     if (!googleEnabled || googleRequested || !allowed() || read('localStorage', GOOGLE_KEY) !== 'accepted') return;
     googleRequested = true;
     const script = document.createElement('script');
-    script.type = 'module'; script.src = '/google-analytics.js?v=conversions-20260905';
+    script.type = 'module'; script.src = '/google-analytics.js?v=public-pages-20260914';
     document.head.appendChild(script);
   };
   const send = (eventName, detail = {}) => {
