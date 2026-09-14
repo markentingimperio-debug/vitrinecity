@@ -2,6 +2,8 @@
 
 ## O que esta entrega implementa
 
+Atualização: o controle opt-in de planos/créditos e a medição por tentativa estão descritos em [VITRINY_NEURAL_AI_CREDITS.md](VITRINY_NEURAL_AI_CREDITS.md). Ele substitui a allowlist por períodos explícitos quando habilitado e separa uso desconhecido de zero. Continua sem cobrança automática, preços em reais ou integração de pagamento de plano de IA.
+
 O administrador e as lojas autorizadas enviam um comando em português, sem escolher modelo ou tipo de tarefa. Um modelo local qualificado decide entre rascunho de site/código, texto/roteiro e pedido não suportado. O motor valida cada ação, mantém versões dos arquivos em SQLite e mostra o resultado para revisão humana.
 
 Isto é uma API própria de orquestração e um chat de rascunhos. Não é um novo modelo fundacional, treinamento de pesos, computação quântica ou uma réplica do Codex. Não incorpora pesos ou prompts privados de outros fornecedores. A redução de custos ainda precisa ser medida com hardware, consumo, qualidade e volume reais; não há garantia de economia de 90% ou de eficácia de 100%.
@@ -38,7 +40,7 @@ VITRINY_NEURAL_TASKS_DAILY=10
 VITRINY_NEURAL_TASKS_TIMEOUT_MS=120000
 ```
 
-Uma lista de lojas vazia habilita somente o administrador. A lista é uma autorização manual de piloto, NÃO uma verificação de contratação de plano de IA. Não vender acesso automático com base nela. `shadow` não executa tarefas.
+Com o controle comercial desligado, uma lista de lojas vazia habilita somente o administrador. A lista é uma autorização manual de piloto, NÃO uma verificação de contratação de plano de IA. Com `VITRINY_NEURAL_BILLING_ENABLED=1`, lojas autenticadas precisam de um período explícito ativo; a lista deixa de ser o critério de admissão. A concessão do período também não confirma pagamento. `shadow` não executa tarefas.
 
 Configure o servidor local existente por `VITRINY_NEURAL_MODEL_ORIGIN`/`VITRINY_NEURAL_MODEL_NAME` ou pelas opções `JARVIS_LOCAL_MODEL`. Confira que o destino é realmente seu servidor privado. A marca `local` é metadado administrativo, não prova de localização nem firewall; uma URL remota marcada incorretamente pode enviar dados para fora. Exigir bloqueio de saída e allowlist de destinos na infraestrutura antes de operar com dados privados.
 
@@ -89,7 +91,7 @@ Criar retorna `201`, repetição idêntica `200`, e iniciar retorna `202`. A mes
 - Downloads recebem `attachment`, `text/plain`, `nosniff` e CSP restritiva. O chat não executa HTML/JS gerado. Um arquivo baixado ainda é código não confiável: revisar antes de abrir como página, executar ou publicar.
 - Até 200 tarefas retidas por escopo e 2.000 globais. Não há expurgo automático nesta versão: ao atingir o teto, novas tarefas são bloqueadas. Definir exportação, retenção, recuperação e exclusão administrativa antes de escalar. Não apagar dados para contornar o limite durante o piloto.
 - Textos privados não são inseridos automaticamente na memória compartilhada ou nos datasets. Padrões conhecidos de chaves são rejeitados, mas isso não é um detector completo de segredos. Não enviar credenciais no chat. O banco e seus backups precisam de proteção e política de retenção próprias.
-- Uso de tokens reflete respostas devolvidas com sucesso; inferências canceladas, falhas e consumo interno do servidor podem não estar incluídos. Não usar este contador como faturamento exato.
+- A medição por tentativa inclui respostas tardias com contagem válida e distingue uso desconhecido de zero. Falhas sem recibo ou chamadas sem contagem completa permanecem incertas; não se infere o consumo interno do servidor. O ledger converte uso confirmado em créditos internos e mantém reservas incertas para conferência. Isso não equivale a reconciliar uma fatura de provedor externo.
 
 ## Verificação desta entrega
 
@@ -107,7 +109,7 @@ Os provedores desses testes são simulados. Nenhuma dessas execuções comprova 
 ## Próximos marcos antes de vender autonomia ampla
 
 1. Validar o modelo local real no protocolo e medir conclusão correta por categoria, latência p95, consumo por tarefa e correções humanas. Estabelecer um conjunto de aceitação separado dos exemplos de desenvolvimento; publicar resultados e falhas, não uma porcentagem presumida.
-2. Conectar o entitlement de plano de IA por loja, revogação, ledger de consumo e limites comerciais; não basta ter uma loja ou estar na allowlist.
+2. O controle opt-in de períodos, revogação, ledger e créditos está implementado no complemento comercial. Ainda falta vinculá-lo a pagamentos/renovações/estornos verificados e preços aprovados; ter uma loja ou concessão manual não comprova pagamento de plano de IA.
 3. Criar executor de código isolado com diretório temporário, rede restrita, processos/memória/tempo limitados e evidências de testes. Só então acrescentar navegador e integração Git/PR, com credenciais específicas e aprovações.
 4. Adicionar adaptadores reais de imagem/vídeo e contratos de jobs/artefatos, cancelamento e validação. Um modelo de texto não gera mídia por receber uma capability com esse nome.
 5. Integrar OAuth e publicação nas redes com prévia, aprovação, idempotência e recibo verificável da plataforma. Um texto do modelo não é recibo de publicação.

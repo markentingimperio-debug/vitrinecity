@@ -9,10 +9,14 @@ export function mountNeuralWorkspace(environment = globalThis) {
     ? '/api/store-portal/' + encodeURIComponent(storeReference) + '/neural/tasks'
     : '/api/admin/vitriny-neural/tasks';
   const state = { token: '', status: null, tasks: [], selected: null, busy: false, loading: false, timer: null, epoch: 0, pending: null };
+  $('billing-link').href = '/neural-billing.html' + (storeReference ? '?store=' + encodeURIComponent(storeReference) : '');
   const requests = new Set();
   const labels = { queued: 'Na fila', running: 'Preparando rascunho', draft_ready: 'Rascunho disponível', failed: 'Falhou', cancelled: 'Cancelada', interrupted: 'Interrompida', blocked: 'Recurso indisponível' };
   const kinds = { website: 'Rascunho de site ou código', content: 'Texto ou roteiro', unsupported: 'Integração pendente' };
   const errors = {
+    credits: 'Saldo de créditos de IA insuficiente para reservar a tarefa. Consulte seu plano e extrato.',
+    subscription: 'Seu acesso precisa de um período de plano de IA ativo. Consulte a administração.',
+    usageReview: 'Consumo pendente de conferência. Os créditos reservados não foram tratados como uso gratuito.',
     unavailable: 'Não foi possível acessar a Neural. Tente atualizar em instantes.',
     unauthorized: 'Entre novamente para acessar as tarefas da sua conta.',
     forbidden: 'Este acesso não tem permissão ou plano habilitado para usar a Neural.',
@@ -31,6 +35,9 @@ export function mountNeuralWorkspace(environment = globalThis) {
     invalidResponse: 'O servidor devolveu uma resposta inválida. Atualize o histórico antes de tentar novamente.'
   };
   const errorCodes = {
+    billing_insufficient_credits: 'credits', billing_task_budget_exhausted: 'credits',
+    billing_credits_exhausted: 'credits',
+    billing_subscription_required: 'subscription', billing_usage_review_required: 'usageReview', billing_disabled: 'disabled',
     task_provider_unqualified: 'unqualified', model_unavailable: 'local', task_provider_failed: 'local',
     task_tool_unavailable: 'integration', task_disabled: 'disabled', tasks_disabled: 'disabled',
     task_scope_disabled: 'forbidden', task_scope_denied: 'forbidden', store_not_enabled: 'forbidden',
@@ -92,14 +99,15 @@ export function mountNeuralWorkspace(environment = globalThis) {
   }
   function activeTask() { return state.tasks.find(task => task.status === 'running'); }
   function runsExhausted() { return state.status?.usage?.remainingRuns === 0; }
-  function canSend() { return !!state.status?.enabled && (!storeReference || !!state.token) && !state.busy && !state.loading && !activeTask() && !runsExhausted(); }
+  function creditBlocked() { const b=state.status?.billing; return b?.enabled===true && (!b.active || b.availableCredits < (b.plan?.taskReserveCredits || 1)); }
+  function canSend() { return !!state.status?.enabled && (!storeReference || !!state.token) && !state.busy && !state.loading && !activeTask() && !runsExhausted() && !creditBlocked(); }
   function controls() {
     $('send').disabled = !canSend();
     $('send').textContent = state.busy ? 'Processando…' : 'Enviar comando ↑';
     $('refresh').disabled = state.loading || state.busy || (!!storeReference && !state.token);
     $('connect').disabled = state.loading || state.busy;
     $('command-form').setAttribute('aria-busy', String(state.busy));
-    $('start-task').disabled = state.busy || !state.status?.enabled || !!activeTask() || runsExhausted();
+    $('start-task').disabled = state.busy || !state.status?.enabled || !!activeTask() || runsExhausted() || creditBlocked();
     $('start-task').title = runsExhausted() ? 'Cota diária de execuções esgotada.' : '';
     $('send').title = runsExhausted() ? 'Cota diária de execuções esgotada. Histórico e downloads continuam disponíveis.' : '';
     $('cancel-task').disabled = state.busy;
@@ -123,6 +131,10 @@ export function mountNeuralWorkspace(environment = globalThis) {
     $('service-status').textContent = state.status ? (state.status.enabled ? 'Piloto habilitado' : 'Piloto desabilitado') : (storeReference ? 'Conecte sua loja para continuar' : 'Disponibilidade não confirmada');
     $('quota-status').textContent = quotaText(state.status?.usage, state.status?.limits);
     $('execution-mode').textContent = (state.status?.localOnly ? 'Somente modelo local' : 'Roteamento definido pelo servidor') + (state.status?.draftOnly ? ' · apenas rascunhos para revisão' : ' · este chat não publica nem executa código');
+    const billing = state.status?.billing;
+    $('billing-status').textContent = billing?.enabled
+      ? (billing.active ? String(billing.availableCredits ?? '—') + ' créditos disponíveis · ' + String(billing.reservedCredits ?? '—') + ' reservados · ' + String(billing.usedCredits ?? '—') + ' consumidos' : 'Sem período ativo de plano de IA.')
+      : 'Controle comercial não habilitado neste acesso; não há cobrança automática.';
     controls();
   }
   function updateTask(item) {
@@ -159,6 +171,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
     $('task-status').textContent = labels[item.status] || 'Estado desconhecido';
     $('task-detail').setAttribute('aria-busy', String(item.status === 'running'));
     $('task-meta').textContent = (kinds[item.kind] || 'Tarefa') + ' · ' + Math.max(0, Number(item.stepCount) || 0) + ' etapa(s) registrada(s)';
+    if(item.billing) $('task-meta').textContent += item.billing.state==='review_required' ? ' · créditos pendentes de conferência' : ' · ' + String(item.billing.chargedCredits ?? 0) + ' créditos consumidos';
     const guidance = { queued: 'Pedido salvo. Você pode iniciar a preparação ou cancelar. Reabrir esta página não o inicia automaticamente.', running: 'Preparando o rascunho. Você pode acompanhar ou cancelar; nenhuma publicação será realizada.', draft_ready: 'Rascunho disponível para revisão. Arquivos de código não foram executados nem testados.', cancelled: 'Tarefa cancelada. Nenhuma publicação foi realizada.' };
     $('task-guidance').textContent = guidance[item.status] || taskError(item);
     $('task-output').textContent = typeof item.resultText === 'string' ? item.resultText : '';

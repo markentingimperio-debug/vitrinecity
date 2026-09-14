@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="referrer" content="same-origin">
+  <title>Vitrini Neural · Créditos e consumo</title>
+  <link rel="stylesheet" href="/neural-billing.css">
+  <script type="module" src="/neural-billing.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#summary-title">Pular para o saldo</a>
+  <header class="topbar"><a class="brand" href="/">Vitrini <strong>Neural</strong></a><a id="chat-link" href="/neural-workspace.html">Voltar ao chat</a></header>
+  <main>
+    <p class="eyebrow" id="account-label">ADMINISTRAÇÃO</p>
+    <h1>Créditos e consumo</h1>
+    <p class="notice">Preparação comercial — sem cobrança automática; valores em créditos internos, não reais. Esta tela não processa pagamentos nem renova assinaturas.</p>
+    <section id="store-access" class="card" hidden aria-labelledby="access-title">
+      <h2 id="access-title">Acesso da sua loja</h2>
+      <p>Use a senha do portal. Ela fica apenas na memória desta página, até desconectar, fechar ou recarregar.</p>
+      <form id="access-form" class="row">
+        <label>Senha de acesso<input id="access-token" type="password" autocomplete="current-password" required maxlength="512"></label>
+        <button id="connect" type="submit">Conectar</button><button id="disconnect" type="button" class="secondary" hidden>Esquecer acesso</button>
+      </form>
+      <p id="access-status" class="muted" role="status">Aguardando autenticação.</p>
+    </section>
+    <section id="admin-store" class="card" aria-labelledby="store-title" hidden>
+      <h2 id="store-title">Consultar uma loja</h2>
+      <form id="store-form" class="row"><label>Referência da loja<input id="store-reference" required maxlength="160" autocomplete="off"></label><button id="load-store" type="submit">Consultar saldo</button></form>
+      <a id="admin-login" href="/admin-login.html" hidden>Entrar na administração</a>
+    </section>
+    <p id="error" class="error" role="alert" hidden></p>
+    <p id="announcement" role="status" aria-live="polite"></p>
+    <section class="card" aria-labelledby="summary-title">
+      <div class="heading"><h2 id="summary-title">Saldo do período</h2><button id="refresh" type="button" class="secondary" disabled>Atualizar</button></div>
+      <p id="period-status" class="muted">Selecione uma loja ou conecte seu acesso.</p>
+      <dl class="balance"><div><dt>Concedidos</dt><dd id="granted">—</dd></div><div><dt>Consumidos</dt><dd id="used">—</dd></div><div><dt>Reservados</dt><dd id="reserved">—</dd></div><div><dt>Disponíveis para uso</dt><dd id="available">—</dd></div></dl>
+      <p id="period-window" class="muted"></p><p id="plan-detail" class="muted"></p>
+      <p class="hint">Reservas separam créditos antes da execução. Um consumo ainda não confirmado pode ficar pendente de revisão: isso não significa débito final. Não há excedente automático autorizado nesta tela.</p>
+      <p id="pending-status" role="status"></p>
+    </section>
+    <section class="card" aria-labelledby="ledger-title">
+      <h2 id="ledger-title">Extrato de créditos</h2><p class="hint">Os movimentos distinguem concessão, reserva e consumo. Não some a coluna de créditos: o saldo acima já considera cada tipo de movimento. O extrato mostra os lançamentos mais recentes.</p><p id="ledger-empty" class="muted">Nenhum lançamento carregado.</p>
+      <div class="table-scroll"><table><caption class="sr-only">Lançamentos do acesso autenticado</caption><thead><tr><th scope="col">Data</th><th scope="col">Movimento</th><th scope="col">Créditos</th><th scope="col">Tarefa / observação</th></tr></thead><tbody id="ledger"></tbody></table></div>
+    </section>
+    <section id="admin-controls" hidden>
+      <div class="card">
+        <h2>Planos internos</h2><p class="hint">Defina os créditos depois de medir o custo real. Planos criados são imutáveis; mudanças exigem outro código. Não são preços de venda.</p>
+        <ul id="plans" class="plans"></ul>
+        <details><summary>Criar configuração de plano</summary>
+          <form id="plan-form" class="form-grid">
+            <label>Código único (3–64 caracteres, minúsculas)<input id="plan-code" required minlength="3" maxlength="64" pattern="[a-z0-9][a-z0-9_\-]{2,63}" autocomplete="off"></label>
+            <label>Nome<input id="plan-name" required maxlength="100" autocomplete="off"></label>
+            <label>Créditos por período<input id="plan-monthly" type="number" min="1" step="1" required></label>
+            <label>Reserva por tarefa<input id="plan-reserve" type="number" min="1" step="1" required></label>
+            <label>Créditos por 1.000 tokens de entrada<input id="plan-input" type="number" min="0" step="1" required></label>
+            <label>Créditos por 1.000 tokens de saída<input id="plan-output" type="number" min="0" step="1" required></label>
+            <button id="create-plan" type="submit">Criar plano interno</button>
+          </form>
+        </details>
+      </div>
+      <div class="card">
+        <h2>Concessão manual de período</h2><p class="hint">Libera a franquia de um plano para a loja consultada. Não confirma pagamento, não cobra dinheiro e não cria renovação recorrente. As datas usam o fuso deste navegador.</p>
+        <form id="period-form" class="form-grid">
+          <label>Plano<select id="period-plan" required><option value="">Selecione um plano</option></select></label>
+          <label>Início do período<input id="period-start" type="datetime-local" required></label>
+          <label>Fim do período<input id="period-end" type="datetime-local" required></label>
+          <button id="grant-period" type="submit" disabled>Conceder créditos à loja</button>
+        </form>
+        <ul id="periods" class="periods"></ul>
+      </div>
+      <div class="card">
+        <h2>Revisar consumo pendente</h2><p class="hint">Use somente depois de verificar o processamento real. Informe o débito final em créditos; zero libera a reserva sem consumo. Não invente tokens para fechar uma execução sem medição.</p>
+        <form id="resolve-form" class="form-grid">
+          <label>ID da tarefa pendente<input id="resolve-task" required maxlength="160" autocomplete="off"></label>
+          <label>Débito final em créditos<input id="resolve-credits" type="number" min="0" step="1" required></label>
+          <label class="wide">Justificativa da revisão<textarea id="resolve-reason" rows="2" minlength="5" maxlength="500" required></textarea></label>
+          <button id="resolve-task-submit" type="submit" disabled>Registrar revisão manual</button>
+        </form>
+      </div>
+    </section>
+    <p class="footer-note">Créditos da Neural são separados das moedas de anúncios. Geração de imagem e vídeo exige medição própria; esta etapa não oferece esses serviços.</p>
+  </main>
+</body>
+</html>

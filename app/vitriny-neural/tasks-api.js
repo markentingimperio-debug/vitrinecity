@@ -3,6 +3,12 @@ const STORE_BASE='/api/store-portal/:reference/neural/tasks';
 const SUBMIT_FIELDS=new Set(['instruction','idempotencyKey','token']);
 const CONTROL_FIELDS=new Set(['token']);
 const ERROR_RESPONSES={
+  billing_subscription_required:[402,'Seu acesso à IA precisa de um período de plano ativo.'],
+  billing_insufficient_credits:[402,'Saldo de créditos de IA insuficiente para reservar esta tarefa.'],
+  billing_credits_exhausted:[402,'Saldo de créditos de IA insuficiente para reservar esta tarefa.'],
+  billing_usage_review_required:[409,'O consumo desta tarefa está pendente de conferência.'],
+  billing_task_budget_exhausted:[402,'O limite de créditos reservado para a tarefa foi atingido.'],
+  billing_disabled:[503,'O controle de créditos de IA está desabilitado.'],
   task_not_found:[404,'Tarefa não encontrada.'],
   task_file_not_found:[404,'Arquivo não encontrado.'],
   file_not_found:[404,'Arquivo não encontrado.'],

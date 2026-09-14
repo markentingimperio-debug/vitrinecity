@@ -1,10 +1,33 @@
+import {randomUUID} from 'node:crypto';
+
 const ID=/^[a-z][a-z0-9._-]{1,63}$/;
 
 function ensureId(value,label){const v=String(value||'').trim();if(!ID.test(v))throw new Error(`${label} inválido.`);return v;}
 function ensureFn(value,label){if(typeof value!=='function')throw new TypeError(`${label} precisa ser função.`);return value;}
 function abortIfRequested(signal){if(signal?.aborted)throw signal.reason instanceof Error?signal.reason:Object.assign(new Error('provider_aborted'),{name:'AbortError'});}
 function statOf(stats,id){if(!stats.has(id))stats.set(id,{success:0,fail:0,consecutiveFail:0,totalMs:0,lastMs:0,openedUntil:0,inputTokens:0,outputTokens:0,totalTokens:0});return stats.get(id);}
-function usageOf(output){const u=output?.usage||output?.output?.usage||{};const input=Number(u.prompt_tokens??u.input_tokens??u.promptTokens??u.inputTokens??0)||0;const outputTokens=Number(u.completion_tokens??u.output_tokens??u.completionTokens??u.outputTokens??0)||0;const total=Number(u.total_tokens??u.totalTokens??0)||input+outputTokens;return{inputTokens:Math.max(0,input),outputTokens:Math.max(0,outputTokens),totalTokens:Math.max(0,total)};}
+function usageOf(output){
+  const u=output?.usage||output?.output?.usage||{};
+  const field=names=>{for(const name of names)if(Object.prototype.hasOwnProperty.call(u,name))return u[name];};
+  const input=field(['prompt_tokens','input_tokens','promptTokens','inputTokens']);
+  const outputTokens=field(['completion_tokens','output_tokens','completionTokens','outputTokens']);
+  const valid=value=>Number.isSafeInteger(value)&&value>=0;
+  const known=valid(input)&&valid(outputTokens)&&Number.isSafeInteger(input+outputTokens);
+  // Missing/invalid usage is not zero consumption. Keep numeric fields for old
+  // dashboards, but accounting must consult `known`. Completion usage already
+  // includes any reasoning tokens reported by the provider; do not add them twice.
+  return{inputTokens:valid(input)?input:0,outputTokens:valid(outputTokens)?outputTokens:0,totalTokens:known?input+outputTokens:0,known};
+}
+function emitAttempt(callback,event){
+  if(!callback)return;
+  const result=callback(Object.freeze(event));
+  if(result&&typeof result.then==='function'){
+    // Avoid an unhandled rejection from an accidentally async hook. Never await
+    // it or continue inference: the durable accounting hook must be synchronous.
+    Promise.resolve(result).catch(()=>{});
+    throw new TypeError('onAttempt precisa concluir de forma síncrona.');
+  }
+}
 
 export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circuitCooldownMs=60000,knowledgeProvider=null}={}){
   const skills=new Map(),providers=new Map(),stats=new Map(),providerPolicies=new Map();
@@ -74,8 +97,9 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
     return rows.sort((a,b)=>a.preferred-b.preferred||a.provider.priority-b.provider.priority||b.reliability-a.reliability).map(x=>x.provider);
   }
 
-  async function invoke(capability,input,{preferredProviders=[],timeoutMs=120000,evaluation=false,maxTokens=null,localOnly=false,allowedProviders=null,signal=null,taskProtocol=null}={}){
+  async function invoke(capability,input,{preferredProviders=[],timeoutMs=120000,evaluation=false,maxTokens=null,localOnly=false,allowedProviders=null,signal=null,taskProtocol=null,onAttempt=null}={}){
     abortIfRequested(signal);
+    if(onAttempt!==null)ensureFn(onAttempt,'onAttempt');
     let request=input;
     if(typeof knowledgeProvider==='function'&&input&&typeof input==='object'&&!Array.isArray(input)){
       // Caller-supplied knowledge cannot impersonate the reviewed system corpus.
@@ -89,24 +113,35 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
     const attempts=[];
     for(const provider of list){
       abortIfRequested(signal);
-      const started=now();
+      const started=now(),attemptId=randomUUID(),identity={attemptId,provider:provider.id,modelName:provider.modelName};
+      const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);
+      const forwardAbort=()=>controller.abort(signal.reason);
+      signal?.addEventListener('abort',forwardAbort,{once:true});
       try{
-        const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);
-        const forwardAbort=()=>controller.abort(signal.reason);
-        signal?.addEventListener('abort',forwardAbort,{once:true});
-        try{
-          abortIfRequested(signal);
-          const output=await provider.invoke({capability,input:request,signal:controller.signal,options:{evaluation,maxTokens,...(taskProtocol==='draft-v1'?{taskProtocol}: {})}});
-          abortIfRequested(signal);
-          const elapsed=Math.max(0,now()-started),s=statOf(stats,provider.id),usage=usageOf(output);s.success++;s.consecutiveFail=0;s.lastMs=elapsed;s.totalMs+=elapsed;s.openedUntil=0;s.inputTokens+=usage.inputTokens;s.outputTokens+=usage.outputTokens;s.totalTokens+=usage.totalTokens;
-          return {provider:provider.id,output,durationMs:elapsed,usage,attempts:[...attempts,{provider:provider.id,ok:true}]};
-        }finally{clearTimeout(timer);signal?.removeEventListener('abort',forwardAbort);}
-      }catch(error){
-        // Caller cancellation is not a provider fault, and never permits fallback.
         abortIfRequested(signal);
-        const elapsed=Math.max(0,now()-started),s=statOf(stats,provider.id);s.fail++;s.consecutiveFail++;s.lastMs=elapsed;s.totalMs+=elapsed;if(s.consecutiveFail>=threshold)s.openedUntil=now()+cooldown;
-        attempts.push({provider:provider.id,ok:false,error:String(error?.name==='AbortError'?'provider_timeout':error?.message||'provider_failed').slice(0,240)});
-      }
+        // Hook errors are ledger/admission errors, never provider errors. In
+        // particular, a failed start record must prevent this call and fallback.
+        emitAttempt(onAttempt,{type:'started',...identity,inputTokens:null,outputTokens:null,known:false,durationMs:null});
+        let output,error,failed=false;
+        try{abortIfRequested(signal);output=await provider.invoke({capability,input:request,signal:controller.signal,options:{evaluation,maxTokens,...(taskProtocol==='draft-v1'?{taskProtocol}: {})}});}
+        catch(cause){failed=true;error=cause;}
+        const elapsed=Math.max(0,now()-started);
+        if(failed){
+          emitAttempt(onAttempt,{type:'failed',...identity,inputTokens:null,outputTokens:null,known:false,durationMs:elapsed});
+          // Caller cancellation is not a provider fault and never permits fallback.
+          abortIfRequested(signal);
+          const s=statOf(stats,provider.id);s.fail++;s.consecutiveFail++;s.lastMs=elapsed;s.totalMs+=elapsed;if(s.consecutiveFail>=threshold)s.openedUntil=now()+cooldown;
+          attempts.push({provider:provider.id,ok:false,error:String(error?.name==='AbortError'?'provider_timeout':error?.message||'provider_failed').slice(0,240)});
+          continue;
+        }
+        const usage=usageOf(output);
+        // Record even a late response to a cancelled task: it still consumed
+        // inference. Do not turn a failed completion hook into a second event.
+        emitAttempt(onAttempt,{type:'completed',...identity,inputTokens:usage.known?usage.inputTokens:null,outputTokens:usage.known?usage.outputTokens:null,known:usage.known,durationMs:elapsed});
+        abortIfRequested(signal);
+        const s=statOf(stats,provider.id);s.success++;s.consecutiveFail=0;s.lastMs=elapsed;s.totalMs+=elapsed;s.openedUntil=0;s.inputTokens+=usage.inputTokens;s.outputTokens+=usage.outputTokens;s.totalTokens+=usage.totalTokens;
+        return {provider:provider.id,output,durationMs:elapsed,usage,attempts:[...attempts,{provider:provider.id,ok:true}]};
+      }finally{clearTimeout(timer);signal?.removeEventListener('abort',forwardAbort);}
     }
     const error=new Error(`Todos os providers falharam para ${capability}.`);error.attempts=attempts;throw error;
   }
