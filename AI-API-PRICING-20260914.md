@@ -16,6 +16,10 @@ Preço do consumo do cliente = custo confirmado da API convertido para reais × 
 
 ## Estado desta alteração
 
+O administrador também autorizou selecionar modelos mais potentes e maior esforço quando a tarefa exigir, sempre com preço proporcional à API do modelo efetivamente utilizado e o mesmo acréscimo de 15%. A autorização não transforma todos os modelos em uma tarifa fixa: trocar modelo/esforço muda o corpo autorizado e exige cotação/reserva compatível antes do envio. Uma resposta ou instrução do modelo não pode ampliar seu próprio orçamento. Tentativas com consumo incerto não devem ser repetidas automaticamente.
+
+Todo uso de IA faturável ao cliente deve consumir somente o saldo pré-pago de Créditos IA que ele adquiriu: reservar o teto antes do consumo, conciliar o custo confirmado uma única vez e liberar o restante. Sem saldo disponível para a reserva, não iniciar a chamada paga nem criar saldo negativo. Isso inclui cada consumo confirmado em tarefas com mais de uma etapa, sem reaplicar margem sobre um preço que já recebeu os 15%. Créditos reservados para uma tarefa não podem ser gastos por outra simultaneamente. Este é o requisito do ciclo comercial; não comprova que compra de créditos e cobrança pública estejam conectadas.
+
 O calculador `app/vitriny-neural/ai-credit-pricing.js` continua isolado: não chama APIs, não acessa banco, não reserva nem debita saldo. A carteira monetária e a cobrança de mídia para clientes ainda não estão conectadas. Atualizar o multiplicador não ativa vendas, APIs, geração ou pagamentos.
 
 Nenhum saldo, compra, recibo, reserva ou orçamento histórico é recalculado. Um futuro integrador deve preservar a política aceita na reserva/recibo existente; a versão v2 identifica os novos cálculos. Validade, regras de reembolso, planos locais de IA, Ads e outras moedas da plataforma permanecem inalterados.
