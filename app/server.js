@@ -3041,6 +3041,13 @@ app.get('/feeds/meta-catalog.csv', (_req, res) => {
 });
 app.get(['/oracao-do-dia','/oracao-do-dia.html'], createPrayerDailyHandler({readTemplate:()=>fs.readFileSync(path.join(dir,'public','oracao-do-dia.html'),'utf8')}));
 app.use((req,res,next)=>{if(req.method!=='GET'||req.path.startsWith('/admin'))return next();const relative=req.path==='/'?'index.html':decodeURIComponent(req.path).replace(/^\//,'');const candidates=relative.endsWith('.html')?[relative]:[`${relative}.html`];for(const candidate of candidates){if(candidate.includes('/')||candidate.includes('..'))continue;const file=path.join(dir,'public',candidate);if(!fs.existsSync(file))continue;const page=fs.readFileSync(file,'utf8');return res.type('html').send(['course-checkout.html','presente.html'].includes(candidate)?page:page.replace('</body>','<script src="/global-market-banner.js?v=3" defer></script></body>'))}return next()});
+// Published nested guides/articles must pass through the shared HTML decorators.
+app.use((req, res, next) => {
+  if (req.method !== 'GET' || !/^\/(?:guias|artigos)\/[a-z0-9-]+\.html$/.test(req.path)) return next();
+  const file = path.join(dir, 'public', req.path.slice(1));
+  if (!fs.existsSync(file)) return next();
+  return res.type('html').send(fs.readFileSync(file, 'utf8'));
+});
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
 
 app.get('/r/:code', (req, res) => {

@@ -1,4 +1,5 @@
 import { toLegacyPublicPath } from './vitriny-public-routes.js';
+import { PUBLIC_INFORMATION_PATHS } from './public-page-catalog.js?v=20260914';
 
 // Shared by the public loader and the server. Unknown/private routes stay out.
 // This deliberately accepts a pathname only, never a URL, query or fragment.
@@ -20,6 +21,11 @@ export function classifySiteAssistantPath(value) {
   if (['/servicos-digitais', '/servicos-digitais.html'].includes(path)) return allow('service');
   if (/^\/cursos(?:\/[a-z0-9-]+)?$/.test(path) || legacy === '/centro-educacional.html') return allow('course');
   if (['/sobre.html', '/contato.html', '/como-funciona.html', '/porque-vitrinecity.html', '/solucoes.html', '/para-empresas.html', '/pesquisar.html'].includes(legacy)) return allow('info');
+  if (PUBLIC_INFORMATION_PATHS.has(legacy) || ['/descobrir', '/descobrir.html', '/portfolio', '/portfolio.html', '/afiliados.html', '/conteudo', '/buscar.html'].includes(legacy) || /^\/(?:guias|artigos)\/[a-z0-9-]+\.html$/.test(path)) {
+    const quiet = /(?:privacy|termos|politica|regras)/.test(legacy);
+    return quiet ? { ...blocked, path } : allow('info');
+  }
+  if (/^\/(?:cidade|categoria|cinema|musicas)\/[a-z0-9-]+$/.test(path)) return allow('info');
   return { ...blocked, path };
 }
 

@@ -560,3 +560,14 @@ test('a blocked navigation from the current frame explains the problem without o
   assert.doesNotMatch(h.find('.vc-assistant-content-status').textContent,/admin|private|token/);assert.equal(frame.src,initial);assert.equal(h.find('.vc-assistant-content-external-link'),null);
   h.find('.vc-assistant-content-back').fire('click');await ask(h,'Pode me ajudar?');assert.equal(h.requests.filter(r=>r.url.endsWith('/chat')).at(-1).body.contextPath,'/produto/13');
 });
+
+test('public discovery coverage preserves private exclusions and platform introduction is opt-in', async () => {
+  for(const path of ['/emissora','/categoria/adubos','/cinema/spring','/musicas/radio','/portfolio','/guias/plantas-em-vasos.html']) assert.equal(classify(path).enabled,true,path);
+  for(const path of ['/carteira','/minha-conta.html','/neural-workspace.html','/meus-creditos','/privacy.html']) assert.equal(classify(path).enabled,false,path);
+  const h=harness(); const controller=h.mount(); await controller.ready; h.advance(4000);
+  assert.equal(h.count('/chat'),0);
+  const button=h.find('.vc-assistant-invite-actions').children.find(n=>n.textContent==='Conhecer a plataforma');
+  assert.ok(button); button.fire('click'); await flush();
+  assert.equal(h.count('/chat'),1); assert.match(h.requests.find(r=>r.url.endsWith('/chat')).body.message,/conhecer melhor a plataforma/);
+  controller.destroy();
+});
