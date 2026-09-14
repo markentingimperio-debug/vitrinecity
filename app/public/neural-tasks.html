@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="referrer" content="same-origin">
+  <title>Vitrini Neural · Tarefas do piloto</title>
+  <link rel="stylesheet" href="/neural-tasks.css">
+  <script type="module" src="/neural-tasks.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#command">Pular para o comando</a>
+  <header class="topbar">
+    <a class="brand" href="/">V<span aria-hidden="true">✦</span><span>Vitrini <strong>Neural</strong></span></a>
+    <div class="header-meta"><span id="account-label">Administração</span><span class="pill">Piloto · rascunhos</span></div>
+  </header>
+  <main class="workspace">
+    <aside class="sidebar" aria-labelledby="history-title">
+      <div class="sidebar-heading"><h2 id="history-title">Suas tarefas</h2><button id="refresh" type="button" class="quiet">Atualizar</button></div>
+      <p class="muted small">O histórico é recuperado do servidor. Reabrir a página não inicia tarefas novamente.</p>
+      <p id="history-empty" class="empty">Nenhuma tarefa carregada.</p>
+      <ul id="task-list" class="task-list"></ul>
+      <div class="connection">
+        <p id="service-status" role="status">Consultando disponibilidade…</p>
+        <p id="quota-status" class="small muted">As cotas do acesso aparecerão aqui.</p>
+        <p id="execution-mode" class="small muted">Sem publicação automática.</p>
+        <p id="billing-status" class="small muted">Créditos de IA consultados com o acesso.</p>
+        <a id="return-chat" href="/neural-workspace.html" class="small">Voltar ao chat da Lia</a>
+        <a id="billing-link" href="/neural-billing.html" class="small">Plano e extrato de IA</a>
+      </div>
+      <a id="admin-login" class="small" href="/admin-login.html" hidden>Entrar na administração</a>
+    </aside>
+    <section class="conversation" aria-labelledby="workspace-title">
+      <div class="intro">
+        <p class="eyebrow">UM COMANDO. UM ESPAÇO DE TRABALHO.</p>
+        <h1 id="workspace-title">O que vamos criar?</h1>
+        <p>Descreva seu objetivo. A Neural identifica o tipo de tarefa e acompanha as etapas, sem você escolher um modelo.</p>
+        <p class="pilot-notice">Este piloto cria rascunhos de textos e código. Navegação em sites, publicação em redes sociais e geração de imagens e vídeos dependem de integrações ainda indisponíveis. Código gerado não foi executado nem testado; revise os arquivos antes de usar.</p>
+      </div>
+      <section id="store-access" class="access-card" aria-labelledby="access-title" hidden>
+        <h2 id="access-title">Acesso da sua loja</h2>
+        <p class="small muted">Use a senha de acesso do portal. Ela fica apenas na memória desta página e será solicitada novamente ao reabrir.</p>
+        <form id="access-form">
+          <label for="access-token">Senha de acesso</label>
+          <div class="access-row"><input id="access-token" type="password" autocomplete="current-password" required maxlength="512"><button id="connect" type="submit">Conectar</button><button id="disconnect" type="button" class="quiet" hidden>Esquecer acesso</button></div>
+        </form>
+        <p id="access-status" class="small muted" role="status">Aguardando autenticação.</p>
+      </section>
+      <p id="error" class="error" role="alert" hidden></p>
+      <p id="announcement" class="sr-only" role="status" aria-live="polite"></p>
+      <div id="welcome" class="welcome">
+        <span class="neural-mark" aria-hidden="true">✦</span>
+        <h2>Conte o que você precisa</h2>
+        <p class="muted">Comece com um pedido de texto ou um rascunho de site.</p>
+        <div class="examples" aria-label="Exemplos de comandos">
+          <button type="button" data-example="Crie um roteiro de 30 segundos para apresentar os produtos da minha loja, com uma chamada final para conhecer o catálogo.">Roteiro para minha loja</button>
+          <button type="button" data-example="Crie os arquivos de um site simples para uma loja de jardinagem, com apresentação, produtos e contato. Use apenas dados de exemplo e identifique-os.">Rascunho de um site</button>
+          <button type="button" data-example="Escreva três descrições curtas para um adubo orgânico. Não invente composição, certificações nem resultados garantidos.">Descrições de produtos</button>
+        </div>
+      </div>
+      <article id="task-detail" class="task-detail" aria-labelledby="task-title" hidden>
+        <div class="message user-message"><p class="message-label">Seu comando</p><h2 id="task-title">Detalhes da tarefa</h2></div>
+        <div class="message assistant-message">
+          <div class="task-heading"><p class="message-label">Vitrini Neural</p><span id="task-status" class="pill"></span></div>
+          <p id="task-meta" class="small muted"></p>
+          <p id="task-guidance" class="task-guidance"></p>
+          <ol id="task-events" class="task-events" aria-label="Etapas registradas"></ol>
+          <pre id="task-output" class="task-output"></pre>
+          <div id="task-files" class="task-files" aria-label="Arquivos para baixar"></div>
+          <div class="task-actions"><button id="start-task" type="button" hidden>Iniciar rascunho</button><button id="cancel-task" type="button" class="quiet" hidden>Cancelar tarefa</button></div>
+        </div>
+      </article>
+      <form id="command-form" class="composer">
+        <label for="command">Seu próximo comando</label>
+        <textarea id="command" name="instruction" rows="3" minlength="3" maxlength="6000" required placeholder="Ex.: crie um roteiro para apresentar os produtos da minha loja…" aria-describedby="command-hint"></textarea>
+        <div class="composer-footer"><p id="command-hint" class="small muted">Não inclua senhas, chaves de API ou dados pessoais desnecessários.</p><button id="send" class="primary" type="submit" disabled>Enviar comando <span aria-hidden="true">↑</span></button></div>
+      </form>
+      <p class="footer-note">Resultados de IA podem conter erros. Revise conteúdo e arquivos. Recursos e cotas dependem do acesso habilitado para sua conta.</p>
+    </section>
+  </main>
+</body>
+</html>
