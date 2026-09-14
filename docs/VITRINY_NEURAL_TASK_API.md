@@ -29,6 +29,8 @@ Isto é uma API própria de orquestração e um chat de rascunhos. Não é um no
 
 ## Configuração de homologação
 
+O [diagnóstico e ensaio de aceitação real](VITRINY_NEURAL_LIVE_ACCEPTANCE.md) complementa o benchmark genérico com testes de protocolo, roteiro, arquivos e ferramenta ausente, sem persistir uma qualificação de produção.
+
 O recurso é desabilitado por padrão. Esta alteração não o ativa nem publica em produção.
 
 ```dotenv
