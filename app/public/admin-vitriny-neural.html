@@ -6,7 +6,7 @@
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>Vitriny Neural · Console de IA | VitrineCity</title>
   <link rel="stylesheet" href="/vitriny-neural-admin.css?v=2">
-  <script src="/vitriny-neural-admin.js?v=3" defer></script>
+  <script src="/vitriny-neural-admin.js?v=4" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Pular para o conteúdo</a>
@@ -108,6 +108,19 @@
           <option value="ranking">Ranking</option>
           <option value="media">Imagem / vídeo / áudio</option>
         </select>
+        <div id="growth-action-field" hidden>
+          <label for="growth-action">Tipo de pedido de marketing</label>
+          <select id="growth-action" required disabled aria-describedby="growth-action-help">
+            <option value="" selected>Selecione o tipo de pedido</option>
+            <option value="diagnose">Diagnóstico</option>
+            <option value="campaign-plan">Plano de campanha</option>
+            <option value="content-plan">Rascunho de conteúdo</option>
+            <option value="seo-plan">Plano de SEO</option>
+            <option value="experiment">Experimento</option>
+            <option value="metric-review">Revisão de métricas</option>
+          </select>
+          <p id="growth-action-help" class="fine">Escolha a entrega desejada. Nenhuma opção publica conteúdo ou executa uma campanha.</p>
+        </div>
         <label for="prompt">Pedido para a Neural</label>
         <textarea id="prompt" rows="5" maxlength="5000" minlength="3" required placeholder="Ex.: Analise como aumentar a conversão das lojas locais sem aumentar o desperdício de anúncios."></textarea>
         <div class="form-foot"><small id="test-hint">A resposta é apenas para avaliação administrativa.</small><button class="primary" id="run-test" type="submit">Executar teste ↗</button></div>

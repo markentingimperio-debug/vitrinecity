@@ -17,7 +17,7 @@ export function createGrowthSkill({neural=null}={}){
         budgetCents:Math.max(0,Math.min(1_000_000_000,Number(input.budgetCents)||0)),
         metrics:safeMetrics(input.metrics),
         constraints:Array.isArray(input.constraints)?input.constraints.slice(0,30).map(v=>text(v,500,1)):[],
-        requireMeasurementPlan:true
+        requireMeasurementPlan:action!=='content-plan'
       };
       const result=await invoke(capability,request,{preferredProviders:Array.isArray(input.preferredProviders)?input.preferredProviders:[],timeoutMs:Math.max(5000,Math.min(5*60*1000,Number(input.timeoutMs)||90000))});
       if(neural?.ingest)try{neural.ingest({type:`skill.${capability}.completed`,source:'vitriny-neural',entityType:'skill',entityId:'growth.optimizer',priority:2,payload:{provider:result.provider,objective:request.objective.slice(0,180),learningContext:context.learningContext||{}}});}catch{}

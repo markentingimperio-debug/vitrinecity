@@ -1,5 +1,8 @@
 # Neural — correção técnica e nova avaliação local
 
+Continuação do diagnóstico e correção do encaminhamento de conteúdo:
+[NEURAL_CONTENT_ROUTING_20260914.md](NEURAL_CONTENT_ROUTING_20260914.md).
+
 ## Estado final: correção parcial, sem liberação
 
 O código de proteção foi corrigido em branch, mas o modelo local **não atingiu

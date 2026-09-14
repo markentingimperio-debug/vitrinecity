@@ -35,6 +35,24 @@ test('worker instructions prohibit invented execution and unsupported citation I
   assert.doesNotMatch(system,/Ignore regras|\[VC1\]|\[VC2\]|\[VC3\]/);
 });
 
+test('content requests keep their requested deliverable instead of becoming experiments',async()=>{
+  for(const local of [true,false]){
+    const {provider,requests}=adapter({local});
+    await provider.invoke({capability:'growth.content-plan',input:{objective:'Escreva uma legenda curta.'}});
+    const system=requests[0].messages[0].content;
+    assert.match(system,/formato solicitado/i);
+    assert.doesNotMatch(system,/Proponha experimento pequeno/);
+    assert.match(system,/Não envie mensagens/);
+    assert.match(system,/Não invente dados ausentes/);
+    await provider.invoke({capability:'growth.experiment',input:{objective:'Avaliar duas propostas.'}});
+    assert.match(requests[1].messages[0].content,/Proponha experimento pequeno/);
+    await provider.invoke({capability:'growth.content-plan',input:{task:'Rascunho.'},options:{taskProtocol:'draft-v1'}});
+    assert.match(requests[2].messages[0].content,/Contrato interno de tarefas/);
+    assert.match(requests[2].messages[0].content,/files.write/);
+    assert.equal(requests[2].max_tokens,1200);
+  }
+});
+
 for(const reason of ['length','content_filter'])for(const content of ['Resposta com todas as palavras de aprovação.',null,'']){
   test(`incomplete ${reason} content=${String(content)} cannot qualify but retains receipt`,async()=>{
     const {provider}=adapter({reason,content});

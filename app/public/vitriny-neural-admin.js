@@ -94,9 +94,17 @@
     }catch(e){$('benchmark-state').textContent='INDISPONÍVEL';$('benchmark-start').disabled=false;showError(e);}
   }
   function scheduleBenchmark(){clearTimeout(benchmarkTimer);benchmarkTimer=setTimeout(loadBenchmark,5000);}
-  function inputFor(area,prompt){switch(area){
+  const growthActions=new Set(['diagnose','campaign-plan','content-plan','seo-plan','experiment','metric-review']);
+  function updateTestArea(){
+    const area=$('area').value,isGrowth=area==='growth';
+    $('growth-action-field').hidden=!isGrowth;$('growth-action').disabled=!isGrowth;
+    $('test-hint').textContent=area==='media'?'Este teste exige um provider de imagem; o Qwen de texto pode não suportar esta capacidade.':'A resposta é apenas para avaliação administrativa. Providers reprovados em benchmark continuam testáveis aqui, mas bloqueados para operação.';
+  }
+  function inputFor(area,prompt,growthAction){switch(area){
     case'code':return['code.engineer',{action:'analyze',task:prompt,repository:'vitrinecity',constraints:['sem deploy automático','mudança reversível'],dryRun:true,requireTests:true}];
-    case'growth':return['growth.optimizer',{action:'diagnose',objective:prompt,businessContext:'VitrineCity · marketplace e rede social local',channel:'multi',metrics:{}}];
+    case'growth':
+      if(!growthActions.has(growthAction))throw Error('Escolha um tipo de pedido de marketing antes de executar o teste.');
+      return['growth.optimizer',{action:growthAction,objective:prompt,businessContext:'VitrineCity · marketplace e rede social local',channel:'multi',metrics:{}}];
     case'research':return['research.supervised',{action:'verify',question:prompt,sourcePolicy:'authoritative-first',maxSources:8,freshnessDays:30}];
     case'commerce':return['commerce.advisor',{action:'seller-diagnose',objective:prompt,catalog:[],metrics:{},constraints:['não inventar valores ausentes']}];
     case'ranking':return['ranking.optimizer',{action:'evaluate',objective:prompt,features:{},metrics:{},sampleSize:0,maxWeightChange:.02,offlineOnly:true}];
@@ -104,7 +112,14 @@
     default:return['support.assistant',{action:'draft-reply',message:prompt,businessContext:'VitrineCity',tone:'cordial',channel:'admin-test',confirmedFacts:{}}];
   }}
   function outputText(data){const r=data?.result||{},o=r.output??r.asset??r;if(typeof o==='string')return o;if(typeof o?.text==='string')return o.text;if(typeof o?.output?.text==='string')return o.output.text;try{return JSON.stringify(o,null,2);}catch{return String(o);}}
-  async function runTest(event){event.preventDefault();if(runningTest)return;clearError();const prompt=$('prompt').value.trim(),area=$('area').value;if(prompt.length<3)return;const [skill,input]=inputFor(area,prompt),started=performance.now();runningTest=true;$('run-test').disabled=true;$('test-response').setAttribute('aria-busy','true');$('test-provider').textContent='PROCESSANDO';$('test-time').textContent='aguarde';$('test-output').textContent='Consultando o modelo local em modo de avaliação. O raciocínio oculto foi desativado para responder mais rápido…';try{const data=await api('/skills/'+encodeURIComponent(skill)+'/run','POST',input,150000);$('test-provider').textContent=data.result?.provider||'CONCLUÍDO';$('test-time').textContent=`${((performance.now()-started)/1000).toFixed(1)} s`;$('test-output').textContent=outputText(data)||'Resposta vazia.';announce('Teste da Vitriny Neural concluído.');await loadAll(false);}catch(e){$('test-provider').textContent='FALHOU';$('test-time').textContent=`${((performance.now()-started)/1000).toFixed(1)} s`;$('test-output').textContent=e.message;showError(e);}finally{runningTest=false;$('run-test').disabled=false;$('test-response').setAttribute('aria-busy','false');}}
+  async function runTest(event){
+    event.preventDefault();if(runningTest)return;clearError();
+    const prompt=$('prompt').value.trim(),area=$('area').value;if(prompt.length<3)return;
+    let skill,input;
+    try{[skill,input]=inputFor(area,prompt,$('growth-action').value);}catch(e){showError(e);$('growth-action').focus();return;}
+    const started=performance.now();runningTest=true;$('run-test').disabled=true;$('test-response').setAttribute('aria-busy','true');$('test-provider').textContent='PROCESSANDO';$('test-time').textContent='aguarde';$('test-output').textContent='Consultando o modelo local em modo de avaliação. O raciocínio oculto foi desativado para responder mais rápido…';
+    try{const data=await api('/skills/'+encodeURIComponent(skill)+'/run','POST',input,150000);$('test-provider').textContent=data.result?.provider||'CONCLUÍDO';$('test-time').textContent=`${((performance.now()-started)/1000).toFixed(1)} s`;$('test-output').textContent=outputText(data)||'Resposta vazia.';announce('Teste da Vitriny Neural concluído.');await loadAll(false);}catch(e){$('test-provider').textContent='FALHOU';$('test-time').textContent=`${((performance.now()-started)/1000).toFixed(1)} s`;$('test-output').textContent=e.message;showError(e);}finally{runningTest=false;$('run-test').disabled=false;$('test-response').setAttribute('aria-busy','false');}
+  }
   async function startBenchmark(){clearError();$('benchmark-start').disabled=true;try{const data=await api('/benchmark/start','POST',{},15000);$('benchmark-state').textContent='RUNNING';$('benchmark-score').textContent='…';$('benchmark-grade').textContent='Benchmark iniciado';$('benchmark-meta').textContent=`Execução ${data.item.id}. O painel acompanhará sem bloquear esta página.`;announce('Benchmark real iniciado.');scheduleBenchmark();}catch(e){showError(e);$('benchmark-start').disabled=false;}}
   function renderWebResearch(){
     const s=researchSnapshot||{};$('web-research-state').textContent=s.running?'PESQUISANDO':s.enabled?'AUTÔNOMA ATIVA':'MANUAL / PAUSADA';$('web-research-state').className='tag '+(s.configured?'ok':'danger');
@@ -347,8 +362,8 @@
     loadSupervisor(true);
   }
   async function loadAll(withBenchmark=true){clearError();try{const [status,skills,qs]=await Promise.all([api('/status'),api('/skills'),api('/models/qualifications')]);snapshot=status;skillsSnapshot=skills;qualifications=qs.items||[];renderSummary();renderShadow();renderSkills();renderLearning();renderQualifications();await Promise.all([loadWebResearch(),loadTraining()]);if(withBenchmark)await loadBenchmark();}catch(e){showError(e);}}
-  $('refresh').onclick=()=>loadAll();$('test-form').onsubmit=runTest;$('benchmark-start').onclick=startBenchmark;$('web-research-form').onsubmit=startWebResearch;$('training-form').onsubmit=saveTraining;$('training-export-all').onclick=()=>exportTraining('all');$('training-export-train').onclick=()=>exportTraining('train');$('training-export-validation').onclick=()=>exportTraining('validation');$('area').onchange=()=>{$('test-hint').textContent=$('area').value==='media'?'Este teste exige um provider de imagem; o Qwen de texto pode não suportar esta capacidade.':'A resposta é apenas para avaliação administrativa. Providers reprovados em benchmark continuam testáveis aqui, mas bloqueados para operação.';};
+  $('refresh').onclick=()=>loadAll();$('test-form').onsubmit=runTest;$('benchmark-start').onclick=startBenchmark;$('web-research-form').onsubmit=startWebResearch;$('training-form').onsubmit=saveTraining;$('training-export-all').onclick=()=>exportTraining('all');$('training-export-train').onclick=()=>exportTraining('train');$('training-export-validation').onclick=()=>exportTraining('validation');$('area').onchange=updateTestArea;
   $('refresh').onclick=()=>{loadAll();if($('supervisor-panel'))loadSupervisor(true);};
   $('model-preflight').onclick=verifyLocalModel;
-  loadAll();setInterval(()=>loadAll(false),30000);
+  updateTestArea();loadAll();setInterval(()=>loadAll(false),30000);
 })();
