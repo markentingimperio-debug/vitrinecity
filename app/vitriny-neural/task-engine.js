@@ -24,6 +24,23 @@ function command(value) {
   if(Object.keys(data).some(key=>!keys.includes(key))) fail('task_protocol_invalid');
   return data;
 }
+function taskUsage(item,attempts) {
+  const valid=value=>Number.isSafeInteger(value)&&value>=0;
+  let input=0n,output=0n,complete=attempts.length>0;
+  for(const attempt of attempts){
+    const known=attempt.known===1&&attempt.state!=='started'&&valid(attempt.inputTokens)&&valid(attempt.outputTokens);
+    if(known){input+=BigInt(attempt.inputTokens);output+=BigInt(attempt.outputTokens);}
+    else complete=false;
+  }
+  // Legacy rows without attempt receipts retain their safe recorded subtotal,
+  // but cannot become complete evidence. Never expose rounded SQL/Number sums.
+  if(!attempts.length){
+    const overflow=!valid(item.input_tokens)||!valid(item.output_tokens);
+    return {inputTokens:valid(item.input_tokens)?item.input_tokens:null,outputTokens:valid(item.output_tokens)?item.output_tokens:null,complete:false,overflow};
+  }
+  const safe=value=>value<=BigInt(Number.MAX_SAFE_INTEGER),overflow=!safe(input)||!safe(output);
+  return {inputTokens:safe(input)?Number(input):null,outputTokens:safe(output)?Number(output):null,complete:complete&&!overflow,overflow};
+}
 /** A bounded draft workbench, NOT an OS/container sandbox. Artifacts are inert
  * SQLite text rows and never evaluated, served as HTML, or written to the host. */
 export function createNeuralTaskEngine({db, skills, qualifications, config, billing=null, env=process.env, now=Date.now}={}) {
@@ -96,8 +113,7 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, bill
     const attempts=db.prepare('SELECT id,provider,model_name modelName,state,input_tokens inputTokens,output_tokens outputTokens,known,duration_ms durationMs FROM neural_task_attempts WHERE task_id=? ORDER BY created_at,id').all(item.id);
     return {id:item.id,status:item.status,kind:item.kind||null,instruction:item.instruction,stepCount:item.step_count,
       resultText:item.result_text,errorCode:item.error_code||null,createdAt:item.created_at,updatedAt:item.updated_at,
-      draftOnly:true,requiresReview:true,files:files(item.id),usage:{inputTokens:item.input_tokens,outputTokens:item.output_tokens,
-        complete:attempts.length>0&&attempts.every(attempt=>attempt.known===1&&attempt.state!=='started')},
+      draftOnly:true,requiresReview:true,files:files(item.id),usage:taskUsage(item,attempts),
       billing:billable(item.scope)?billing.report(item.scope,item.id):null,
       attempts:attempts.map(attempt=>({...attempt,known:attempt.known===1})),
       events:db.prepare('SELECT step,provider,tool,outcome,created_at createdAt FROM neural_task_steps WHERE task_id=? ORDER BY step').all(item.id)};
@@ -187,7 +203,15 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, bill
         let timer;
         const pending=skills.invoke(capability,{task:item.instruction,contract:CONTRACT,kind:item.kind||'route_required',draftFiles:files(id),history:history.slice(-3)},
           // Task deadline fires first, preventing per-attempt timeout from starting another inference.
-          {localOnly:true,allowedProviders,timeoutMs:timeout+1000,evaluation:false,maxTokens:1200,signal:controller.signal,taskProtocol:'draft-v1',onAttempt:event=>recordAttempt(scope,id,event)});
+          {localOnly:true,allowedProviders,timeoutMs:timeout+1000,evaluation:false,maxTokens:1200,signal:controller.signal,taskProtocol:'draft-v1',onAttempt:event=>{
+            if(event.type==='started'){
+              live(scope,id,lease);
+              // A new qualification can revoke a fallback while an earlier
+              // attempt is pending, even if the configured model name is stable.
+              if(!qualified(capability).includes(event.provider))fail('task_provider_unqualified',503);
+            }
+            recordAttempt(scope,id,event);
+          }});
         modelCalls.set(id,{scope,pending});
         pending.finally(()=>{
           modelCalls.delete(id);
@@ -202,6 +226,10 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, bill
         live(scope,id,lease);
         // Unknown usage is not zero, and cannot silently spend another inference.
         if(billable(scope)&&billing.report(scope,id)?.state==='review_required')fail('billing_usage_review_required',409);
+        const provider=skills.status().providers.find(candidate=>candidate.id===result.provider);
+        // Receipts are recorded before rejecting an unidentified/different
+        // response. Its tool commands must never create artifacts or continue.
+        if(!provider?.modelName||result.output?.model!==provider.modelName)fail('task_provider_unqualified',503);
         const action=command(result.output?.text);
         const observation=db.transaction(()=>{
           const current=live(scope,id,lease);

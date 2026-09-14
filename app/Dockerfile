@@ -8,6 +8,7 @@ COPY vitriny-neural ./vitriny-neural
 COPY vitriny-spatial ./vitriny-spatial
 RUN mkdir -p ./scripts
 COPY scripts/run-vitriny-neural-live-benchmark.mjs ./scripts/run-vitriny-neural-live-benchmark.mjs
+COPY scripts/run-vitriny-neural-task-acceptance.mjs ./scripts/run-vitriny-neural-task-acceptance.mjs
 COPY scripts/smoke-vitriny-multiversal.mjs ./scripts/smoke-vitriny-multiversal.mjs
 COPY affiliate-catalog-seed.json ./
 COPY public ./public

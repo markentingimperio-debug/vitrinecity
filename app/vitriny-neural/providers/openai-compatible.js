@@ -100,7 +100,9 @@ export function createOpenAICompatibleProvider({id='local-model',baseUrl,apiKey=
       });}catch{if(signal?.aborted)signal.throwIfAborted();throw new Error('Falha de conexão com o modelo.');}
       if(!response.ok||response.redirected){discardBody(response);throw new Error(`Modelo HTTP ${response.status}.`);}
       let data;try{data=await response.json();}catch{if(signal?.aborted)signal.throwIfAborted();throw new Error('Resposta do modelo inválida.');}
-      return {text:normalizeContent(data),model:data?.model||modelName,usage:data?.usage||null};
+      // The configured alias selects the request; it is not evidence of which
+      // model answered. Qualification and task gates require an observed alias.
+      return {text:normalizeContent(data),model:data?.model??null,usage:data?.usage||null};
     }
   };
 }

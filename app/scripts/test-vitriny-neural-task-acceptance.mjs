@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {runNeuralTaskAcceptance} from '../vitriny-neural/task-acceptance.js';
-import {openAICompatibleCapabilities} from '../vitriny-neural/providers/openai-compatible.js';
+import {createOpenAICompatibleProvider,openAICompatibleCapabilities} from '../vitriny-neural/providers/openai-compatible.js';
 import {vitrinyNeuralCoreBenchmark} from '../vitriny-neural/benchmarks/core-set.js';
 
 // Deliberately deterministic FIXTURE answers. These test the acceptance runner,
@@ -55,13 +56,13 @@ function fixture({poor=false,failBenchmark=false,failTask='',missingUsage=false,
 }
 
 test('CLI ajuda não gera inferência e origem remota é recusada sem revelar credenciais',()=>{
-  const cli=new URL('./run-vitriny-neural-task-acceptance.mjs',import.meta.url);
-  const help=spawnSync(process.execPath,[cli.pathname,'--help'],{encoding:'utf8',env:{PATH:process.env.PATH}});
+  const cli=fileURLToPath(new URL('./run-vitriny-neural-task-acceptance.mjs',import.meta.url));
+  const help=spawnSync(process.execPath,[cli,'--help'],{encoding:'utf8',env:{PATH:process.env.PATH}});
   assert.equal(help.status,0);assert.match(help.stdout,/concorrência 1/);
-  const blocked=spawnSync(process.execPath,[cli.pathname,'--run-local'],{encoding:'utf8',env:{PATH:process.env.PATH,VITRINY_NEURAL_MODEL_ORIGIN:'https://remote.invalid',VITRINY_NEURAL_MODEL_API_KEY:'secret-do-not-print'}});
+  const blocked=spawnSync(process.execPath,[cli,'--run-local'],{encoding:'utf8',env:{PATH:process.env.PATH,VITRINY_NEURAL_MODEL_ORIGIN:'https://remote.invalid',VITRINY_NEURAL_MODEL_API_KEY:'secret-do-not-print'}});
   assert.equal(blocked.status,2);assert.equal(JSON.parse(blocked.stdout).reason,'local_origin_required');
   assert.doesNotMatch(blocked.stdout+blocked.stderr,/secret-do-not-print/);
-  const implicit=spawnSync(process.execPath,[cli.pathname,'--run-local'],{encoding:'utf8',env:{PATH:process.env.PATH,JARVIS_LOCAL_MODEL:'1'}});
+  const implicit=spawnSync(process.execPath,[cli,'--run-local'],{encoding:'utf8',env:{PATH:process.env.PATH,JARVIS_LOCAL_MODEL:'1'}});
   assert.equal(implicit.status,2);assert.equal(JSON.parse(implicit.stdout).reason,'local_origin_required','Live acceptance must not infer an operator destination from the Jarvis flag alone');
 });
 test('provider não local e limiares rebaixados falham antes de inferência',async()=>{
@@ -84,6 +85,35 @@ test('qualificação insuficiente não é promovida artificialmente e não inici
 test('modelo diferente no benchmark não recebe qualificação para nome configurado',async()=>{
   const f=fixture({model:'different-model'});const report=await runNeuralTaskAcceptance({provider:f.provider});
   assert.equal(report.reason,'benchmark_model_mismatch');assert.equal(report.qualification,undefined);assert.equal(report.tasks.length,0);
+});
+test('adaptador não transforma alias configurado em identidade observada quando model está ausente',async()=>{
+  let calls=0;
+  const provider=createOpenAICompatibleProvider({id:'acceptance-fixture',model:'acceptance-fixture',baseUrl:'http://127.0.0.1:1',fetchImpl:async(_url,options)=>{
+    calls++;const request=JSON.parse(options.body),input=JSON.parse(request.messages[1].content);
+    assert.ok(input.benchmarkCaseId,'Missing model identity must block before tasks');
+    return Response.json({choices:[{message:{content:ANSWERS[input.benchmarkCaseId]}}],usage:{prompt_tokens:10,completion_tokens:5}});
+  }});
+  const report=await runNeuralTaskAcceptance({provider});
+  assert.equal(report.reason,'benchmark_model_mismatch');assert.equal(report.qualification,undefined);
+  assert.equal(report.tasks.length,0);assert.equal(calls,vitrinyNeuralCoreBenchmark.length);
+  assert.ok(report.benchmark.results.every(item=>item.model===null&&item.modelMatchesExpected===false));
+});
+test('identidade ausente ou divergente após benchmark bloqueia comandos e preserva consumo',async()=>{
+  for(const model of [undefined,null,'different-private-model',{private:'do-not-print'}]){
+    const f=fixture(),originalInvoke=f.provider.invoke;
+    f.provider.invoke=async request=>{
+      const output=await originalInvoke(request);
+      return request.input.benchmarkCaseId||request.input.kind==='route_required'?output:{...output,model};
+    };
+    const report=await runNeuralTaskAcceptance({provider:f.provider});
+    assert.equal(report.status,'partial');assert.equal(report.passed,1);
+    for(const task of report.tasks.slice(0,2)){
+      assert.equal(task.status,'failed');assert.equal(task.errorCode,'task_provider_unqualified');
+      assert.equal(task.files.length,0);assert.equal(task.structuralPassed,false);
+      assert.equal(task.usage.complete,true);assert.equal(task.usage.knownInputTokens,20);
+    }
+    assert.doesNotMatch(JSON.stringify(report),/different-private-model|do-not-print/);
+  }
 });
 test('campo model malicioso no retorno não vaza objeto ou string privada no relatório',async()=>{
   for(const model of ['PRIVATE_MARKER_FROM_MODEL_0123456789',{credential:'PRIVATE_MARKER_FROM_MODEL_0123456789',nested:{apiKey:'another-private-field'}}]){

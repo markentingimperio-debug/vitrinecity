@@ -113,6 +113,11 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
     const attempts=[];
     for(const provider of list){
       abortIfRequested(signal);
+      // Availability awaits and earlier attempts allow policy revocation after
+      // candidate selection. Admission must still hold at each dispatch.
+      const currentPolicy=providerPolicies.get(provider.id)||{enabled:true,allowedCapabilities:null};
+      if(!evaluation&&(!currentPolicy.enabled||(currentPolicy.allowedCapabilities&&!currentPolicy.allowedCapabilities.has(capability))))continue;
+      if(statOf(stats,provider.id).openedUntil>now())continue;
       const started=now(),attemptId=randomUUID(),identity={attemptId,provider:provider.id,modelName:provider.modelName};
       const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);
       const forwardAbort=()=>controller.abort(signal.reason);
