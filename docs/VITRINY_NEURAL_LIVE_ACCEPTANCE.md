@@ -2,6 +2,14 @@
 
 Este complemento prepara a verificação operacional da IA local. Não instala pesos, não configura a VPS, não habilita lojas, não cobra assinaturas e não concede novas ferramentas de execução ao modelo. Os recursos continuam desabilitados por padrão. Os testes automatizados usam fixtures; nenhum resultado desses testes é qualificação de um modelo real.
 
+## Resultado da integração de 14/09/2026
+
+O ensaio foi executado em contêiner descartável na VPS, sem banco de produção.
+O modelo instalado não atingiu os critérios atuais e as tarefas permaneceram
+bloqueadas. Veja o [relatório da integração e teste real](NEURAL_INTEGRATED_PILOT_20260914.md).
+As instruções abaixo descrevem o procedimento; não indicam que o piloto foi
+ativado ou publicado para lojistas.
+
 ## Diagnóstico no painel administrativo
 
 Em `/admin-vitriny-neural.html`, **Verificar modelo local** consulta os metadados do servidor configurado, sem enviar um prompt ou gerar tokens. O endpoint administrativo é `POST /api/admin/vitriny-neural/model/preflight`, com sessão administrativa, origem autorizada, JSON e `X-Neural-Request: 1`. Não recebe URL, token ou nome de modelo do navegador.
@@ -32,7 +40,7 @@ Em um contêiner já publicado e conferido, o equivalente é:
 docker compose exec -T app npm run acceptance:neural -- --run-local
 ```
 
-Esses comandos são operacionais para uso após reconciliar a instalação; não foram executados contra a VPS nesta entrega. O ensaio gera inferência local e consome recursos. Executar primeiro em homologação, sem chats ou benchmarks concorrentes. Concorrência 1 do ensaio não limita outros serviços. O Compose existente declara um modelo com uma sequência, 2 CPUs e 4 GiB; isso descreve o arquivo do repositório, não comprova os recursos efetivos da VPS.
+Esses comandos são operacionais para uso após reconciliar a instalação. A execução de 14/09/2026 utilizou um contêiner separado, não o contêiner da aplicação publicada. O ensaio gera inferência local e consome recursos. Executar primeiro em homologação, sem chats ou benchmarks concorrentes. Concorrência 1 do ensaio não limita outros serviços. O Compose existente declara um modelo com uma sequência, 2 CPUs e 4 GiB; isso descreve o arquivo do repositório, não comprova os recursos efetivos da VPS.
 
 O ensaio usa somente o provider local primário configurado por `VITRINY_NEURAL_MODEL_ORIGIN` e `VITRINY_NEURAL_MODEL_NAME`, ou por `JARVIS_LOCAL_MODEL` e `JARVIS_MODEL_ORIGIN` explícito. A flag Jarvis sozinha não seleciona um endereço para o ensaio: o operador deve fornecer a origem efetivamente conferida. Ignora fallback e rejeita origem fora de loopback, IP privado ou nomes internos previstos na ajuda. Chaves permanecem no ambiente do processo. Não importar relatórios ou qualificações artificiais para liberar o teste.
 
