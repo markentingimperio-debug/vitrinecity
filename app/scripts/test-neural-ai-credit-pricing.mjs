@@ -16,26 +16,27 @@ const mediaRequest=(extra={})=>({quoteId:'example-quote-v1',providerId:'example-
 const pricing=(extra={})=>createAiCreditPricing({tariffs:[tariff()],fxSnapshots:[fx()],mediaQuotes:[],...extra});
 const errorCode=code=>error=>error?.code===code;
 
-test('chat separates cached input, converts USD to BRL, and adds 50 percent with only final microBRL rounding',()=>{
+test('chat separates cached input, converts USD to BRL, and adds 15 percent with only final microBRL rounding',()=>{
   const result=pricing().priceChat(request());
   assert.deepEqual(result.costUsdExact,{numerator:'97',denominator:'40000'});
   assert.deepEqual(result.costBrlExact,{numerator:'97',denominator:'8000'});
-  assert.deepEqual(result.customerBrlExact,{numerator:'291',denominator:'16000'});
-  assert.equal(result.customerMicroBRL,'18188');assert.equal(result.customerBRL,'0.018188');
-  assert.equal(result.credits,'1.8188');assert.equal(result.kind,'chat');
+  assert.deepEqual(result.customerBrlExact,{numerator:'2231',denominator:'160000'});
+  assert.equal(result.customerMicroBRL,'13944');assert.equal(result.customerBRL,'0.013944');
+  assert.equal(result.credits,'1.3944');assert.equal(result.kind,'chat');
   assert.deepEqual(result.usage,{inputTokens:'1000',cachedInputTokens:'250',uncachedInputTokens:'750',outputTokens:'100'});
   assert.equal(result.audit.providerId,'example-provider');assert.equal(result.audit.modelId,'example-chat');
   assert.equal(result.audit.tariffVersion,'example-tariff-v1');assert.equal(result.audit.tariffEffectiveAt,tariff().effectiveAt);
   assert.equal(result.audit.fxVersion,'example-fx-v1');assert.equal(result.audit.fxObservedAt,fx().observedAt);
-  assert.equal(result.audit.pricedAt,at);assert.equal(result.audit.markupNumerator,'3');assert.equal(result.audit.markupDenominator,'2');
+  assert.equal(result.audit.pricedAt,at);assert.equal(result.audit.markupNumerator,'23');assert.equal(result.audit.markupDenominator,'20');
+  assert.equal(result.audit.policyVersion,'ai-credit-policy-v2');
   assert.equal(result.audit.rounding,'half_up_at_final_microBRL');assert.equal(result.audit.creditConversionStatus,'proposed');
   assert.doesNotThrow(()=>JSON.stringify(result));
 });
 
 test('rounding happens after summing components, conversion and markup, not per token or in USD',()=>{
-  const p=pricing({tariffs:[{...tariff(),inputUsdPerMillion:'0.0000002',cachedInputUsdPerMillion:'0',outputUsdPerMillion:'0.0000002'}],fxSnapshots:[{...fx(),usdToBrl:'1'}]});
+  const p=pricing({tariffs:[{...tariff(),inputUsdPerMillion:'0.0000003',cachedInputUsdPerMillion:'0',outputUsdPerMillion:'0.0000003'}],fxSnapshots:[{...fx(),usdToBrl:'1'}]});
   const result=p.priceChat(request({usage:{inputTokens:1_000_000,cachedInputTokens:0,outputTokens:1_000_000}}));
-  assert.deepEqual(result.customerBrlExact,{numerator:'3',denominator:'5000000'});
+  assert.deepEqual(result.customerBrlExact,{numerator:'69',denominator:'100000000'});
   assert.equal(result.customerMicroBRL,'1');assert.equal(result.credits,'0.0001');
   const second=pricing({tariffs:[{...tariff(),inputUsdPerMillion:'0.0000004'}],fxSnapshots:[{...fx(),usdToBrl:'2'}]});
   assert.equal(second.priceChat(request({usage:{inputTokens:1_000_000,cachedInputTokens:0,outputTokens:0}})).customerMicroBRL,'1');
@@ -49,7 +50,7 @@ test('half-up rounding and fractional credit display use integers, including val
   assert.equal(creditsFromMicroBRL(0n),'0');assert.equal(creditsFromMicroBRL(1250n,'80'),'0.1');
   const tokens=9007199254740993n;
   const p=pricing({tariffs:[{...tariff(),inputUsdPerMillion:'1'}],fxSnapshots:[{...fx(),usdToBrl:'1'}]});
-  assert.equal(p.priceChat(request({usage:{inputTokens:tokens,cachedInputTokens:0n,outputTokens:0n}})).customerMicroBRL,((tokens*3n+1n)/2n).toString());
+  assert.equal(p.priceChat(request({usage:{inputTokens:tokens,cachedInputTokens:0n,outputTokens:0n}})).customerMicroBRL,((tokens*23n+10n)/20n).toString());
 });
 
 test('absent usage, missing cache count and explicitly unknown receipts never become free usage',()=>{
@@ -89,7 +90,7 @@ test('provider, model, tariff and FX versions are exact lookups without defaults
 
 test('snapshots are copied immutably and dates prevent future tariffs or FX from silently applying',()=>{
   const t=tariff(),f=fx(),p=pricing({tariffs:[t],fxSnapshots:[f]});t.inputUsdPerMillion='0';f.usdToBrl='1';
-  const result=p.priceChat(request());assert.equal(result.customerMicroBRL,'18188');assert(Object.isFrozen(result.audit));
+  const result=p.priceChat(request());assert.equal(result.customerMicroBRL,'13944');assert(Object.isFrozen(result.audit));
   assert.throws(()=>{result.audit.fxVersion='changed';},TypeError);
   assert.throws(()=>pricing({tariffs:[{...tariff(),effectiveAt:'2026-01-11T00:00:00.000Z'}]}).priceChat(request()),errorCode('tariff_not_effective'));
   assert.throws(()=>pricing({fxSnapshots:[{...fx(),observedAt:'2026-01-11T00:00:00.000Z'}]}).priceChat(request()),errorCode('fx_not_effective'));
@@ -100,11 +101,67 @@ test('snapshots are copied immutably and dates prevent future tariffs or FX from
 test('confirmed image/video quotes price only their bound request, carrying audit metadata without estimating',()=>{
   for(const kind of ['image','video']){
     const q=quote({kind}),p=pricing({mediaQuotes:[q]});const result=p.priceMedia(mediaRequest({kind}));
-    assert.equal(result.kind,kind);assert.equal(result.basis,'confirmed_quote');assert.equal(result.customerMicroBRL,'300000');assert.equal(result.credits,'30');
+    assert.equal(result.kind,kind);assert.equal(result.basis,'confirmed_quote');assert.equal(result.customerMicroBRL,'230000');assert.equal(result.credits,'23');
+    assert.deepEqual(result.costBrlExact,{numerator:'1',denominator:'5'});assert.deepEqual(result.customerBrlExact,{numerator:'23',denominator:'100'});
     assert.equal(result.audit.quoteId,q.quoteId);assert.equal(result.audit.quoteExpiresAt,q.expiresAt);assert.equal(result.audit.requestFingerprint,q.requestFingerprint);
     assert.equal(result.audit.tariffVersion,q.tariffVersion);assert.equal(result.audit.tariffEffectiveAt,q.tariffEffectiveAt);
   }
   assert.equal(pricing({mediaQuotes:[quote({totalUsd:'0'})]}).priceMedia(mediaRequest()).customerMicroBRL,'0');
+});
+
+// Provider names below are only identities in synthetic tariff/quote fixtures;
+// these tests do not assert that any connector/model/capability is enabled.
+test('chat, image and video across providers use exactly one 23/20 multiplier with matching v2 audit receipts',()=>{
+  for(const [kind,providerId] of [['chat','openai'],['chat','openrouter'],['image','openai'],['image','kling_api'],['video','kling_api'],['video','google']]){
+    const modelId=`example-${providerId}-${kind}`;
+    const t={...tariff(),providerId,modelId,inputUsdPerMillion:'2.5',cachedInputUsdPerMillion:'0',outputUsdPerMillion:'0'};
+    const q=quote({providerId,modelId,kind:kind==='chat'?'image':kind,totalUsd:'2.5'});
+    const p=pricing({tariffs:[t],mediaQuotes:kind==='chat'?[]:[q]});
+    const input=kind==='chat'?request({providerId,modelId,usage:{inputTokens:1_000_000,cachedInputTokens:0,outputTokens:0}}):mediaRequest({providerId,modelId,kind});
+    const result=kind==='chat'?p.priceChat(input):p.priceMedia(input);
+    assert.equal(result.kind,kind);assert.equal(result.customerMicroBRL,'14375000');assert.equal(result.customerBRL,'14.375000');assert.equal(result.credits,'1437.5');
+    assert.deepEqual(result.costUsdExact,{numerator:'5',denominator:'2'});assert.deepEqual(result.costBrlExact,{numerator:'25',denominator:'2'});
+    assert.deepEqual(result.customerBrlExact,{numerator:'115',denominator:'8'});
+    const cost=result.costBrlExact,customer=result.customerBrlExact;
+    assert.equal(BigInt(customer.numerator)*BigInt(cost.denominator)*20n,BigInt(cost.numerator)*BigInt(customer.denominator)*23n);
+    assert.equal(result.audit.providerId,providerId);assert.equal(result.audit.modelId,modelId);
+    assert.equal(result.audit.markupNumerator,'23');assert.equal(result.audit.markupDenominator,'20');assert.equal(result.audit.policyVersion,'ai-credit-policy-v2');
+    assert.equal(result.audit.markupNumerator,AI_CREDIT_POLICY.markupNumerator);assert.equal(result.audit.markupDenominator,AI_CREDIT_POLICY.markupDenominator);assert.equal(result.audit.policyVersion,AI_CREDIT_POLICY.version);
+    assert.equal(result.audit.fxVersion,fx().version);assert.equal(result.audit.usdToBrl,'5');assert.equal(result.audit.rounding,'half_up_at_final_microBRL');
+    if(kind==='chat'){assert.deepEqual(result.audit.tariffSnapshot,t);}else{assert.deepEqual(result.audit.quoteSnapshot,q);assert.equal(result.audit.requestFingerprint,q.requestFingerprint);}
+    // Pure repeated calculation is stable, not a second fee on the prior result.
+    assert.deepEqual(kind==='chat'?p.priceChat(input):p.priceMedia(input),result);
+    assert(Object.isFrozen(result.audit));assert.doesNotThrow(()=>JSON.stringify(result));
+  }
+});
+
+test('known zero cost remains exact zero for all modalities and still records the 15 percent policy',()=>{
+  for(const [kind,providerId] of [['chat','openai'],['image','openrouter'],['video','kling_api']]){
+    const modelId=`example-${kind}`,t={...tariff(),providerId,modelId,inputUsdPerMillion:'0',cachedInputUsdPerMillion:'0.000',outputUsdPerMillion:'0'};
+    const p=pricing({tariffs:[t],mediaQuotes:kind==='chat'?[]:[quote({providerId,modelId,kind,totalUsd:'0.000'})]});
+    const result=kind==='chat'?p.priceChat(request({providerId,modelId})):p.priceMedia(mediaRequest({providerId,modelId,kind}));
+    for(const field of ['costUsdExact','costBrlExact','customerBrlExact'])assert.deepEqual(result[field],{numerator:'0',denominator:'1'});
+    assert.equal(result.customerMicroBRL,'0');assert.equal(result.customerBRL,'0.000000');assert.equal(result.credits,'0');
+    assert.equal(result.audit.policyVersion,'ai-credit-policy-v2');assert.equal(result.audit.markupNumerator,'23');assert.equal(result.audit.markupDenominator,'20');
+  }
+});
+
+test('all modalities preserve high precision through USD, FX and one 15 percent markup before final rounding',()=>{
+  const usd='0.123456789123456789',usdToBrl='5.123456789123456789';
+  const numerator=123456789123456789n*5123456789123456789n*23n,denominator=10n**36n*20n;
+  const expectedMicro=(numerator*1_000_000n*2n+denominator)/(denominator*2n);
+  for(const kind of ['chat','image','video']){
+    const p=pricing({tariffs:[{...tariff(),inputUsdPerMillion:usd,cachedInputUsdPerMillion:'0',outputUsdPerMillion:'0'}],fxSnapshots:[{...fx(),usdToBrl}],mediaQuotes:kind==='chat'?[]:[quote({kind,totalUsd:usd})]});
+    const result=kind==='chat'?p.priceChat(request({usage:{inputTokens:1_000_000,cachedInputTokens:0,outputTokens:0}})):p.priceMedia(mediaRequest({kind}));
+    const exact=result.customerBrlExact;
+    assert.equal(BigInt(exact.numerator)*denominator,numerator*BigInt(exact.denominator));
+    assert.equal(result.customerMicroBRL,expectedMicro.toString());assert.equal(result.audit.usdToBrl,usdToBrl);
+    assert.equal(result.audit.markupNumerator,'23');assert.equal(result.audit.markupDenominator,'20');assert.equal(result.audit.policyVersion,'ai-credit-policy-v2');
+  }
+  // A half-micro threshold must not retain the old 50% result or round USD first.
+  const tiny=pricing({tariffs:[{...tariff(),inputUsdPerMillion:'0.0000004',cachedInputUsdPerMillion:'0',outputUsdPerMillion:'0'}],fxSnapshots:[{...fx(),usdToBrl:'1'}]});
+  const result=tiny.priceChat(request({usage:{inputTokens:1_000_000,cachedInputTokens:0,outputTokens:0}}));
+  assert.deepEqual(result.customerBrlExact,{numerator:'23',denominator:'50000000'});assert.equal(result.customerMicroBRL,'0');
 });
 
 test('missing, unconfirmed, expired, mismatched and price-less quotes cannot be guessed or reused for another request',()=>{
@@ -128,6 +185,8 @@ test('new-credit terms expire exactly 60 days after purchase and cannot be appli
   assert.throws(()=>newAiCreditPurchaseTerms({...input,walletId:'existing-wallet'}),errorCode('purchase_invalid'));
   assert.throws(()=>newAiCreditPurchaseTerms({...input,purchasedAt:'invalid'}),errorCode('purchase_invalid'));
   assert.equal(AI_CREDIT_POLICY.legacyBalances,'unchanged');assert.equal(AI_CREDIT_POLICY.refunds,'review_under_applicable_rules');
+  assert.equal(AI_CREDIT_POLICY.version,'ai-credit-policy-v2');assert.equal(result.policyVersion,'ai-credit-policy-v2');
+  assert.equal(AI_CREDIT_POLICY.markupNumerator,'23');assert.equal(AI_CREDIT_POLICY.markupDenominator,'20');
   assert.equal(PROPOSED_CREDIT_CONVERSION.creditsPerBRL,'100');assert.equal(PROPOSED_CREDIT_CONVERSION.status,'proposed');
   assert(Object.isFrozen(AI_CREDIT_POLICY));assert(Object.isFrozen(result));
 });

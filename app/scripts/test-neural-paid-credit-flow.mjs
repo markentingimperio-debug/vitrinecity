@@ -44,13 +44,15 @@ test('mocked paid transport, pricing and ledger interoperate with one dispatch a
     const price=f.pricing.priceChat({providerId:'openai',modelId:receipt.requestedModel,tariffVersion:'fixture-tariff',fxVersion:'fixture-fx',pricedAt:date,
       usage:{inputTokens,cachedInputTokens,outputTokens}});
     const exact=BigInt(price.customerMicroBRL);assert.ok(exact<=BigInt(Number.MAX_SAFE_INTEGER));
-    assert.equal(exact,120n);
+    assert.equal(exact,92n);
+    assert.equal(price.audit.policyVersion,'ai-credit-policy-v2');
+    assert.equal(price.audit.markupNumerator,'23');assert.equal(price.audit.markupDenominator,'20');
     const amount=Number(exact),settlement={actualMicroBrl:amount,receiptId:receipt.receiptId};
     f.wallet.settle(scope,f.input.requestId,settlement);
     f.wallet.settle(scope,f.input.requestId,settlement);
-    assert.equal(f.wallet.status(scope).chargedMicroBrl,120);
+    assert.equal(f.wallet.status(scope).chargedMicroBrl,92);
     assert.equal(f.wallet.status(scope).reservedMicroBrl,0);
-    assert.equal(f.wallet.status(scope).availableMicroBrl,999880);
+    assert.equal(f.wallet.status(scope).availableMicroBrl,999908);
     const repeated=await f.adapter.invoke(f.input);assert.equal(repeated.transportStarted,false);assert.equal(calls,1);
   }finally{f.db.close();}
 });

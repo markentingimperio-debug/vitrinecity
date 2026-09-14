@@ -6,15 +6,18 @@
  * source. Never construct it from a request body. Per-call input can select an
  * exact snapshot version but cannot supply/override rates, FX or the markup.
  * All monetary inputs are decimal STRINGS; results use strings for JSON safety.
+ * New customer calculations apply the approved 15% uplift exactly once to the
+ * provider cost after FX conversion. Credit purchases/legacy receipts are not
+ * repriced here. Internal production costs must not debit customer wallets.
  */
-const MICRO=1_000_000n, MARKUP_NUMERATOR=3n, MARKUP_DENOMINATOR=2n;
+const MICRO=1_000_000n, MARKUP_NUMERATOR=23n, MARKUP_DENOMINATOR=20n;
 const VALIDITY_MS=60n*24n*60n*60n*1000n;
 const fail=code=>{throw Object.assign(new Error(code),{code});};
 const freeze=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))freeze(child);Object.freeze(value);}return value;};
 
 export const PROPOSED_CREDIT_CONVERSION=freeze({version:'proposal-100-credits-per-brl-v1',status:'proposed',creditsPerBRL:'100'});
 export const AI_CREDIT_POLICY=freeze({
-  version:'ai-credit-policy-v1',markupNumerator:'3',markupDenominator:'2',
+  version:'ai-credit-policy-v2',markupNumerator:MARKUP_NUMERATOR.toString(),markupDenominator:MARKUP_DENOMINATOR.toString(),
   validityDays:60,appliesTo:'new_ai_credit_purchase_only',usageScope:'internal_ai_services_only',
   legacyBalances:'unchanged',refunds:'review_under_applicable_rules'
 });
@@ -130,7 +133,7 @@ export function createAiCreditPricing(config={}){
     return freeze({kind,...extra,costUsdExact:receiptFraction(costUsd),costBrlExact:receiptFraction(costBrl),customerBrlExact:receiptFraction(customerBrl),
       customerMicroBRL:microBRL.toString(),customerBRL:scaledText(microBRL),credits:creditsFromMicroBRL(microBRL,conversion.creditsPerBRL),
       audit:{...audit,fxVersion:fx.snapshot.version,fxObservedAt:fx.snapshot.observedAt,usdToBrl:fx.snapshot.usdToBrl,
-        markupNumerator:'3',markupDenominator:'2',rounding:'half_up_at_final_microBRL',policyVersion:AI_CREDIT_POLICY.version,
+        markupNumerator:AI_CREDIT_POLICY.markupNumerator,markupDenominator:AI_CREDIT_POLICY.markupDenominator,rounding:'half_up_at_final_microBRL',policyVersion:AI_CREDIT_POLICY.version,
         creditConversionVersion:conversion.version,creditConversionStatus:conversion.status,creditsPerBRL:conversion.creditsPerBRL}});
   }
   function priceChat(input){
