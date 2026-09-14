@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
+import {createHash} from 'node:crypto';
 import {createOpenAiPaidChatAdapter,hashOpenAiPaidChatRequest} from '../vitriny-neural/providers/openai-paid-chat.js';
 
 // Synthetic values only. This suite never reads an environment key or makes HTTP calls.
-const MODEL='gpt-4o-mini',SNAPSHOT='gpt-4o-mini-2024-07-18',START=1800000000000;
+const MODEL='gpt-4o-mini',SNAPSHOT='gpt-4o-mini-2024-07-18',LUNA='gpt-5.6-luna',START=1800000000000;
 const messages=()=>[{role:'user',content:'Escreva um rascunho usando somente estes dados: loja de plantas.'}];
-const completion=(extra={})=>({id:'chatcmpl-fixture-001',object:'chat.completion',model:MODEL,choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:'Rascunho de exemplo.',refusal:null}}],usage:{prompt_tokens:90,completion_tokens:12,total_tokens:102,prompt_tokens_details:{cached_tokens:30}},...extra});
+const completion=(extra={})=>({id:'chatcmpl-fixture-001',object:'chat.completion',model:MODEL,choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:'Rascunho de exemplo.',refusal:null}}],usage:{prompt_tokens:90,completion_tokens:12,total_tokens:102,prompt_tokens_details:{cached_tokens:30,...(extra.model===LUNA?{cache_write_tokens:0}:{})}},...extra});
 const response=(data=completion(),options={})=>new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json','x-request-id':'req_fixture_001'},...options});
 function request(extra={}){
   const input={requestId:'request-fixture-001',messages:messages(),maxOutputTokens:200,...extra};
@@ -21,6 +22,11 @@ function fixture(options={}){
 const invoke=(f,extra={})=>f.adapter.invoke(request(extra));
 const noDispatch=result=>{assert.equal(result.transportStarted,false);assert.equal(result.status,'not_dispatched');assert.equal(result.billingDisposition,'no_dispatch');assert.equal(result.usage.known,false);assert.equal(result.usage.inputTokens,null);};
 const held=result=>{assert.equal(result.transportStarted,true);assert.equal(result.billingDisposition,'hold');assert.equal(result.retryAllowed,false);};
+function lunaRequest(extra={}){
+  const input=request(extra);
+  input.permit={...input.permit,model:LUNA,requestHash:hashOpenAiPaidChatRequest({model:LUNA,messages:input.messages,maxOutputTokens:input.maxOutputTokens}),...extra.permit};
+  return input;
+}
 
 test('module and disabled or keyless factories never infer or obtain credentials from environment',async()=>{
   let calls=0;const fetchImpl=async()=>{calls++;throw Error('Must not fetch');};
@@ -38,7 +44,7 @@ test('one official-origin POST has exact model, fixed text-only contract and aut
   assert.equal(init.redirect,'error');assert.equal(init.method,'POST');assert.equal(init.headers.authorization,'Bearer fixture-key-not-real');
   assert.equal(body.model,MODEL);assert.equal(body.store,false);assert.equal(body.stream,false);assert.equal(body.n,1);
   assert.equal(body.max_completion_tokens,200);assert.deepEqual(body.modalities,['text']);assert.equal(body.service_tier,'default');
-  for(const field of ['tools','functions','web_search_options','audio','user','metadata'])assert.equal(Object.hasOwn(body,field),false);
+  for(const field of ['tools','functions','web_search_options','audio','user','metadata','reasoning_effort'])assert.equal(Object.hasOwn(body,field),false);
   assert.equal(body.messages[0].role,'system');assert.deepEqual(body.messages.slice(1),input.messages);
   assert.equal(f.authorizations.length,1);assert.equal(f.authorizations[0].requestHash,input.permit.requestHash);
   assert.equal(result.status,'completed');assert.equal(result.text,'Rascunho de exemplo.');assert.equal(result.provider,'openai');
@@ -186,4 +192,85 @@ test('abort before send is no_dispatch; abort after send is unknown hold with sa
 test('timeout also bounds a response body that never ends and cancels its reader',async()=>{
   let cancelled=0;const result=await invoke(fixture({timeoutMs:20,fetchImpl:async()=>new Response(new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('{'));},cancel(){cancelled++;}}),{headers:{'content-type':'application/json'}})}));
   held(result);assert.equal(result.code,'openai_timeout_unknown');assert.equal(cancelled,1);
+});
+
+test('Luna is an explicit opt-in alias; disabled state and legacy default are unchanged',async()=>{
+  const legacy=createOpenAiPaidChatAdapter();assert.equal(legacy.model,MODEL);assert.equal(legacy.enabled,false);
+  let count=0;const luna=createOpenAiPaidChatAdapter({model:LUNA,apiKey:'fixture-only',fetchImpl:async()=>{count++;throw Error('No HTTP');}});
+  assert.equal(luna.model,LUNA);assert.equal(luna.enabled,false);noDispatch(await luna.invoke(lunaRequest()));assert.equal(count,0);
+  for(const model of [`${LUNA}-2026-09-14`,'gpt-5.6','gpt-5.6-sol','gpt-5.6-luna-impostor']){
+    assert.throws(()=>createOpenAiPaidChatAdapter({model}),/openai_config_invalid/);
+    assert.throws(()=>hashOpenAiPaidChatRequest({model,messages:messages(),maxOutputTokens:200}),/openai_input_invalid/);
+  }
+});
+
+test('Luna success sends fixed reasoning none inside the exact authorized body hash, text only and one request',async()=>{
+  let calls=0,body;const f=fixture({model:LUNA,fetchImpl:async(url,init)=>{
+    calls++;assert.equal(url,'https://api.openai.com/v1/chat/completions');assert.equal(init.method,'POST');assert.equal(init.redirect,'error');body=JSON.parse(init.body);
+    assert.equal(createHash('sha256').update(init.body).digest('hex'),f.authorizations[0].requestHash);
+    return response(completion({model:LUNA}));
+  }}),result=await f.adapter.invoke(lunaRequest());
+  assert.equal(calls,1);assert.equal(body.model,LUNA);assert.equal(body.reasoning_effort,'none');assert.equal(body.max_completion_tokens,200);
+  assert.equal(body.service_tier,'default');assert.equal(body.store,false);assert.equal(body.stream,false);assert.equal(body.n,1);assert.deepEqual(body.modalities,['text']);
+  for(const field of ['tools','functions','web_search_options','audio','temperature','prompt_cache_retention','prompt_cache_key'])assert.equal(Object.hasOwn(body,field),false);
+  assert.equal(result.status,'completed');assert.equal(result.model,LUNA);assert.equal(result.requestedModel,LUNA);assert.equal(result.billingDisposition,'reconcile');
+  assert.deepEqual(result.usage,{known:true,inputTokens:90,cachedInputTokens:30,outputTokens:12,totalTokens:102});
+  const withoutReasoning={...body};delete withoutReasoning.reasoning_effort;
+  assert.notEqual(createHash('sha256').update(JSON.stringify(withoutReasoning)).digest('hex'),f.authorizations[0].requestHash);
+});
+
+test('response allowlists cannot authorize another model family and old mini snapshots still work',()=>{
+  for(const options of [{model:LUNA,acceptedResponseModels:[MODEL]},{model:LUNA,acceptedResponseModels:[LUNA,SNAPSHOT]},{model:MODEL,acceptedResponseModels:[LUNA]},{model:SNAPSHOT,acceptedResponseModels:[MODEL,LUNA]},{model:LUNA,acceptedResponseModels:[`${LUNA}-2026-09-14`]}]){
+    assert.throws(()=>createOpenAiPaidChatAdapter(options),/openai_config_invalid/);
+  }
+  assert.doesNotThrow(()=>createOpenAiPaidChatAdapter({model:MODEL,acceptedResponseModels:[MODEL,SNAPSHOT]}));
+  assert.doesNotThrow(()=>createOpenAiPaidChatAdapter({model:SNAPSHOT,acceptedResponseModels:[SNAPSHOT]}));
+});
+
+test('Luna permits cannot reuse mini hashes/models or override internal reasoning and request bounds',async()=>{
+  for(const permit of [{model:MODEL},{requestHash:request().permit.requestHash},{maxOutputTokens:201},{scope:''}]){
+    const f=fixture({model:LUNA});noDispatch(await f.adapter.invoke(lunaRequest({permit})));assert.equal(f.calls.length,0);
+  }
+  for(const extra of [{reasoning_effort:'high'},{reasoningEffort:'none'},{reasoning:{effort:'none'}},{model:MODEL},{maxOutputTokens:1025},{tools:[]},{modalities:['image']}]){
+    const f=fixture({model:LUNA}),input=lunaRequest();Object.assign(input,extra);noDispatch(await f.adapter.invoke(input));assert.equal(f.calls.length,0);
+  }
+  assert.throws(()=>createOpenAiPaidChatAdapter({model:LUNA,reasoningEffort:'high'}),/openai_config_invalid/);
+});
+
+test('Luna mismatch or transport error never falls back to mini or a different provider',async()=>{
+  for(const model of [MODEL,SNAPSHOT,'gpt-5.6',`${LUNA}-2026-09-14`]){
+    let count=0;const f=fixture({model:LUNA,fetchImpl:async()=>{count++;return response(completion({model,usage:completion({model:LUNA}).usage}));}}),result=await f.adapter.invoke(lunaRequest());
+    held(result);assert.equal(result.code,'openai_model_mismatch');assert.equal(result.text,null);assert.equal(result.usage.known,true);assert.equal(count,1);
+  }
+  let count=0;const f=fixture({model:LUNA,fetchImpl:async()=>{count++;throw Error('PRIVATE');}}),result=await f.adapter.invoke(lunaRequest());
+  held(result);assert.equal(result.usage.known,false);assert.equal(count,1);assert.doesNotMatch(JSON.stringify(result),/PRIVATE/);
+});
+
+test('Luna keeps the input-byte ceiling and holds reported long-context usage instead of applying ordinary tariffs',async()=>{
+  assert.throws(()=>createOpenAiPaidChatAdapter({model:LUNA,maxInputBytes:262145}),/openai_config_invalid/);
+  const f=fixture({model:LUNA,maxInputBytes:262144});
+  noDispatch(await f.adapter.invoke(lunaRequest({messages:Array.from({length:17},()=>({role:'user',content:'x'.repeat(16000)}))})));assert.equal(f.calls.length,0);
+  const usage=inputTokens=>({prompt_tokens:inputTokens,completion_tokens:12,total_tokens:inputTokens+12,prompt_tokens_details:{cached_tokens:0,cache_write_tokens:0}});
+  for(const count of [272001,300000]){
+    const r=await fixture({model:LUNA,fetchImpl:async()=>response(completion({model:LUNA,usage:usage(count)}))}).adapter.invoke(lunaRequest());
+    held(r);assert.equal(r.code,'openai_long_context_unpriced');assert.equal(r.text,null);assert.equal(r.usage.known,true);assert.equal(r.usage.inputTokens,count);assert.equal(r.receiptId,'openai:chatcmpl-fixture-001');
+  }
+  const boundary=await fixture({model:LUNA,fetchImpl:async()=>response(completion({model:LUNA,usage:usage(272000)}))}).adapter.invoke(lunaRequest());
+  assert.equal(boundary.status,'completed');assert.equal(boundary.billingDisposition,'reconcile');
+  const errorReceipt=await fixture({model:LUNA,fetchImpl:async()=>response(completion({model:LUNA,usage:usage(272001)}),{status:500})}).adapter.invoke(lunaRequest());
+  held(errorReceipt);assert.equal(errorReceipt.code,'openai_http_error');assert.equal(errorReceipt.usage.inputTokens,272001);assert.equal(errorReceipt.receiptId,'openai:chatcmpl-fixture-001');
+});
+
+test('Luna requires explicit zero cache writes: missing/null/write/audio usage is never priced as ordinary input',async()=>{
+  const normal=completion().usage;
+  for(const usage of [undefined,null,normal,{...normal,prompt_tokens_details:{cached_tokens:30,cache_write_tokens:null}},{...normal,prompt_tokens_details:{cached_tokens:30,cache_write_tokens:1}},
+    {...normal,prompt_tokens_details:{cached_tokens:30,cache_write_tokens:'0'}},{...normal,prompt_tokens_details:{cached_tokens:30,audio_tokens:1}},
+    {...normal,completion_tokens_details:{audio_tokens:1}}]){
+    const r=await fixture({model:LUNA,fetchImpl:async()=>response(completion({model:LUNA,usage}))}).adapter.invoke(lunaRequest());
+    held(r);assert.equal(r.code,'openai_usage_unknown');assert.equal(r.usage.known,false);assert.equal(r.receiptId,'openai:chatcmpl-fixture-001');assert.equal(r.text,null);
+  }
+  const r=await fixture({model:LUNA,fetchImpl:async()=>response(completion({model:LUNA,usage:{...normal,prompt_tokens_details:{cached_tokens:30,cache_write_tokens:0,audio_tokens:0},completion_tokens_details:{audio_tokens:0}}}))}).adapter.invoke(lunaRequest());
+  assert.equal(r.status,'completed');assert.equal(r.usage.inputTokens,90);assert.equal(r.usage.cachedInputTokens,30);
+  // The older supported family still accepts its existing optional write field.
+  assert.equal((await invoke(fixture({fetchImpl:async()=>response(completion({usage:normal}))}))).status,'completed');
 });
