@@ -1,3 +1,5 @@
+import {assertChatReceipt,assertChatQueueStatus} from '../public/neural-chat-contract.js';
+
 const ADMIN='/api/admin/vitriny-neural/chat';
 const STORE='/api/store-portal/:reference/neural/chat';
 const ERRORS={
@@ -41,17 +43,20 @@ export function mountNeuralChatApi({app,chat,requireAdmin,sameOriginOnly,getAuth
   };
   const mount=(base,auth)=>{
     const read=[privateHeaders,...auth],write=[...read,mutate];
-    app.get(base+'/status',...read,route('status',(_req,res,scope)=>res.json({ok:true,...chat.status(scope)})));
+    app.get(base+'/status',...read,route('status',(_req,res,scope)=>{
+      const status=chat.status(scope);if(status.queue!==undefined)assertChatQueueStatus(status.queue);
+      return res.json({ok:true,...status});
+    }));
     app.get(base+'/conversations',...read,route('list',(_req,res,scope)=>res.json({ok:true,items:chat.list(scope)})));
     app.get(base+'/conversations/:id',...read,route('conversation',(req,res,scope)=>res.json({ok:true,...chat.conversation(scope,req.params.id)})));
     app.post(base+'/messages',...write,route('submit',(req,res,scope)=>{
-      const result=chat.submit(scope,req.body);return res.status(result.duplicate?200:202).json({ok:true,...result});
+      const result=assertChatReceipt(chat.submit(scope,req.body));return res.status(result.duplicate?200:202).json({ok:true,...result});
     }));
-    app.get(base+'/requests/by-key/:key',...read,route('requestByKey',(req,res,scope)=>res.json({ok:true,request:chat.requestByKey(scope,req.params.key)})));
-    app.get(base+'/requests/:id',...read,route('request',(req,res,scope)=>res.json({ok:true,request:chat.request(scope,req.params.id)})));
+    app.get(base+'/requests/by-key/:key',...read,route('requestByKey',(req,res,scope)=>res.json({ok:true,request:assertChatReceipt(chat.requestByKey(scope,req.params.key))})));
+    app.get(base+'/requests/:id',...read,route('request',(req,res,scope)=>res.json({ok:true,request:assertChatReceipt(chat.request(scope,req.params.id))})));
     app.post(base+'/requests/:id/cancel',...write,route('cancel',(req,res,scope)=>{
       if(!req.body||typeof req.body!=='object'||Array.isArray(req.body)||Object.keys(req.body).length)return res.status(400).json({ok:false,code:'chat_input_invalid',error:'Cancelamento inválido.'});
-      return res.json({ok:true,...chat.cancel(scope,req.params.id)});
+      return res.json({ok:true,...assertChatReceipt(chat.cancel(scope,req.params.id))});
     }));
     app.post(base+'/attachments',...write,route('upload',(req,res,scope)=>res.status(201).json({ok:true,attachment:chat.upload(scope,req.body)})));
     app.get(base+'/attachments/:id',...read,route('readAttachment',(req,res,scope)=>{

@@ -54,13 +54,14 @@
       </div>
       <div class="composer-dock">
         <p id="capability-notice" class="capability-notice" hidden>Seu envio será salvo no histórico privado, mas o modelo ainda não está habilitado para responder. Você pode organizar conversas e anexar arquivos. Nenhuma geração paga será realizada.</p>
+        <p id="queue-review-notice" class="capability-notice" role="status" aria-live="polite" hidden></p>
         <p id="error" class="error" role="alert" hidden></p>
         <div id="recovery" class="recovery" hidden><p>O recebimento do último envio ainda não foi confirmado. Vamos conferir o registro, sem enviar outra vez.</p><button id="recover-request" type="button">Conferir envio</button><p id="retry-note" hidden>O registro ainda não foi encontrado. Se você escolher tentar, enviaremos exatamente a mensagem e as referências aos mesmos anexos, com o mesmo identificador para evitar duplicidade. Os arquivos não serão enviados novamente.</p><button id="retry-request" type="button" aria-describedby="retry-note" hidden>Tentar o mesmo envio</button></div>
         <p id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
         <form id="command-form" class="composer">
           <ul id="attachment-previews" class="attachment-previews" aria-label="Arquivos para enviar"></ul>
           <label for="command" class="sr-only">Mensagem para a Lia</label>
-          <textarea id="command" name="message" rows="2" minlength="1" maxlength="6000" required placeholder="Pergunte, peça uma ideia ou adicione um arquivo…" aria-describedby="command-hint attachment-hint error"></textarea>
+          <textarea id="command" name="message" rows="2" minlength="1" maxlength="6000" required placeholder="Pergunte, peça uma ideia ou adicione um arquivo…" aria-describedby="command-hint attachment-hint queue-review-notice error"></textarea>
           <div class="composer-footer">
             <div class="composer-tools"><button id="attach" type="button" class="attach-button" aria-label="Adicionar imagem ou documento" title="Adicionar imagem ou documento" disabled>＋</button><label for="attachment-input" class="sr-only">Escolha até três imagens ou documentos de texto</label><input id="attachment-input" type="file" accept="image/png,image/jpeg,image/webp,.txt,.md,.csv" multiple hidden><span id="command-hint" class="small muted">Enter envia · Shift + Enter quebra a linha</span></div>
             <div class="send-controls"><button id="cancel-request" type="button" class="quiet" hidden>Parar</button><button id="send" type="submit" class="primary send-button" aria-label="Enviar mensagem" title="Enviar mensagem" disabled>↑</button></div>

@@ -1,6 +1,8 @@
+import { CHAT_MESSAGE_STATES, CHAT_QUEUE_LANES, isChatActive, assertChatReceipt, assertChatQueueStatus } from './neural-chat-contract.js';
+
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const TEXT_MIMES = { txt: 'text/plain', md: 'text/markdown', csv: 'text/csv' };
-const MESSAGE_STATES = new Set(['completed', 'running', 'unavailable', 'failed', 'cancelled', 'interrupted']);
+const MESSAGE_STATES = new Set(CHAT_MESSAGE_STATES);
 export function validateNeuralAttachment(file) {
   const extension = String(file?.name || '').split('.').pop().toLowerCase();
   const mimeType = IMAGE_MIMES.has(file?.type) ? file.type : TEXT_MIMES[extension];
@@ -16,7 +18,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
   const $ = id => document.getElementById(id);
   const params = new URLSearchParams(location.search), storeReference = params.get('store') || '';
   const base = storeReference ? '/api/store-portal/' + encodeURIComponent(storeReference) + '/neural/chat' : '/api/admin/vitriny-neural/chat';
-  const state = { token: '', status: null, conversations: [], selected: null, messages: [], attachments: [], busy: false, loading: false, epoch: 0, selectionEpoch: 0, timer: null, pollFailures: 0, activeConversation: null, activeRequest: null, pending: null, uncertain: false, retryAllowed: false };
+  const state = { token: '', status: null, conversations: [], selected: null, messages: [], attachments: [], busy: false, loading: false, historyUnverified: false, epoch: 0, selectionEpoch: 0, timer: null, pollFailures: 0, activeConversation: null, activeRequest: null, activeStatus: null, pending: null, uncertain: false, retryAllowed: false };
   const requests = new Set(), previewCache = new Map(), downloadUrls = new Set();
   const errorText = {
     attachment_type: 'Formato não aceito. Use PNG, JPEG, WebP, TXT, MD ou CSV. PDF e DOCX ainda não são suportados.',
@@ -65,7 +67,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
     } catch (error) { if (epoch !== state.epoch) throw failure('stale'); if (error?.name === 'AbortError') throw failure('timeout'); throw error; }
     finally { clearTimeout(timeout); requests.delete(controller); }
   }
-  const canSend = () => !!state.status?.enabled && (!storeReference || !!state.token) && !state.loading && !state.busy && !state.activeRequest && !state.uncertain;
+  const canSend = () => !!state.status?.enabled && (!storeReference || !!state.token) && !state.loading && !state.busy && !state.historyUnverified && !state.status?.queue?.requiresReview && !state.activeRequest && !state.uncertain;
   function controls() {
     $('send').disabled = !canSend() || !$('command').value.trim();
     $('attach').disabled = !canSend() || state.attachments.length >= 3;
@@ -73,7 +75,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
     $('send').textContent = state.busy ? '…' : '↑';
     $('command-form').setAttribute('aria-busy', String(state.busy));
     $('refresh').disabled = state.loading || state.busy || (!!storeReference && !state.token);
-    $('new-conversation').disabled = state.busy || state.uncertain || !!state.activeRequest;
+    $('new-conversation').disabled = state.busy || state.uncertain || state.historyUnverified || !!state.activeRequest || !!state.status?.queue?.requiresReview;
     $('connect').disabled = state.loading || state.busy;
     $('recover-request').disabled = state.busy;
     $('recovery').hidden = !state.uncertain;
@@ -82,6 +84,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
     $('retry-request').disabled = state.busy;
     $('cancel-request').hidden = !state.activeRequest;
     $('cancel-request').disabled = state.busy;
+    $('cancel-request').textContent = state.activeStatus === 'queued' ? 'Cancelar pedido' : 'Parar';
     for (const button of document.querySelectorAll('[data-example]')) button.disabled = state.busy || state.uncertain;
   }
   function setHistoryOpen(open, restoreFocus = false) {
@@ -95,6 +98,8 @@ export function mountNeuralWorkspace(environment = globalThis) {
     $('service-status').textContent = state.status ? (state.status.enabled ? (preparing ? 'Histórico conectado · respostas ainda indisponíveis' : 'Chat conectado') : 'Chat não habilitado') : (storeReference ? 'Conecte sua loja para conversar' : 'Disponibilidade não confirmada');
     $('mode-label').textContent = state.status?.enabled ? (preparing ? 'Em preparação' : 'Conectado') : 'Chat';
     $('capability-notice').hidden = !preparing;
+    $('queue-review-notice').textContent = state.status?.queue?.requiresReview ? 'Há um pedido interrompido aguardando conferência. Não reenvie para evitar duplicação. Novos envios estão pausados até a confirmação do estado anterior.' : '';
+    $('queue-review-notice').hidden = !state.status?.queue?.requiresReview;
     $('billing-status').textContent = state.status?.paidGenerationEnabled === true ? 'Consulte seu saldo e os limites de Créditos IA.' : 'Gerações pagas não estão ativas neste chat.';
     controls();
   }
@@ -141,9 +146,10 @@ export function mountNeuralWorkspace(environment = globalThis) {
     for (const message of state.messages) {
       const li = node('li', null, 'message ' + (message.role === 'user' ? 'user-message' : 'assistant-message'));
       li.append(node('p', message.role === 'user' ? 'Você' : 'Lia', 'message-label'));
-      li.append(node('p', message.text || (message.status === 'running' ? 'Preparando sua resposta…' : ''), 'message-content'));
-      if (message.status === 'running') li.setAttribute('aria-busy', 'true');
-      const labels = { running: 'Em andamento', unavailable: 'Recurso ainda indisponível · nenhuma geração realizada', failed: 'Não concluído', cancelled: 'Cancelado', interrupted: 'Interrompido · confira antes de pedir novamente' };
+      li.append(node('p', message.text || ({ queued: 'Pedido recebido. Aguardando sua vez na fila.', running: 'Preparando sua resposta…' })[message.status] || '', 'message-content'));
+      if (isChatActive(message.status)) li.setAttribute('aria-busy', 'true');
+      const queuePosition = message.queue && CHAT_QUEUE_LANES.includes(message.queue.lane) && Number.isSafeInteger(message.queue.position) && message.queue.position >= 1 ? message.queue.position : null;
+      const labels = { queued: 'Na fila' + (queuePosition === null ? '' : ' · posição ' + queuePosition), running: 'Em andamento', unavailable: 'Recurso ainda indisponível · nenhuma geração realizada', failed: 'Não concluído', cancelled: 'Cancelado', interrupted: 'Interrompido · confira antes de pedir novamente' };
       if (labels[message.status] && message.role !== 'user') li.append(node('p', labels[message.status], 'message-state'));
       if (message.attachments?.length) {
         const files = node('ul', null, 'message-attachments');
@@ -162,41 +168,79 @@ export function mountNeuralWorkspace(environment = globalThis) {
     }
     controls(); scrollLatest(forceScroll);
   }
-  function validMessages(data) {
-    if (!data?.conversation || typeof data.conversation.id !== 'string' || !Array.isArray(data.messages)) throw failure('invalidResponse');
-    return data.messages.filter(item => item && typeof item.id === 'string' && ['user', 'assistant'].includes(item.role) && MESSAGE_STATES.has(item.status));
+  function validStatus(data) {
+    if (!data || typeof data.enabled !== 'boolean') throw failure('invalidResponse');
+    if (data.queue !== undefined) { try { assertChatQueueStatus(data.queue); } catch { throw failure('invalidResponse'); } }
+    return data;
+  }
+  function validMessages(data, expectedConversationId) {
+    if (!data?.conversation || data.conversation.id !== expectedConversationId || !Array.isArray(data.messages)) throw failure('invalidResponse');
+    const ids = new Set();
+    for (const item of data.messages) {
+      if (!item || typeof item.id !== 'string' || !item.id || ids.has(item.id) || !['user', 'assistant'].includes(item.role) || !MESSAGE_STATES.has(item.status) || typeof item.text !== 'string') throw failure('invalidResponse');
+      if (isChatActive(item.status) && (item.role !== 'assistant' || typeof item.requestId !== 'string' || !item.requestId)) throw failure('invalidResponse');
+      if (item.attachments !== undefined && (!Array.isArray(item.attachments) || item.attachments.some(file => !file || typeof file.id !== 'string' || !file.id || typeof file.name !== 'string' || !['image', 'text'].includes(file.kind)))) throw failure('invalidResponse');
+      if (item.queue !== undefined && (!item.queue || !CHAT_QUEUE_LANES.includes(item.queue.lane) || !(item.queue.position === null || Number.isSafeInteger(item.queue.position) && item.queue.position >= 1))) throw failure('invalidResponse');
+      ids.add(item.id);
+    }
+    return data.messages;
   }
   function rememberConversation(conversation) {
     state.conversations = [conversation, ...state.conversations.filter(item => item.id !== conversation.id)];
   }
-  function updateActive(messages, conversationId) {
-    const running = messages.find(message => message.status === 'running' && typeof message.requestId === 'string');
-    if (running) { state.activeRequest = running.requestId; state.activeConversation = conversationId; }
-    else if (state.activeConversation === conversationId) { state.activeRequest = null; state.activeConversation = null; }
+  async function updateActive(messages, conversationId) {
+    // A partial or truncated history is not proof that a known request finished.
+    if (state.activeConversation === conversationId && state.activeRequest && !messages.some(message => message.role === 'assistant' && message.requestId === state.activeRequest)) {
+      const requestId = state.activeRequest;
+      const data = await api('/requests/' + encodeURIComponent(requestId));
+      if (state.activeRequest !== requestId || state.activeConversation !== conversationId) return;
+      const receipt = acceptReceipt(data.request, conversationId, requestId);
+      if (isChatActive(receipt.status)) return;
+    }
+    const active = messages.find(message => message.role === 'assistant' && isChatActive(message.status));
+    if (active) { state.activeRequest = active.requestId; state.activeConversation = conversationId; state.activeStatus = active.status; }
+    else if (state.activeConversation === conversationId) { state.activeRequest = null; state.activeConversation = null; state.activeStatus = null; }
+  }
+  function acceptReceipt(value, expectedConversationId, expectedRequestId) {
+    let receipt;
+    try { receipt = assertChatReceipt(value); } catch { throw failure('invalidResponse'); }
+    if (expectedConversationId && receipt.conversationId !== expectedConversationId) throw failure('invalidResponse');
+    if (expectedRequestId && receipt.requestId !== expectedRequestId) throw failure('invalidResponse');
+    if (isChatActive(receipt.status)) { state.activeRequest = receipt.requestId; state.activeConversation = receipt.conversationId; state.activeStatus = receipt.status; }
+    else if (state.activeConversation === receipt.conversationId) { state.activeRequest = null; state.activeConversation = null; state.activeStatus = null; }
+    schedulePoll();
+    return receipt;
   }
   function schedulePoll() {
     clearTimeout(state.timer);
     if (state.activeConversation) state.timer = setTimeout(poll, Math.min(10000, 2000 * (state.pollFailures + 1)));
   }
   async function poll() {
-    const id = state.activeConversation; if (!id) return;
+    const id = state.activeConversation, requestId = state.activeRequest, epoch = state.epoch; if (!id) return;
     try {
-      const data = await api('/conversations/' + encodeURIComponent(id)), messages = validMessages(data);
-      const before = state.activeRequest; rememberConversation(data.conversation); updateActive(messages, id);
-      if (state.selected === id) { state.messages = messages; renderMessages(); }
+      const [data, status] = await Promise.all([api('/conversations/' + encodeURIComponent(id)), api('/status')]);
+      const messages = validMessages(data, id), nextStatus = validStatus(status);
+      if (state.activeRequest !== requestId || state.activeConversation !== id) return;
+      const before = state.activeRequest, beforeStatus = state.activeStatus; await updateActive(messages, id);
+      state.status = nextStatus; rememberConversation(data.conversation); renderStatus();
+      if (state.selected === id) { state.messages = messages; state.historyUnverified = false; renderMessages(); }
       renderHistory(); state.pollFailures = 0;
       if (before && !state.activeRequest) announce('O estado do pedido foi atualizado. Confira a resposta na conversa.');
+      else if (beforeStatus !== state.activeStatus && state.activeStatus === 'running') announce('Seu pedido saiu da fila. A resposta está sendo preparada.');
     } catch (error) { if (error?.key !== 'stale') { state.pollFailures += 1; showError(error); } }
-    controls(); schedulePoll();
+    if (epoch === state.epoch) { controls(); schedulePoll(); }
   }
   async function selectConversation(id, forceScroll = true) {
     const selectionEpoch = ++state.selectionEpoch;
-    clearError(); state.selected = id; state.messages = []; renderHistory(); renderMessages();
+    clearError(); state.selected = id; state.messages = []; state.historyUnverified = true; renderHistory(); renderMessages();
     try {
-      const data = await api('/conversations/' + encodeURIComponent(id)), messages = validMessages(data);
+      const [data, status] = await Promise.all([api('/conversations/' + encodeURIComponent(id)), api('/status')]);
+      const messages = validMessages(data, id), nextStatus = validStatus(status);
       if (selectionEpoch !== state.selectionEpoch) return;
-      rememberConversation(data.conversation); state.messages = messages; updateActive(messages, id);
-      renderHistory(); renderMessages(forceScroll); schedulePoll();
+      await updateActive(messages, id);
+      if (selectionEpoch !== state.selectionEpoch) return;
+      state.status = nextStatus; rememberConversation(data.conversation); state.messages = messages; state.historyUnverified = false;
+      renderStatus(); renderHistory(); renderMessages(forceScroll); schedulePoll();
     } catch (error) { if (selectionEpoch === state.selectionEpoch) showError(error); }
   }
   async function loadConversations(initial = false) {
@@ -204,7 +248,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
     const epoch = state.epoch; state.loading = true; clearError(); controls();
     try {
       const [status, data] = await Promise.all([api('/status'), api('/conversations')]);
-      state.status = status; state.conversations = (Array.isArray(data.items) ? data.items : []).filter(item => typeof item.id === 'string');
+      state.status = validStatus(status); state.conversations = (Array.isArray(data.items) ? data.items : []).filter(item => typeof item.id === 'string');
       renderStatus(); renderHistory();
       if (initial && state.conversations[0]) await selectConversation(state.conversations[0].id);
       else if (state.selected) await selectConversation(state.selected, false);
@@ -255,10 +299,10 @@ export function mountNeuralWorkspace(environment = globalThis) {
     state.busy = true; state.retryAllowed = false; clearError(); controls();
     try {
       const data = await api('/requests/by-key/' + encodeURIComponent(state.pending.idempotencyKey));
-      if (!data.request || typeof data.request.conversationId !== 'string') throw failure('invalidResponse');
+      const receipt = acceptReceipt(data.request, state.pending.conversationId);
       state.uncertain = false; state.pending = null; $('command').value = ''; clearAttachments();
-      await selectConversation(data.request.conversationId);
-      announce('Envio encontrado. O pedido não foi repetido.');
+      await selectConversation(receipt.conversationId);
+      announce(receipt.status === 'queued' ? 'Envio encontrado. Seu pedido está na fila e não foi repetido.' : 'Envio encontrado. O pedido não foi repetido.');
     } catch (error) { if (epoch === state.epoch) { state.retryAllowed = error?.status === 404; showError(error); } }
     finally { if (epoch === state.epoch) { state.busy = false; controls(); renderAttachments(); } }
   }
@@ -270,11 +314,10 @@ export function mountNeuralWorkspace(environment = globalThis) {
     state.busy = true; state.retryAllowed = false; clearError(); controls();
     try {
       const data = await api('/messages', 'POST', pending);
-      if (typeof data.conversationId !== 'string') throw failure('invalidResponse');
+      const receipt = acceptReceipt(data, pending.conversationId);
       state.pending = null; state.uncertain = false; $('command').value = ''; clearAttachments(); resizeComposer();
-      if (data.status === 'running') { state.activeRequest = data.requestId; state.activeConversation = data.conversationId; }
-      await selectConversation(data.conversationId);
-      announce('O mesmo envio foi confirmado. Acompanhe o registro na conversa.');
+      await selectConversation(receipt.conversationId);
+      announce(receipt.status === 'queued' ? 'O mesmo envio foi confirmado e está na fila.' : 'O mesmo envio foi confirmado. Acompanhe o registro na conversa.');
     } catch (error) {
       if (epoch === state.epoch) { state.uncertain = true; showError(error); announce('Recebimento ainda não confirmado. Confira o registro antes de tentar novamente.'); }
     } finally { if (epoch === state.epoch) { state.busy = false; controls(); renderAttachments(); } }
@@ -298,11 +341,10 @@ export function mountNeuralWorkspace(environment = globalThis) {
       state.retryAllowed = false;
       submitted = true;
       const data = await api('/messages', 'POST', state.pending);
-      if (typeof data.conversationId !== 'string') throw failure('invalidResponse');
+      const receipt = acceptReceipt(data, state.pending.conversationId);
       state.pending = null; state.uncertain = false; $('command').value = ''; clearAttachments(); resizeComposer();
-      if (data.status === 'running') { state.activeRequest = data.requestId; state.activeConversation = data.conversationId; }
-      await selectConversation(data.conversationId);
-      announce('Mensagem recebida. Acompanhe a resposta nesta conversa.');
+      await selectConversation(receipt.conversationId);
+      announce(receipt.status === 'queued' ? 'Mensagem recebida. Seu pedido está na fila.' : 'Mensagem recebida. Acompanhe a resposta nesta conversa.');
     } catch (error) {
       if (epoch !== state.epoch) return;
       if (submitted && state.pending && (!error.status || error.status >= 500)) { state.uncertain = true; announce('Recebimento não confirmado. Confira o envio sem reenviar.'); }
@@ -312,16 +354,19 @@ export function mountNeuralWorkspace(environment = globalThis) {
   }
   async function cancelRequest() {
     if (!state.activeRequest || state.busy) return;
-    const requestId = state.activeRequest; state.busy = true; clearError(); controls();
+    const requestId = state.activeRequest, conversationId = state.activeConversation, epoch = state.epoch; state.busy = true; clearError(); controls();
     try {
-      await api('/requests/' + encodeURIComponent(requestId) + '/cancel', 'POST', {});
-      announce('Cancelamento solicitado. Acompanhando o estado confirmado.'); await poll();
+      const data = await api('/requests/' + encodeURIComponent(requestId) + '/cancel', 'POST', {});
+      const receipt = acceptReceipt(data, conversationId, requestId);
+      await selectConversation(conversationId, false);
+      if (epoch !== state.epoch) return;
+      announce(receipt.status === 'cancelled' ? 'Cancelamento confirmado.' : 'Pedido de cancelamento registrado. Confira o estado na conversa.');
     } catch (error) { showError(error); }
-    finally { state.busy = false; controls(); }
+    finally { if (epoch === state.epoch) { state.busy = false; controls(); } }
   }
   function resizeComposer() { const textarea = $('command'); textarea.style.height = 'auto'; textarea.style.height = Math.min(170, Math.max(57, textarea.scrollHeight)) + 'px'; controls(); }
   function newConversation() {
-    if (state.busy || state.uncertain || state.activeRequest) return;
+    if (state.busy || state.uncertain || state.historyUnverified || state.activeRequest || state.status?.queue?.requiresReview) return;
     state.selectionEpoch += 1; state.selected = null; state.messages = []; state.pending = null;
     $('command').value = ''; clearAttachments(); clearError(); renderHistory(); renderMessages(); resizeComposer(); setHistoryOpen(false); $('command').focus();
     announce('Nova conversa. As anteriores continuam no histórico.');
@@ -331,7 +376,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
     for (const url of previewCache.values()) if (url) URL.revokeObjectURL(url);
     for (const url of downloadUrls) URL.revokeObjectURL(url); previewCache.clear(); downloadUrls.clear();
     clearAttachments();
-    Object.assign(state, { token: '', status: null, conversations: [], messages: [], selected: null, activeRequest: null, activeConversation: null, pending: null, uncertain: false, retryAllowed: false, busy: false, loading: false });
+    Object.assign(state, { token: '', status: null, conversations: [], messages: [], selected: null, activeRequest: null, activeConversation: null, activeStatus: null, pending: null, uncertain: false, retryAllowed: false, busy: false, loading: false, historyUnverified: false });
     $('access-token').value = ''; $('command').value = ''; $('disconnect').hidden = true;
     $('access-status').textContent = 'Acesso esquecido nesta página. Mensagens já enviadas permanecem no histórico privado.';
     clearError(); renderStatus(); renderHistory(); renderMessages(); renderAttachments();

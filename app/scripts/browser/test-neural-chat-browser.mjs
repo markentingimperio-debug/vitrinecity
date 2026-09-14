@@ -3,13 +3,21 @@ import {createServer} from 'node:http';
 import {readFile, mkdir} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
+import {CHAT_MESSAGE_STATES,isChatActive,assertChatReceipt,assertChatQueueStatus} from '../../public/neural-chat-contract.js';
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(process.env.PLAYWRIGHT_MODULE).href:'playwright');
 const root=path.resolve(fileURLToPath(new URL('../../public/',import.meta.url)));
 const conversation={id:'11111111-1111-4111-8111-111111111111',title:'Minha conversa'};
 const files=new Map(),messages=[],requests=new Map(),external=[],errors=[],results=[];
-let sends=0,uploads=0,uncertain=false,rejectBeforeReceipt=0;
+let sends=0,uploads=0,uncertain=false,rejectBeforeReceipt=0,deferNext=false,lastQueuedId=null,cancellations=0,historyFault=null,receiptReads=0;
 const sendAttempts=[];
-const status={ok:true,enabled:true,mode:'local',paidGenerationEnabled:false,capabilities:{text:true,image:false,video:false},attachments:{maxPerMessage:3,imageMaxBytes:2097152,textMaxBytes:65536}};
+const receipt=(requestId,messageId,state)=>assertChatReceipt({id:requestId,requestId,conversationId:conversation.id,messageId,status:state,createdAt:1,updatedAt:1,...(state==='queued'?{queue:{lane:'chat',position:null}}:{})});
+function updateRequest(requestId,state){
+  assert.ok(CHAT_MESSAGE_STATES.includes(state));
+  for(const [key,item] of requests)if(item.requestId===requestId)requests.set(key,receipt(requestId,item.messageId,state));
+  const assistant=messages.find(message=>message.requestId===requestId&&message.role==='assistant');
+  if(assistant){assistant.status=state;assistant.text=state==='completed'?'Resposta da fila concluída.':state==='cancelled'?'Pedido cancelado antes de iniciar.':'';if(state==='queued')assistant.queue={lane:'chat',position:null};else delete assistant.queue;}
+}
+const status={ok:true,enabled:true,mode:'local',paidGenerationEnabled:false,capabilities:{text:true,image:false,video:false},attachments:{maxPerMessage:3,imageMaxBytes:2097152,textMaxBytes:65536},queue:assertChatQueueStatus({enabled:true,pending:0,running:0,requiresReview:false,unresolved:0})};
 const server=createServer(async(req,res)=>{
   try{
     const url=new URL(req.url,'http://localhost');res.setHeader('Cache-Control','no-store');
@@ -20,7 +28,10 @@ const server=createServer(async(req,res)=>{
       if(req.method==='POST'){assert.equal(req.headers['x-neural-request'],'1');const chunks=[];for await(const chunk of req)chunks.push(chunk);body=JSON.parse(Buffer.concat(chunks).toString());}
       if(route==='/status')return send(status);
       if(route==='/conversations')return send({ok:true,items:messages.length?[conversation]:[]});
-      if(route==='/conversations/'+conversation.id)return send({ok:true,conversation,messages});
+      if(route==='/conversations/'+conversation.id){
+        const output=historyFault==='omit'?messages.filter(message=>message.role!=='assistant'||message.requestId!==lastQueuedId):messages.map(message=>historyFault==='unknown'&&message.role==='assistant'&&message.requestId===lastQueuedId?{...message,status:'unrecognized'}:message);
+        return send({ok:true,conversation,messages:output});
+      }
       if(route==='/attachments'&&req.method==='POST'){
         const id='22222222-2222-4222-8222-'+String(++uploads).padStart(12,'0'),data=Buffer.from(body.dataBase64,'base64');
         const attachment={id,name:body.name,mimeType:body.mimeType,kind:body.mimeType.startsWith('image/')?'image':'text',bytes:data.length,textAvailable:body.mimeType.startsWith('text/')};
@@ -37,12 +48,20 @@ const server=createServer(async(req,res)=>{
         assert.ok(!('model'in body)&&!('area'in body),'UI does not request a model or area');
         messages.push({id:'user-'+sends,role:'user',text:body.message,status:'completed',attachments:body.attachmentIds.map(id=>files.get(id).attachment),requestId});
         const unavailable=/video|vídeo|imagem gerada/i.test(body.message);
-        messages.push({id:'assistant-'+sends,role:'assistant',text:unavailable?'A geração de vídeo ainda não está disponível neste chat. Sua imagem foi anexada, mas não houve geração.':'Recebi seu pedido. <img src=x onerror=alert(1)> Este texto permanece inerte.',status:unavailable?'unavailable':'completed',attachments:[],requestId});
-        requests.set(body.idempotencyKey,{id:requestId,conversationId:conversation.id,status:'completed'});
+        const messageState=unavailable?'unavailable':deferNext?'queued':'completed';deferNext=false;
+        const accepted=receipt(requestId,'user-'+sends,messageState);
+        messages.push({id:'assistant-'+sends,role:'assistant',text:unavailable?'A geração de vídeo ainda não está disponível neste chat. Sua imagem foi anexada, mas não houve geração.':isChatActive(messageState)?'':'Recebi seu pedido. <img src=x onerror=alert(1)> Este texto permanece inerte.',status:messageState,attachments:[],requestId,...(accepted.queue?{queue:accepted.queue}:{})});
+        requests.set(body.idempotencyKey,accepted);
+        if(messageState==='queued')lastQueuedId=requestId;
         if(uncertain){uncertain=false;res.writeHead(200,{'Content-Type':'application/json'});res.end('{');return;}
-        return send({ok:true,conversationId:conversation.id,requestId,messageId:'user-'+sends,status:unavailable?'unavailable':'completed'},202);
+        return send({ok:true,...accepted},202);
+      }
+      if(/^\/requests\/[^/]+\/cancel$/.test(route)&&req.method==='POST'){
+        const requestId=route.split('/')[2],item=[...requests.values()].find(candidate=>candidate.requestId===requestId);
+        if(!item)return send({ok:false},404);cancellations++;updateRequest(requestId,'cancelled');return send({ok:true,...receipt(requestId,item.messageId,'cancelled')});
       }
       if(route.startsWith('/requests/by-key/')){const request=requests.get(decodeURIComponent(route.split('/').pop()));return request?send({ok:true,request}):send({ok:false},404);}
+      if(/^\/requests\/[^/]+$/.test(route)&&req.method==='GET'){receiptReads++;const request=[...requests.values()].find(item=>item.requestId===route.split('/').pop());return request?send({ok:true,request}):send({ok:false},404);}
       return send({ok:false},404);
     }
     if(url.pathname==='/favicon.ico'){res.writeHead(204);res.end();return;}
@@ -126,7 +145,64 @@ try{
   assert.equal(sendAttempts.length,attemptsBefore+3);
   assert.equal(sendAttempts.at(-1),sendAttempts[attemptsBefore]);assert.equal(uploads,uploadsAfterFirst);
   assert.equal(await page.locator('#command').inputValue(),'');assert.equal(await page.locator('#attachment-previews li').count(),0);
+  deferNext=true;
+  await page.locator('#command').fill('Prepare uma resposta quando houver capacidade');await page.locator('#send').click();
+  await page.waitForFunction(()=>document.querySelector('#messages>li:last-child .message-state')?.textContent==='Na fila');
+  assert.equal(await page.locator('#cancel-request').innerText(),'Cancelar pedido');
+  assert.equal(await page.locator('#new-conversation').isDisabled(),true);
+  assert.equal(await page.locator('#messages>li:last-child').getAttribute('aria-busy'),'true');
+  assert.doesNotMatch(await page.locator('#messages>li:last-child').innerText(),/\d+\s*(%|segundos|minutos)/i,'queue cannot invent progress or ETA');
+  const queuedSends=sendAttempts.length;
+  await page.reload();await page.waitForFunction(()=>document.querySelector('#messages>li:last-child .message-state')?.textContent==='Na fila');
+  assert.equal(sendAttempts.length,queuedSends,'reload of queued request never sends');
+  assert.equal(await page.locator('#cancel-request').isVisible(),true);
+  if(process.env.NEURAL_QA_OUTPUT)await page.screenshot({path:path.join(process.env.NEURAL_QA_OUTPUT,'chat-queued-mobile.png')});
+  historyFault='unknown';
+  await page.locator('#error').waitFor({state:'visible'});
+  await page.locator('#command').fill('Não enviar enquanto o estado não for confirmado');
+  assert.equal(await page.locator('#send').isDisabled(),true,'invalid polling state cannot unlock send');
+  assert.equal(await page.locator('#cancel-request').isVisible(),true);
+  assert.equal(sendAttempts.length,queuedSends,'invalid polling cannot send automatically');
+  historyFault='omit';
+  await page.waitForResponse(response=>response.url().endsWith('/requests/'+lastQueuedId)&&response.status()===200);
+  await page.waitForFunction(()=>document.getElementById('send').disabled&&!document.getElementById('cancel-request').hidden);
+  assert.ok(receiptReads>=1,'partial history is checked using request receipt');
+  assert.equal(sendAttempts.length,queuedSends,'partial history cannot send automatically');
+  historyFault=null;
+  updateRequest(lastQueuedId,'running');
+  await page.waitForFunction(()=>document.querySelector('#messages>li:last-child .message-state')?.textContent==='Em andamento');
+  assert.equal(await page.locator('#cancel-request').innerText(),'Parar');
+  updateRequest(lastQueuedId,'completed');
+  await page.waitForFunction(()=>document.querySelector('#messages>li:last-child .message-content')?.textContent==='Resposta da fila concluída.');
+  assert.equal(await page.locator('#cancel-request').isVisible(),false);
+  assert.equal(sendAttempts.length,queuedSends,'queue lifecycle only reads status');
+  deferNext=true;uncertain=true;
+  await page.locator('#command').fill('Outro pedido aguardando na fila');await page.locator('#send').click();await page.locator('#recovery').waitFor({state:'visible'});
+  const queueRecoverySends=sendAttempts.length;
+  await page.locator('#recover-request').click();await page.locator('#recovery').waitFor({state:'hidden'});
+  await page.waitForFunction(()=>document.querySelector('#messages>li:last-child .message-state')?.textContent==='Na fila');
+  assert.equal(sendAttempts.length,queueRecoverySends,'queued receipt recovered with GET only');
+  assert.equal(await page.locator('#cancel-request').innerText(),'Cancelar pedido');
+  await page.locator('#cancel-request').click();
+  await page.waitForFunction(()=>document.querySelector('#messages>li:last-child .message-state')?.textContent==='Cancelado');
+  assert.equal(cancellations,1);assert.equal(sendAttempts.length,queueRecoverySends);
+  assert.equal(await page.locator('#cancel-request').isVisible(),false);
   if(process.env.NEURAL_QA_OUTPUT)await page.screenshot({path:path.join(process.env.NEURAL_QA_OUTPUT,'chat-conversation-mobile.png')});
+  deferNext=true;
+  await page.locator('#command').fill('Conferir interrupção sem repetir');await page.locator('#send').click();
+  await page.waitForFunction(()=>document.querySelector('#messages>li:last-child .message-state')?.textContent==='Na fila');
+  const beforeReview=sendAttempts.length;
+  updateRequest(lastQueuedId,'interrupted');status.queue=assertChatQueueStatus({enabled:true,pending:0,running:0,requiresReview:true,unresolved:1});
+  await page.locator('#queue-review-notice').waitFor({state:'visible'});
+  assert.match(await page.locator('#queue-review-notice').innerText(),/Não reenvie para evitar duplicação/);
+  assert.equal(await page.locator('#cancel-request').isVisible(),false,'review hold is not running');
+  await page.locator('#command').fill('Rascunho preservado durante conferência');assert.equal(await page.locator('#send').isDisabled(),true);
+  assert.equal(sendAttempts.length,beforeReview);
+  if(process.env.NEURAL_QA_OUTPUT)await page.screenshot({path:path.join(process.env.NEURAL_QA_OUTPUT,'chat-review-mobile.png')});
+  await page.reload();await page.locator('#queue-review-notice').waitFor({state:'visible'});
+  await page.locator('#command').fill('Não repetir');assert.equal(await page.locator('#send').isDisabled(),true);
+  assert.equal(sendAttempts.length,beforeReview,'review reload is GET only');
+  status.queue=assertChatQueueStatus({enabled:true,pending:0,running:0,requiresReview:false,unresolved:0});
   status.mode='shadow';status.capabilities.text=false;
   const beforeShadow=sends;
   await page.reload();
@@ -139,5 +215,5 @@ try{
   assert.equal(sends,beforeShadow,'shadow status check cannot submit requests');
   if(process.env.NEURAL_QA_OUTPUT)await page.screenshot({path:path.join(process.env.NEURAL_QA_OUTPUT,'chat-preparing-mobile.png')});
   assert.deepEqual(external,[]);assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({ok:true,viewports:results,continuousConversation:true,historyRecoveredWithoutPost:true,attachmentsPreviewRemove:true,attachmentUploads:uploads,unsupportedPdfHonest:true,videoUnavailableHonest:true,shadowReadinessHonest:true,shadowStorageAvailable:true,timeoutRecoveredWithGet:true,explicitSamePayloadRetryAfter404:true,noAttachmentReupload:true,secondLossHeld:true,imeSafe:true,externalRequests:0,paidCalls:0}));
+  console.log(JSON.stringify({ok:true,viewports:results,continuousConversation:true,historyRecoveredWithoutPost:true,attachmentsPreviewRemove:true,attachmentUploads:uploads,unsupportedPdfHonest:true,videoUnavailableHonest:true,shadowReadinessHonest:true,shadowStorageAvailable:true,timeoutRecoveredWithGet:true,explicitSamePayloadRetryAfter404:true,noAttachmentReupload:true,secondLossHeld:true,queuedRunningCompleted:true,queuedReloadGetOnly:true,queuedRecoveryGetOnly:true,queuedCancellation:true,invalidHistoryHeld:true,missingAssistantReceiptChecked:true,reviewStatusVisible:true,reviewReloadGetOnly:true,canonicalReceipts:true,imeSafe:true,externalRequests:0,paidCalls:0}));
 }finally{if(browser)await browser.close();await new Promise(resolve=>server.close(resolve));}

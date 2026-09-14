@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { mountNeuralWorkspace, validateNeuralAttachment } from '../public/neural-workspace.js';
+import { CHAT_MESSAGE_STATES, CHAT_ACTIVE_STATES, isChatActive, assertChatReceipt, assertChatQueueStatus } from '../public/neural-chat-contract.js';
+const receipt = (overrides={}) => {
+  const requestId=overrides.requestId||'request-fixture';
+  return assertChatReceipt({id:requestId,requestId,conversationId:'conversation-1',messageId:'message-fixture',status:'completed',createdAt:1,updatedAt:1,...overrides});
+};
 const html = readFileSync(new URL('../public/neural-workspace.html', import.meta.url), 'utf8');
 const js = readFileSync(new URL('../public/neural-workspace.js', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../public/neural-workspace.css', import.meta.url), 'utf8');
@@ -22,6 +27,11 @@ assert.match(js, /credentials: 'same-origin'/);
 assert.match(js, /cache: 'no-store'/);
 assert.match(js, /isComposing/);
 assert.match(js, /keyCode !== 229/);
+assert.match(js, /from '\.\/neural-chat-contract\.js'/);
+assert.match(js, /new Set\(CHAT_MESSAGE_STATES\)/);
+assert.ok(CHAT_MESSAGE_STATES.includes('queued'));
+assert.ok(CHAT_ACTIVE_STATES.every(isChatActive));
+assert.equal(isChatActive('completed'),false);
 assert.match(css, /@media\(max-width:700px\)/);
 assert.match(css, /focus-visible/);
 for (const [, id] of js.matchAll(/\$\('([^']+)'\)/g)) assert.ok(html.includes('id="' + id + '"'), 'Missing selector ' + id);
@@ -64,7 +74,7 @@ const app=harness({respond:async(url,options)=>{
   if(url.endsWith('/status'))return {data:status};
   if(url.endsWith('/conversations'))return {data:{ok:true,items:currentMessages.length?[conversation]:[]}};
   if(url.endsWith('/attachments')&&options.method==='POST')return {data:{ok:true,attachment:{id:'attachment-1',name:'notes.txt',kind:'text',mimeType:'text/plain',bytes:5}}};
-  if(url.endsWith('/messages')){const body=JSON.parse(options.body);posts++;received.push(body);currentMessages.push({id:'u'+posts,role:'user',text:body.message,status:'completed',attachments:[]},{id:'a'+posts,role:'assistant',text:malicious,status:'completed',attachments:[]});return {data:{ok:true,conversationId:conversation.id,requestId:'request-'+posts,status:'completed'}};}
+  if(url.endsWith('/messages')){const body=JSON.parse(options.body);posts++;received.push(body);currentMessages.push({id:'u'+posts,role:'user',text:body.message,status:'completed',attachments:[]},{id:'a'+posts,role:'assistant',text:malicious,status:'completed',attachments:[]});return {data:{ok:true,...receipt({conversationId:conversation.id,requestId:'request-'+posts,messageId:'u'+posts})}};}
   if(url.endsWith('/conversations/'+conversation.id))return {data:{ok:true,conversation,messages:currentMessages}};
   throw Error('Unexpected '+url);
 }});
@@ -106,7 +116,7 @@ const uncertain=harness({respond:async(url,options)=>{
   if(url.endsWith('/status'))return {data:status};
   if(url.endsWith('/conversations'))return {data:{ok:true,items:[]}};
   if(url.endsWith('/messages')){uncertainPosts++;throw Error('Network unavailable');}
-  if(url.includes('/requests/by-key/'))return found?{data:{ok:true,request:{conversationId:'c-found'}}}:{status:404};
+  if(url.includes('/requests/by-key/'))return found?{data:{ok:true,request:receipt({conversationId:'c-found'})}}:{status:404};
   if(url.endsWith('/conversations/c-found'))return {data:{ok:true,conversation:{id:'c-found',title:'Recovered'},messages:[{id:'m-found',role:'assistant',text:'Recebido',status:'completed'}]}};
   throw Error('unexpected '+url);
 }});
@@ -131,7 +141,7 @@ const explicitRetry=harness({respond:async(url,options)=>{
   if(url.endsWith('/messages')){
     retryPosts++;retryPayloads.push(options.body);
     if(retryPosts<=2)throw Error('Response lost before receipt confirmation');
-    return {data:{ok:true,conversationId:'c-original',requestId:'same-receipt',status:'completed'}};
+    return {data:{ok:true,...receipt({conversationId:'c-original',requestId:'same-receipt'})}};
   }
   throw Error('unexpected retry request '+url);
 }});
@@ -189,4 +199,162 @@ const reopened=harness({respond:async(url,options)=>{
   return url.endsWith('/status')?{data:status}:url.endsWith('/conversations')?{data:{ok:true,items:[conversation]}}:{data:{ok:true,conversation,messages:[{id:'a-running',role:'assistant',text:'',status:'running',requestId:'r-existing'}]}};
 }});
 await settled();assert.equal(reopened.elements.get('send').disabled,true);assert.ok([...reopened.timers.values()].some(t=>t.ms===2000));
-console.log('Lia chat UI: continuous conversations, attachment validation/context, scoped auth, inert output, IME, recovery-only GET, no duplicate POST and restored history passed.');
+let queueState='queued';
+const queueReceipt=()=>receipt({requestId:'request-queued',status:queueState,...(queueState==='queued'?{queue:{lane:'chat',position:2}}:{})});
+const queueMessages=()=>[{id:'message-user-queued',role:'user',text:'Pedido na fila',status:'completed',requestId:'request-queued'}, {id:'message-assistant-queued',role:'assistant',text:queueState==='completed'?'Resposta concluída.':'',status:queueState,requestId:'request-queued',...(queueState==='queued'?{queue:{lane:'chat',position:2}}:{})}];
+const queued=harness({respond:async(url,options)=>{
+  if(url.endsWith('/status'))return {data:status};
+  if(url.endsWith('/conversations'))return {data:{ok:true,items:[conversation]}};
+  if(url.endsWith('/conversations/conversation-1'))return {data:{ok:true,conversation,messages:options.method==='GET'?queueMessages():[]}};
+  if(url.endsWith('/messages'))return {data:{ok:true,...queueReceipt()}};
+  throw Error('Unexpected queue request '+url);
+}});
+await settled();
+assert.equal(queued.elements.get('send').disabled,true,'reopening queued work blocks a duplicate send');
+assert.equal(queued.elements.get('new-conversation').disabled,true);
+assert.equal(queued.elements.get('cancel-request').hidden,false);
+assert.equal(queued.elements.get('cancel-request').textContent,'Cancelar pedido');
+assert.equal(queued.elements.get('messages').children[1].attributes['aria-busy'],'true');
+assert.equal(queued.elements.get('messages').children[1].children.at(-1).textContent,'Na fila · posição 2');
+assert.equal(queued.calls.filter(call=>call.options.method==='POST').length,0,'recovered queue only issues GET');
+await queued.elements.get('refresh').click();await settled();
+assert.equal(queued.calls.filter(call=>call.options.method==='POST').length,0,'refreshing queued work does not dispatch');
+queueState='running';await [...queued.timers.values()].find(timer=>timer.ms===2000).f();
+assert.equal(queued.elements.get('messages').children[1].children.at(-1).textContent,'Em andamento');
+assert.equal(queued.elements.get('cancel-request').textContent,'Parar');
+assert.match(queued.elements.get('announcement').textContent,/saiu da fila/);
+queueState='completed';queued.elements.get('command').value='Próximo pedido';await [...queued.timers.values()].find(timer=>timer.ms===2000).f();
+assert.equal(queued.elements.get('cancel-request').hidden,true);
+assert.equal(queued.elements.get('send').disabled,false);
+assert.equal(queued.elements.get('messages').children[1].children[1].textContent,'Resposta concluída.');
+assert.ok(![...queued.timers.values()].some(timer=>timer.ms===2000),'terminal state stops polling');
+queueState='queued';
+const queuedCancel=harness({respond:async(url,options)=>{
+  if(url.endsWith('/status'))return {data:status};
+  if(url.endsWith('/conversations'))return {data:{ok:true,items:[conversation]}};
+  if(url.endsWith('/conversations/conversation-1'))return {data:{ok:true,conversation,messages:queueMessages()}};
+  if(url.endsWith('/requests/request-queued/cancel')){assert.equal(options.body,'{}');queueState='cancelled';return {data:{ok:true,...queueReceipt()}};}
+  throw Error('Unexpected queued cancellation '+url);
+}});
+await settled();await queuedCancel.elements.get('cancel-request').click();
+assert.equal(queuedCancel.calls.filter(call=>call.options.method==='POST').length,1);
+assert.equal(queuedCancel.elements.get('cancel-request').hidden,true);
+assert.equal(queuedCancel.elements.get('messages').children[1].children.at(-1).textContent,'Cancelado');
+assert.equal(queuedCancel.elements.get('announcement').textContent,'Cancelamento confirmado.');
+// Even if conversation readback fails, a valid queued receipt must remain active
+// and polled; a malformed receipt must never discard the pending command.
+for(const mode of ['post','recovery','retry']){
+  let sent=0,foundQueued=false;
+  const pendingQueue=harness({respond:async(url)=>{
+    if(url.endsWith('/status'))return {data:status};
+    if(url.endsWith('/conversations'))return {data:{ok:true,items:[]}};
+    if(url.endsWith('/messages')){sent++;if(mode!=='post'&&sent===1)throw Error('lost reply');return {data:{ok:true,...receipt({status:'queued',requestId:'receipt-queued',queue:{lane:'chat',position:null}})}};}
+    if(url.includes('/requests/by-key/'))return mode==='retry'&&!foundQueued?{status:404}:{data:{ok:true,request:receipt({status:'queued',requestId:'receipt-queued'})}};
+    if(url.endsWith('/conversations/conversation-1'))return {status:503};
+    throw Error('Unexpected receipt '+url);
+  }});
+  await settled();pendingQueue.elements.get('command').value='Pedido durável';await pendingQueue.submit();
+  if(mode!=='post'){await pendingQueue.elements.get('recover-request').click();if(mode==='retry'){foundQueued=true;await pendingQueue.elements.get('retry-request').click();}}
+  assert.equal(pendingQueue.elements.get('cancel-request').hidden,false,mode+' receipt keeps queued work active');
+  assert.equal(pendingQueue.elements.get('send').disabled,true);
+  assert.ok([...pendingQueue.timers.values()].some(timer=>timer.ms===2000),mode+' polls even if first history read fails');
+  assert.equal(sent,mode==='retry'?2:1);
+}
+const invalidReceipt=harness({respond:async url=>url.endsWith('/status')?{data:status}:url.endsWith('/conversations')?{data:{ok:true,items:[]}}:url.endsWith('/messages')?{data:{ok:true,conversationId:'conversation-1',requestId:'incomplete',status:'queued'}}:{data:{ok:true,request:{conversationId:'conversation-1',status:'queued'}}}});
+await settled();invalidReceipt.elements.get('command').value='Preserve o pedido';await invalidReceipt.submit();
+assert.equal(invalidReceipt.elements.get('recovery').hidden,false);
+assert.equal(invalidReceipt.elements.get('command').value,'Preserve o pedido');
+await invalidReceipt.elements.get('recover-request').click();
+assert.equal(invalidReceipt.elements.get('recovery').hidden,false,'invalid recovery receipt cannot release uncertainty');
+assert.equal(invalidReceipt.calls.filter(call=>call.options.method==='POST').length,1);
+// Unknown message states are not silently omitted: an invalid history must not
+// release a request or make another send possible, including after reopening.
+for (const scenario of ['unknown-state', 'duplicate-id', 'missing-request', 'wrong-conversation']) {
+  let corrupt=false;
+  const guarded=harness({respond:async url=>{
+    if(url.endsWith('/status'))return {data:status};
+    if(url.endsWith('/conversations'))return {data:{ok:true,items:[conversation]}};
+    const message={id:'a-guarded',role:'assistant',text:'',status:'queued',requestId:'r-guarded'};
+    if(corrupt&&scenario==='unknown-state')message.status='maybe-finished';
+    if(corrupt&&scenario==='missing-request')delete message.requestId;
+    return {data:{ok:true,conversation:corrupt&&scenario==='wrong-conversation'?{id:'someone-else'}:conversation,messages:corrupt&&scenario==='duplicate-id'?[message,message]:[message]}};
+  }});
+  await settled();guarded.elements.get('command').value='Não duplicar';corrupt=true;
+  await [...guarded.timers.values()].find(timer=>timer.ms===2000).f();
+  assert.equal(guarded.elements.get('send').disabled,true,scenario+' cannot unlock a known request');
+  assert.equal(guarded.elements.get('cancel-request').hidden,false);
+  assert.match(guarded.elements.get('error').textContent,/confirmar a resposta/);
+  await guarded.submit();assert.equal(guarded.calls.filter(call=>call.options.method==='POST').length,0);
+}
+// A well-formed but partial conversation needs the same request's receipt.
+for (const confirmation of ['queued','running','completed','wrong-id','wrong-conversation','invalid','not-found']) {
+  let omit=false,requestReads=0;
+  const partial=harness({respond:async url=>{
+    if(url.endsWith('/status'))return {data:status};
+    if(url.endsWith('/conversations'))return {data:{ok:true,items:[conversation]}};
+    if(url.endsWith('/requests/r-partial')){
+      requestReads++;
+      if(confirmation==='not-found')return {status:404};
+      const proof=receipt({requestId:confirmation==='wrong-id'?'wrong-request':'r-partial',conversationId:confirmation==='wrong-conversation'?'wrong-conversation':conversation.id,status:['queued','running','completed'].includes(confirmation)?confirmation:'completed'});
+      if(confirmation==='invalid')delete proof.messageId;
+      return {data:{ok:true,request:proof}};
+    }
+    return {data:{ok:true,conversation,messages:omit?[]:[{id:'a-partial',role:'assistant',text:'',status:'queued',requestId:'r-partial'}]}};
+  }});
+  await settled();partial.elements.get('command').value='Próximo pedido';omit=true;
+  await [...partial.timers.values()].find(timer=>timer.ms===2000).f();
+  assert.equal(requestReads,1,'partial history confirms with GET receipt');
+  assert.equal(partial.elements.get('send').disabled,confirmation!=='completed',confirmation+' receipt releases only a proven terminal request');
+  assert.equal(partial.calls.filter(call=>call.options.method==='POST').length,0);
+}
+// Review holds are owner-scoped status, not a fake in-progress message. The
+// visible warning survives reload and makes no promise of automatic release.
+const needsReview=assertChatQueueStatus({enabled:true,pending:0,running:0,requiresReview:true,unresolved:1});
+let reviewState='queued',reviewQueue={...needsReview,requiresReview:false,unresolved:0,pending:1};
+const review=harness({respond:async url=>{
+  if(url.endsWith('/status'))return {data:{...status,queue:reviewQueue}};
+  if(url.endsWith('/conversations'))return {data:{ok:true,items:[conversation]}};
+  return {data:{ok:true,conversation,messages:[{id:'a-review',requestId:'r-review',role:'assistant',text:'',status:reviewState}]}};
+}});
+await settled();reviewState='interrupted';reviewQueue=needsReview;
+await [...review.timers.values()].find(timer=>timer.ms===2000).f();
+assert.equal(review.elements.get('queue-review-notice').hidden,false);
+assert.match(review.elements.get('queue-review-notice').textContent,/interrompido aguardando conferência.*Não reenvie/);
+assert.equal(review.elements.get('cancel-request').hidden,true,'interrupted review is not shown as running');
+review.elements.get('command').value='Não repetir';review.elements.get('command').listeners.input();
+assert.equal(review.elements.get('send').disabled,true);
+assert.equal(review.elements.get('command').disabled,false,'draft can still be edited');
+await review.elements.get('refresh').click();await settled();await review.submit();
+assert.equal(review.elements.get('queue-review-notice').hidden,false);
+assert.equal(review.calls.filter(call=>call.options.method==='POST').length,0,'review and refresh never dispatch');
+const malformedQueue=harness({respond:async url=>url.endsWith('/status')?{data:{...status,queue:{...needsReview,requiresReview:false}}}:{data:{ok:true,items:[]}}});
+await settled();malformedQueue.elements.get('command').value='Não enviar';malformedQueue.elements.get('command').listeners.input();
+assert.equal(malformedQueue.elements.get('send').disabled,true,'invalid queue status cannot enable the composer');
+let initialHistoryInvalid=true;
+const invalidReopened=harness({respond:async url=>url.endsWith('/status')?{data:status}:url.endsWith('/conversations')?{data:{ok:true,items:[conversation]}}:{data:{ok:true,conversation,messages:[{id:'a-reopened',requestId:'r-reopened',role:'assistant',text:'Confira o estado',status:initialHistoryInvalid?'unknown':'completed'}]}}});
+await settled();invalidReopened.elements.get('command').value='Rascunho preservado';invalidReopened.elements.get('command').listeners.input();
+assert.equal(invalidReopened.elements.get('send').disabled,true,'invalid first history read fails closed without a previously known request');
+assert.equal(invalidReopened.elements.get('new-conversation').disabled,true);
+initialHistoryInvalid=false;await invalidReopened.elements.get('refresh').click();await settled();
+assert.equal(invalidReopened.elements.get('send').disabled,false,'a valid explicit refresh can finish the history check');
+assert.equal(invalidReopened.elements.get('command').value,'Rascunho preservado');
+assert.equal(invalidReopened.calls.filter(call=>call.options.method==='POST').length,0);
+// A cancelled account's pending HTTP result must not alter the new session.
+let finishOldCancel;
+const switched=harness({search:'?store=one',respond:async(url,options)=>{
+  if(url.endsWith('/status'))return {data:status};
+  if(url.endsWith('/conversations'))return {data:{ok:true,items:options.headers['x-store-token']==='first'?[conversation]:[]}};
+  if(url.endsWith('/cancel'))return new Promise(resolve=>{finishOldCancel=resolve;});
+  return {data:{ok:true,conversation,messages:[{id:'a-old',role:'assistant',text:'',status:'queued',requestId:'r-old'}]}};
+}});
+switched.elements.get('access-token').value='first';switched.elements.get('access-form').listeners.submit({preventDefault(){}});await settled();
+const oldCancellation=switched.elements.get('cancel-request').click();await settled();
+switched.elements.get('disconnect').click();
+switched.elements.get('access-token').value='second';switched.elements.get('access-form').listeners.submit({preventDefault(){}});await settled();
+switched.elements.get('command').value='Rascunho do novo acesso';
+finishOldCancel({data:{ok:true,...receipt({requestId:'r-old',status:'cancelled'})}});await oldCancellation;
+assert.equal(switched.elements.get('messages').children.length,0);
+assert.equal(switched.elements.get('command').value,'Rascunho do novo acesso');
+assert.equal(switched.elements.get('cancel-request').hidden,true);
+assert.notEqual(switched.elements.get('announcement').textContent,'Cancelamento confirmado.');
+console.log('Lia chat UI: canonical receipts, durable queue lifecycle/cancellation, invalid-history fail-closed, missing-message receipt recovery, scoped review holds, stale cancellation isolation, context, IME, GET recovery, exact retry and readiness transparency passed.');
