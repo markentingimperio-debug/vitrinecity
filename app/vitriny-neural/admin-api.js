@@ -8,7 +8,7 @@ function safeBody(value){if(!value||typeof value!=='object'||Array.isArray(value
 export function mountVitrinyNeuralAdmin({app,runtime=null,service=null,requireAdmin,sameOriginOnly}){
   const activeRuntime=service?.runtime||runtime;
   if(!app||!activeRuntime?.neural||!activeRuntime?.skills)throw new TypeError('Runtime Neural inválido.');
-  app.use(API,requireAdmin,(req,res,next)=>{res.set('Cache-Control','no-store');if(req.method==='GET')return next();return sameOriginOnly(req,res,next);});
+  app.use(API,(_req,res,next)=>{res.set('Cache-Control','no-store');next();},requireAdmin,(req,res,next)=>{if(req.method==='GET')return next();return sameOriginOnly(req,res,next);});
   app.get(API+'/status',(_req,res)=>res.json(service?.status?service.status():activeRuntime.status()));
   app.get(API+'/skills',(_req,res)=>res.json(activeRuntime.skills.status()));
   const supervisorRoute=fn=>async(req,res)=>{
