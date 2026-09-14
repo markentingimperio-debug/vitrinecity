@@ -14,6 +14,10 @@ import {createNeuralTaskEngine} from './task-engine.js';
 import {createNeuralBilling} from './billing.js';
 import {createNeuralTaskDiagnostics} from './task-diagnostics.js';
 import {createNeuralChatEngine} from './chat-engine.js';
+import path from 'node:path';
+import {createCoinAiWalletAdapter} from './coin-wallet-adapter.js';
+import {createChatArtifacts} from './chat-artifacts.js';
+import {createPaidChatRuntime} from './paid-chat-runtime.js';
 
 function primaryProviderId(runtime){const providers=runtime.skills.status().providers||[];return providers.find(provider=>provider.policy?.enabled!==false)?.id||providers[0]?.id||null;}
 function qualificationMatchesProvider(provider,record){
@@ -23,7 +27,7 @@ function qualificationMatchesProvider(provider,record){
   return Boolean(provider&&record&&record.providerId===provider.id&&(!provider.modelName||record.modelName===provider.modelName));
 }
 
-export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalThis.fetch,now=Date.now,nodeId='service',providers=null,pseudonymSalt='vitriny-neural-v1',logger=console}={}){
+export function createVitrinyNeuralService({db,coinWallet,env=process.env,fetchImpl=globalThis.fetch,now=Date.now,nodeId='service',providers=null,pseudonymSalt='vitriny-neural-v1',logger=console}={}){
   if(!db)throw new TypeError('Vitriny Neural service requer banco.');
   const config=createNeuralConfig({env});
   const runtime=createVitrinyNeuralRuntime({db,env,fetchImpl,now,nodeId,providers,pseudonymSalt,config});
@@ -78,7 +82,13 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
   }});
   const billing=createNeuralBilling({db,env,now});
   const tasks=createNeuralTaskEngine({db,skills:runtime.skills,qualifications,config,billing,env,now});
-  const chat=createNeuralChatEngine({db,skills:runtime.skills,qualifications,config,env,now});
+  // Separate opt-in from the local-model shadow policy and legacy plan credits.
+  // No production balance, policy, or recurring task is inferred from an API key.
+  const paidEnabled=env.VITRINY_NEURAL_PAID_ENABLED==='true'&&coinWallet?.enabled===true;
+  const paidWallet=coinWallet?.enabled===true?createCoinAiWalletAdapter({db,coinWallet,now,adminEmails:String(env.ADMIN_EMAILS||'').split(',')}):null;
+  const paidArtifacts=paidEnabled?createChatArtifacts({db,now,directory:path.resolve(env.DATA_DIR||path.dirname(db.name),'neural-private-artifacts')}):null;
+  const paidChat=paidEnabled?createPaidChatRuntime({db,env,wallet:paidWallet,artifacts:paidArtifacts,fetchImpl,now,authorizeScope:scope=>paidWallet.allowsScope(scope)}):null;
+  const chat=createNeuralChatEngine({db,skills:runtime.skills,qualifications,config,env,now,paidRuntime:paidChat});
   const taskDiagnostics=createNeuralTaskDiagnostics({probeLocalProviders:runtime.probeLocalProviders,
     getProviders:()=>runtime.skills.status().providers,getQualification:qualifications.latest,getTaskStatus:()=>tasks.status('admin',{reapExpired:false}),now});
 
@@ -110,5 +120,5 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
     };
   }
 
-  return{runtime,config,qualifications,budget,observer,benchmarks,webResearch,training,supervisor,tasks,chat,billing,taskDiagnostics,execution,recordQualification,readiness,capture,authorize,commitAction,releaseAction,status};
+  return{runtime,config,qualifications,budget,observer,benchmarks,webResearch,training,supervisor,tasks,chat,billing,paidWallet,paidArtifacts,paidChat,taskDiagnostics,execution,recordQualification,readiness,capture,authorize,commitAction,releaseAction,status};
 }

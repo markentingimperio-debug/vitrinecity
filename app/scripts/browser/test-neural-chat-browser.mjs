@@ -22,6 +22,7 @@ const server=createServer(async(req,res)=>{
   try{
     const url=new URL(req.url,'http://localhost');res.setHeader('Cache-Control','no-store');
     const send=(data,code=200)=>{res.writeHead(code,{'Content-Type':'application/json'});res.end(JSON.stringify(data));};
+    if(url.pathname==='/api/coins/status')return send({ok:false,error:'Carteira unificada indisponível na fixture legada.'},503);
     if(url.pathname.startsWith('/api/admin/vitriny-neural/chat')){
       const route=url.pathname.slice('/api/admin/vitriny-neural/chat'.length);
       let body={};

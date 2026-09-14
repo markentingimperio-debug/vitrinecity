@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {rewardDay,REWARD_TIME_ZONE} from './city-rewards.js';
+import {assertCoinStatus,atomsFromRewardPoints} from './public/vitrine-coins-contract.js';
 
 export const EXPLORATION_VIEW_MS=10000;
 const SESSION_MS=30*60*1000;
@@ -26,6 +27,7 @@ export function setupCityExploration({app,db,requireUser,sameOriginOnly,rewards,
   const eligibleProduct=(id,reference)=>db.prepare(`SELECT p.id FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
     WHERE p.id=? AND p.store_reference=? AND p.active=1 AND p.marketplace_enabled=1 AND p.stock_quantity>0 AND p.price_cents>0 AND s.review_status='published'`).get(id,reference);
   function summary(id){
+    const config=rewards.settings(),balance=rewards.available(id);
     const time=now(),day=explorationDay(time),visits=db.prepare('SELECT store_reference,claimed_ms FROM city_exploration_visits WHERE user_id=? AND claimed_ms IS NOT NULL ORDER BY claimed_ms DESC').all(id);
     const days=db.prepare('SELECT reward_day FROM city_exploration_checkins WHERE user_id=? ORDER BY reward_day DESC').all(id).map(r=>r.reward_day);
     let cursor=Date.parse(day+'T12:00:00Z'),streak=0;if(days[0]!==day)cursor-=86400000;
@@ -38,10 +40,11 @@ export function setupCityExploration({app,db,requireUser,sameOriginOnly,rewards,
       AND EXISTS(SELECT 1 FROM store_products p WHERE p.store_reference=s.order_reference AND p.active=1 AND p.marketplace_enabled=1 AND p.stock_quantity>0 AND p.price_cents>0)
       ORDER BY EXISTS(SELECT 1 FROM city_exploration_visits v WHERE v.user_id=? AND v.store_reference=s.order_reference AND v.reward_day=? AND v.claimed_ms IS NOT NULL),s.business_name LIMIT 6`).all(id,day).map(store=>({...store,completed:visitedToday.includes(store.reference)}));
     return {...explorationLevel(visits.length*10+days.length*5),streak,checkedIn:checkins.has(day),totalVisits:visits.length,
-      visitedToday,dailyStores,day,serverNow:time,timeZone:REWARD_TIME_ZONE,balance:rewards.available(id).points,
+      visitedToday,dailyStores,day,serverNow:time,timeZone:REWARD_TIME_ZONE,balance:balance.points,
+      ...(config.unified?{unified:true,coinWallet:assertCoinStatus(balance.coins),rewardAtomsPerStore:atomsFromRewardPoints(1,config.coinsPerReal)}:{}),
       dailyGoal:{target,completed,remaining:target-completed,achieved:target>0&&completed>=target,available:target>0,rewardCoinsPerStore:1,bonusCoins:0},
       dailyRewards:rewards.dailyAllowance(id,time),
-      rules:{coinsPerStore:1,viewSeconds:EXPLORATION_VIEW_MS/1000,visitXp:10,checkinXp:5,validityDays:60,dailyGoalStores:DAILY_GOAL_STORES},enabled:Boolean(rewards.settings().enabled)};
+      rules:{coinsPerStore:1,viewSeconds:EXPLORATION_VIEW_MS/1000,visitXp:10,checkinXp:5,validityDays:60,dailyGoalStores:DAILY_GOAL_STORES},enabled:Boolean(config.enabled)};
   }
   const error=(message,status=409,code='invalid_visit')=>Object.assign(new Error(message),{status,code});
   function session(req){
@@ -66,7 +69,8 @@ export function setupCityExploration({app,db,requireUser,sameOriginOnly,rewards,
     if(!row){db.prepare('INSERT INTO city_exploration_visits(user_id,store_reference,reward_day,token,entered_ms) VALUES(?,?,?,?,?)').run(req.user.id,reference,day,randomUUID(),now());}
     else if(!row.claimed_ms&&now()-row.entered_ms>SESSION_MS){db.prepare('UPDATE city_exploration_visits SET token=?,entered_ms=?,product_id=NULL,viewed_ms=NULL WHERE user_id=? AND store_reference=? AND reward_day=?').run(randomUUID(),now(),req.user.id,reference,day);}
     row=db.prepare('SELECT * FROM city_exploration_visits WHERE user_id=? AND store_reference=? AND reward_day=?').get(req.user.id,reference,day);
-    return {eligible:true,token:row.token,day,store:store.business_name,alreadyClaimed:row.claimed_ms!==null,viewSeconds:EXPLORATION_VIEW_MS/1000};
+    const config=rewards.settings();
+    return {eligible:true,token:row.token,day,store:store.business_name,alreadyClaimed:row.claimed_ms!==null,viewSeconds:EXPLORATION_VIEW_MS/1000,...(config.unified?{unified:true,rewardAtomsPerStore:atomsFromRewardPoints(1,config.coinsPerReal)}:{})};
   })()));
   app.post(base+'/view',sameOriginOnly,requireUser,route(req=>db.transaction(()=>{
     const row=session(req);if(row.claimed_ms!==null)return {alreadyClaimed:true,...summary(req.user.id)};
@@ -83,7 +87,9 @@ export function setupCityExploration({app,db,requireUser,sameOriginOnly,rewards,
     const granted=rewards.grantGame(req.user.id,1,`exploration:${req.user.id}:${row.store_reference}:${row.reward_day}`);
     if(!granted)throw error('Você atingiu o limite diário de recompensas. Volte amanhã.',409,'daily_limit');
     db.prepare('UPDATE city_exploration_visits SET claimed_ms=? WHERE token=? AND claimed_ms IS NULL').run(now(),row.token);
-    return {awarded:true,coins:1,...summary(req.user.id)};
+    const config=rewards.settings();
+    // `coins` is the legacy reward-point field; retain it for older clients.
+    return {awarded:true,coins:1,...(config.unified?{rewardAtoms:atomsFromRewardPoints(granted,config.coinsPerReal)}:{}),...summary(req.user.id)};
   })()));
   return {summary,exportUser:id=>({visits:db.prepare('SELECT store_reference,reward_day,product_id,entered_ms,viewed_ms,claimed_ms FROM city_exploration_visits WHERE user_id=?').all(id),checkins:db.prepare('SELECT reward_day,created_ms FROM city_exploration_checkins WHERE user_id=?').all(id)})};
 }

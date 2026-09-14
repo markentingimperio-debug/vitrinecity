@@ -12,7 +12,7 @@ class Element{
 function documentFixture(){const head=new Element('head');return {head,createElement:tag=>new Element(tag),querySelector:selector=>selector==='link[data-exploration-style]'?head.children.find(child=>child.dataset.explorationStyle)||null:null,getElementById:()=>null};}
 const saved={document:globalThis.document,fetch:globalThis.fetch,location:globalThis.location,addEventListener:globalThis.addEventListener};
 globalThis.document=documentFixture();
-const source=readFileSync(new URL('../public/vitriny-exploration-rewards.js',import.meta.url),'utf8');
+const source=readFileSync(new URL('../public/vitriny-exploration-rewards.js',import.meta.url),'utf8').replaceAll("from './vitrine-coins-contract.js'","from '"+new URL('../public/vitrine-coins-contract.js',import.meta.url).href+"'").replaceAll("from './vitrine-coins-ui.js'","from '"+new URL('../public/vitrine-coins-ui.js',import.meta.url).href+"'");
 const {mountExplorationProgress}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 globalThis.document=saved.document;
 
@@ -40,12 +40,12 @@ test('a validated summary renders the phase, coins and progress together',async(
   const view=mount(async()=>response(known));
   try{
     assert.equal(view.progress.hidden,true);assert.equal(view.heading.textContent,'Suas conquistas na cidade');
-    await flush();assert.equal(view.heading.textContent,'Fase 2 · Explorador');assert.equal(view.copy.textContent,'7 moedas · 2 lojas descobertas hoje');
+    await flush();assert.equal(view.heading.textContent,'Fase 2 · Explorador');assert.equal(view.copy.textContent,'7 pontos anteriores · 2 lojas descobertas hoje');
     assert.equal(view.detail.textContent,'3 dias seguidos · 75 XP para a próxima fase');assert.equal(view.progress.hidden,false);assert.equal(view.progress.style.display,'');assert.equal(view.progress.value,25);
     assert.equal(view.requests[0][0],'/api/rewards/exploration/check-in');assert.equal(view.requests[0][1].method,'POST');
     assert.equal(view.link.href,'/central-creditos.html');
     view.emit({...known,level:3,name:'Conhecedor',xp:201,nextLevelXp:300,progress:1,balance:8,streak:4,visitedToday:['third-store']});
-    assert.equal(view.heading.textContent,'Fase 3 · Conhecedor');assert.equal(view.copy.textContent,'8 moedas · 1 loja descoberta hoje');assert.equal(view.progress.value,1);
+    assert.equal(view.heading.textContent,'Fase 3 · Conhecedor');assert.equal(view.copy.textContent,'8 pontos anteriores · 1 loja descoberta hoje');assert.equal(view.progress.value,1);
   }finally{view.restore();}
 });
 
@@ -87,12 +87,17 @@ test('a valid reward event is retained if an older pending request fails',async(
 });
 
 const goal={target:3,completed:2,remaining:1,achieved:false,available:true,rewardCoinsPerStore:1,bonusCoins:0};
+test('unified reward UI shows exact wallet and 0.096 Coin per old point, preserving XP',async()=>{
+  const data={...known,unified:true,rewardAtomsPerStore:'960000',coinWallet:{currency:'VITRINE_COINS',policyVersion:'vitrine-coins-topup-15-v1',unified:true,frozen:false,availableAtoms:'816000001',reservedAtoms:'0',chargedAtoms:'0',expiredAtoms:'0'},dailyGoal:goal};
+  const view=mount(async()=>response(data));
+  try{await flush();assert.equal(view.copy.textContent,'81,6000001 Vitrine Coins · 2 lojas descobertas hoje');assert.match(view.goal.textContent,/Ganhe 0,096 Vitrine Coins por loja/);assert.equal(view.detail.textContent,'3 dias seguidos · 75 XP para a próxima fase');const before=snapshot(view);view.emit({...data,coinWallet:{...data.coinWallet,availableAtoms:'bad'}});assert.deepEqual(snapshot(view),before);}finally{view.restore();}
+});
 test('daily goal shows credited visits, completes without extra coins and explains paused or capped rewards',async()=>{
   const view=mount(async()=>response({...known,dailyGoal:goal,enabled:true}));
   try{
     await flush();assert.equal(view.goal.hidden,false);assert.match(view.goal.textContent,/2 de 3 lojas · falta 1 loja/);assert.match(view.goal.textContent,/não acrescenta moedas extras/);
     assert.equal(view.goal.children[1].value,2);assert.equal(view.goal.children[1].max,3);
-    view.emit({...known,visitedToday:['first-store','second-store','third-store'],dailyGoal:{...goal,completed:3,remaining:0,achieved:true}});assert.match(view.goal.textContent,/Meta de hoje concluída/);assert.equal(view.copy.textContent,'7 moedas · 3 lojas descobertas hoje');
+    view.emit({...known,visitedToday:['first-store','second-store','third-store'],dailyGoal:{...goal,completed:3,remaining:0,achieved:true}});assert.match(view.goal.textContent,/Meta de hoje concluída/);assert.equal(view.copy.textContent,'7 pontos anteriores · 3 lojas descobertas hoje');
     view.emit({...known,dailyGoal:goal,enabled:false});assert.match(view.goal.textContent,/recompensas estão pausadas/);
     view.emit({...known,dailyGoal:goal,dailyRewards:{limit:50,earned:50,remaining:0}});assert.match(view.goal.textContent,/limite de moedas de hoje entre visitas e fazenda/);
     view.emit({...known,dailyGoal:{...goal,target:0,completed:0,remaining:0,available:false,achieved:false}});assert.match(view.goal.textContent,/Ainda não há lojas/);assert.equal(view.goal.children[1].hidden,true);

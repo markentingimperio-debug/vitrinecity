@@ -46,6 +46,9 @@ export function createAiCreditWallet({db,enabled=false,now=Date.now}={}){
       scope TEXT NOT NULL,request_id TEXT NOT NULL,receipt_id TEXT NOT NULL UNIQUE,
       observed_micro INTEGER CHECK(observed_micro>=0),created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,
       PRIMARY KEY(scope,request_id));
+    CREATE TABLE IF NOT EXISTS neural_ai_credit_scope_holds(
+      scope TEXT NOT NULL,payment_reference TEXT NOT NULL,reason TEXT NOT NULL,created_at INTEGER NOT NULL,
+      PRIMARY KEY(scope,payment_reference));
   `);
   function event(scope,requestId,type,amount){db.prepare('INSERT INTO neural_ai_credit_events VALUES(?,?,?,?,?,?)').run(randomUUID(),scope,requestId,type,amount,clock());}
   function view(row){return {requestId:row.request_id,state:row.state,maximumMicroBrl:row.maximum_micro,chargedMicroBrl:row.charged_micro,quoteId:row.quote_id,createdAt:row.created_at,updatedAt:row.updated_at};}
@@ -59,8 +62,20 @@ export function createAiCreditWallet({db,enabled=false,now=Date.now}={}){
     const lots=db.prepare('SELECT amount_micro,charged_micro,reserved_micro,expires_at FROM neural_ai_credit_lots WHERE scope=?').all(scope);
     let available=0,expired=0,reserved=0,charged=0;
     for(const lot of lots){const unused=lot.amount_micro-lot.charged_micro-lot.reserved_micro; if(lot.expires_at>time)available+=unused;else expired+=unused;reserved+=lot.reserved_micro;charged+=lot.charged_micro;}
-    return {enabled:active,currency:'BRL',unit:'microBRL',availableMicroBrl:available,reservedMicroBrl:reserved,chargedMicroBrl:charged,expiredMicroBrl:expired};
+    const frozen=!!db.prepare('SELECT 1 FROM neural_ai_credit_scope_holds WHERE scope=? LIMIT 1').get(scope);
+    return {enabled:active,currency:'BRL',unit:'microBRL',availableMicroBrl:frozen?0:available,reservedMicroBrl:reserved,chargedMicroBrl:charged,expiredMicroBrl:expired,frozen,frozenMicroBrl:frozen?available:0};
   }
+  // A dispute/reversal blocks NEW expenditure without erasing balances, provider
+  // receipts or in-flight reservations. Release requires separately audited review.
+  const freeze=atomic((scope,input)=>{
+    requireEnabled();scopeOf(scope);object(input,['paymentReference','reason']);
+    const reference=identifier(input.paymentReference);
+    if(!['refunded','charged_back','in_mediation','partial_refund','duplicate_payment','payment_review'].includes(input.reason))fail('ai_wallet_input_invalid');
+    const prior=db.prepare('SELECT reason FROM neural_ai_credit_scope_holds WHERE scope=? AND payment_reference=?').get(scope,reference);
+    if(prior)return {frozen:true,duplicate:true};
+    db.prepare('INSERT INTO neural_ai_credit_scope_holds VALUES(?,?,?,?)').run(scope,reference,input.reason,clock());
+    event(scope,null,'frozen',0);return {frozen:true,duplicate:false};
+  });
   const grant=atomic((scope,input)=>{
     requireEnabled();scopeOf(scope);object(input,['paymentReference','amountMicroBrl','termsVersion']);
     const payment=identifier(input.paymentReference),amount=number(input.amountMicroBrl,1),terms=identifier(input.termsVersion);
@@ -78,6 +93,7 @@ export function createAiCreditWallet({db,enabled=false,now=Date.now}={}){
   });
   const reserve=atomic((scope,input)=>{
     requireEnabled();scopeOf(scope);object(input,['requestId','maximumMicroBrl','quoteId','requestHash']);
+    if(db.prepare('SELECT 1 FROM neural_ai_credit_scope_holds WHERE scope=? LIMIT 1').get(scope))fail('ai_wallet_frozen',423);
     const requestId=identifier(input.requestId),maximum=number(input.maximumMicroBrl,1),quote=identifier(input.quoteId);
     if(typeof input.requestHash!=='string'||! /^[a-f0-9]{64}$/.test(input.requestHash))fail('ai_wallet_input_invalid');
     const fingerprint=hash({requestId,maximum,quote,requestHash:input.requestHash});
@@ -153,5 +169,5 @@ export function createAiCreditWallet({db,enabled=false,now=Date.now}={}){
     event(scope,requestId,'released',prior.maximum_micro);return view(row(scope,requestId));
   });
   const history=scope=>{scopeOf(scope);return db.prepare('SELECT request_id requestId,type,amount_micro amountMicroBrl,created_at createdAt FROM neural_ai_credit_events WHERE scope=? ORDER BY created_at DESC,rowid DESC LIMIT 100').all(scope);};
-  return {enabled:active,status,grant,reserve,settle,release,history};
+  return {enabled:active,status,grant,reserve,settle,release,history,freeze};
 }

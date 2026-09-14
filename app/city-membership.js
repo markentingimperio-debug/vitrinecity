@@ -1,7 +1,9 @@
 import {memberPage,memberReturn} from './public/vitriny-membership-core.js';
 import {randomUUID} from 'node:crypto';
 import {newFarm,restoreFarm,farmAction,CROPS,ANIMALS} from './public/vitriny-farm-core.js';
-export function setupCityMembership(app,{db,currentUser,requireUser,sameOriginOnly,isAdministrativeUser=()=>false,grantGameReward=()=>0}){
+import {atomsFromRewardPoints} from './public/vitrine-coins-contract.js';
+import {formatCoins} from './public/vitrine-coins-ui.js';
+export function setupCityMembership(app,{db,currentUser,requireUser,sameOriginOnly,isAdministrativeUser=()=>false,grantGameReward=()=>0,rewardSettings=()=>({unified:false})}){
   db.exec(`CREATE TABLE IF NOT EXISTS city_farm_progress(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,state_json TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
   app.use((req,res,next)=>{
     if(!['GET','HEAD'].includes(req.method)||!memberPage(req.path))return next();
@@ -18,7 +20,7 @@ export function setupCityMembership(app,{db,currentUser,requireUser,sameOriginOn
       db.prepare(`INSERT INTO city_farm_progress(user_id,state_json) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET state_json=excluded.state_json,updated_at=CURRENT_TIMESTAMP`).run(req.user.id,JSON.stringify(result.state));
       const earned=action.type==='harvest'?CROPS[before.plots[action.plot]?.crop]:action.type==='collect'?ANIMALS[action.animal]:null;
       result.rewardPoints=earned?grantGameReward(req.user.id,earned.reward-earned.cost,'farm:'+randomUUID()):0;
-      if(result.rewardPoints)result.message+=` +${result.rewardPoints} Vitrine Coins de recompensa.`;
+      if(result.rewardPoints){const config=rewardSettings();if(config.unified){result.rewardAtoms=atomsFromRewardPoints(result.rewardPoints,config.coinsPerReal);result.message+=` +${formatCoins(result.rewardAtoms)} Vitrine Coins de recompensa.`;}else result.message+=` +${result.rewardPoints} pontos de recompensa no registro anterior.`;}
     }return result;})();
     return res.set('Cache-Control','private,no-store').status(result.changed?200:409).json({...result,serverNow:Date.now()});
   });
