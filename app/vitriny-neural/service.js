@@ -9,6 +9,7 @@ import {createShadowObserver} from './shadow-observer.js';
 import {createNeuralBenchmarkManager} from './benchmark-manager.js';
 import {createNeuralWebResearchEngine} from './web-research-engine.js';
 import {createNeuralDatasetBuilder} from './dataset-builder.js';
+import {createNeuralTaskEngine} from './task-engine.js';
 
 function primaryProviderId(runtime){const providers=runtime.skills.status().providers||[];return providers.find(provider=>provider.policy?.enabled!==false)?.id||providers[0]?.id||null;}
 
@@ -48,6 +49,7 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
   const benchmarks=createNeuralBenchmarkManager({db,env,fetchImpl,now,recordQualification,logger});
   const webResearch=createNeuralWebResearchEngine({db,neural:runtime.neural,env,fetchImpl,now,logger});
   const training=createNeuralDatasetBuilder({db,now,nodeId});
+  const tasks=createNeuralTaskEngine({db,skills:runtime.skills,qualifications,config,env,now});
 
   function readiness(){return assessNeuralReadiness({runtime,qualification:activeQualification()});}
 
@@ -71,9 +73,10 @@ export function createVitrinyNeuralService({db,env=process.env,fetchImpl=globalT
       observer:observer.status(),
       webResearch:webResearch.status(),
       training:training.status(),
+      tasks:tasks.status('admin'),
       benchmark:{activeId:benchmarks.status().activeId,recent:benchmarks.list(5).map(item=>({id:item.id,status:item.status,providerId:item.providerId,modelName:item.modelName,score:item.score,grade:item.grade,createdAt:item.createdAt,completedAt:item.completedAt}))}
     };
   }
 
-  return{runtime,config,qualifications,budget,observer,benchmarks,webResearch,training,execution,recordQualification,readiness,capture,authorize,commitAction,releaseAction,status};
+  return{runtime,config,qualifications,budget,observer,benchmarks,webResearch,training,tasks,execution,recordQualification,readiness,capture,authorize,commitAction,releaseAction,status};
 }

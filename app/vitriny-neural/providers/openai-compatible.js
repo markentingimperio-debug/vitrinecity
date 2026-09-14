@@ -1,3 +1,5 @@
+import {DRAFT_TASK_PROTOCOL} from '../task-protocol.js';
+
 const DEFAULT_CAPABILITIES=[
   'code.analyze','code.plan','code.patch','code.review','code.test-plan',
   'growth.diagnose','growth.campaign-plan','growth.content-plan','growth.seo-plan','growth.experiment','growth.metric-review',
@@ -27,15 +29,15 @@ export function createOpenAICompatibleProvider({id='local-model',baseUrl,apiKey=
   const modelName=cleanText(model,160,1);
   const caps=[...new Set(capabilities.map(x=>cleanText(x,80,2)))];
   return {
-    id:providerId,capabilities:caps,priority,costClass,local,
+    id:providerId,modelName,capabilities:caps,priority,costClass,local,
     async available(){return true;},
     async invoke({capability,input,signal,options={}}){
       if(!caps.includes(capability))throw new Error(`Capacidade não suportada pelo modelo: ${capability}`);
-      const requestedMax=Number(options.maxTokens);
+      const requestedMax=options.maxTokens==null?NaN:Number(options.maxTokens);
       const effectiveMax=Number.isFinite(requestedMax)?Math.max(64,Math.min(Number(maxTokens),requestedMax)):Number(maxTokens);
       const payload={
         model:modelName,temperature:Number(temperature),max_tokens:effectiveMax,
-        messages:[{role:'system',content:systemPrompt(capability)},{role:'user',content:JSON.stringify(input??{})}]
+        messages:[{role:'system',content:systemPrompt(capability)+(options.taskProtocol==='draft-v1'?`\nContrato interno de tarefas (tem precedência sobre preferências genéricas de formato): ${JSON.stringify(DRAFT_TASK_PROTOCOL)}`:'')},{role:'user',content:JSON.stringify(input??{})}]
       };
       // llama.cpp + Qwen3 podem gastar quase todo o orçamento em raciocínio oculto. No provider local,
       // desligamos esse modo para que a console administrativa receba uma resposta útil rapidamente.

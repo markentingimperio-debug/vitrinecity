@@ -2,6 +2,7 @@ const ID=/^[a-z][a-z0-9._-]{1,63}$/;
 
 function ensureId(value,label){const v=String(value||'').trim();if(!ID.test(v))throw new Error(`${label} inválido.`);return v;}
 function ensureFn(value,label){if(typeof value!=='function')throw new TypeError(`${label} precisa ser função.`);return value;}
+function abortIfRequested(signal){if(signal?.aborted)throw signal.reason instanceof Error?signal.reason:Object.assign(new Error('provider_aborted'),{name:'AbortError'});}
 function statOf(stats,id){if(!stats.has(id))stats.set(id,{success:0,fail:0,consecutiveFail:0,totalMs:0,lastMs:0,openedUntil:0,inputTokens:0,outputTokens:0,totalTokens:0});return stats.get(id);}
 function usageOf(output){const u=output?.usage||output?.output?.usage||{};const input=Number(u.prompt_tokens??u.input_tokens??u.promptTokens??u.inputTokens??0)||0;const outputTokens=Number(u.completion_tokens??u.output_tokens??u.completionTokens??u.outputTokens??0)||0;const total=Number(u.total_tokens??u.totalTokens??0)||input+outputTokens;return{inputTokens:Math.max(0,input),outputTokens:Math.max(0,outputTokens),totalTokens:Math.max(0,total)};}
 
@@ -26,7 +27,7 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
     if(!capabilities.size)throw new Error('Provider precisa declarar capacidades.');
     const normalized={
       id,capabilities,priority:Number.isFinite(Number(provider.priority))?Number(provider.priority):100,
-      costClass:String(provider.costClass||'unknown'),local:Boolean(provider.local),
+      costClass:String(provider.costClass||'unknown'),local:Boolean(provider.local),modelName:String(provider.modelName||''),
       available:typeof provider.available==='function'?provider.available:async()=>true,
       invoke:ensureFn(provider.invoke,'invoke')
     };
@@ -42,11 +43,18 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
     return{id,enabled:policy.enabled,allowedCapabilities:allowed?[...allowed]:null,source:policy.source};
   }
 
-  async function candidates(capability,{preferredProviders=[],evaluation=false}={}){
+  async function candidates(capability,{preferredProviders=[],evaluation=false,localOnly=false,allowedProviders=null,signal=null}={}){
+    abortIfRequested(signal);
     const preferred=new Map(preferredProviders.map((id,index)=>[id,index])),clock=now();
+    const allowed=Array.isArray(allowedProviders)?new Set(allowedProviders):null;
     const rows=[];
     for(const provider of providers.values()){
+      abortIfRequested(signal);
       if(!provider.capabilities.has(capability))continue;
+      // Routing restrictions are admission checks, not ranking preferences. An empty
+      // allowlist denies all providers, including during administrative evaluation.
+      if(localOnly&&!provider.local)continue;
+      if(allowed&&!allowed.has(provider.id))continue;
       const policy=providerPolicies.get(provider.id)||{enabled:true,allowedCapabilities:null};
       // Um provider reprovado em benchmark continua bloqueado para operação, mas pode ser chamado
       // explicitamente pela console administrativa para diagnóstico/benchmark, sem executar ações.
@@ -58,6 +66,7 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
       if(s.openedUntil>clock)continue;
       if(s.openedUntil&&s.openedUntil<=clock){s.openedUntil=0;s.consecutiveFail=0;}
       let available=false;try{available=await provider.available(capability);}catch{}
+      abortIfRequested(signal);
       if(!available)continue;
       const reliability=(s.success+1)/(s.success+s.fail+2);
       rows.push({provider,reliability,preferred:preferred.has(provider.id)?preferred.get(provider.id):999});
@@ -65,7 +74,8 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
     return rows.sort((a,b)=>a.preferred-b.preferred||a.provider.priority-b.provider.priority||b.reliability-a.reliability).map(x=>x.provider);
   }
 
-  async function invoke(capability,input,{preferredProviders=[],timeoutMs=120000,evaluation=false,maxTokens=null}={}){
+  async function invoke(capability,input,{preferredProviders=[],timeoutMs=120000,evaluation=false,maxTokens=null,localOnly=false,allowedProviders=null,signal=null,taskProtocol=null}={}){
+    abortIfRequested(signal);
     let request=input;
     if(typeof knowledgeProvider==='function'&&input&&typeof input==='object'&&!Array.isArray(input)){
       // Caller-supplied knowledge cannot impersonate the reviewed system corpus.
@@ -73,19 +83,27 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
       const query=[input.task,input.question,input.message,input.objective,input.prompt].filter(value=>typeof value==='string').join(' ').slice(0,6000);
       try{const sources=knowledgeProvider(query);if(Array.isArray(sources)&&sources.length)request={...plainInput,platformKnowledge:{scope:'public_platform_facts_only',sources}};}catch{/* Knowledge is optional; its failure does not grant broader access. */}
     }
-    const list=await candidates(capability,{preferredProviders,evaluation});
+    const list=await candidates(capability,{preferredProviders,evaluation,localOnly,allowedProviders,signal});
+    abortIfRequested(signal);
     if(!list.length)throw new Error(`Nenhum provider disponível para ${capability}.`);
     const attempts=[];
     for(const provider of list){
+      abortIfRequested(signal);
       const started=now();
       try{
         const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);
+        const forwardAbort=()=>controller.abort(signal.reason);
+        signal?.addEventListener('abort',forwardAbort,{once:true});
         try{
-          const output=await provider.invoke({capability,input:request,signal:controller.signal,options:{evaluation,maxTokens}});
+          abortIfRequested(signal);
+          const output=await provider.invoke({capability,input:request,signal:controller.signal,options:{evaluation,maxTokens,...(taskProtocol==='draft-v1'?{taskProtocol}: {})}});
+          abortIfRequested(signal);
           const elapsed=Math.max(0,now()-started),s=statOf(stats,provider.id),usage=usageOf(output);s.success++;s.consecutiveFail=0;s.lastMs=elapsed;s.totalMs+=elapsed;s.openedUntil=0;s.inputTokens+=usage.inputTokens;s.outputTokens+=usage.outputTokens;s.totalTokens+=usage.totalTokens;
           return {provider:provider.id,output,durationMs:elapsed,usage,attempts:[...attempts,{provider:provider.id,ok:true}]};
-        }finally{clearTimeout(timer);}
+        }finally{clearTimeout(timer);signal?.removeEventListener('abort',forwardAbort);}
       }catch(error){
+        // Caller cancellation is not a provider fault, and never permits fallback.
+        abortIfRequested(signal);
         const elapsed=Math.max(0,now()-started),s=statOf(stats,provider.id);s.fail++;s.consecutiveFail++;s.lastMs=elapsed;s.totalMs+=elapsed;if(s.consecutiveFail>=threshold)s.openedUntil=now()+cooldown;
         attempts.push({provider:provider.id,ok:false,error:String(error?.name==='AbortError'?'provider_timeout':error?.message||'provider_failed').slice(0,240)});
       }
@@ -101,7 +119,7 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
     return skill.execute({input,context,invoke:invokeForSkill,candidates:candidatesForSkill,registry:{skills,providers,stats,providerPolicies}});
   }
 
-  function status(){const clock=now();return {skills:[...skills.values()].map(s=>({id:s.id,version:s.version,capabilities:s.capabilities,risk:s.risk})),providers:[...providers.values()].map(p=>{const s=statOf(stats,p.id),calls=s.success+s.fail,policy=providerPolicies.get(p.id)||{enabled:true,allowedCapabilities:null,source:'default'};return{id:p.id,capabilities:[...p.capabilities],priority:p.priority,costClass:p.costClass,local:p.local,policy:{enabled:policy.enabled,allowedCapabilities:policy.allowedCapabilities?[...policy.allowedCapabilities]:null,source:policy.source},stats:{success:s.success,fail:s.fail,consecutiveFail:s.consecutiveFail,reliability:(s.success+1)/(calls+2),avgMs:calls?s.totalMs/calls:0,lastMs:s.lastMs,inputTokens:s.inputTokens,outputTokens:s.outputTokens,totalTokens:s.totalTokens,circuit:s.openedUntil>clock?'open':'closed',openedUntil:s.openedUntil||null}};})};}
+  function status(){const clock=now();return {skills:[...skills.values()].map(s=>({id:s.id,version:s.version,capabilities:s.capabilities,risk:s.risk})),providers:[...providers.values()].map(p=>{const s=statOf(stats,p.id),calls=s.success+s.fail,policy=providerPolicies.get(p.id)||{enabled:true,allowedCapabilities:null,source:'default'};return{id:p.id,modelName:p.modelName,capabilities:[...p.capabilities],priority:p.priority,costClass:p.costClass,local:p.local,policy:{enabled:policy.enabled,allowedCapabilities:policy.allowedCapabilities?[...policy.allowedCapabilities]:null,source:policy.source},stats:{success:s.success,fail:s.fail,consecutiveFail:s.consecutiveFail,reliability:(s.success+1)/(calls+2),avgMs:calls?s.totalMs/calls:0,lastMs:s.lastMs,inputTokens:s.inputTokens,outputTokens:s.outputTokens,totalTokens:s.totalTokens,circuit:s.openedUntil>clock?'open':'closed',openedUntil:s.openedUntil||null}};})};}
 
   return {registerSkill,registerProvider,setProviderPolicy,run,invoke,candidates,status};
 }
