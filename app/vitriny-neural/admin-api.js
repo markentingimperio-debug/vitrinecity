@@ -1,5 +1,6 @@
 import {qualifyModel} from './provider-qualification.js';
 import {assessNeuralReadiness} from './readiness.js';
+import {createFactGroundedDraft,FactGroundedDraftError} from './fact-grounded-drafts.js';
 
 const API='/api/admin/vitriny-neural';
 const ALLOWED_SKILLS=new Set(['media.generate','code.engineer','growth.optimizer','research.supervised','commerce.advisor','support.assistant','ranking.optimizer']);
@@ -11,6 +12,18 @@ export function mountVitrinyNeuralAdmin({app,runtime=null,service=null,requireAd
   app.use(API,(_req,res,next)=>{res.set('Cache-Control','no-store');next();},requireAdmin,(req,res,next)=>{if(req.method==='GET')return next();return sameOriginOnly(req,res,next);});
   app.get(API+'/status',(_req,res)=>res.json(service?.status?service.status():activeRuntime.status()));
   app.get(API+'/skills',(_req,res)=>res.json(activeRuntime.skills.status()));
+  app.post(API+'/factual-draft',(req,res)=>{
+    if(req.get('x-neural-request')!=='1'||!req.is('application/json'))return res.status(403).json({ok:false,error:'Requisição de rascunho não autorizada.'});
+    if(Object.keys(req.query||{}).length)return res.status(400).json({ok:false,error:'O rascunho não aceita parâmetros na URL.'});
+    try{
+      const body=safeBody(req.body);
+      return res.json({ok:true,draft:createFactGroundedDraft(body)});
+    }catch(error){
+      if(error?.status===413)return res.status(413).json({ok:false,error:'Os dados excedem o limite do rascunho.'});
+      if(error instanceof FactGroundedDraftError)return res.status(400).json({ok:false,error:'Confira os fatos e o formato: até 30 fatos, com até 500 caracteres em cada um.',code:error.code});
+      return res.status(500).json({ok:false,error:'Não foi possível preparar o rascunho.'});
+    }
+  });
   const supervisorRoute=fn=>async(req,res)=>{
     try{
       if(!service?.supervisor)return res.status(503).json({error:'astra_supervisor_unavailable'});

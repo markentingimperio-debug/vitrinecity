@@ -111,6 +111,17 @@ try{
   result=await request(adminBase,{method:'POST',headers:{cookie:adminCookie},body:{instruction:'Crie um texto da loja.',idempotencyKey:'admin_smoke_disabled_1'}});
   assert.equal(result.status,503);assert.equal(result.json.code,'task_disabled');
 
+  const factualRoute='/api/admin/vitriny-neural/factual-draft';
+  const factualBody={facts:[{id:'f1',text:'Capa de almofada em algodão cru, com zíper.'},{id:'f2',text:'Não acompanha enchimento.'}],format:'paragraphs'};
+  result=await request(factualRoute,{method:'POST',body:factualBody});assert.equal(result.status,401);
+  result=await request(factualRoute,{method:'POST',headers:{cookie:customerCookie},body:factualBody});assert.equal(result.status,403);
+  result=await request(factualRoute,{method:'POST',headers:{cookie:adminCookie,origin:'https://foreign.invalid'},body:factualBody});assert.equal(result.status,403);
+  result=await request(factualRoute,{method:'POST',headers:{cookie:adminCookie},body:factualBody});
+  assert.equal(result.status,200);assert.equal(result.json.ok,true);
+  assert.equal(result.json.draft.text,factualBody.facts.map(fact=>fact.text).join('\n\n'));
+  assert.equal(result.json.draft.grounding.externallyVerified,false);
+  result=await request(factualRoute,{method:'POST',headers:{cookie:adminCookie},body:{facts:[]}});assert.equal(result.status,400);
+
   result=await request(storeBase('smoke-store-a')+'/status');assert.equal(result.status,403);
   result=await request(storeBase('smoke-store-a')+'/status',{headers:{'x-store-token':'invalid-fixture'}});assert.equal(result.status,403);
   const merchantHeaders={'x-store-token':storeToken('smoke-store-a')};

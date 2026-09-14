@@ -18,8 +18,8 @@ class Element{
   setAttribute(name,value){this.attributes[name]=String(value);}getAttribute(name){return this.attributes[name];}
   reset(){}focus(){this.focused=true;}
 }
-function fixture({fetcher}={}){
-  const nodes=new Map(),calls=[],invocations=[],storage=new Map();
+function fixture({fetcher,copy=async()=>{}}={}){
+  const nodes=new Map(),calls=[],invocations=[],storage=new Map(),copied=[];
   for(const match of html.matchAll(/<([a-z][a-z0-9-]*)\b[^>]*\bid="([^"]+)"[^>]*>/gi)){
     const node=new Element(match[1]);node.id=match[2];node.disabled=/\sdisabled(?:\s|>)/.test(match[0]);node.hidden=/\shidden(?:\s|>)/.test(match[0]);nodes.set(node.id,node);
   }
@@ -36,6 +36,7 @@ function fixture({fetcher}={}){
     '/supervisor/status':{enabled:false,configured:false,paused:false,revision:1,automaticDaily:false,automatic:{},limits:{},quote:{},budget:{},availability:{state:'unknown'},recent:[]}
   };
   const context={document,Intl,Date,URLSearchParams,performance:{now:()=>0},AbortSignal:{timeout:()=>undefined},
+    navigator:{clipboard:{writeText:async text=>{await copy(text);copied.push(text);}}},
     sessionStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},
     location:{assign:()=>{throw Error('Unexpected navigation');}},setInterval:()=>1,setTimeout:()=>1,clearTimeout:()=>{},
     fetch:async(url,options)=>{
@@ -43,8 +44,9 @@ function fixture({fetcher}={}){
       assert.equal(options.credentials,'same-origin');assert.equal(options.cache,'no-store');
       if(call.method==='GET'){assert(Object.hasOwn(reads,call.path),'Unexpected GET '+call.path);return response(reads[call.path]);}
       assert.equal(options.headers['x-neural-request'],'1');assert.equal(options.headers['content-type'],'application/json');
-      assert.match(call.path,/^\/skills\/[a-z.]+\/run$/);
+      assert.match(call.path,/^(?:\/skills\/[a-z.]+\/run|\/factual-draft)$/);
       const overridden=await fetcher?.(call);if(overridden!==undefined)return overridden;
+      if(call.path==='/factual-draft')return response({ok:true,draft:{text:call.body.facts.map(fact=>(call.body.format==='bullets'?'- ':'')+fact.text).join(call.body.format==='paragraphs'?'\n\n':'\n'),factIds:call.body.facts.map(fact=>fact.id),grounding:{method:'literal_facts',scope:'supplied_facts_only',externallyVerified:false},draft:true}});
       if(call.path==='/skills/growth.optimizer/run'){
         const result=await createGrowthSkill().execute({input:call.body,invoke:async(capability,input,options)=>{
           invocations.push({capability,input,options});return {provider:'fixture',output:{text:'Rascunho sintético para revisão.'},attempts:[]};
@@ -55,8 +57,10 @@ function fixture({fetcher}={}){
     }
   };
   context.window=context;vm.runInNewContext(script,context,{filename:'vitriny-neural-admin.js'});
-  return {$,calls,invocations,posts:()=>calls.filter(call=>call.method==='POST'),
+  return {$,calls,invocations,copied,posts:()=>calls.filter(call=>call.method==='POST'),
     change(name,value){$(name).value=value;$(name).onchange?.();},
+    async submitFactual(){await $('factual-form').onsubmit({preventDefault(){}});await tick();},
+    async click(name){await $(name).onclick?.();await tick();},
     async submit(){await $('test-form').onsubmit({preventDefault(){}});await tick();}};
 }
 
@@ -127,4 +131,70 @@ test('a pending growth request stays single and untrusted output is rendered as 
   resolve(response({ok:true,evaluation:true,result:{provider:'fixture',output:{text}}}));await first;await second;
   assert.equal(f.$('test-output').textContent,text);assert.equal(f.$('test-output').children.length,0);assert.equal(f.$('run-test').disabled,false);
   assert.equal(f.$('test-response').getAttribute('aria-busy'),'false');assert.equal(f.posts().length,1);
+});
+
+test('test prompt limits match each skill and changing areas preserves existing text',async()=>{
+  const f=fixture();await tick();
+  const full='Linha inicial\n'+'x'.repeat(6000);f.$('prompt').value=full;
+  for(const [area,limit] of Object.entries({support:6000,code:6000,growth:2000,research:5000,commerce:2000,ranking:1800,media:8000})){
+    f.change('area',area);assert.equal(f.$('prompt').maxLength,limit);assert.equal(f.$('prompt').value,full);
+    assert.match(f.$('test-limit').textContent,new RegExp(String(limit)));await f.submit();
+  }
+  assert.equal(f.posts().length,1,'only media accepts the complete input');
+  assert.equal(f.posts()[0].body.prompt,full);
+});
+
+test('incomplete administrative model responses show partial text and never announce completion',async()=>{
+  for(const marker of [{incomplete:true,finishReason:'length'},{finishReason:'content_filter'}]){
+    const partial='<img src=x onerror=alert(1)> Resposta parcial';
+    const f=fixture({fetcher:()=>response({ok:true,evaluation:true,result:{provider:'fixture',output:{text:partial,...marker}}})});await tick();
+    f.$('prompt').value=prompt;await f.submit();
+    assert.equal(f.$('test-provider').textContent,'RESPOSTA INTERROMPIDA');assert.match(f.$('test-output').textContent,/Resposta interrompida/);
+    assert(f.$('test-output').textContent.includes(partial));assert.equal(f.$('test-output').children.length,0);
+    assert.doesNotMatch(f.$('announcement').textContent,/Teste.*concluído/i);assert.equal(f.$('run-test').disabled,false);
+  }
+});
+
+test('factual drafts stay available without model qualification and send only after an explicit submit',async()=>{
+  const f=fixture();await tick();assert.equal(f.posts().length,0);assert.equal(f.$('factual-generate').disabled,false);
+  assert.match(html,/<label\s+for="factual-facts">/);assert.match(html,/<label\s+for="factual-format">/);
+  assert.match(html,/Usa somente os dados que você informar\./);
+  f.change('factual-format','paragraphs');assert.equal(f.posts().length,0);
+  f.$('factual-facts').value='Capa para almofada de algodão.\r\n\r\nEnchimento não incluso.';await f.submitFactual();
+  assert.deepEqual(f.posts().map(call=>call.path),['/factual-draft']);
+  assert.deepEqual(f.posts()[0].body,{facts:[{id:'f1',text:'Capa para almofada de algodão.'},{id:'f2',text:'Enchimento não incluso.'}],format:'paragraphs'});
+  assert.equal(f.$('factual-output').textContent,'Capa para almofada de algodão.\n\nEnchimento não incluso.');
+  assert.equal(f.$('factual-state').textContent,'RASCUNHO PRONTO');assert.equal(f.$('factual-copy').disabled,false);
+  assert.match(f.$('factual-source').textContent,/informados por você/);assert.match(f.$('factual-source').textContent,/sem verificação externa/);
+  await f.click('factual-copy');assert.deepEqual(f.copied,[f.$('factual-output').textContent]);assert.equal(f.posts().length,1);
+});
+
+test('factual form rejects missing facts, too many facts, long facts and unsupported formats before sending',async()=>{
+  for(const [facts,format] of [['\n \n','lines'],[Array(31).fill('Fato').join('\n'),'lines'],['x'.repeat(501),'lines'],['Fato confirmado','html']]){
+    const f=fixture();await tick();f.$('factual-facts').value=facts;f.change('factual-format',format);await f.submitFactual();
+    assert.equal(f.posts().length,0);assert.equal(f.$('factual-error').hidden,false);assert.equal(f.$('factual-copy').disabled,true);
+    assert.equal(f.$('factual-generate').disabled,false);assert.equal(f.$('factual-facts').value,facts);
+  }
+});
+
+test('factual generation stays single while pending and renders markup literally in every format',async()=>{
+  for(const format of ['lines','paragraphs','bullets']){
+    let finish;const pending=new Promise(resolve=>{finish=resolve;});
+    const f=fixture({fetcher:()=>pending});await tick();const literal='<script>alert(1)</script>';f.$('factual-facts').value=literal;f.change('factual-format',format);
+    const first=f.submitFactual(),second=f.submitFactual();assert.equal(f.posts().length,1);assert.equal(f.$('factual-generate').disabled,true);
+    const expected=(format==='bullets'?'- ':'')+literal;
+    finish(response({ok:true,draft:{text:expected,factIds:['f1'],grounding:{method:'literal_facts',scope:'supplied_facts_only',externallyVerified:false},draft:true}}));await first;await second;
+    assert.equal(f.$('factual-output').textContent,expected);assert.equal(f.$('factual-output').children.length,0);assert.equal(f.$('factual-generate').disabled,false);
+    assert.equal(f.$('factual-response').getAttribute('aria-busy'),'false');assert.equal(f.$('factual-facts').disabled,false);
+  }
+});
+
+test('invalid factual response or failed copy never claims a ready or copied result',async()=>{
+  for(const draft of [null,{text:'Sem origem',draft:true},{text:'Texto',draft:true,factIds:[],grounding:{method:'literal_facts',scope:'supplied_facts_only',externallyVerified:false}},{text:'Chega amanhã!',draft:true,factIds:['f1'],grounding:{method:'literal_facts',scope:'supplied_facts_only',externallyVerified:false}}]){
+    const f=fixture({fetcher:()=>response({ok:true,draft})});await tick();f.$('factual-facts').value='Fato';await f.submitFactual();
+    assert.equal(f.$('factual-error').hidden,false);assert.equal(f.$('factual-copy').disabled,true);assert.notEqual(f.$('factual-state').textContent,'RASCUNHO PRONTO');
+  }
+  const f=fixture({copy:async()=>{throw Error('Clipboard blocked');}});await tick();f.$('factual-facts').value='Fato';await f.submitFactual();await f.click('factual-copy');
+  assert.deepEqual(f.copied,[]);assert.match(f.$('factual-error').textContent,/selecione/i);assert.notEqual(f.$('factual-copy').textContent,'Copiado');
+  assert.equal(f.$('factual-output').textContent,'Fato');
 });

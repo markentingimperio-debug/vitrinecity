@@ -95,9 +95,11 @@
   }
   function scheduleBenchmark(){clearTimeout(benchmarkTimer);benchmarkTimer=setTimeout(loadBenchmark,5000);}
   const growthActions=new Set(['diagnose','campaign-plan','content-plan','seo-plan','experiment','metric-review']);
+  const promptLimits={support:6000,code:6000,growth:2000,research:5000,commerce:2000,ranking:1800,media:8000};
   function updateTestArea(){
     const area=$('area').value,isGrowth=area==='growth';
     $('growth-action-field').hidden=!isGrowth;$('growth-action').disabled=!isGrowth;
+    const limit=promptLimits[area]||6000;$('prompt').maxLength=limit;$('test-limit').textContent=`Até ${limit} caracteres para esta área.`;
     $('test-hint').textContent=area==='media'?'Este teste exige um provider de imagem; o Qwen de texto pode não suportar esta capacidade.':'A resposta é apenas para avaliação administrativa. Providers reprovados em benchmark continuam testáveis aqui, mas bloqueados para operação.';
   }
   function inputFor(area,prompt,growthAction){switch(area){
@@ -112,13 +114,57 @@
     default:return['support.assistant',{action:'draft-reply',message:prompt,businessContext:'VitrineCity',tone:'cordial',channel:'admin-test',confirmedFacts:{}}];
   }}
   function outputText(data){const r=data?.result||{},o=r.output??r.asset??r;if(typeof o==='string')return o;if(typeof o?.text==='string')return o.text;if(typeof o?.output?.text==='string')return o.output.text;try{return JSON.stringify(o,null,2);}catch{return String(o);}}
+  function incompleteTest(data){return [data,data?.result,data?.result?.output,data?.result?.asset].some(value=>value?.incomplete===true||['length','content_filter'].includes(value?.finishReason));}
+  function renderTestResult(data){
+    const incomplete=incompleteTest(data),text=outputText(data);
+    $('test-provider').textContent=incomplete?'RESPOSTA INTERROMPIDA':data.result?.provider||'CONCLUÍDO';
+    $('test-provider').className='tag'+(incomplete?' warn':'');
+    $('test-output').textContent=incomplete?'Resposta interrompida. O trecho abaixo está incompleto e precisa de nova avaliação.\n\n'+(text||'Nenhum trecho de texto disponível.'):text||'Resposta vazia.';
+    announce(incomplete?'Resposta interrompida. Somente o trecho parcial está disponível.':'Teste da Vitriny Neural concluído.');
+  }
   async function runTest(event){
     event.preventDefault();if(runningTest)return;clearError();
     const prompt=$('prompt').value.trim(),area=$('area').value;if(prompt.length<3)return;
+    const limit=promptLimits[area]||6000;if(prompt.length>limit){showError(Error(`O pedido para esta área aceita até ${limit} caracteres. Seu texto foi preservado.`));$('prompt').focus();return;}
     let skill,input;
     try{[skill,input]=inputFor(area,prompt,$('growth-action').value);}catch(e){showError(e);$('growth-action').focus();return;}
     const started=performance.now();runningTest=true;$('run-test').disabled=true;$('test-response').setAttribute('aria-busy','true');$('test-provider').textContent='PROCESSANDO';$('test-time').textContent='aguarde';$('test-output').textContent='Consultando o modelo local em modo de avaliação. O raciocínio oculto foi desativado para responder mais rápido…';
-    try{const data=await api('/skills/'+encodeURIComponent(skill)+'/run','POST',input,150000);$('test-provider').textContent=data.result?.provider||'CONCLUÍDO';$('test-time').textContent=`${((performance.now()-started)/1000).toFixed(1)} s`;$('test-output').textContent=outputText(data)||'Resposta vazia.';announce('Teste da Vitriny Neural concluído.');await loadAll(false);}catch(e){$('test-provider').textContent='FALHOU';$('test-time').textContent=`${((performance.now()-started)/1000).toFixed(1)} s`;$('test-output').textContent=e.message;showError(e);}finally{runningTest=false;$('run-test').disabled=false;$('test-response').setAttribute('aria-busy','false');}
+    try{const data=await api('/skills/'+encodeURIComponent(skill)+'/run','POST',input,150000);$('test-time').textContent=`${((performance.now()-started)/1000).toFixed(1)} s`;renderTestResult(data);await loadAll(false);}catch(e){$('test-time').textContent=`${((performance.now()-started)/1000).toFixed(1)} s`;if(incompleteTest(e.responseData))renderTestResult(e.responseData);else{$('test-provider').textContent='FALHOU';$('test-output').textContent=e.message;}showError(e);}finally{runningTest=false;$('run-test').disabled=false;$('test-response').setAttribute('aria-busy','false');}
+  }
+  let factualRunning=false,factualText='';
+  const factualFormats=new Set(['lines','paragraphs','bullets']);
+  function factualError(message){$('factual-error').textContent=message;$('factual-error').hidden=false;}
+  function resetFactualResult(){
+    if(factualRunning)return;
+    factualText='';$('factual-copy').disabled=true;$('factual-copy').textContent='Copiar texto';$('factual-error').hidden=true;
+    $('factual-state').textContent='PRONTO PARA USAR';$('factual-output').textContent='O texto preparado aparecerá aqui.';$('factual-notice').textContent='';
+  }
+  async function prepareFactualDraft(event){
+    event.preventDefault();if(factualRunning)return;resetFactualResult();
+    const lines=$('factual-facts').value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean),format=$('factual-format').value;
+    if(!lines.length){factualError('Informe pelo menos um fato para preparar o rascunho.');$('factual-facts').focus();return;}
+    if(lines.length>30||lines.some(line=>line.length>500)){factualError('Use até 30 fatos, com até 500 caracteres em cada linha. Seu texto foi preservado.');$('factual-facts').focus();return;}
+    if(new Set(lines).size!==lines.length){factualError('Há linhas repetidas. Mantenha cada fato uma única vez.');$('factual-facts').focus();return;}
+    if(!factualFormats.has(format)){factualError('Escolha linhas, parágrafos ou tópicos.');$('factual-format').focus();return;}
+    const facts=lines.map((text,index)=>({id:'f'+(index+1),text}));
+    const expectedText=facts.map(fact=>(format==='bullets'?'- ':'')+fact.text).join(format==='paragraphs'?'\n\n':'\n');
+    factualRunning=true;$('factual-generate').disabled=true;$('factual-facts').disabled=true;$('factual-format').disabled=true;
+    $('factual-state').textContent='PREPARANDO';$('factual-response').setAttribute('aria-busy','true');$('factual-notice').textContent='Organizando os dados informados…';
+    try{
+      const data=await api('/factual-draft','POST',{facts,format}),draft=data?.draft;
+      if(data?.ok!==true||draft?.draft!==true||draft.text!==expectedText||!Array.isArray(draft.factIds)||draft.factIds.length!==facts.length||!draft.factIds.every((id,index)=>id===facts[index].id)||draft.grounding?.method!=='literal_facts'||draft.grounding?.scope!=='supplied_facts_only'||draft.grounding?.externallyVerified!==false)throw Error('Não foi possível confirmar o rascunho com os dados informados.');
+      factualText=draft.text;$('factual-output').textContent=factualText;$('factual-state').textContent='RASCUNHO PRONTO';$('factual-copy').disabled=false;
+      $('factual-source').textContent='Fonte: dados informados por você; sem verificação externa.';
+      $('factual-notice').textContent='Rascunho preparado. Você pode copiar o texto.';
+    }catch(error){$('factual-state').textContent='NÃO PREPARADO';$('factual-notice').textContent='';factualError(error.message||'Não foi possível preparar o rascunho.');}
+    finally{factualRunning=false;$('factual-generate').disabled=false;$('factual-facts').disabled=false;$('factual-format').disabled=false;$('factual-response').setAttribute('aria-busy','false');}
+  }
+  async function copyFactualDraft(){
+    if(!factualText||$('factual-copy').disabled)return;
+    const text=factualText;$('factual-copy').disabled=true;$('factual-error').hidden=true;
+    try{if(!navigator.clipboard?.writeText)throw Error('clipboard_unavailable');await navigator.clipboard.writeText(text);if(factualText===text){$('factual-copy').textContent='Copiado';$('factual-notice').textContent='Texto copiado.';}}
+    catch{if(factualText===text)factualError('Não foi possível copiar automaticamente. Selecione o texto do rascunho e copie.');}
+    finally{$('factual-copy').disabled=!factualText||factualRunning;}
   }
   async function startBenchmark(){clearError();$('benchmark-start').disabled=true;try{const data=await api('/benchmark/start','POST',{},15000);$('benchmark-state').textContent='RUNNING';$('benchmark-score').textContent='…';$('benchmark-grade').textContent='Benchmark iniciado';$('benchmark-meta').textContent=`Execução ${data.item.id}. O painel acompanhará sem bloquear esta página.`;announce('Benchmark real iniciado.');scheduleBenchmark();}catch(e){showError(e);$('benchmark-start').disabled=false;}}
   function renderWebResearch(){
@@ -365,5 +411,6 @@
   $('refresh').onclick=()=>loadAll();$('test-form').onsubmit=runTest;$('benchmark-start').onclick=startBenchmark;$('web-research-form').onsubmit=startWebResearch;$('training-form').onsubmit=saveTraining;$('training-export-all').onclick=()=>exportTraining('all');$('training-export-train').onclick=()=>exportTraining('train');$('training-export-validation').onclick=()=>exportTraining('validation');$('area').onchange=updateTestArea;
   $('refresh').onclick=()=>{loadAll();if($('supervisor-panel'))loadSupervisor(true);};
   $('model-preflight').onclick=verifyLocalModel;
+  $('factual-form').onsubmit=prepareFactualDraft;$('factual-copy').onclick=copyFactualDraft;$('factual-facts').oninput=resetFactualResult;$('factual-format').onchange=resetFactualResult;
   updateTestArea();loadAll();setInterval(()=>loadAll(false),30000);
 })();

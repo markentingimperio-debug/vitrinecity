@@ -92,9 +92,10 @@ test('piloto desligado, shadow, falta de benchmark ou outro modelo bloqueiam exe
 test('qualificação revogada durante tentativa impede fallback mesmo com política ainda habilitada',async()=>{
   let f,backupCalls=0;
   f=fixture({respond:()=>{
-    // A passing record for another alias leaves policy enabled, but revokes the
-    // configured model's qualification after the candidates were already read.
+    // Deliberately restore a stale policy after replacing the qualification to
+    // exercise task admission's independent barrier after candidate selection.
     f.service.recordQualification({providerId:'backup-local',modelName:'changed-model',report});
+    f.service.runtime.skills.setProviderPolicy('backup-local',{enabled:true,allowedCapabilities:['code.plan'],source:'fixture-stale-policy'});
     throw Error('first attempt failed');
   }});
   try{
