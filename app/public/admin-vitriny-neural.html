@@ -6,7 +6,9 @@
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>Vitriny Neural · Console de IA | VitrineCity</title>
   <link rel="stylesheet" href="/vitriny-neural-admin.css?v=3">
+  <link rel="stylesheet" href="/neural-kling-admin.css">
   <script src="/vitriny-neural-admin.js?v=5" defer></script>
+  <script type="module" src="/neural-kling-admin.js"></script>
 </head>
 <body>
 <a class="skip" href="#main">Pular para o conteúdo</a>
@@ -34,6 +36,32 @@
 
   <p id="error" class="error" role="alert" hidden></p>
   <p id="announcement" class="sr-only" aria-live="polite" role="status"></p>
+
+  <section id="kling-panel" class="panel kling-panel" aria-labelledby="kling-title" aria-busy="true">
+    <div class="section-head"><div><p class="eyebrow">INTEGRAÇÃO COMERCIAL · PREPARAÇÃO</p><h2 id="kling-title">Kling API · geração para clientes</h2></div><span id="kling-stage" class="kling-stage" data-state="loading">Carregando estado</span></div>
+    <p class="muted">A estrutura de integração está preparada. Isso não significa geração de vídeos ativa: conectar a API, testar a entrega e habilitar a cobrança dos clientes são etapas diferentes.</p>
+    <div class="kling-overview">
+      <article><h3>API comercial para a plataforma</h3><p>Usa a credencial e os créditos próprios da conta de API. A conferência abaixo não compra pacotes, não gera conteúdo e não habilita vendas.</p></article>
+      <article><h3>Kling Studio · assinatura separada</h3><p>Assinatura e créditos do Studio não são compartilhados com a API. Este painel não altera o Studio nem confirma seu plano ou saldo.</p></article>
+    </div>
+    <p id="kling-status" class="kling-status" role="status" aria-live="polite" aria-atomic="true">Carregando o estado salvo, sem iniciar uma conferência de acesso.</p>
+    <p id="kling-error" class="error" role="alert" hidden></p>
+    <a id="kling-login" class="kling-login" href="/admin-login.html" hidden>Entrar novamente na administração</a>
+    <ol class="kling-checklist" aria-label="Etapas para disponibilizar vídeos aos clientes">
+      <li><strong>1. Credencial da API</strong><span id="kling-credential">Aguardando leitura do servidor.</span></li>
+      <li><strong>2. Conferência de acesso</strong><span id="kling-access">Ainda não confirmada nesta página.</span></li>
+      <li><strong>3. Créditos e condições comerciais</strong><span id="kling-commercial">Pendentes de conferência na conta da API. Nenhum saldo foi confirmado.</span></li>
+      <li><strong>4. Teste real de geração</strong><span id="kling-generation">Pendente. Exige autorização específica e pode consumir créditos; não é iniciado aqui.</span></li>
+      <li><strong>5. Cobrança de clientes</strong><span id="kling-billing">Desativada. Preço, consumo de créditos e entrega ainda precisam ser validados antes da ativação.</span></li>
+    </ol>
+    <p id="kling-checked-at" class="fine">Nenhuma conferência de acesso carregada.</p>
+    <p id="kling-package-count" class="fine" hidden></p>
+    <p class="fine">Os dados de pacotes da API podem levar até 12 horas para atualizar. A existência de um pacote não comprova saldo utilizável nem garante geração.</p>
+    <div class="kling-actions"><button id="kling-check" type="button" aria-describedby="kling-check-hint" disabled>Conferir acesso à API · sem custo</button><button id="kling-refresh" type="button" disabled>Atualizar estado salvo</button></div>
+    <p id="kling-check-hint" class="fine">Conferência gratuita e somente leitura, iniciada por você. Não gera vídeo, não compra créditos, não configura pagamentos e não cobra clientes.</p>
+    <nav class="kling-links" aria-label="Recursos oficiais da Kling API"><a id="kling-console-link">Conta e chave da API</a><a id="kling-pricing-link">Preços oficiais atualizados</a><a id="kling-documentation-link">Documentação da API</a><a id="kling-terms-link">Condições do serviço pago</a></nav>
+    <p class="fine">Os links oficiais abrem em outra aba. Não envie credenciais no chat nem cole chaves neste painel.</p>
+  </section>
 
   <details class="advanced-console">
   <summary>Administração avançada · diagnósticos, testes e aprendizado</summary>
