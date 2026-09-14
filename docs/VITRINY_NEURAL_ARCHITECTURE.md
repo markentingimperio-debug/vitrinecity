@@ -45,6 +45,21 @@ Vitriny Neural Core
         └─ Vector Store para memória semântica
 ```
 
+## Roteamento local-first de modelos
+
+O gateway aceita quatro papeis independentes, todos por endpoint compativel com OpenAI:
+
+1. `MODEL`: modelo local geral e de menor custo;
+2. `SPECIALIST`: codigo, growth e ranking;
+3. `TEACHER`: revisao premium, pesquisa, comercio e suporte;
+4. `FALLBACK`: continuidade quando os anteriores falham.
+
+Cada papel declara capacidades permitidas. O registro tenta primeiro o provider de menor
+prioridade numerica que suporte a capacidade, respeita qualificacao semantica, abre o
+circuit breaker apos falhas repetidas e tenta o proximo provider automaticamente. Assim,
+uma tarefa simples permanece local e uma tarefa complexa pode subir de nivel sem expor
+ao modelo ferramentas que ele nao foi autorizado a usar.
+
 ## Ciclo de aprendizagem
 
 ```text
