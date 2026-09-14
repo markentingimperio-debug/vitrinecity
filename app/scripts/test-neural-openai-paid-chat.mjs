@@ -4,9 +4,10 @@ import {createHash} from 'node:crypto';
 import {createOpenAiPaidChatAdapter,hashOpenAiPaidChatRequest} from '../vitriny-neural/providers/openai-paid-chat.js';
 
 // Synthetic values only. This suite never reads an environment key or makes HTTP calls.
-const MODEL='gpt-4o-mini',SNAPSHOT='gpt-4o-mini-2024-07-18',LUNA='gpt-5.6-luna',START=1800000000000;
+const MODEL='gpt-4o-mini',SNAPSHOT='gpt-4o-mini-2024-07-18',LUNA='gpt-5.6-luna',TERRA='gpt-5.6-terra',ASTRA='gpt-6-astra',START=1800000000000;
+const MODERN=[LUNA,TERRA,ASTRA];
 const messages=()=>[{role:'user',content:'Escreva um rascunho usando somente estes dados: loja de plantas.'}];
-const completion=(extra={})=>({id:'chatcmpl-fixture-001',object:'chat.completion',model:MODEL,choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:'Rascunho de exemplo.',refusal:null}}],usage:{prompt_tokens:90,completion_tokens:12,total_tokens:102,prompt_tokens_details:{cached_tokens:30,...(extra.model===LUNA?{cache_write_tokens:0}:{})}},...extra});
+const completion=(extra={})=>({id:'chatcmpl-fixture-001',object:'chat.completion',model:MODEL,choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:'Rascunho de exemplo.',refusal:null}}],usage:{prompt_tokens:90,completion_tokens:12,total_tokens:102,prompt_tokens_details:{cached_tokens:30,...(MODERN.includes(extra.model)?{cache_write_tokens:0}:{})}},...extra});
 const response=(data=completion(),options={})=>new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json','x-request-id':'req_fixture_001'},...options});
 function request(extra={}){
   const input={requestId:'request-fixture-001',messages:messages(),maxOutputTokens:200,...extra};
@@ -25,6 +26,11 @@ const held=result=>{assert.equal(result.transportStarted,true);assert.equal(resu
 function lunaRequest(extra={}){
   const input=request(extra);
   input.permit={...input.permit,model:LUNA,requestHash:hashOpenAiPaidChatRequest({model:LUNA,messages:input.messages,maxOutputTokens:input.maxOutputTokens}),...extra.permit};
+  return input;
+}
+function modernRequest(model,reasoningEffort,extra={}){
+  const input=request(extra);
+  input.permit={...input.permit,model,requestHash:hashOpenAiPaidChatRequest({model,reasoningEffort,messages:input.messages,maxOutputTokens:input.maxOutputTokens}),...extra.permit};
   return input;
 }
 
@@ -234,7 +240,7 @@ test('Luna permits cannot reuse mini hashes/models or override internal reasonin
   for(const extra of [{reasoning_effort:'high'},{reasoningEffort:'none'},{reasoning:{effort:'none'}},{model:MODEL},{maxOutputTokens:1025},{tools:[]},{modalities:['image']}]){
     const f=fixture({model:LUNA}),input=lunaRequest();Object.assign(input,extra);noDispatch(await f.adapter.invoke(input));assert.equal(f.calls.length,0);
   }
-  assert.throws(()=>createOpenAiPaidChatAdapter({model:LUNA,reasoningEffort:'high'}),/openai_config_invalid/);
+  assert.throws(()=>createOpenAiPaidChatAdapter({model:LUNA,reasoningEffort:'ultra'}),/openai_config_invalid/);
 });
 
 test('Luna mismatch or transport error never falls back to mini or a different provider',async()=>{
@@ -273,4 +279,109 @@ test('Luna requires explicit zero cache writes: missing/null/write/audio usage i
   assert.equal(r.status,'completed');assert.equal(r.usage.inputTokens,90);assert.equal(r.usage.cachedInputTokens,30);
   // The older supported family still accepts its existing optional write field.
   assert.equal((await invoke(fixture({fetchImpl:async()=>response(completion({usage:normal}))}))).status,'completed');
+});
+
+test('Luna holds present nonzero or invalid image usage while preserving receipts and never retrying',async()=>{
+  const normal=completion({model:LUNA}).usage;
+  for(const image_tokens of [60,1,-1,0.5,null,'0',false,{},[]]){
+    let calls=0;const usage={...normal,prompt_tokens_details:{...normal.prompt_tokens_details,image_tokens}};
+    const r=await fixture({model:LUNA,fetchImpl:async()=>{calls++;return response(completion({model:LUNA,usage}));}}).adapter.invoke(lunaRequest());
+    held(r);assert.equal(r.code,'openai_usage_unknown');assert.equal(r.usage.known,false);assert.equal(r.text,null);
+    assert.equal(r.receiptId,'openai:chatcmpl-fixture-001');assert.equal(r.providerRequestId,'req_fixture_001');assert.equal(calls,1);
+  }
+  for(const details of [normal.prompt_tokens_details,{...normal.prompt_tokens_details,image_tokens:0}]){
+    const r=await fixture({model:LUNA,fetchImpl:async()=>response(completion({model:LUNA,usage:{...normal,prompt_tokens_details:details}}))}).adapter.invoke(lunaRequest());
+    assert.equal(r.status,'completed');assert.equal(r.billingDisposition,'reconcile');assert.equal(r.usage.inputTokens,90);
+  }
+  const imageUsage={...normal,prompt_tokens_details:{...normal.prompt_tokens_details,image_tokens:60}};
+  const httpError=await fixture({model:LUNA,fetchImpl:async()=>response(completion({model:LUNA,usage:imageUsage}),{status:500})}).adapter.invoke(lunaRequest());
+  held(httpError);assert.equal(httpError.code,'openai_http_error');assert.equal(httpError.usage.known,false);assert.equal(httpError.receiptId,'openai:chatcmpl-fixture-001');
+  // Keep the established mini receipt compatibility; this new guard is Luna-only.
+  const mini=await invoke(fixture({fetchImpl:async()=>response(completion({usage:imageUsage}))}));
+  assert.equal(mini.status,'completed');assert.equal(mini.billingDisposition,'reconcile');
+});
+
+test('exact modern aliases use server-owned model-specific default reasoning without changing the mini default',async()=>{
+  for(const [model,effort] of [[LUNA,'none'],[TERRA,'none'],[ASTRA,'low']]){
+    assert.equal(createOpenAiPaidChatAdapter({model}).enabled,false);
+    let calls=0;const f=fixture({model,fetchImpl:async(_url,init)=>{calls++;const body=JSON.parse(init.body);assert.equal(body.model,model);assert.equal(body.reasoning_effort,effort);assert.equal(createHash('sha256').update(init.body).digest('hex'),f.authorizations[0].requestHash);return response(completion({model}));}});
+    const r=await f.adapter.invoke(modernRequest(model));assert.equal(r.status,'completed');assert.equal(calls,1);
+    assert.equal(hashOpenAiPaidChatRequest({model,messages:messages(),maxOutputTokens:200}),hashOpenAiPaidChatRequest({model,reasoningEffort:effort,messages:messages(),maxOutputTokens:200}));
+    assert.throws(()=>createOpenAiPaidChatAdapter({model:`${model}-2026-09-14`}),/openai_config_invalid/);
+  }
+  const legacy=createOpenAiPaidChatAdapter();assert.equal(legacy.model,MODEL);assert.equal(legacy.enabled,false);
+});
+
+test('modern reasoning allowlists accept only officially supported efforts and mini rejects an effort option',async()=>{
+  const supported={
+    [LUNA]:['none','low','medium','high','xhigh','max'],
+    [TERRA]:['none','low','medium','high','xhigh','max'],
+    [ASTRA]:['low','medium','high','xhigh','max']
+  };
+  for(const model of MODERN){
+    for(const reasoningEffort of supported[model]){
+      const f=fixture({model,reasoningEffort,fetchImpl:async(_url,init)=>{assert.equal(JSON.parse(init.body).reasoning_effort,reasoningEffort);return response(completion({model}));}});
+      assert.equal((await f.adapter.invoke(modernRequest(model,reasoningEffort))).status,'completed');
+    }
+    for(const reasoningEffort of ['minimal','ultra','',null,0,{},...['none','low','high'].filter(e=>!supported[model].includes(e))]){
+      assert.throws(()=>createOpenAiPaidChatAdapter({model,reasoningEffort}),/openai_config_invalid/);
+      assert.throws(()=>hashOpenAiPaidChatRequest({model,reasoningEffort,messages:messages(),maxOutputTokens:200}),/openai_input_invalid/);
+    }
+  }
+  for(const model of [MODEL,SNAPSHOT])for(const reasoningEffort of ['none','low',null]){
+    assert.throws(()=>createOpenAiPaidChatAdapter({model,reasoningEffort}),/openai_config_invalid/);
+    assert.throws(()=>hashOpenAiPaidChatRequest({model,reasoningEffort,messages:messages(),maxOutputTokens:200}),/openai_input_invalid/);
+  }
+  assert.equal(hashOpenAiPaidChatRequest({model:MODEL,reasoningEffort:undefined,messages:messages(),maxOutputTokens:200}),request().permit.requestHash);
+});
+
+test('request permits bind the exact selected model and effort; neither callbacks nor per-request input may escalate',async()=>{
+  assert.notEqual(modernRequest(TERRA,'low').permit.requestHash,modernRequest(TERRA,'high').permit.requestHash);
+  assert.notEqual(modernRequest(TERRA,'low').permit.requestHash,modernRequest(ASTRA,'low').permit.requestHash);
+  for(const input of [modernRequest(TERRA,'none'),modernRequest(TERRA,'low'),modernRequest(ASTRA,'high'),modernRequest(LUNA)]){
+    const f=fixture({model:TERRA,reasoningEffort:'high'});noDispatch(await f.adapter.invoke(input));assert.equal(f.calls.length,0);assert.equal(f.authorizations.length,0);
+  }
+  for(const field of ['reasoningEffort','reasoning_effort','model']){
+    const f=fixture({model:TERRA,reasoningEffort:'high'}),input=modernRequest(TERRA,'high');input[field]=field==='model'?ASTRA:'max';
+    noDispatch(await f.adapter.invoke(input));assert.equal(f.calls.length,0);
+  }
+  let body;const input=modernRequest(TERRA,'high'),options={model:TERRA,reasoningEffort:'high',assertAuthorized:()=>{options.reasoningEffort='max';input.reasoningEffort='max';return true;},fetchImpl:async(_url,init)=>{body=JSON.parse(init.body);return response(completion({model:TERRA}));}};
+  const f=fixture(options);assert.equal((await f.adapter.invoke(input)).status,'completed');assert.equal(body.reasoning_effort,'high');
+});
+
+test('modern models never accept another family or silently fall back after an unexpected model or transport failure',async()=>{
+  for(const requested of MODERN)for(const observed of [MODEL,...MODERN.filter(m=>m!==requested)]){
+    assert.throws(()=>createOpenAiPaidChatAdapter({model:requested,acceptedResponseModels:[observed]}),/openai_config_invalid/);
+    let calls=0;const r=await fixture({model:requested,fetchImpl:async()=>{calls++;return response(completion({model:observed,usage:completion({model:requested}).usage}));}}).adapter.invoke(modernRequest(requested));
+    held(r);assert.equal(r.code,'openai_model_mismatch');assert.equal(calls,1);assert.equal(r.text,null);
+  }
+  for(const model of MODERN){
+    let calls=0;const r=await fixture({model,fetchImpl:async()=>{calls++;throw Error('PRIVATE');}}).adapter.invoke(modernRequest(model));
+    held(r);assert.equal(calls,1);assert.equal(r.usage.known,false);assert.doesNotMatch(JSON.stringify(r),/PRIVATE/);
+  }
+});
+
+test('all modern aliases share zero-write, text-only and long-context guards without losing receipt IDs',async()=>{
+  for(const model of MODERN){
+    const normal=completion({model}).usage;
+    for(const details of [{cached_tokens:30},{cached_tokens:30,cache_write_tokens:null},{cached_tokens:30,cache_write_tokens:1},{...normal.prompt_tokens_details,image_tokens:60},{...normal.prompt_tokens_details,image_tokens:null},{...normal.prompt_tokens_details,image_tokens:'0'},{...normal.prompt_tokens_details,audio_tokens:1}]){
+      const r=await fixture({model,fetchImpl:async()=>response(completion({model,usage:{...normal,prompt_tokens_details:details}}))}).adapter.invoke(modernRequest(model));
+      held(r);assert.equal(r.code,'openai_usage_unknown');assert.equal(r.usage.known,false);assert.equal(r.receiptId,'openai:chatcmpl-fixture-001');
+    }
+    const usage={...normal,prompt_tokens:272001,total_tokens:272013};
+    const r=await fixture({model,fetchImpl:async()=>response(completion({model,usage}))}).adapter.invoke(modernRequest(model));
+    held(r);assert.equal(r.code,'openai_long_context_unpriced');assert.equal(r.usage.inputTokens,272001);assert.equal(r.receiptId,'openai:chatcmpl-fixture-001');
+    assert.throws(()=>createOpenAiPaidChatAdapter({model,maxInputBytes:262145}),/openai_config_invalid/);
+  }
+});
+
+test('reported completion tokens already include reasoning: retain the total once and apply the cap to that total',async()=>{
+  for(const [model,reasoningEffort] of [[LUNA,'none'],[TERRA,'high'],[ASTRA,'max']]){
+    const usage={...completion({model}).usage,completion_tokens_details:{reasoning_tokens:9}};
+    const r=await fixture({model,reasoningEffort,fetchImpl:async()=>response(completion({model,usage}))}).adapter.invoke(modernRequest(model,reasoningEffort));
+    assert.equal(r.status,'completed');assert.equal(r.usage.outputTokens,12);assert.equal(r.usage.totalTokens,102);assert.equal(r.billingDisposition,'reconcile');
+    const overCap={...usage,completion_tokens:201,total_tokens:291,completion_tokens_details:{reasoning_tokens:200}};
+    const heldReceipt=await fixture({model,reasoningEffort,fetchImpl:async()=>response(completion({model,usage:overCap}))}).adapter.invoke(modernRequest(model,reasoningEffort));
+    held(heldReceipt);assert.equal(heldReceipt.code,'openai_budget_exceeded');assert.equal(heldReceipt.usage.outputTokens,201);
+  }
 });

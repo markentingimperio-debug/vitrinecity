@@ -8,13 +8,13 @@ import {createOpenAiPaidChatAdapter,hashOpenAiPaidChatRequest} from '../vitriny-
 // Integration fixtures only. These are NOT current provider tariffs, payment
 // confirmation, purchase endpoints, consent handling or production activation.
 const date='2026-09-14T17:00:00.000Z',time=Date.parse(date),scope='admin:fixture-owner';
-function fixture(fetchImpl,{model='gpt-4o-mini',rates={inputUsdPerMillion:'0.1',cachedInputUsdPerMillion:'0.05',outputUsdPerMillion:'0.4'}}={}){
+function fixture(fetchImpl,{model='gpt-4o-mini',reasoningEffort,rates={inputUsdPerMillion:'0.1',cachedInputUsdPerMillion:'0.05',outputUsdPerMillion:'0.4'}}={}){
   const db=new Database(':memory:');
   const wallet=createAiCreditWallet({db,enabled:true,now:()=>time});
   wallet.grant(scope,{paymentReference:'fixture-payment-only',amountMicroBrl:1_000_000,termsVersion:'fixture-terms'});
   db.exec('CREATE TABLE fixture_dispatch_claims(request_id TEXT PRIMARY KEY)');
   const input={requestId:'fixture-request-001',messages:[{role:'user',content:'Explique este teste.'}],maxOutputTokens:100};
-  const requestHash=hashOpenAiPaidChatRequest({model,messages:input.messages,maxOutputTokens:input.maxOutputTokens});
+  const requestHash=hashOpenAiPaidChatRequest({model,reasoningEffort,messages:input.messages,maxOutputTokens:input.maxOutputTokens});
   wallet.reserve(scope,{requestId:input.requestId,maximumMicroBrl:10000,quoteId:'fixture-quote',requestHash});
   input.permit={authorized:true,scope,requestId:input.requestId,requestHash,model,maxOutputTokens:100,
     reservationId:input.requestId,maximumMicroBrl:'10000',expiresAt:time+10000};
@@ -23,7 +23,7 @@ function fixture(fetchImpl,{model='gpt-4o-mini',rates={inputUsdPerMillion:'0.1',
     if(!row||row.state!=='reserved'||row.request_hash!==permit.requestHash||String(row.maximum_micro)!==permit.maximumMicroBrl)return false;
     return db.prepare('INSERT OR IGNORE INTO fixture_dispatch_claims VALUES(?)').run(permit.requestId).changes===1;
   });
-  const adapter=createOpenAiPaidChatAdapter({enabled:true,apiKey:'fixture-key-not-real',model,now:()=>time,
+  const adapter=createOpenAiPaidChatAdapter({enabled:true,apiKey:'fixture-key-not-real',model,reasoningEffort,now:()=>time,
     fetchImpl,assertAuthorized:permit=>assertAuthorized.immediate(permit)});
   const pricing=createAiCreditPricing({tariffs:[{providerId:'openai',modelId:model,version:'fixture-tariff',effectiveAt:date,
     ...rates}],fxSnapshots:[{version:'fixture-fx',observedAt:date,usdToBrl:'5'}]});
@@ -109,4 +109,53 @@ test('mocked Luna missing cache-write evidence holds its reservation without pri
     assert.equal(f.wallet.status(scope).reservedMicroBrl,10000);assert.equal(f.wallet.status(scope).chargedMicroBrl,0);
     assert.equal((await f.adapter.invoke(f.input)).transportStarted,false);assert.equal(calls,1);
   }finally{f.db.close();}
+});
+
+test('stronger text models settle their own token tariff plus 15 percent, counting reasoning only once',async()=>{
+  for(const [model,reasoningEffort,input,cache,output,expected] of [
+    ['gpt-5.6-terra','high','2','0.2','12',2116],
+    ['gpt-6-astra','high','10','1','50',9430]
+  ]){
+    let calls=0;const f=fixture(async(_url,init)=>{
+      calls++;const body=JSON.parse(init.body);assert.equal(body.model,model);assert.equal(body.reasoning_effort,'high');
+      return new Response(JSON.stringify({id:'chatcmpl-strong-fixture',object:'chat.completion',model,
+        choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:'Analise simulada.'}}],
+        usage:{prompt_tokens:100,completion_tokens:20,total_tokens:120,
+          prompt_tokens_details:{cached_tokens:40,cache_write_tokens:0,image_tokens:0},
+          completion_tokens_details:{reasoning_tokens:8,audio_tokens:0}}}));
+    },{model,reasoningEffort,rates:{inputUsdPerMillion:input,cachedInputUsdPerMillion:cache,outputUsdPerMillion:output}});
+    try{
+      const receipt=await f.adapter.invoke(f.input);assert.equal(receipt.ok,true);assert.equal(receipt.usage.outputTokens,20);
+      const {inputTokens,cachedInputTokens,outputTokens}=receipt.usage;
+      const price=f.pricing.priceChat({providerId:'openai',modelId:model,tariffVersion:'fixture-tariff',fxVersion:'fixture-fx',pricedAt:date,
+        usage:{inputTokens,cachedInputTokens,outputTokens}});
+      assert.equal(price.customerMicroBRL,String(expected));assert.equal(price.audit.modelId,model);
+      assert.equal(price.audit.markupNumerator,'23');assert.equal(price.audit.markupDenominator,'20');
+      const settlement={actualMicroBrl:expected,receiptId:receipt.receiptId};
+      f.wallet.settle(scope,f.input.requestId,settlement);f.wallet.settle(scope,f.input.requestId,settlement);
+      assert.equal(f.wallet.status(scope).chargedMicroBrl,expected);assert.equal(f.wallet.status(scope).availableMicroBrl,1000000-expected);
+      assert.equal((await f.adapter.invoke(f.input)).transportStarted,false);assert.equal(calls,1);
+    }finally{f.db.close();}
+  }
+});
+
+test('prepaid reservation failure prevents any paid model dispatch; other reservations cannot reuse that balance',async()=>{
+  const db=new Database(':memory:');let calls=0;
+  try{
+    const wallet=createAiCreditWallet({db,enabled:true,now:()=>time});
+    const input={model:'gpt-6-astra',reasoningEffort:'high',messages:[{role:'user',content:'Teste sem saldo suficiente.'}],maxOutputTokens:100};
+    const requestHash=hashOpenAiPaidChatRequest(input);
+    const reserveAndCreate=()=>{
+      wallet.reserve(scope,{requestId:'fixture-budget-request',maximumMicroBrl:9430,quoteId:'fixture-astra-quote',requestHash});
+      return createOpenAiPaidChatAdapter({model:input.model,reasoningEffort:input.reasoningEffort,enabled:true,apiKey:'fixture-only',
+        assertAuthorized:()=>false,fetchImpl:async()=>{calls++;throw Error('No dispatch expected');}});
+    };
+    assert.throws(reserveAndCreate,{code:'ai_wallet_insufficient'});
+    wallet.grant(scope,{paymentReference:'fixture-small-prepaid',amountMicroBrl:10000,termsVersion:'fixture-terms'});
+    wallet.reserve(scope,{requestId:'fixture-earlier-request',maximumMicroBrl:600,quoteId:'fixture-earlier-quote',requestHash:'a'.repeat(64)});
+    assert.equal(wallet.status(scope).availableMicroBrl,9400);
+    assert.throws(reserveAndCreate,{code:'ai_wallet_insufficient'});
+    assert.equal(calls,0);assert.equal(wallet.status(scope).chargedMicroBrl,0);
+    assert.equal(wallet.status(scope).reservedMicroBrl,600);assert.equal(wallet.status(scope).availableMicroBrl,9400);
+  }finally{db.close();}
 });
