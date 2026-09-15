@@ -8,7 +8,7 @@ export function productFeedRows(products, siteUrl) {
     && /^(?:https:\/\/|\/(?!\/))/.test(p.image_url || '')).map(p => {
       const slug = p.name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
       return { item_id:`product-${p.id}`, title:p.name, description:p.description || p.name,
-        url:`${origin}/produto/${p.id}/${slug}`, brand:p.store_name, seller_name:p.store_name,
+        url:`${origin}/produto/${p.id}/${slug}#falar-com-lia`, brand:p.store_name, seller_name:p.store_name,
         seller_url:`${origin}/loja/official_agrotecnica/agrotecnica`, image_url:new URL(p.image_url,origin).href,
         availability:'in_stock', price:`${(p.price_cents / 100).toFixed(2)} BRL`, is_ads_eligible:'true' };
     });
