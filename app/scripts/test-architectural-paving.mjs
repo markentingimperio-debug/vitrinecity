@@ -1,11 +1,53 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 import * as THREE from 'three';
 
 const source=(await readFile(new URL('../public/vitriny-architectural-paving.js',import.meta.url),'utf8'))
   .replace("'/vendor/three/three.module.js'",JSON.stringify(import.meta.resolve('three')));
-const {architecturalPavingPixels,createArchitecturalPavingMaps}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+// Test-only inspection stays outside the production module's public API.
+const instrumented=source+'\nexport const inspectPavingPatterns=()=>[...pavingPatterns.values()];';
+const {architecturalPavingPixels,createArchitecturalPavingMaps,inspectPavingPatterns}=await import('data:text/javascript;base64,'+Buffer.from(instrumented).toString('base64'));
+
+test('all city pavement tints retain the exact original PR200 RGBA pixels',()=>{
+  const fixtures=[
+    [false,'#d1cbbb','e28e45ef834cab10a345994aab3546bfc26d96ab7f0ce637ecfedfdf0929320d'],
+    [false,'#8f8069','7b726bda656ed0b7095be44376d74e232ded907bc2c3db10c10304fcd61c076c'],
+    [false,'#d2c9b7','fa4387b0ded07fa6cf8879fe9a837ffb1f09cfce979fea3a44861e61053b80cb'],
+    [true,'#d1cbbb','5e0fb82b1506664aa75cbce87cd098e23e113f692bdf95dbc74a4bccfe1bace3'],
+    [true,'#8f8069','9b02ebcc376e57b6db4ff1bce146b8ba8aa35c564dfae6f93712206bf57ae503'],
+    [true,'#d2c9b7','a7d3fcef4dcce846b5832eaed00108f8eb8c91e0b3b2eb5f4927429976b901d5']
+  ];
+  for(const [lite,color,expected] of fixtures){
+    const {albedo,surface}=architecturalPavingPixels({color,lite});
+    const hash=createHash('sha256').update(albedo);if(surface)hash.update(surface);
+    assert.equal(hash.digest('hex'),expected,`${color} / ${lite?'LITE':'STANDARD'}`);
+  }
+});
+
+test('pattern reuse is bounded to two resolutions and released after the synchronous build',async()=>{
+  await Promise.resolve();assert.deepEqual(inspectPavingPatterns(),[]);
+  const first=architecturalPavingPixels({color:'#d1cbbb'}),[pattern]=inspectPavingPatterns();
+  architecturalPavingPixels({color:'#8f8069'});
+  assert.equal(inspectPavingPatterns()[0],pattern,'Different tints reuse the same expensive pattern');
+  architecturalPavingPixels({color:'#8f8069',lite:true});
+  const cached=inspectPavingPatterns();assert.equal(cached.length,2);
+  assert.equal(cached.reduce((sum,p)=>sum+p.shades.byteLength+(p.surface?.byteLength||0),0),3.5*1024*1024);
+  await Promise.resolve();assert.deepEqual(inspectPavingPatterns(),[]);
+  const rebuilt=architecturalPavingPixels({color:'#d1cbbb'});
+  assert.notEqual(inspectPavingPatterns()[0],pattern);assert.deepEqual(rebuilt,first);
+  await Promise.resolve();assert.deepEqual(inspectPavingPatterns(),[]);
+});
+
+test('each floor owns independent pixel buffers even when its pattern is reused',()=>{
+  for(const lite of [false,true]){
+    const first=architecturalPavingPixels({lite}),second=architecturalPavingPixels({lite});
+    assert.notEqual(first.albedo.buffer,second.albedo.buffer);
+    first.albedo.fill(0);if(first.surface){assert.notEqual(first.surface.buffer,second.surface.buffer);first.surface.fill(0);}
+    assert.deepEqual(architecturalPavingPixels({lite}),second);
+  }
+});
 
 test('local paving has deterministic stone variation, staggered joints and bounded texture memory',()=>{
   for(const lite of [false,true]){

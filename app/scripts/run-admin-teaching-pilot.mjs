@@ -90,8 +90,9 @@ export function teachingPilotConfig(){return{budgetMicroBrl:'20000000',maxOutput
 }};}
 export function parseTeachingArgs(args=[]){
   const out={mode:'dry-run'};const seen=new Set();
-  for(const arg of args){const match=/^--(domain|ledger|report)=(.+)$/.exec(arg);const key=match?.[1]||arg.slice(2);if(seen.has(key))fail('teaching_args_invalid');seen.add(key);
+  for(const arg of args){const match=/^--(domain|ledger|report|review-profile)=(.+)$/.exec(arg);const key=match?.[1]||arg.slice(2);if(seen.has(key))fail('teaching_args_invalid');seen.add(key);
     if(match)out[key]=match[2];else if(['--execute','--inspect','--dry-run'].includes(arg)){if(seen.has('mode'))fail('teaching_args_invalid');seen.add('mode');out.mode=arg.slice(2);}else fail('teaching_args_invalid');}
+  if(out['review-profile']!==undefined&&out['review-profile']!=='plain-text-v1')fail('teaching_args_invalid');
   if(out.domain&&!DOMAINS.includes(out.domain)||out.mode!=='dry-run'&&(!out.domain||!out.ledger||!out.report))fail('teaching_args_invalid');return out;
 }
 function canonical(target){const absolute=path.resolve(target);return fs.existsSync(absolute)?fs.realpathSync(absolute):path.join(fs.realpathSync(path.dirname(absolute)),path.basename(absolute));}
@@ -113,7 +114,7 @@ function assertLedger(db){if(db.prepare("SELECT name FROM sqlite_master WHERE ty
 function existingReport(reportPath,identity){
   if(!fs.existsSync(reportPath))return null;const stat=fs.lstatSync(reportPath);if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size>256000)fail('teaching_report_conflict');
   let prior;try{prior=JSON.parse(fs.readFileSync(reportPath,'utf8'));}catch{fail('teaching_report_conflict');}
-  if(prior.format!==FORMAT||['domain','planHash','ledgerFingerprint'].some(key=>prior[key]!==identity[key]))fail('teaching_report_conflict');return prior;
+  if(prior.format!==FORMAT||['domain','planHash','ledgerFingerprint','reviewProfile'].some(key=>(prior[key]??null)!==(identity[key]??null)))fail('teaching_report_conflict');return prior;
 }
 function writeReport(target,report){
   const prior=existingReport(target,report);if(prior?.state==='completed'&&report.state!=='completed')return;
@@ -133,7 +134,8 @@ export async function runTeachingCli({args=[],env={},now=Date.now,fetchImpl=glob
   const plans=(options.domain?[options.domain]:DOMAINS).map(domain=>planTeaching({domain,sources,sourceRevision,now}));
   if(options.mode==='dry-run'){const result={mode:'dry-run',state:'prepared',budgetMicroBrl:'20000000',modelCalls:0,lessons:plans.length*10,plans:plans.map(p=>({domain:p.domain,planHash:p.planHash,sourceCount:p.sources.length,lessonCount:10}))};stdout(result);return result;}
   if(options.mode==='execute'&&['DEEPSEEK_API_KEY','OPENAI_API_KEY'].some(key=>typeof env[key]!=='string'||!env[key].trim()||!/^[\x21-\x7e]{1,512}$/.test(env[key])))fail('teaching_provider_keys_missing');
-  const plan=plans[0],paths=validateTeachingPaths(options,env),identity={format:FORMAT,domain:plan.domain,planHash:plan.planHash,ledgerFingerprint:paths.ledgerFingerprint};
+  const plan=plans[0],paths=validateTeachingPaths(options,env),reviewProfile=options['review-profile'],reviewerId=plan.reviewerId+(reviewProfile?'-'+reviewProfile:'');
+  const identity={format:FORMAT,domain:plan.domain,planHash:plan.planHash,ledgerFingerprint:paths.ledgerFingerprint,...(reviewProfile?{reviewProfile}:{})};
   existingReport(paths.reportPath,identity);
   if(fs.existsSync(paths.ledgerPath)){const check=new Database(paths.ledgerPath,{readonly:true,fileMustExist:true});try{assertLedger(check);}finally{check.close();}}
   else if(options.mode==='inspect')fail('teaching_ledger_missing');
@@ -141,12 +143,12 @@ export async function runTeachingCli({args=[],env={},now=Date.now,fetchImpl=glob
   try{
     db=new Database(paths.ledgerPath,{readonly:options.mode==='inspect',fileMustExist:options.mode==='inspect'});
     if(options.mode==='execute'&&process.platform!=='win32')fs.chmodSync(paths.ledgerPath,0o600);
-    const pilot=options.mode==='execute'?createAdminTeachingPilot({db,config:teachingPilotConfig(),providerKeys:{deepseek:env.DEEPSEEK_API_KEY||'',openai:env.OPENAI_API_KEY||''},now,fetchImpl}):null;
+    const pilot=options.mode==='execute'?createAdminTeachingPilot({db,config:{...teachingPilotConfig(),...(reviewProfile?{openAiRequestProfile:reviewProfile}:{})},providerKeys:{deepseek:env.DEEPSEEK_API_KEY||'',openai:env.OPENAI_API_KEY||''},now,fetchImpl}):null;
     const execute=async input=>{try{return await pilot.executeLesson(input);}catch(error){return pilot.get(input.id)||{id:input.id,state:'blocked',code:/^teaching_[a-z_]+$/.test(error.code)?error.code:'teaching_stage_failed'};}};
     let teacher=pilot?await execute({id:plan.teacherId,providerId:'deepseek',model:'deepseek-flash',role:'teacher',messages:plan.teacherMessages}):readOperation(db,plan.teacherId),reviewer=null,content=null,reviews=null,state='partial',validationError=null;
     if(teacher?.state==='completed'&&teacher.result?.ok===true){
       try{content=validateTeacherResponse(teacher.result.text,plan);}catch{validationError='teaching_teacher_response_invalid';}
-      if(content){reviewer=pilot?await execute({id:plan.reviewerId,providerId:'openai',model:'gpt-5.6-luna',role:'reviewer',messages:reviewerMessages(plan,content)}):readOperation(db,plan.reviewerId);
+      if(content){reviewer=pilot?await execute({id:reviewerId,providerId:'openai',model:'gpt-5.6-luna',role:'reviewer',messages:reviewerMessages(plan,content)}):readOperation(db,reviewerId);
         if(reviewer?.state==='completed'&&reviewer.result?.ok===true){try{reviews=validateReviewerResponse(reviewer.result.text,plan);state='completed';}catch{validationError='teaching_reviewer_response_invalid';}}}
     }
     const report={...identity,sourceRevision:plan.sourceRevision,observedAt:new Date(now()).toISOString(),state,approval:'candidate',applied:false,datasetIngested:false,weightTraining:false,teacher:operationSummary(teacher),reviewer:operationSummary(reviewer),validationError,lessons:content?.lessons||[],reviews:reviews?.reviews||[],budget:pilot?pilot.status():readStatus(db)};

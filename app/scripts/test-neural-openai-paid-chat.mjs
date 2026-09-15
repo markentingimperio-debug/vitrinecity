@@ -33,6 +33,11 @@ function modernRequest(model,reasoningEffort,extra={}){
   input.permit={...input.permit,model,requestHash:hashOpenAiPaidChatRequest({model,reasoningEffort,messages:input.messages,maxOutputTokens:input.maxOutputTokens}),...extra.permit};
   return input;
 }
+function plainTextRequest(model=LUNA,reasoningEffort){
+  const input=modernRequest(model,reasoningEffort);
+  input.permit.requestHash=hashOpenAiPaidChatRequest({model,reasoningEffort,requestProfile:'plain-text-v1',messages:input.messages,maxOutputTokens:input.maxOutputTokens});
+  return input;
+}
 
 test('module and disabled or keyless factories never infer or obtain credentials from environment',async()=>{
   let calls=0;const fetchImpl=async()=>{calls++;throw Error('Must not fetch');};
@@ -140,6 +145,60 @@ test('HTTP errors and redirects never imply zero consumption and are never autom
   let count=0;const f=fixture({fetchImpl:async()=>{count++;throw Error('PRIVATE key and prompt');}});
   const result=await invoke(f);held(result);assert.equal(count,1);assert.doesNotMatch(JSON.stringify(result),/PRIVATE/);
   const billed=await invoke(fixture({fetchImpl:async()=>response(completion(),{status:500})}));assert.equal(billed.usage.known,true);assert.equal(billed.receiptId,'openai:chatcmpl-fixture-001');assert.equal(billed.billingDisposition,'reconcile');assert.equal(billed.ok,false);
+});
+
+test('HTTP diagnostics preserve status and exact safe provider fields without message/body or a retry',async()=>{
+  const cases=[
+    [400,'unsupported_value','invalid_request_error','reasoning_effort'],
+    [401,'invalid_api_key','authentication_error',null],
+    [429,'insufficient_quota','insufficient_quota',null],
+    [429,'rate_limit_exceeded','rate_limit_error','model'],
+    [500,'server_error','server_error',null]
+  ];
+  for(const [httpStatus,code,type,param] of cases){
+    let calls=0;const f=fixture({fetchImpl:async()=>{calls++;return response({error:{code,type,param,message:'PRIVATE prompt and sk-'+ 'x'.repeat(30),debug:{email:'private@example.test'}}},{status:httpStatus});}});
+    const result=await invoke(f);held(result);assert.equal(result.code,'openai_http_error');assert.equal(result.httpStatus,httpStatus);
+    assert.deepEqual(result.providerError,{code,type,param});assert.equal(Object.isFrozen(result.providerError),true);
+    assert.equal(result.usage.known,false);assert.equal(result.text,null);assert.equal(calls,1);
+    assert.doesNotMatch(JSON.stringify(result),/PRIVATE|sk-xxxxxxxx|private@example|message|debug/);
+  }
+  const success=await invoke(fixture());assert.equal(success.httpStatus,200);assert.equal(success.providerError,null);assert.equal(success.status,'completed');
+  const disabled=await invoke(fixture({enabled:false}));noDispatch(disabled);assert.equal(disabled.httpStatus,null);assert.equal(disabled.providerError,null);
+});
+
+test('HTTP error field allowlists reject malicious, unknown, non-string and nested values',async()=>{
+  const malicious=['sk-'+ 'x'.repeat(30),'private@example.test','11999998888','Bearer PRIVATE-TOKEN','model\nPRIVATE','<script>PRIVATE</script>','messages[0].content.PRIVATE','unlisted_identifier','x'.repeat(10000),0,[],{code:'server_error'},null];
+  for(const value of malicious){
+    const result=await invoke(fixture({fetchImpl:async()=>response({error:{code:value,type:value,param:value,message:'NEVER_EXPOSED'}},{status:400})}));
+    held(result);assert.equal(result.httpStatus,400);assert.deepEqual(result.providerError,{code:null,type:null,param:null});
+    assert.doesNotMatch(JSON.stringify(result),/PRIVATE|NEVER_EXPOSED|sk-xxxxxxxx|private@example|11999998888|unlisted_identifier|script/);
+  }
+  for(const error of ['PRIVATE',[],null]){
+    const result=await invoke(fixture({fetchImpl:async()=>response({error},{status:401})}));held(result);assert.equal(result.httpStatus,401);assert.equal(result.providerError,null);
+  }
+});
+
+test('invalid HTTP bodies and a timeout after headers retain safe status while unknown usage stays held',async()=>{
+  for(const status of [400,401,429,500]){
+    const result=await invoke(fixture({fetchImpl:async()=>new Response('<html>PRIVATE prompt private@example.test</html>',{status})}));
+    held(result);assert.equal(result.httpStatus,status);assert.equal(result.providerError,null);assert.equal(result.usage.known,false);assert.equal(result.code,'openai_transport_unknown');assert.doesNotMatch(JSON.stringify(result),/PRIVATE|private@example|html/);
+  }
+  const tooLarge=await invoke(fixture({maxResponseBytes:1024,fetchImpl:async()=>new Response('PRIVATE',{status:429,headers:{'content-length':'2048'}})}));
+  held(tooLarge);assert.equal(tooLarge.code,'openai_response_too_large');assert.equal(tooLarge.httpStatus,429);assert.equal(tooLarge.providerError,null);
+  const timeout=await invoke(fixture({timeoutMs:20,fetchImpl:async()=>new Response(new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('{'));}}),{status:500})}));
+  held(timeout);assert.equal(timeout.code,'openai_timeout_unknown');assert.equal(timeout.httpStatus,500);assert.equal(timeout.providerError,null);
+  for(const status of ['500','401\nPRIVATE',null,999]){
+    const result=await invoke(fixture({fetchImpl:async()=>({status,body:response({error:{code:'server_error',type:'server_error',param:null}}).body,headers:new Headers()})}));
+    held(result);assert.equal(result.httpStatus,null);assert.doesNotMatch(JSON.stringify(result),/PRIVATE/);
+  }
+});
+
+test('safe HTTP diagnostics are additive and do not reclassify a pre-existing known usage receipt',async()=>{
+  const data=completion({error:{code:'unsupported_parameter',type:'invalid_request_error',param:'max_completion_tokens',message:'PRIVATE'}});
+  const result=await invoke(fixture({fetchImpl:async()=>response(data,{status:400})}));
+  assert.equal(result.httpStatus,400);assert.deepEqual(result.providerError,{code:'unsupported_parameter',type:'invalid_request_error',param:'max_completion_tokens'});
+  assert.equal(result.code,'openai_http_error');assert.equal(result.billingDisposition,'reconcile');assert.equal(result.usage.known,true);assert.equal(result.receiptId,'openai:chatcmpl-fixture-001');
+  assert.equal(result.ok,false);assert.equal(result.text,null);assert.equal(result.retryAllowed,false);
 });
 
 test('missing/unsafe receipt identifiers preserve any known usage but hold reconciliation',async()=>{
@@ -383,5 +442,61 @@ test('reported completion tokens already include reasoning: retain the total onc
     const overCap={...usage,completion_tokens:201,total_tokens:291,completion_tokens_details:{reasoning_tokens:200}};
     const heldReceipt=await fixture({model,reasoningEffort,fetchImpl:async()=>response(completion({model,usage:overCap}))}).adapter.invoke(modernRequest(model,reasoningEffort));
     held(heldReceipt);assert.equal(heldReceipt.code,'openai_budget_exceeded');assert.equal(heldReceipt.usage.outputTokens,201);
+  }
+});
+
+test('omitted request profile retains literal pre-change legacy hashes for mini and all modern models',()=>{
+  const hashes={
+    'gpt-4o-mini':'9de63c2224da48b82da5cc88e86f21ae6c8a8dcbc0a44146a96e42db94ebb8fd',
+    'gpt-5.6-luna':'e6a31dc7a8c09a233d540e413740992b36de84a11e5ad97df1652fe1c09c93c7',
+    'gpt-5.6-terra':'acf4763854e36aab14fedcf336a1f240f98db6de913f7364078bce100545ed9e',
+    'gpt-6-astra':'e5fa77b459dfb213f401e3379bcf9a4e6385562bf685c15cd62e62eea9f92aaf'
+  };
+  for(const [model,expected] of Object.entries(hashes)){
+    const input={model,messages:messages(),maxOutputTokens:200};assert.equal(hashOpenAiPaidChatRequest(input),expected);assert.equal(hashOpenAiPaidChatRequest({...input,requestProfile:undefined}),expected);
+  }
+});
+
+test('plain-text-v1 modern opt-in changes only modalities/cache fields and binds exact new body hash',async()=>{
+  for(const model of MODERN){
+    let legacyBody,body,calls=0;
+    const legacy=fixture({model,fetchImpl:async(_url,init)=>{legacyBody=JSON.parse(init.body);return response(completion({model}));}});
+    assert.equal((await legacy.adapter.invoke(modernRequest(model))).ok,true);
+    const f=fixture({model,requestProfile:'plain-text-v1',fetchImpl:async(_url,init)=>{calls++;body=JSON.parse(init.body);assert.equal(createHash('sha256').update(init.body).digest('hex'),f.authorizations[0].requestHash);return response(completion({model}));}});
+    const input=plainTextRequest(model),result=await f.adapter.invoke(input),expected={...legacyBody,prompt_cache_options:{mode:'explicit'}};delete expected.modalities;
+    assert.deepEqual(body,expected);assert.equal(Object.hasOwn(body,'modalities'),false);assert.deepEqual(body.prompt_cache_options,{mode:'explicit'});assert.equal(calls,1);
+    assert.equal(result.ok,true);assert.equal(result.billingDisposition,'reconcile');assert.equal(result.retryAllowed,false);
+    assert.notEqual(input.permit.requestHash,modernRequest(model).permit.requestHash);
+  }
+});
+
+test('request profile is strict server configuration, rejects mini/client overrides and cannot change after construction',async()=>{
+  for(const requestProfile of ['',null,'legacy','auto','plain-text-v2',{},[]]){
+    assert.throws(()=>createOpenAiPaidChatAdapter({model:LUNA,requestProfile}),/openai_config_invalid/);
+    assert.throws(()=>hashOpenAiPaidChatRequest({model:LUNA,messages:messages(),maxOutputTokens:200,requestProfile}),/openai_input_invalid/);
+  }
+  for(const model of [MODEL,SNAPSHOT]){assert.throws(()=>createOpenAiPaidChatAdapter({model,requestProfile:'plain-text-v1'}),/openai_config_invalid/);assert.throws(()=>hashOpenAiPaidChatRequest({model,messages:messages(),maxOutputTokens:200,requestProfile:'plain-text-v1'}),/openai_input_invalid/);}
+  const f=fixture({model:LUNA,requestProfile:'plain-text-v1'}),input=plainTextRequest();
+  noDispatch(await f.adapter.invoke({...input,requestProfile:'plain-text-v1'}));noDispatch(await f.adapter.invoke({...input,permit:{...input.permit,requestProfile:'plain-text-v1'}}));assert.equal(f.calls.length,0);
+  let body;const options={enabled:true,model:LUNA,apiKey:'fixture-only',now:()=>START,requestProfile:'plain-text-v1',assertAuthorized:()=>true,fetchImpl:async(_url,init)=>{body=JSON.parse(init.body);return response(completion({model:LUNA}));}};
+  const adapter=createOpenAiPaidChatAdapter(options);options.requestProfile=undefined;assert.equal((await adapter.invoke(plainTextRequest())).ok,true);assert.equal(body.modalities,undefined);assert.deepEqual(body.prompt_cache_options,{mode:'explicit'});
+});
+
+test('plain-text and legacy permits cannot cross-authorize and async claims still cannot dispatch',async()=>{
+  const plain=fixture({model:LUNA,requestProfile:'plain-text-v1'}),legacy=fixture({model:LUNA});
+  const wrongPlain=await plain.adapter.invoke(modernRequest(LUNA)),wrongLegacy=await legacy.adapter.invoke(plainTextRequest());
+  for(const result of [wrongPlain,wrongLegacy]){noDispatch(result);assert.equal(result.code,'openai_authorization_invalid');}
+  assert.equal(plain.calls.length,0);assert.equal(legacy.calls.length,0);
+  const asyncClaim=fixture({model:LUNA,requestProfile:'plain-text-v1',assertAuthorized:async()=>true});const denied=await asyncClaim.adapter.invoke(plainTextRequest());
+  noDispatch(denied);assert.equal(denied.code,'openai_authorization_denied');assert.equal(asyncClaim.calls.length,0);
+});
+
+test('plain-text-v1 never assumes zero cache writes from its request; strict receipt evidence remains required',async()=>{
+  for(const model of MODERN)for(const write of [undefined,null,1,0]){
+    const data=completion({model});if(write===undefined)delete data.usage.prompt_tokens_details.cache_write_tokens;else data.usage.prompt_tokens_details.cache_write_tokens=write;
+    let calls=0;const f=fixture({model,requestProfile:'plain-text-v1',fetchImpl:async()=>{calls++;return response(data);}}),result=await f.adapter.invoke(plainTextRequest(model));
+    if(write===0){assert.equal(result.ok,true);assert.equal(result.usage.known,true);assert.equal(result.billingDisposition,'reconcile');}
+    else{held(result);assert.equal(result.code,'openai_usage_unknown');assert.equal(result.usage.known,false);assert.equal(result.text,null);}
+    assert.equal(calls,1);assert.equal(result.retryAllowed,false);
   }
 });
