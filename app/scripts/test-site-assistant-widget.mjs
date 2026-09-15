@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import { classifySiteAssistantPath as classify, siteAssistantContextPath, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS as DAY } from '../public/site-assistant-policy.js';
+import { classifySiteAssistantPath as classify, siteAssistantContextPath, siteAssistantDirectIntent, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS as DAY } from '../public/site-assistant-policy.js';
 import { injectSiteAssistant } from '../site-assistant-page.js';
 import { mountSiteAssistant } from '../public/site-assistant.js';
 
@@ -28,7 +28,7 @@ class Node {
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
 }
 
-function harness({ path = '/receitas', search = '', disabled = false, stored = null, sessionStorage = new Map(), storageFails = false, context = {}, answer = {}, chat, failChat = false } = {}) {
+function harness({ path = '/receitas', search = '', hash = '', disabled = false, stored = null, sessionStorage = new Map(), storageFails = false, context = {}, contextResponse, failContext = false, answer = {}, chat, failChat = false } = {}) {
   let clock = 100000, tid = 0; const intervals = new Map(), requests = [], storage = new Map();
   if (stored !== null) storage.set('vc-assistant-dismiss-until-v1', String(stored));
   const doc = { hidden: false, focusCalls: 0, activity: false, listeners: {}, createElement(tag) { return new Node(tag, this); }, addEventListener: Node.prototype.addEventListener, removeEventListener: Node.prototype.removeEventListener, fire: Node.prototype.fire };
@@ -39,11 +39,14 @@ function harness({ path = '/receitas', search = '', disabled = false, stored = n
     return doc.body.querySelector(selector);
   };
   const storageApi = map => ({ getItem(key) { if (storageFails) throw new Error('Storage unavailable'); return map.get(key) ?? null; }, setItem(key, value) { if (storageFails) throw new Error('Storage unavailable'); map.set(key, value); }, removeItem(key) { if (storageFails) throw new Error('Storage unavailable'); map.delete(key); } });
-  const win = { document: doc, location: { pathname: path, search, origin: 'https://vitrinecity.com' }, listeners: {}, localStorage: storageApi(storage), sessionStorage: storageApi(sessionStorage), CustomEvent: class { constructor(type) { this.type = type; } }, dispatchEvent(event) { for (const fn of this.listeners[event.type] || []) fn(event); }, addEventListener: Node.prototype.addEventListener, removeEventListener: Node.prototype.removeEventListener,
+  const win = { document: doc, location: { pathname: path, search, hash, origin: 'https://vitrinecity.com' }, listeners: {}, localStorage: storageApi(storage), sessionStorage: storageApi(sessionStorage), CustomEvent: class { constructor(type) { this.type = type; } }, dispatchEvent(event) { for (const fn of this.listeners[event.type] || []) fn(event); }, addEventListener: Node.prototype.addEventListener, removeEventListener: Node.prototype.removeEventListener,
     setTimeout: () => ++tid, clearTimeout() {}, setInterval(fn) { const id = ++tid; intervals.set(id, fn); return id; }, clearInterval: id => intervals.delete(id) };
   const fetcher = async (url, options) => {
     requests.push({ url, options, body: options.body ? JSON.parse(options.body) : null });
-    if (url.includes('/context?')) return { ok: true, json: async () => ({ enabled: !disabled, context: { path: new URL(url,'https://vitrinecity.com').searchParams.get('path'), kind: 'recipe' }, greeting: 'Olá! Sou a Lia. Posso ajudar?', quickActions: [{ label: 'Como comprar', message: 'Como faço para comprar?' }], offers: [], ...context }) };
+    if (url.includes('/context?')) {
+      const response = { ok: !failContext, json: async () => ({ enabled: !disabled, context: { path: new URL(url,'https://vitrinecity.com').searchParams.get('path'), kind: 'recipe' }, greeting: 'Olá! Sou a Lia. Posso ajudar?', quickActions: [{ label: 'Como comprar', message: 'Como faço para comprar?' }], offers: [], ...context }) };
+      return contextResponse ? contextResponse(response) : response;
+    }
     if (url.endsWith('/chat')) { if (chat) return chat(); return { ok: !failChat, json: async () => ({ reply: 'Veja as informações confirmadas do produto.', offers: [], ...answer }) }; }
     return { ok: true, json: async () => ({ ok: true }) };
   };
@@ -570,4 +573,129 @@ test('public discovery coverage preserves private exclusions and platform introd
   assert.ok(button); button.fire('click'); await flush();
   assert.equal(h.count('/chat'),1); assert.match(h.requests.find(r=>r.url.endsWith('/chat')).body.message,/conhecer melhor a plataforma/);
   controller.destroy();
+});
+
+const LIA_DIRECT = '#falar-com-lia';
+const NPK_PRODUCT = '/produto/10/adubo-npk-organico-com-composto-para-plantas-e-hortas';
+const assertNoAutomaticChat = h => {
+  assert.equal(h.count('/chat'), 0);
+  assert.equal(h.find('textarea')?.value || '', '');
+  assert.ok(h.requests.every(r => r.options.method === 'GET' ||
+    (r.url === '/api/site-assistant/event' && ['open', 'dismiss', 'invitation'].includes(r.body?.type))));
+};
+
+test('direct intent requires the exact literal fragment on enabled commercial public pages', () => {
+  for (const path of ['/', '/index.html', NPK_PRODUCT, '/receitas', '/multiverso']) assert.equal(siteAssistantDirectIntent(path, LIA_DIRECT), true, path);
+  for (const hash of ['', '#lia', '#Falar-com-lia', '#falar-com-lia/', '#falar-com-lia?prompt=oi', '#falar-com-lia&x=1', '#%66alar-com-lia', 'falar-com-lia', null]) {
+    assert.equal(siteAssistantDirectIntent(NPK_PRODUCT, hash), false, String(hash));
+  }
+  for (const path of ['/checkout', '/pagamento.html', '/course-checkout.html', '/admin.html', '/carteira', '/oracao-do-dia', '/privacy.html', '/stories/amp', '/produto/10?prompt=oi']) {
+    assert.equal(siteAssistantDirectIntent(path, LIA_DIRECT), false, path);
+  }
+});
+
+test('home and exact product deep links open only after approved GET context and never submit URL prompts', async () => {
+  for (const path of ['/', NPK_PRODUCT]) {
+    let finish;
+    const h = harness({path, hash:LIA_DIRECT, search:'?utm_source=ads&prompt=comprar&message=GERAR&contextPath=/admin&email=private@example.test',
+      contextResponse: response => new Promise(resolve => { finish = () => resolve(response); })});
+    const widget = h.mount();
+    assert.equal(h.find('.vc-assistant-panel').hidden, true); assert.equal(h.doc.focusCalls, 0);
+    assert.equal(h.requests.length, 1); assert.equal(h.requests[0].options.method, 'GET');
+    assert.equal(h.requests[0].url, '/api/site-assistant/context?path=' + encodeURIComponent(path));
+    finish(); await widget.ready;
+    assert.equal(h.find('.vc-assistant-panel').hidden, false); assert.equal(widget.launcher.getAttribute('aria-expanded'), 'true');
+    assert.equal(h.doc.activeElement, h.find('textarea')); assert.equal(h.doc.focusCalls, 1); assert.equal(h.intervals, 0);
+    assert.equal(h.find('iframe').src, undefined); assert.equal(h.find('.vc-assistant-offers').children.length, 0);
+    assertNoAutomaticChat(h); assert.doesNotMatch(JSON.stringify(h.requests), /GERAR|comprar|private@example|utm_source|contextPath/);
+    h.advance(60000); assertNoAutomaticChat(h);
+    await ask(h, 'Como usar este produto?');
+    assert.deepEqual(h.requests.find(r => r.url.endsWith('/chat')).body, {message:'Como usar este produto?', contextPath:path});
+    widget.destroy();
+  }
+});
+
+test('explicit deep links override old dismissal/minimized markers but closing or minimizing never auto-reopens', async () => {
+  for (const action of ['close', 'minimize']) {
+    const h = harness({path:NPK_PRODUCT, hash:LIA_DIRECT, stored:100000+DAY,
+      sessionStorage:new Map([[PANEL_KEY, String(100000+PANEL_KEEP_MS)], ['vc-assistant-minimized-until-v1', String(100000+PANEL_KEEP_MS)]]),
+      context:{history:previousConversation}});
+    const opener = h.doc.createElement('button'); h.doc.body.append(opener); h.doc.activeElement = opener;
+    const widget = h.mount(); await widget.ready;
+    assert.equal(h.find('.vc-assistant-panel').hidden, false); assert.equal(h.find('.vc-assistant-log').children.length, 2);
+    assert.equal(h.sessionStorage.has('vc-assistant-minimized-until-v1'), false); assertNoAutomaticChat(h);
+    if (action === 'close') h.find('.vc-assistant-panel').fire('keydown', {key:'Escape'});
+    else h.find('.vc-assistant-minimize').fire('click');
+    assert.equal(h.find('.vc-assistant-panel').hidden, true);
+    assert.equal(h.doc.activeElement, action === 'close' ? opener : widget.launcher);
+    const focusCalls = h.doc.focusCalls;
+    h.doc.fire('visibilitychange'); h.win.dispatchEvent({type:'hashchange'}); h.advance(60000);
+    assert.equal(h.find('.vc-assistant-panel').hidden, true); assert.equal(h.doc.focusCalls, focusCalls); assert.equal(h.intervals, 0);
+    widget.launcher.fire('click'); assert.equal(h.find('.vc-assistant-panel').hidden, false); assertNoAutomaticChat(h);
+  }
+});
+
+test('direct links defer focus while hidden, checkout active, or typing elsewhere, and expire after 30 seconds', async () => {
+  for (const blocker of ['hidden', 'checkout', 'input', 'city']) {
+    const h = harness({path:blocker === 'city' ? '/multiverso' : NPK_PRODUCT, hash:LIA_DIRECT, stored:100000+DAY});
+    const field = h.doc.createElement('input'); h.doc.body.append(field);
+    if (blocker === 'hidden') h.doc.hidden = true;
+    if (blocker === 'checkout') h.doc.activity = true;
+    if (blocker === 'input') h.doc.activeElement = field;
+    const widget = h.mount(); await widget.ready; h.advance(2000);
+    assert.equal(h.find('.vc-assistant-panel').hidden, true); assert.equal(h.doc.focusCalls, 0); assert.equal(h.intervals, 1);
+    h.doc.hidden = false; h.doc.activity = false; h.doc.activeElement = h.doc.body; h.doc.documentElement.dataset.cityGuideReady = 'true';
+    h.doc.fire('visibilitychange'); h.advance(1000);
+    assert.equal(h.find('.vc-assistant-panel').hidden, false); assert.equal(h.doc.focusCalls, 1); assert.equal(h.intervals, 0); assertNoAutomaticChat(h);
+    widget.destroy();
+  }
+  const h = harness({hash:LIA_DIRECT}); h.doc.hidden = true; const widget = h.mount(); await widget.ready; h.advance(30000);
+  assert.equal(h.intervals, 0); h.doc.hidden = false; h.doc.fire('visibilitychange'); h.advance(10000);
+  assert.equal(h.find('.vc-assistant-panel').hidden, true); assert.equal(h.doc.focusCalls, 0); assert.equal(widget.launcher.hidden, false); assertNoAutomaticChat(h);
+  widget.open(); assert.equal(h.find('.vc-assistant-panel').hidden, false);
+});
+
+test('pending direct opening respects new cancellation, navigation and destroyed or hidden pages during the context request', async () => {
+  for (const action of ['close', 'minimize', 'dismiss', 'destroy', 'pagehide', 'storage', 'hash', 'path', 'expired']) {
+    let finish;
+    const h = harness({hash:LIA_DIRECT, context:{history:previousConversation}, sessionStorage:new Map([[PANEL_KEY,String(100000+PANEL_KEEP_MS)]]),
+      contextResponse: response => new Promise(resolve => { finish = () => resolve(response); })});
+    const widget = h.mount();
+    if (['close', 'minimize', 'dismiss', 'destroy'].includes(action)) widget[action]();
+    else if (action === 'pagehide') h.win.dispatchEvent({type:'pagehide'});
+    else if (action === 'storage') h.win.dispatchEvent({type:'storage', key:'vc-assistant-dismiss-until-v1', newValue:String(100000+DAY)});
+    else if (action === 'hash') h.win.location.hash = '#other';
+    else if (action === 'path') h.win.location.pathname = '/checkout';
+    else h.advance(30000);
+    finish(); await widget.ready; h.doc.fire('visibilitychange'); h.advance(60000);
+    assert.equal(h.find('.vc-assistant-panel')?.hidden ?? true, true, action); assert.equal(h.doc.focusCalls, 0, action);
+    assert.equal(h.intervals, 0, action); assertNoAutomaticChat(h);
+  }
+});
+
+test('failed, disabled or mismatched context cannot open a direct chat', async () => {
+  for (const options of [{failContext:true}, {disabled:true}, {context:{context:{path:'/produto/99'}}}]) {
+    const h = harness({path:NPK_PRODUCT, hash:LIA_DIRECT, ...options}); await h.mount().ready; h.advance(60000);
+    assert.equal(h.doc.body.children.length, 0); assert.equal(h.doc.focusCalls, 0); assert.equal(h.intervals, 0);
+    assert.equal(h.requests.length, 1); assertNoAutomaticChat(h);
+  }
+});
+
+test('nearby hashes and query parameters preserve the ordinary passive startup without a direct link', async () => {
+  for (const hash of ['', '#lia', '#Falar-com-lia', '#falar-com-lia-more', '#falar-com-lia?prompt=oi', '#%66alar-com-lia']) {
+    const h = harness({hash, search:'?lia=1&prompt=oi&falar-com-lia=1'}); await h.mount().ready;
+    assert.equal(h.find('.vc-assistant-panel').hidden, true); assert.equal(h.doc.focusCalls, 0);
+    h.advance(3000); assert.equal(h.find('.vc-assistant-invite').hidden, false); assertNoAutomaticChat(h);
+  }
+  for (const path of ['/checkout', '/carteira', '/admin.html', '/stories/amp']) {
+    const h = harness({path, hash:LIA_DIRECT}); assert.equal(h.mount(), null); assert.equal(h.requests.length, 0);
+  }
+  for (const path of ['/oracao-do-dia', '/course-checkout.html']) {
+    const h = harness({path, hash:LIA_DIRECT, search:'?curso=canva'}); await h.mount().ready; h.advance(60000);
+    assert.equal(h.find('.vc-assistant-panel').hidden, true); assert.equal(h.intervals, 0); assert.equal(h.doc.focusCalls, 0); assertNoAutomaticChat(h);
+  }
+  const embedded = harness({hash:LIA_DIRECT, search:'?lia=1'}); embedded.win.self = embedded.win; embedded.win.top = {};
+  assert.equal(embedded.mount(), null); assert.equal(embedded.requests.length, 0);
+  const amp = harness({hash:LIA_DIRECT}); amp.doc.documentElement.setAttribute('amp','');
+  assert.equal(amp.mount(), null); assert.equal(amp.requests.length, 0);
 });

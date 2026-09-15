@@ -1,4 +1,4 @@
-import { classifySiteAssistantPath, siteAssistantContextPath, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS } from './site-assistant-policy.js?v=20260914';
+import { classifySiteAssistantPath, siteAssistantContextPath, siteAssistantDirectIntent, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS } from './site-assistant-policy.js?v=20260915-lia-direct';
 import { createSiteAssistantContent, siteAssistantDestination } from './site-assistant-content.js';
 
 const DISMISS_KEY = 'vc-assistant-dismiss-until-v1';
@@ -103,6 +103,9 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   }
 
   let context = null, busy = false, disposed = false, timer = null, returnFocus = launcher, shown = false, elapsed = 0, lastTick = now(), wasEligible = false;
+  const directRequested = siteAssistantDirectIntent(win.location.pathname, win.location.hash);
+  const directDeadline = now() + 30000;
+  let directPending = directRequested, directTimer = null;
   let dismissedUntil = 0;
   try { dismissedUntil = Number(win.localStorage.getItem(DISMISS_KEY)) || 0; } catch {}
 
@@ -149,7 +152,24 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     void api('event', body, 5000).catch(() => {});
   }
   function stopTimer() { if (timer !== null) win.clearInterval(timer); timer = null; }
+  function cancelDirectOpen() {
+    directPending = false;
+    if (directTimer !== null) win.clearInterval(directTimer);
+    directTimer = null;
+  }
+  function tryDirectOpen() {
+    if (!directPending || !context) return;
+    if (disposed || now() >= directDeadline ||
+        !siteAssistantDirectIntent(win.location.pathname, win.location.hash) ||
+        siteAssistantContextPath(win.location.pathname, win.location.search) !== contextPath) {
+      cancelDirectOpen(); return;
+    }
+    if (blockedByActivity()) return;
+    // Reuse manual UI opening only. It never submits a prompt or follows a CTA.
+    open();
+  }
   function silence() {
+    cancelDirectOpen();
     dismissedUntil = now() + SITE_ASSISTANT_DISMISS_MS;
     try { win.localStorage.setItem(DISMISS_KEY, String(dismissedUntil)); } catch {}
     invite.hidden = true; stopTimer();
@@ -161,6 +181,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   }
   function open({ restore = false } = {}) {
     if (disposed || !context) return;
+    cancelDirectOpen();
     forgetMinimized();
     const focusTarget = () => content.root.hidden ? input : content.root.querySelector('.vc-assistant-content-back');
     if (!panel.hidden) { if (!restore) focusTarget().focus({ preventScroll: true }); return; }
@@ -172,6 +193,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     if (!restore) { track('open'); focusTarget().focus({ preventScroll: true }); }
   }
   function minimize() {
+    cancelDirectOpen();
     if (disposed || !context || panel.hidden) return;
     const hadFocus = panel.contains(doc.activeElement);
     forgetPanel();
@@ -190,6 +212,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     panelExpand.setAttribute('aria-pressed', String(expanded));
   }
   function close() {
+    cancelDirectOpen();
     forgetPanel(); forgetMinimized();
     if (panel.hidden) return;
     panel.hidden = true; launcher.setAttribute('aria-expanded', 'false'); log.setAttribute('aria-live', 'off'); silence();
@@ -334,14 +357,14 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
   // Stop the city movement shortcuts only while interacting with this panel.
   panel.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); close(); } event.stopPropagation(); });
   invite.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); dismiss(); } event.stopPropagation(); });
-  const onVisibility = () => { lastTick = now(); wasEligible = false; if (doc.hidden) invite.hidden = true; else if (context && policy.proactive && timer !== null) tick(); };
+  const onVisibility = () => { lastTick = now(); wasEligible = false; if (doc.hidden) invite.hidden = true; else { tryDirectOpen(); if (context && policy.proactive && timer !== null) tick(); } };
   doc.addEventListener('visibilitychange', onVisibility);
-  const onStorage = event => { if (event.key === DISMISS_KEY) { dismissedUntil = Number(event.newValue) || 0; if (siteAssistantDismissed(dismissedUntil, now())) { invite.hidden = true; stopTimer(); } } };
+  const onStorage = event => { if (event.key === DISMISS_KEY) { dismissedUntil = Number(event.newValue) || 0; if (siteAssistantDismissed(dismissedUntil, now())) { cancelDirectOpen(); invite.hidden = true; stopTimer(); } } };
   win.addEventListener('storage', onStorage);
-  const onPageHide = () => { invite.hidden = true; if (!panel.hidden) rememberPanel(); };
+  const onPageHide = () => { cancelDirectOpen(); invite.hidden = true; if (!panel.hidden) rememberPanel(); };
   win.addEventListener('pagehide', onPageHide);
   const controller = { open, close, minimize, toggleExpanded, dismiss, root, launcher, destroy() {
-    disposed = true; stopTimer(); content.destroy(); root.remove(); launcher.remove();
+    disposed = true; cancelDirectOpen(); stopTimer(); content.destroy(); root.remove(); launcher.remove();
     doc.removeEventListener('visibilitychange', onVisibility); win.removeEventListener('storage', onStorage); win.removeEventListener('pagehide', onPageHide);
     delete win[SINGLETON];
   } };
@@ -367,7 +390,13 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     }
     // Start as a conversation. Results appear only after the visitor asks.
     launcher.hidden = false;
-    if (uiStateActive(MINIMIZED_KEY)) {
+    if (directRequested) {
+      // Explicit current intent overrides old UI markers, but never a new
+      // cancellation. Wait briefly for a visible idle page, then stay manual.
+      forgetPanel(); forgetMinimized();
+      tryDirectOpen();
+      if (directPending) directTimer = win.setInterval(tryDirectOpen, 1000);
+    } else if (uiStateActive(MINIMIZED_KEY)) {
       forgetPanel(); shown = true; invite.hidden = true;
       launcher.textContent = 'Continuar conversa'; launcher.setAttribute('aria-label', 'Continuar conversa com a Lia');
     } else if (policy.kind !== 'course_checkout' && history.length && uiStateActive(PANEL_KEY)) open({ restore: true });
