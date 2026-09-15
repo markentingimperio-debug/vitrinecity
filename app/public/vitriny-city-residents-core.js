@@ -117,7 +117,8 @@ export function residentPose(person,building,elapsed=0){
   if(person.specialty&&building.newBuilding){
     const slot=person.slot,desk=residentDesk(slot),pair=Math.floor(slot/2),phase=(Math.max(0,Number(elapsed)||0)+pair*14)%56;
     const work={x:desk.x,z:desk.z+1.3},conversation={x:slot%2?2:-2,z:19+pair*.8};
-    const path=[work,{x:0,z:work.z},{x:0,z:16},conversation];let local,action,activity;
+    const lane=slot%2?.6:-.6;
+    const path=[work,{x:lane,z:work.z},{x:lane,z:16},conversation];let local,action,activity;
     if(phase<16){local={...work,yaw:Math.PI};action='work';activity='Trabalho simulado na mesa';}
     else if(phase<28){local=alongPath(path,(phase-16)/12);action='walk';activity='Saída simulada pela entrada';}
     else if(phase<38){local={...conversation,yaw:slot%2?-Math.PI/2:Math.PI/2};action='talk';activity='Conversa simulada com colega';}

@@ -104,6 +104,17 @@ test('new pavilion models include eight desks and transparent sides with a genui
   assert.equal(venue.children.filter(c=>c.material===a.wood&&c.position.y===1.15).length,8);
 });
 
+test('paired colleagues keep separate lanes through the aisle and open doorway',()=>{
+  for(const d of RESIDENT_DEPARTMENTS.filter(d=>d.newBuilding))for(let pair=0;pair<4;pair++){
+    const people=[pair*2,pair*2+1].map(slot=>CITY_RESIDENTS.find(p=>p.departmentId===d.id&&p.specialty&&p.slot===slot));
+    for(let elapsed=0;elapsed<=112;elapsed+=.125){
+      const [a,b]=people.map(person=>residentPose(person,d,elapsed));if(!a.moving&&!b.moving)continue;
+      assert.ok(Math.hypot(a.x-b.x,a.z-b.z)>=1.19,'Paired walkers must not overlap');
+      for(const pose of [a,b])if(Math.abs(pose.z-d.position.z-12.5)<.6){assert.ok(Math.abs(Math.abs(pose.x-d.position.x)-.6)<.0001);assert.ok(Math.abs(pose.x-d.position.x)+.3<2,'Body clears the four-metre doorway');}
+    }
+  }
+});
+
 test('scripted dialogue names two local fictional peers and never creates task receipts',()=>{
   const catalog=createResidentCatalog(),person=catalog.residents.find(p=>p.id==='studio-specialist-research'),dialogue=residentConversation(person,catalog);
   assert.equal(dialogue.simulated,true);assert.equal(dialogue.speakers.length,2);assert.equal(new Set(dialogue.speakers).size,2);
