@@ -12,6 +12,7 @@ coverage
 scripts/*
 !scripts/run-vitriny-neural-live-benchmark.mjs
 !scripts/run-vitriny-neural-task-acceptance.mjs
+!scripts/run-admin-teaching-pilot.mjs
 !scripts/smoke-vitriny-multiversal.mjs
 *.bak*
 backups

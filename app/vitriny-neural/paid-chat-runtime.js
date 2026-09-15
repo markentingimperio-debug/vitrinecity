@@ -8,6 +8,7 @@ import {createDeepSeekPaidChatAdapter,hashDeepSeekPaidChatRequest,DEEPSEEK_TARIF
 import {createKlingPaidVideoAdapter,hashKlingPaidVideoRequest} from './providers/kling-paid-video.js';
 import {createKlingPaidImageAdapter,hashKlingPaidImageRequest} from './providers/kling-paid-image.js';
 import {chatError,chatId,validateChatScope,containsChatSecret} from './chat-attachments.js';
+import {enrichPaidChatInput} from './paid-platform-context.js';
 
 const MODES=['chat','image','video'],MAX_MONEY=100000000000;
 const clone=x=>JSON.parse(JSON.stringify(x));
@@ -100,6 +101,7 @@ export function createPaidChatRuntime({db,env=process.env,config:inputConfig,wal
       if(!shortText(content))return null;
       input={messages:[...history,{role:'user',content}],maxOutputTokens:cfg.chat.maxOutputTokens??1024};
       if(Buffer.byteLength(JSON.stringify(input),'utf8')>50000)return null;
+      input=enrichPaidChatInput(input,{question:message,at:time});
       q.providerId=cfg.chat.providerId||'openai';
       if(q.providerId==='deepseek'){
         requestHash=hashDeepSeekPaidChatRequest({model:q.model,...input});
