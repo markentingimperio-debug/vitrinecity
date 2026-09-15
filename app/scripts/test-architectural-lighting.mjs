@@ -126,7 +126,7 @@ test('the same Brasilia clock drives daytime, sunset and readable night without 
     const sky=state.scene.getObjectByName('architectural-photographic-sky');
     assert.equal(state.scene.userData.dayPhase,'day');assert.equal(sky.material.uniforms.photoMix.value,0);
     const dayIntensity=state.scene.children.find(light=>light.isHemisphereLight).intensity;
-    assert.ok(dayIntensity>=1.4);assert.ok(state.renderer.toneMappingExposure>=1);
+    assert.ok(dayIntensity>=1.3&&dayIntensity<=1.45);assert.ok(state.renderer.toneMappingExposure>=.94&&state.renderer.toneMappingExposure<1);
     date=new Date('2026-09-13T21:00:00Z');callback();
     assert.equal(state.scene.userData.dayPhase,'dusk');assert.equal(sky.material.uniforms.photoMix.value,1);
     date=new Date('2026-09-14T01:00:00Z');callback();
@@ -141,5 +141,48 @@ test('day transitions are continuous, including the midnight wrap',()=>{
   for(const hour of [0,5,6,7,16,18,19,24]){
     const before=architecturalDaylight(hour-.0001),after=architecturalDaylight(hour+.0001);
     for(const key of ['exposure','hemi','sun','environment','photo'])assert.ok(Math.abs(before[key]-after[key])<.001,`${hour}: ${key}`);
+    for(const key of ['sky','horizon','fog','ground','sunColor'])for(const channel of ['r','g','b'])assert.ok(Math.abs(before[key][channel]-after[key][channel])<.001,`${hour}: ${key}.${channel}`);
+  }
+});
+
+test('soft daylight reduces highlight energy without making daytime into night',()=>{
+  // Compare versioned presets, not rendered-pixel luminance: ACES, materials and
+  // camera direction also affect appearance and require a separate visual check.
+  const before={exposure:1.02,hemi:1.55,sun:2.65,environment:.78,horizon:'#c8e5f3',fog:'#bdd5e0'};
+  const luminance=color=>.2126*color.r+.7152*color.g+.0722*color.b;
+  for(const hour of [7,9,12,15,16]){
+    const day=architecturalDaylight(hour);
+    assert.equal(day.daylight,1);assert.equal(day.photo,0);
+    const directRatio=day.exposure*day.sun/(before.exposure*before.sun);
+    const reflectedRatio=day.exposure*day.environment/(before.exposure*before.environment);
+    assert.ok(directRatio>=.68&&directRatio<=.72,'direct light remains useful with about 31% less exposure-weighted energy');
+    assert.ok(reflectedRatio>=.72&&reflectedRatio<=.78,'reflections are softened rather than disabled');
+    assert.ok(day.hemi>=1.3&&day.hemi>=architecturalDaylight(0).hemi*1.6,'preserve broad daytime fill, including shadowless LITE');
+    for(const key of ['horizon','fog'])assert.ok(luminance(day[key])<luminance(new THREE.Color(before[key])),'less glaring distant palette');
+    assert.ok(day.sky.b>day.sky.r&&day.sunColor.r>day.sunColor.b,'blue sky and warm sun retain the city palette');
+  }
+  for(const [hour,expected] of [[0,{exposure:.98,ambient:.065,hemi:.8,sun:.25,environment:.24,photo:0,daylight:0}],
+    [6,{exposure:1,ambient:.075,hemi:1.1,sun:1.2,environment:.5,photo:.65,daylight:.48}],
+    [18,{exposure:1,ambient:.075,hemi:1.05,sun:1.5,environment:.5,photo:1,daylight:.36}],
+    [22,{exposure:.98,ambient:.065,hemi:.8,sun:.25,environment:.24,photo:0,daylight:0}]]){
+    const state=architecturalDaylight(hour);for(const [key,value] of Object.entries(expected))assert.equal(state[key],value,`${hour}: preserve ${key}`);
+  }
+});
+
+test('the softer day uses the same light count, shadow budget and asset requests in every profile',async()=>{
+  for(const profileId of ['LITE','STANDARD','ULTRA']){
+    const state=fixture('success');activeFixture=state;
+    state.sun.castShadow=profileId!=='LITE';
+    const shadowSize=state.sun.shadow.mapSize.toArray(),lightCount=state.scene.children.filter(node=>node.isLight).length;
+    const lighting=configureArchitecturalLighting({scene:state.scene,renderer:state.renderer,sun:state.sun,profile:{id:profileId},now:()=>new Date('2026-09-15T15:00:00Z')});
+    assert.equal(await lighting.ready,true);
+    const day=architecturalDaylight(12);
+    assert.equal(state.renderer.toneMappingExposure,day.exposure);assert.equal(state.sun.intensity,day.sun);
+    assert.equal(state.scene.environmentIntensity,day.environment);assert.equal(state.scene.fog.density,.00035);
+    assert.equal(state.scene.children.filter(node=>node.isLight).length,lightCount);
+    assert.equal(state.sun.castShadow,profileId!=='LITE');assert.deepEqual(state.sun.shadow.mapSize.toArray(),shadowSize);
+    assert.equal(state.requests.length,2);assert.equal(state.generators,1);
+    assert.equal(state.requests.find(request=>request.kind==='photo').url.endsWith(profileId==='LITE'?'2k.webp':'4k.webp'),true);
+    lighting.dispose();assert.deepEqual(state.snapshot(),state.original);
   }
 });
