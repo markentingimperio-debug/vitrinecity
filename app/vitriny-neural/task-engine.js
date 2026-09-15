@@ -3,7 +3,7 @@ import {DRAFT_TASK_PROTOCOL as CONTRACT} from './task-protocol.js';
 
 const TOOLS = Object.freeze(['route', 'files.list', 'files.read', 'files.write', 'finish']);
 const TERMINAL = new Set(['draft_ready', 'failed', 'cancelled', 'interrupted', 'blocked']);
-const SECRET = /-----BEGIN [^-]*PRIVATE KEY-----|\b(?:sk-proj-|ghp_|github_pat_|AKIA)[A-Za-z0-9_-]{10,}|\bBearer\s+[A-Za-z0-9._-]{16,}/i;
+const SECRET = /-----BEGIN [^-]*PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{20,}|\bDEEPSEEK_API_KEY\s*[:=]\s*["']?[^\s"']{4,}|\b(?:sk-proj-|ghp_|github_pat_|AKIA)[A-Za-z0-9_-]{10,}|\bBearer\s+[A-Za-z0-9._-]{16,}/i;
 const fail = (code, status=400) => {throw Object.assign(new Error(code), {code, status});};
 const truthy = value => ['1','true','yes','on'].includes(String(value||'').toLowerCase());
 const bounded = (value, fallback, min, max) => value == null || value === '' ? fallback : Number.isInteger(Number(value)) ? Math.max(min, Math.min(max, Number(value))) : fallback;

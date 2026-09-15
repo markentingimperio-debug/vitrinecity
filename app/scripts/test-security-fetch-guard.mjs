@@ -7,12 +7,14 @@ const calls=[];
 const originalFetch=globalThis.fetch;
 const originalKey=process.env.OPENROUTER_API_KEY;
 const originalOpenAiKey=process.env.OPENAI_API_KEY;
+const originalDeepseekKey=process.env.DEEPSEEK_API_KEY;
 const originalGoogleKey=process.env.GEMINI_API_KEY;
 const originalKlingKey=process.env.KLING_API_KEY;
 
 try{
   process.env.OPENROUTER_API_KEY='audit-secret-example';
   process.env.OPENAI_API_KEY='audit-openai-example';
+  process.env.DEEPSEEK_API_KEY='audit-deepseek-example';
   process.env.GEMINI_API_KEY='audit-google-example';
   process.env.KLING_API_KEY='audit-kling-example';
   globalThis.fetch=async(input,init={})=>{
@@ -68,6 +70,16 @@ try{
   assert.equal(calls.at(-1).headers.get('authorization'),'Bearer audit-kling-example');
   await globalThis.fetch('https://api-singapore.klingai.com/account/costs',{headers:{Authorization:'Bearer audit-openai-example'}});
   assert.equal(calls.at(-1).headers.get('authorization'),null);
+  for(const url of ['https://api.openai.com/v1/responses','https://openrouter.ai/api/v1/responses','http://api.deepseek.com/responses','https://api.deepseek.com:8443/responses','https://api.deepseek.com.attacker.invalid/responses']){
+    await globalThis.fetch(url,{headers:{Authorization:'Bearer audit-deepseek-example'}});
+    assert.equal(calls.at(-1).headers.get('authorization'),null,'DeepSeek key must not cross provider origins');
+  }
+  await globalThis.fetch('https://api.deepseek.com/responses',{headers:{Authorization:'Bearer audit-deepseek-example'}});
+  assert.equal(calls.at(-1).headers.get('authorization'),'Bearer audit-deepseek-example');
+  await globalThis.fetch('https://api.deepseek.com/responses',{headers:{Authorization:'Bearer audit-openai-example'}});
+  assert.equal(calls.at(-1).headers.get('authorization'),null,'Fallback must use its own provider key');
+  await globalThis.fetch(new Request('https://cdn.example.invalid/image',{headers:{Authorization:'Bearer audit-deepseek-example'}}));
+  assert.equal(calls.at(-1).headers.get('authorization'),null);
   const dockerfile=readFileSync(`${appRoot}/Dockerfile`,'utf8');
   assert.match(pkg.scripts.start,/--import \.\/security-fetch-guard\.js/);
   assert.match(dockerfile,/"--import", "\.\/security-fetch-guard\.js"/);
@@ -76,6 +88,7 @@ try{
   globalThis.fetch=originalFetch;
   if(originalKey===undefined)delete process.env.OPENROUTER_API_KEY;else process.env.OPENROUTER_API_KEY=originalKey;
   if(originalOpenAiKey===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=originalOpenAiKey;
+  if(originalDeepseekKey===undefined)delete process.env.DEEPSEEK_API_KEY;else process.env.DEEPSEEK_API_KEY=originalDeepseekKey;
   if(originalGoogleKey===undefined)delete process.env.GEMINI_API_KEY;else process.env.GEMINI_API_KEY=originalGoogleKey;
   if(originalKlingKey===undefined)delete process.env.KLING_API_KEY;else process.env.KLING_API_KEY=originalKlingKey;
 }

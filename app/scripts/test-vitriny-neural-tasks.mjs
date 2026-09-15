@@ -226,6 +226,8 @@ test('ferramenta arbitrária, path traversal, segredos e falsa conclusão são r
     [{tool:'files.write',path:'../server.js',content:'alteração'},'task_file_invalid'],
     [{tool:'files.write',path:'.env',content:'alteração'},'task_file_invalid'],
     [{tool:'files.write',path:'x.js',content:'ghp_ABCDEFGHIJK1234567890'},'task_input_invalid'],
+    [{tool:'files.write',path:'x.js',content:'sk-'+'a'.repeat(32)},'task_input_invalid'],
+    [{tool:'files.write',path:'x.js',content:'DEEPSEEK_API_KEY=fixture-private-token'},'task_input_invalid'],
     [{tool:'files.write',path:'x.js',content:'a'.repeat(33000)},'task_input_invalid'],
     [{tool:'finish',message:'Site publicado.'},'task_artifact_missing']
   ]){

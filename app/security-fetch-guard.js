@@ -2,12 +2,13 @@ const nativeFetch = globalThis.fetch;
 const aiOriginKeys = () => new Map([
   ['https://openrouter.ai', String(process.env.OPENROUTER_API_KEY || '').trim()],
   ['https://api.openai.com', String(process.env.OPENAI_API_KEY || '').trim()],
+  ['https://api.deepseek.com', String(process.env.DEEPSEEK_API_KEY || '').trim()],
   ['https://generativelanguage.googleapis.com', String(process.env.GEMINI_API_KEY || '').trim()],
   ['https://api-singapore.klingai.com', String(process.env.KLING_API_KEY || '').trim()]
 ]);
 
 function aiSecrets() {
-  return new Set([process.env.OPENROUTER_API_KEY, process.env.OPENAI_API_KEY, process.env.GEMINI_API_KEY, process.env.KLING_API_KEY]
+  return new Set([process.env.OPENROUTER_API_KEY, process.env.OPENAI_API_KEY, process.env.DEEPSEEK_API_KEY, process.env.GEMINI_API_KEY, process.env.KLING_API_KEY]
     .map(value => String(value || '').trim()).filter(Boolean));
 }
 

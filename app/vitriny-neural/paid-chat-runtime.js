@@ -4,6 +4,7 @@ import {createAiCreditPricing} from './ai-credit-pricing.js';
 import {VITRINE_COINS_POLICY} from '../public/vitrine-coins-contract.js';
 import {createDurableJobQueue} from './durable-job-queue.js';
 import {createOpenAiPaidChatAdapter,hashOpenAiPaidChatRequest} from './providers/openai-paid-chat.js';
+import {createDeepSeekPaidChatAdapter,hashDeepSeekPaidChatRequest,DEEPSEEK_TARIFF_SCHEDULE} from './providers/deepseek-paid-chat.js';
 import {createKlingPaidVideoAdapter,hashKlingPaidVideoRequest} from './providers/kling-paid-video.js';
 import {createKlingPaidImageAdapter,hashKlingPaidImageRequest} from './providers/kling-paid-image.js';
 import {chatError,chatId,validateChatScope,containsChatSecret} from './chat-attachments.js';
@@ -47,26 +48,44 @@ export function createPaidChatRuntime({db,env=process.env,config:inputConfig,wal
   const scopeAllowed=scope=>{try{return authorizeScope(scope)===true&&scopeAuthorizer(scope)===true;}catch{return false;}};
   function get(scope,id){validateChatScope(scope);chatId(id);const r=db.prepare('SELECT * FROM neural_paid_chat_requests WHERE request_id=? AND scope=?').get(id,scope);if(!r)throw chatError('chat_not_found',404);return r;}
   const owns=(scope,id)=>Boolean(db.prepare('SELECT 1 FROM neural_paid_chat_requests WHERE request_id=? AND scope=?').get(id,scope));
-  function capability(kind){
+  function capability(kind,quote=null){
     if(!enabled||!wallet.enabled||!cfg.fx||wallet.unified===true&&cfg.billingPolicyVersion!==VITRINE_COINS_POLICY.version)return false;
     try{
       decimal(cfg.fx.usdToBrl);if(!Number.isFinite(Date.parse(cfg.fx.observedAt))||!cfg.fx.version)return false;
       // A stale/future FX snapshot cannot authorize a newly quoted paid job.
       if(Date.parse(cfg.fx.observedAt)>now()||now()-Date.parse(cfg.fx.observedAt)>7*86400000)return false;
-      if(kind==='chat'){if(!env.OPENAI_API_KEY||!cfg.chat)return false;decimal(cfg.chat.inputUsdPerMillion);decimal(cfg.chat.cachedInputUsdPerMillion);decimal(cfg.chat.outputUsdPerMillion);return true;}
+      if(kind==='chat'){
+        const chat=quote?.chatConfig||cfg.chat,provider=quote?.providerId||chat?.providerId||'openai';if(!chat)return false;
+        if(provider==='deepseek'){
+          if(!env.DEEPSEEK_API_KEY||chat.model!=='deepseek-flash'||(quote?.tariffSchedule||chat.tariffSchedule)!==DEEPSEEK_TARIFF_SCHEDULE)return false;
+          if(!quote&&(typeof chat.tariffVersion!=='string'||! /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,149}$/.test(chat.tariffVersion)))return false;
+          if(!quote&&(typeof chat.effectiveAt!=='string'||new Date(chat.effectiveAt).toISOString()!==chat.effectiveAt||Date.parse(chat.effectiveAt)>now()))return false;
+          if(!quote&&chat.maxOutputTokens!==undefined&&(!Number.isSafeInteger(chat.maxOutputTokens)||chat.maxOutputTokens<1||chat.maxOutputTokens>16384))return false;
+          if(chat.acceptedResponseModels!==undefined&&(!Array.isArray(chat.acceptedResponseModels)||!chat.acceptedResponseModels.length||chat.acceptedResponseModels.length>8||chat.acceptedResponseModels.some(x=>!['deepseek-flash','deepseek-v4-flash'].includes(x))))return false;
+          const tariffs=quote?.tariffs||chat.tariffs;
+          for(const band of ['peak','offPeak'])for(const key of ['inputUsdPerMillion','cachedInputUsdPerMillion','outputUsdPerMillion'])decimal(tariffs?.[band]?.[key]);
+          return true;
+        }
+        if(provider!=='openai'||!env.OPENAI_API_KEY)return false;
+        const tariff=quote?.tariff||chat;decimal(tariff.inputUsdPerMillion);decimal(tariff.cachedInputUsdPerMillion);decimal(tariff.outputUsdPerMillion);return true;
+      }
       if(!env.KLING_API_KEY||!cfg.kling||!artifacts?.ingest||!artifacts?.reserve||!artifacts?.ownsReservation||!artifacts?.canReserve)return false;
       decimal(kind==='image'?cfg.kling.imageUsdEach:cfg.kling.videoUsdPerSecond);return true;
     }catch{return false;}
   }
   function status(scope){validateChatScope(scope);const allowed=wallet.allowsScope?.(scope)!==false,s=allowed?wallet.status(scope):{availableMicroBrl:0,reservedMicroBrl:0};return {enabled,capabilities:Object.fromEntries(MODES.map(k=>[k,allowed&&capability(k)])),wallet:{currency:'BRL',availableMicro:s.availableMicroBrl,reservedMicro:s.reservedMicroBrl},notice:wallet.unified?'Vitrine Coins: taxa de 15% somente na recarga. Uso de API pelo custo confirmado convertido em reais, sem nova taxa, após confirmar o limite máximo.':'Uso de API somente após confirmar o valor máximo. O consumo confirmado recebe acréscimo de 15%; saldo de anúncios não é usado.'};}
-  function pricing(q,mediaCost){
+  function pricing(q,mediaCost,tariff=q.tariff){
     const options={fxSnapshots:[q.fx],...(q.billingPolicyVersion?{billingPolicyVersion:q.billingPolicyVersion}:{})};
-    if(q.kind==='chat')options.tariffs=[q.tariff];
+    if(q.kind==='chat')options.tariffs=[tariff];
     else options.mediaQuotes=[{quoteId:q.quoteId,providerId:'kling_api',modelId:q.model,kind:q.kind,tariffVersion:q.tariffVersion,tariffEffectiveAt:q.effectiveAt,status:'confirmed',quotedAt:iso(q.createdAt),expiresAt:iso(q.expiresAt),requestFingerprint:q.requestHash,totalUsd:mediaCost??q.totalUsd}];
     return createAiCreditPricing(options);
   }
   function mediaPrice(q,totalUsd){return number(pricing(q,totalUsd).priceMedia({quoteId:q.quoteId,providerId:'kling_api',modelId:q.model,kind:q.kind,tariffVersion:q.tariffVersion,fxVersion:q.fx.version,pricedAt:iso(q.createdAt),requestFingerprint:q.requestHash}).customerMicroBRL);}
-  function chatPrice(q,usage){return number(pricing(q).priceChat({providerId:'openai',modelId:q.model,tariffVersion:q.tariff.version,fxVersion:q.fx.version,pricedAt:iso(q.createdAt),usage}).customerMicroBRL);}
+  function chatPrice(q,usage,band){
+    const providerId=q.providerId||'openai',tariff=providerId==='deepseek'?q.tariffs?.[band]:q.tariff;
+    if(!tariff||providerId==='deepseek'&&q.tariffSchedule!==DEEPSEEK_TARIFF_SCHEDULE)throw chatError('chat_pricing_unavailable',503);
+    return number(pricing(q,undefined,tariff).priceChat({providerId,modelId:q.model,tariffVersion:tariff.version,fxVersion:q.fx.version,pricedAt:iso(q.createdAt),usage}).customerMicroBRL);
+  }
   function prepare(scope,{requestId,conversationId,kind,message,context={},referenceImage=null}={}){
     validateChatScope(scope);chatId(requestId);chatId(conversationId);if(!MODES.includes(kind)||!capability(kind)||wallet.allowsScope?.(scope)===false)return null;
     if(referenceImage&&kind==='chat')return null;
@@ -81,13 +100,24 @@ export function createPaidChatRuntime({db,env=process.env,config:inputConfig,wal
       if(!shortText(content))return null;
       input={messages:[...history,{role:'user',content}],maxOutputTokens:cfg.chat.maxOutputTokens??1024};
       if(Buffer.byteLength(JSON.stringify(input),'utf8')>50000)return null;
-      requestHash=hashOpenAiPaidChatRequest({model:q.model,...input,...(cfg.chat.reasoningEffort===undefined?{}:{reasoningEffort:cfg.chat.reasoningEffort})});
-      q.chatConfig={model:q.model,acceptedResponseModels:cfg.chat.acceptedResponseModels||[q.model],...(cfg.chat.reasoningEffort===undefined?{}:{reasoningEffort:cfg.chat.reasoningEffort})};
-      q.tariff={providerId:'openai',modelId:q.model,version:cfg.chat.tariffVersion,effectiveAt:cfg.chat.effectiveAt,inputUsdPerMillion:cfg.chat.inputUsdPerMillion,cachedInputUsdPerMillion:cfg.chat.cachedInputUsdPerMillion,outputUsdPerMillion:cfg.chat.outputUsdPerMillion};
+      q.providerId=cfg.chat.providerId||'openai';
+      if(q.providerId==='deepseek'){
+        requestHash=hashDeepSeekPaidChatRequest({model:q.model,...input});
+        q.chatConfig={model:q.model,acceptedResponseModels:cfg.chat.acceptedResponseModels||[q.model]};
+        q.tariffSchedule=DEEPSEEK_TARIFF_SCHEDULE;
+        q.tariffs=Object.fromEntries(['peak','offPeak'].map(band=>[band,{providerId:'deepseek',modelId:q.model,version:`${cfg.chat.tariffVersion}:${band}`,effectiveAt:cfg.chat.effectiveAt,...Object.fromEntries(['inputUsdPerMillion','cachedInputUsdPerMillion','outputUsdPerMillion'].map(k=>[k,cfg.chat.tariffs[band][k]]))}]));
+      }else{
+        requestHash=hashOpenAiPaidChatRequest({model:q.model,...input,...(cfg.chat.reasoningEffort===undefined?{}:{reasoningEffort:cfg.chat.reasoningEffort})});
+        q.chatConfig={model:q.model,acceptedResponseModels:cfg.chat.acceptedResponseModels||[q.model],...(cfg.chat.reasoningEffort===undefined?{}:{reasoningEffort:cfg.chat.reasoningEffort})};
+        q.tariff={providerId:'openai',modelId:q.model,version:cfg.chat.tariffVersion,effectiveAt:cfg.chat.effectiveAt,inputUsdPerMillion:cfg.chat.inputUsdPerMillion,cachedInputUsdPerMillion:cfg.chat.cachedInputUsdPerMillion,outputUsdPerMillion:cfg.chat.outputUsdPerMillion};
+      }
       // Conservative byte bound includes canonical system/message framing. A
       // provider receipt exceeding it is held, never allowed to overdraw.
-      q.maximumMicro=Math.max(1,chatPrice(q,{inputTokens:Buffer.byteLength(JSON.stringify(input),'utf8')+4096,cachedInputTokens:0,outputTokens:input.maxOutputTokens}));
-      q.summary=`Resposta de texto; limite máximo reservado, cobrança final por tokens ao ${costLabel}.`;
+      const maximumUsage={inputTokens:Buffer.byteLength(JSON.stringify(input),'utf8')+4096,cachedInputTokens:0,outputTokens:input.maxOutputTokens};
+      // Either tariff may apply after queueing. The ceiling authorizes only this
+      // one provider/body; it is not permission for a fallback or a second POST.
+      q.maximumMicro=Math.max(1,...(q.providerId==='deepseek'?['peak','offPeak'].flatMap(band=>[chatPrice(q,maximumUsage,band),chatPrice(q,{...maximumUsage,cachedInputTokens:maximumUsage.inputTokens},band)]):[chatPrice(q,maximumUsage)]));
+      q.summary=`Resposta de texto${q.providerId==='deepseek'?' com DeepSeek Flash':''}; limite máximo reservado, cobrança final por tokens ao ${costLabel}.`;
     }else{
       if(message.length>(kind==='image'?2500:3072))throw chatError('chat_media_prompt_too_long');
       const n=message.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
@@ -116,27 +146,32 @@ export function createPaidChatRuntime({db,env=process.env,config:inputConfig,wal
     db.prepare('UPDATE neural_chat_conversations SET updated_at=? WHERE id=? AND scope=?').run(now(),r.conversation_id,r.scope);
   }
   const queue=createDurableJobQueue({db,now,leaseMs:120000,lanes:{chat:{concurrency:2,perScopeConcurrency:1},image:{concurrency:1,perScopeConcurrency:1},video:{concurrency:1,perScopeConcurrency:1}},limits:{backlog:100,perScopeBacklog:10,perScopeConcurrency:2},
-    providers:()=>MODES.filter(capability).map(kind=>({id:`paid-${kind==='chat'?'openai':'kling'}`,enabled:true,lanes:kind==='chat'?['chat']:['image','video'],capabilities:kind==='chat'?['paid.chat']:['paid.image','paid.video'],concurrency:kind==='chat'?2:1,perScopeConcurrency:1})),
-    authorize:job=>{const r=db.prepare('SELECT state FROM neural_paid_chat_requests WHERE request_id=? AND scope=?').get(job.id,job.scope);return !closed&&enabled&&r?.state==='reserved'&&capability(job.lane);}});
+    providers:()=>[
+      // Historical OpenAI quotes keep their original provider and tariff even
+      // when newly prepared requests select DeepSeek. Capabilities bind lanes.
+      ...(env.OPENAI_API_KEY?[{id:'paid-openai',enabled:true,lanes:['chat'],capabilities:['paid.chat'],concurrency:2,perScopeConcurrency:1}]:[]),
+      ...(env.DEEPSEEK_API_KEY?[{id:'paid-deepseek',enabled:true,lanes:['chat'],capabilities:['paid.deepseek.chat'],concurrency:2,perScopeConcurrency:1}]:[]),
+      ...(['image','video'].some(k=>capability(k))?[{id:'paid-kling',enabled:true,lanes:['image','video'],capabilities:['paid.image','paid.video'],concurrency:1,perScopeConcurrency:1}]:[])],
+    authorize:job=>{const r=db.prepare('SELECT state,quote_json FROM neural_paid_chat_requests WHERE request_id=? AND scope=?').get(job.id,job.scope);return !closed&&enabled&&r?.state==='reserved'&&capability(job.lane,JSON.parse(r.quote_json));}});
   const confirmTx=db.transaction((scope,id,input)=>{
     const r=get(scope,id);if(closed||!enabled||!scopeAllowed(scope))throw chatError('chat_payment_unavailable',503);
     if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['quoteId','idempotencyKey'].includes(k))||typeof input.idempotencyKey!=='string'||! /^[A-Za-z0-9_-]{12,100}$/.test(input.idempotencyKey))throw chatError('chat_input_invalid');
     const q=JSON.parse(r.quote_json);if(input.quoteId!==q.quoteId)throw chatError('chat_payment_quote_mismatch',409);
     if(r.confirmation_key){if(r.confirmation_key!==input.idempotencyKey)throw chatError('chat_conflict',409);return publicPayment(r);}
     if(r.state!=='quoted'||q.expiresAt<=now())throw chatError('chat_payment_quote_expired',409);
-    if(!capability(r.kind))throw chatError('chat_payment_unavailable',503);
+    if(!capability(r.kind,q))throw chatError('chat_payment_unavailable',503);
     if(wallet.status(scope).frozen)throw chatError('ai_wallet_frozen',403);
     if(r.kind!=='chat'&&artifacts.canReserve(scope,r.kind)!==true)throw chatError('chat_artifact_quota',429);
     if(r.kind!=='chat')artifacts.reserve(scope,{requestId:id,kind:r.kind});
     wallet.reserve(scope,{requestId:id,maximumMicroBrl:q.maximumMicro,quoteId:q.quoteId,requestHash:r.request_hash});
     db.prepare("UPDATE neural_paid_chat_requests SET state='reserved',phase='queued',confirmation_key=?,updated_at=? WHERE request_id=? AND scope=?").run(input.idempotencyKey,now(),id,scope);
-    queue.enqueue({id,scope,idempotencyKey:input.idempotencyKey,requestHash:r.request_hash,lane:r.kind,capability:`paid.${r.kind}`,groupKey:r.conversation_id});
+    queue.enqueue({id,scope,idempotencyKey:input.idempotencyKey,requestHash:r.request_hash,lane:r.kind,capability:r.kind==='chat'&&q.providerId==='deepseek'?'paid.deepseek.chat':`paid.${r.kind}`,groupKey:r.conversation_id});
     updateChat(r,'queued','Pedido confirmado. Aguardando a fila segura de geração.');return publicPayment(get(scope,id));
   });
-  function permitOf(r,q){return {authorized:true,scope:r.scope,requestId:r.request_id,requestHash:r.request_hash,model:q.model,reservationId:r.request_id,maximumMicroBrl:String(q.maximumMicro),expiresAt:now()+120000,...(r.kind==='chat'?{maxOutputTokens:JSON.parse(r.input_json).maxOutputTokens}:{accountBinding:q.accountBinding,policyRevision:q.policyRevision,externalTaskId:r.external_id,quoteId:q.quoteId})};}
+  function permitOf(r,q){return {authorized:true,scope:r.scope,requestId:r.request_id,requestHash:r.request_hash,model:q.model,reservationId:r.request_id,maximumMicroBrl:String(q.maximumMicro),expiresAt:now()+120000,...(r.kind==='chat'?{maxOutputTokens:JSON.parse(r.input_json).maxOutputTokens,...(q.providerId==='deepseek'?{providerId:'deepseek'}:{})}:{accountBinding:q.accountBinding,policyRevision:q.policyRevision,externalTaskId:r.external_id,quoteId:q.quoteId})};}
   function adapterFor(r,q,assertAuthorized=()=>false){
-    const common={enabled,apiKey:r.kind==='chat'?env.OPENAI_API_KEY:env.KLING_API_KEY,fetchImpl,now,assertAuthorized};
-    if(r.kind==='chat')return createOpenAiPaidChatAdapter({...common,...q.chatConfig,maxOutputTokens:JSON.parse(r.input_json).maxOutputTokens});
+    const common={enabled,apiKey:r.kind==='chat'?(q.providerId==='deepseek'?env.DEEPSEEK_API_KEY:env.OPENAI_API_KEY):env.KLING_API_KEY,fetchImpl,now,assertAuthorized};
+    if(r.kind==='chat')return (q.providerId==='deepseek'?createDeepSeekPaidChatAdapter:createOpenAiPaidChatAdapter)({...common,...q.chatConfig,maxOutputTokens:JSON.parse(r.input_json).maxOutputTokens});
     const assertPollAuthorized=receipt=>{const live=get(r.scope,r.request_id),stored=live.receipt_json&&JSON.parse(live.receipt_json);return ['dispatched','held'].includes(live.state)&&stored&&digest(stored)===digest(receipt);};
     return (r.kind==='image'?createKlingPaidImageAdapter:createKlingPaidVideoAdapter)({...common,accountBinding:q.accountBinding,policyRevision:q.policyRevision,assertPollAuthorized});
   }
@@ -173,7 +208,7 @@ export function createPaidChatRuntime({db,env=process.env,config:inputConfig,wal
     // normalized receipt, never invokes a second paid generation.
     db.prepare("UPDATE neural_paid_chat_requests SET phase='finalizing',next_poll=0,updated_at=? WHERE request_id=?").run(now(),r.request_id);
     let cost=null;
-    try{if(r.kind==='chat'&&result.billingDisposition==='reconcile'){const {inputTokens,cachedInputTokens,outputTokens}=result.usage;cost=chatPrice(q,{inputTokens,cachedInputTokens,outputTokens});}else cost=actualMediaCost(q,result);}catch{}
+    try{if(r.kind==='chat'&&result.billingDisposition==='reconcile'){const {inputTokens,cachedInputTokens,outputTokens}=result.usage;cost=chatPrice(q,{inputTokens,cachedInputTokens,outputTokens},result.pricingWindow?.scheduleVersion===q.tariffSchedule?result.pricingWindow?.band:undefined);}else cost=actualMediaCost(q,result);}catch{}
     let settled=null;if(result.receiptId)settled=wallet.settle(r.scope,r.request_id,{actualMicroBrl:cost,receiptId:result.receiptId});
     const financialState=settled?.state==='settled'?'settled':'held';
     db.prepare('UPDATE neural_paid_chat_requests SET state=?,charged_micro=?,next_poll=0,updated_at=? WHERE request_id=?').run(financialState,financialState==='settled'?cost:null,now(),r.request_id);
@@ -236,7 +271,7 @@ export function createPaidChatRuntime({db,env=process.env,config:inputConfig,wal
       const controller=new AbortController(),run={controller};active.set(r.request_id,run);
       run.pending=complete(r,JSON.parse(r.result_json),queue.get(r.scope,r.request_id)).finally(()=>active.delete(r.request_id));run.pending.catch(()=>{});
     }
-    for(const lane of MODES){if(!capability(lane))continue;const job=queue.claim(lane,{workerId});if(job&&!active.has(job.id)){const p=dispatch(job);const run=active.get(job.id);if(run)run.pending=p;p.catch(()=>{});}}
+    for(const lane of MODES){if(lane!=='chat'&&!capability(lane))continue;const job=queue.claim(lane,{workerId});if(job&&!active.has(job.id)){const p=dispatch(job);const run=active.get(job.id);if(run)run.pending=p;p.catch(()=>{});}}
     const r=claimPoll.immediate();if(r&&!active.has(r.request_id)){const p=pollOne(r);const run=active.get(r.request_id);if(run)run.pending=p;p.catch(()=>{});}
   }catch{}finally{kicking=false;}});}
   function confirm(scope,id,input){const result=confirmTx.immediate(scope,id,input);kick();return result;}
@@ -248,5 +283,5 @@ export function createPaidChatRuntime({db,env=process.env,config:inputConfig,wal
   async function wait(id){for(let i=0;i<30;i++){kick();await new Promise(r=>setImmediate(r));const task=active.get(id);if(task?.pending){await task.pending;continue;}break;}}
   function close(){closed=true;clearInterval(timer);for(const r of active.values())r.controller.abort();}
   timer=setInterval(kick,pollIntervalMs);timer.unref?.();
-  return {enabled,wallet,status,prepare,confirm,cancel,owns,payment:(scope,id)=>publicPayment(get(scope,id)),artifacts:(scope,id)=>artifacts?.forRequest?.(scope,id)||[],setScopeAuthorizer:fn=>{if(typeof fn!=='function')throw new TypeError('Scope guard required');scopeAuthorizer=fn;},kick,wait,close};
+  return {enabled,get prefersText(){return cfg.chat?.providerId==='deepseek'&&cfg.chat.primary===true&&capability('chat');},wallet,status,prepare,confirm,cancel,owns,payment:(scope,id)=>publicPayment(get(scope,id)),artifacts:(scope,id)=>artifacts?.forRequest?.(scope,id)||[],setScopeAuthorizer:fn=>{if(typeof fn!=='function')throw new TypeError('Scope guard required');scopeAuthorizer=fn;},kick,wait,close};
 }

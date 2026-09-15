@@ -1,6 +1,7 @@
 // Only fixed diagnostic codes are retained: never provider payloads, tokens or prompts.
 const AI_OPERATIONS = {
   openai_text: 'OpenAI · texto',
+  deepseek_text: 'DeepSeek · texto',
   openai_media: 'OpenAI · imagens',
   google_video: 'Google Veo · vídeos',
   kling_studio_video: 'Kling Studio · vídeos',

@@ -5619,7 +5619,7 @@ function executeAdminAiTool(name, args = {}, userId = null) {
 
 async function requestOpenAI(body) {
   if(!AI_TEXT_CONFIG.configured)return aiTextClient.request(body);
-  return integrationObserver.run(AI_TEXT_CONFIG.provider+'_text',()=>aiTextClient.request(body));
+  return aiTextClient.request(body,{observe:({provider},operation)=>integrationObserver.run(provider+'_text',operation)});
 }
 
 function openRouterHeaders() {
@@ -5666,17 +5666,8 @@ function parseEditorialJson(value) {
 }
 
 async function requestEditorialText(system,user,maxTokens=2200){
-  if(AI_TEXT_CONFIG.explicit){
-    const result=await requestOpenAI({model:OPENAI_MODEL,max_output_tokens:maxTokens,store:false,input:[{role:'system',content:[{type:'input_text',text:system}]},{role:'user',content:[{type:'input_text',text:user}]}]});
-    const text=responseOutputText(result);if(!text)throw new Error('O modelo não devolveu conteúdo editorial.');return text;
-  }
-  if(AI_TEXT_CONFIG.provider==='openrouter'){
-    try{const result=await openRouterRequest('https://openrouter.ai/api/v1/chat/completions',{method:'POST',body:JSON.stringify({model:OPENAI_MODEL,messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:maxTokens,temperature:0.5})},45000);const text=result.data?.choices?.[0]?.message?.content;if(typeof text==='string'&&text.trim())return text.trim();}catch(error){console.error('OpenRouter editorial fallback',String(error.message||error));}
-    const directKey=String(process.env.OPENAI_API_KEY||'').trim();
-    if(directKey){const response=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{Authorization:`Bearer ${directKey}`,'Content-Type':'application/json'},body:JSON.stringify({model:String(process.env.OPENAI_DIRECT_MODEL||'gpt-4o-mini'),messages:[{role:'system',content:system},{role:'user',content:user}],max_tokens:maxTokens,temperature:0.5}),signal:AbortSignal.timeout(60000)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(String(data?.error?.message||`OpenAI ${response.status}`).slice(0,300));const text=data?.choices?.[0]?.message?.content;if(typeof text==='string'&&text.trim())return text.trim();}
-    throw new Error('Nenhum provedor devolveu conteúdo editorial.');
-  }
-  const result=await requestOpenAI({model:OPENAI_MODEL,max_output_tokens:maxTokens,input:[{role:'system',content:[{type:'input_text',text:system}]},{role:'user',content:[{type:'input_text',text:user}]}]});
+  // One transport policy for every text entry point: no legacy retry after an uncertain result.
+  const result=await requestOpenAI({model:OPENAI_MODEL,max_output_tokens:maxTokens,store:false,input:[{role:'system',content:[{type:'input_text',text:system}]},{role:'user',content:[{type:'input_text',text:user}]}]});
   const text=responseOutputText(result);if(!text)throw new Error('O modelo não devolveu conteúdo editorial.');return text;
 }
 
@@ -6117,7 +6108,7 @@ const siteSalesAssistant = typeof setupSiteSalesAssistant === 'function' ? setup
     return {providerMessageId:[data?.Id,data?.id].find(validWhatsAppReceiptId)?.trim()};
   },
   requestOpenAI:body=>{
-    if(AI_TEXT_CONFIG.provider!=='openai')throw new Error('site_assistant_provider_unavailable');
+    if(!AI_TEXT_CONFIG.configured||!['openai','deepseek'].includes(AI_TEXT_CONFIG.provider))throw new Error('site_assistant_provider_unavailable');
     return requestOpenAI(body);
   }
 }) : null;
@@ -6126,8 +6117,8 @@ let liveLia;
 const liveLiaMedia=createLiveLiaMedia({env:process.env,liveStudioDir:process.env.LIVE_STUDIO_DIR||'/live-studio',publicDir:path.join(dir,'public'),reserveDailyOperation:input=>liveLia?.reserveDailyOperation(input)||{allowed:false}});
 liveLia=setupLiveLia({app,db,requireAdmin,sameOriginOnly,root:process.env.LIVE_STUDIO_DIR||'/live-studio',publicOrigin:SITE_URL,
   resolveContext:value=>siteSalesAssistant?.resolveContext(value)||null,offersFor:(context,message)=>siteSalesAssistant?.offersFor(context,message)||[],
-  requestText:body=>{if(AI_TEXT_CONFIG.provider!=='openai'||!ecosystemCanRun())throw Error('live_lia_text_unavailable');return requestOpenAI(body);},
-  textConfigured:()=>AI_TEXT_CONFIG.provider==='openai'&&AI_TEXT_CONFIG.configured,media:liveLiaMedia,canRun:ecosystemCanRun,dailyLimit:3,textDailyLimit:20});
+  requestText:body=>{if(!AI_TEXT_CONFIG.configured||!['openai','deepseek'].includes(AI_TEXT_CONFIG.provider)||!ecosystemCanRun())throw Error('live_lia_text_unavailable');return requestOpenAI(body);},
+  textConfigured:()=>['openai','deepseek'].includes(AI_TEXT_CONFIG.provider)&&AI_TEXT_CONFIG.configured,media:liveLiaMedia,canRun:ecosystemCanRun,dailyLimit:3,textDailyLimit:20});
 
 app.get('/api/admin/media-factory', requireAdmin, async (_req, res) => {
   const projects = db.prepare(`SELECT m.*,t.title,t.instructions,t.priority,t.status AS task_status,a.name AS agent_name
@@ -6578,12 +6569,14 @@ Seja objetiva e informe quais páginas consultou quando fizer uma auditoria. Qua
       }
     }
     if (!answer) return res.status(502).json({ error: 'A IA não concluiu a análise. Tente fazer uma pergunta mais específica.' });
+    const answeredModel=data?.aiText?.model||data?.aiText?.requestedModel||OPENAI_MODEL;
+    const answeredProvider=data?.aiText?.provider||AI_TEXT_CONFIG.provider;
     const result = db.prepare(`INSERT INTO admin_ai_messages
       (user_id,role,content,model,input_tokens,output_tokens) VALUES (?,'assistant',?,?,?,?)`)
-      .run(req.user.id, answer.slice(0, 30000), OPENAI_MODEL, inputTokens, outputTokens);
+      .run(req.user.id, answer.slice(0, 30000), answeredModel, inputTokens, outputTokens);
     return res.json({
       message: { id: Number(result.lastInsertRowid), role: 'assistant', content: answer,
-        model: OPENAI_MODEL, created_at: new Date().toISOString() },
+        model: answeredModel, provider: answeredProvider, fallbackUsed:Boolean(data?.aiText?.fallbackUsed), created_at: new Date().toISOString() },
       toolCalls
     });
   } catch (error) {

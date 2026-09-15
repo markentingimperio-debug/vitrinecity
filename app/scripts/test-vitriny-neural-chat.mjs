@@ -6,7 +6,7 @@ import {createOpenAICompatibleProvider} from '../vitriny-neural/providers/openai
 
 const capabilities=['support.draft-reply','support.summarize','growth.content-plan','growth.campaign-plan','growth.seo-plan','growth.diagnose','code.plan','research.verify','research.summarize','commerce.seller-diagnose','ranking.evaluate'];
 const fixtures=[];afterEach(()=>{for(const fixture of fixtures.splice(0))fixture.chat.close();});
-function fixture({respond,qualified=true,config={enabled:true,mode:'advisory'},now=Date.now,timeoutMs,queueOptions,env={},db=new Database(':memory:')}={}){
+function fixture({respond,qualified=true,config={enabled:true,mode:'advisory'},now=Date.now,timeoutMs,queueOptions,env={},paidRuntime=null,db=new Database(':memory:')}={}){
   const calls=[];
   const provider={id:'local-fixture',modelName:'fixture-v1',local:true,policy:{enabled:true,allowedCapabilities:capabilities},capabilities};
   const qualifications={latest:()=>qualified?{modelName:provider.modelName,qualification:{productionEligible:true,allowedCapabilities:capabilities}}:null};
@@ -16,13 +16,50 @@ function fixture({respond,qualified=true,config={enabled:true,mode:'advisory'},n
     const result=await(respond?respond({capability,input,options}):{provider:provider.id,output:{model:provider.modelName,text:'Resposta baseada no contexto fornecido.'}});
     options.onAttempt?.({type:'completed',provider:provider.id,modelName:provider.modelName});return result;
   }};
-  const chat=createNeuralChatEngine({db,skills,qualifications,config,now,timeoutMs,queueOptions,env:{VITRINY_NEURAL_TASKS_STORES:'shop-a,shop-b',...env}});
+  const chat=createNeuralChatEngine({db,skills,qualifications,config,now,timeoutMs,queueOptions,paidRuntime,env:{VITRINY_NEURAL_TASKS_STORES:'shop-a,shop-b',...env}});
   const result={chat,calls,db};fixtures.push(result);return result;
 }
 const request=(chat,message='Crie um texto para minha loja.',key='request-chat-test-001',extra={})=>chat.submit('admin:1',{message,idempotencyKey:key,...extra});
 const upload=(chat,name='contexto.txt',value='O produto pesa 2 kg.',scope='admin:1')=>chat.upload(scope,{name,mimeType:'text/plain',dataBase64:Buffer.from(value).toString('base64')});
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 const answer={provider:'local-fixture',output:{model:'fixture-v1',text:'Resposta final recebida.'}};
+
+test('DeepSeek-shaped secrets are rejected in prompts and text attachments before persistence',()=>{
+  const f=fixture();try{
+    for(const secret of ['sk-'+'a'.repeat(32),'DEEPSEEK_API_KEY=fixture-private-token']){
+      assert.throws(()=>request(f.chat,secret,'request-deepseek-secret'),{code:'chat_input_invalid'});
+      assert.throws(()=>upload(f.chat,'context.txt',secret),{code:'chat_attachment_invalid'});
+    }
+    assert.equal(f.calls.length,0);
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM neural_chat_messages').get().n,0);
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM neural_chat_attachments').get().n,0);
+  }finally{f.chat.close();f.db.close();}
+});
+
+test('explicit paid primary quotes before dispatch even with a qualified local model',async()=>{
+  const quotes=new Map(),paidRuntime={enabled:true,prefersText:true,setScopeAuthorizer(){},
+    prepare(scope,input){quotes.set(input.requestId,{scope,kind:input.kind,quoteId:'quote-fixture',amountMicro:5});return quotes.get(input.requestId);},
+    owns:(scope,id)=>quotes.get(id)?.scope===scope,payment:(_scope,id)=>quotes.get(id),artifacts:()=>[],close(){}};
+  const f=fixture({paidRuntime});try{
+    const item=request(f.chat,'Escreva um texto curto.','request-primary-paid-001');
+    assert.equal(item.status,'awaiting_confirmation');assert.equal(item.payment.amountMicro,5);
+    await tick();assert.equal(f.calls.length,0,'Local must not run alongside a paid quote');
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM neural_durable_jobs').get().n,0);
+    const duplicate=request(f.chat,'Escreva um texto curto.','request-primary-paid-001');
+    assert.equal(duplicate.requestId,item.requestId);assert.equal(quotes.size,1);
+    assert.throws(()=>request(f.chat,'Escreva um texto.','request-client-preference',{prefersText:true}),{code:'chat_input_invalid'});
+    const action=request(f.chat,'Publique o texto no Instagram.','request-primary-action');
+    assert.equal(action.status,'unavailable');assert.equal(quotes.size,1);
+  }finally{f.chat.close();f.db.close();}
+});
+
+test('unavailable paid primary does not prevent already qualified local text',async()=>{
+  let prepares=0;const paidRuntime={enabled:true,prefersText:true,setScopeAuthorizer(){},prepare(){prepares++;return null;},owns:()=>false,close(){}};
+  const f=fixture({paidRuntime});try{
+    const item=request(f.chat,'Escreva um texto.','request-primary-unavailable');await f.chat.wait(item.requestId);
+    assert.equal(prepares,1);assert.equal(f.calls.length,1);assert.equal(f.chat.request('admin:1',item.requestId).status,'completed');
+  }finally{f.chat.close();f.db.close();}
+});
 // Keeps the registry's pre-dispatch phase and its transport separately
 // controllable, so cross-worker races do not depend on timing a real network.
 function stagedFixture({db=new Database(':memory:'),now=Date.now,timeoutMs=1000}={}){

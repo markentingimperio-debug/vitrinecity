@@ -11,7 +11,7 @@ export function validateChatScope(scope){
 }
 export function chatId(id){if(typeof id!=='string'||!(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/).test(id))throw chatError('chat_not_found',404);return id;}
 const EXTENSIONS={'text/plain':['txt'],'text/markdown':['md','markdown'],'text/csv':['csv'],'image/png':['png'],'image/jpeg':['jpg','jpeg'],'image/webp':['webp']};
-const SECRET=/-----BEGIN [^-]*PRIVATE KEY-----|\b(?:sk-proj-|ghp_|github_pat_|AKIA)[A-Za-z0-9_-]{10,}|\bBearer\s+[A-Za-z0-9._-]{16,}/i;
+const SECRET=/-----BEGIN [^-]*PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{20,}|\bDEEPSEEK_API_KEY\s*[:=]\s*["']?[^\s"']{4,}|\b(?:sk-proj-|ghp_|github_pat_|AKIA)[A-Za-z0-9_-]{10,}|\bBearer\s+[A-Za-z0-9._-]{16,}/i;
 export function containsChatSecret(value){return SECRET.test(value);}
 function metadata(row){return {id:row.id,name:row.name,mimeType:row.mime_type,bytes:row.bytes,kind:row.kind,textAvailable:row.kind==='text',
   ...(row.kind==='image'?{width:row.width,height:row.height}:{}),createdAt:row.created_at};}
