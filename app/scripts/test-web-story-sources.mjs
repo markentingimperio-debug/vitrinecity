@@ -122,7 +122,8 @@ test('city source comes from the real public home and existing guide, without in
   const db=new Database(':memory:');t.after(()=>db.close());
   const publicDir=fileURLToPath(new URL('../public/',import.meta.url)),sources=createWebStorySources({db,publicDir});
   const item=sources.get('city:vitrine-city');assert.ok(item);assert.equal(item.kind,'city');assert.equal(item.group,'trends');assert.equal(item.commercial,false);assert.equal(item.sourcePath,'/');
-  assert.equal(item.facts.accessNote,'Visite sem cadastro. Entre na sua conta para jogar e conversar.');
+  // The first public hero-note now carries the AI/Coins notice; keep runtime and index.html unchanged.
+  assert.equal(item.facts.accessNote,'Use sua conta para conversar, planejar e criar. Recursos de IA podem consumir Vitrine Coins; confira o valor antes de confirmar.');
   assert.ok(item.body.includes('Consulte as lojas com entrega local e a disponibilidade na sua cidade.'));
   assert.ok(item.body.includes('Centro Educacional'));assert.ok(item.body.includes('Pulse Arena'));assert.ok(item.body.includes('Lojas e vitrines'));
   assert.ok(item.facts.illustrationDescription.includes('conceitual'));assert.ok(item.body.length>650);
