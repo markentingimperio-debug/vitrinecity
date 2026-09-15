@@ -9,7 +9,9 @@ import {priceLiaItems,courseLiaQuote,marketplaceLiaQuote,publicLiaQuote,assertLi
 
 const source=readFileSync(new URL('../server.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const extract=(start,end)=>{const begin=source.indexOf(start),finish=source.indexOf(end,begin+start.length);assert.ok(begin>=0&&finish>begin,start);return source.slice(begin,finish);};
-const routes=extract('function liaDiscountEligible(',"\napp.post('/api/marketplace/orders/:reference/delivery-review'")+extract("app.get('/api/courses/:slug/quote'",'\nconst buyCourseWithCoins =');
+const routes=extract('function liaDiscountEligible(',"\napp.post('/api/marketplace/orders/:reference/delivery-review'")+extract("app.get('/api/courses/:slug/quote'",'\nconst buyCourseWithCoins =')
+  +extract("app.post('/api/marketplace/shipping/quote',","\napp.get('/api/marketplace/orders',")
+  +extract("app.post('/api/marketplace/local-delivery/quote',","\napp.post('/api/courier/applications',");
 
 async function fixture(t){
   const db=new Database(':memory:');
@@ -18,7 +20,7 @@ async function fixture(t){
     INSERT INTO store_profiles VALUES('official_agrotecnica','Agrotécnica','published'),('other_store','Outra loja','published');
     CREATE TABLE customer_addresses(id INTEGER PRIMARY KEY,user_id INTEGER,postal_code TEXT,street TEXT,number TEXT);
     INSERT INTO customer_addresses VALUES(7,1,'12345678','Rua teste','10');
-    CREATE TABLE store_products(id INTEGER PRIMARY KEY,store_reference TEXT,name TEXT,sku TEXT,price_cents INTEGER,stock_quantity INTEGER,active INTEGER DEFAULT 1,marketplace_enabled INTEGER DEFAULT 1,product_url TEXT DEFAULT '');
+    CREATE TABLE store_products(id INTEGER PRIMARY KEY,store_reference TEXT,name TEXT,sku TEXT,price_cents INTEGER,stock_quantity INTEGER,active INTEGER DEFAULT 1,marketplace_enabled INTEGER DEFAULT 1,available INTEGER NOT NULL DEFAULT 1,product_url TEXT DEFAULT '');
     INSERT INTO store_products(id,store_reference,name,sku,price_cents,stock_quantity) VALUES(1,'official_agrotecnica','Adubo','AD1',33,50),(2,'official_agrotecnica','Substrato','SU2',2399,50),(3,'other_store','Produto de parceiro','P3',2399,50);
     CREATE TABLE product_option_groups(id INTEGER PRIMARY KEY,product_id INTEGER,name TEXT,min_select INTEGER,max_select INTEGER);
     CREATE TABLE product_options(id INTEGER PRIMARY KEY,group_id INTEGER,name TEXT,price_delta_cents INTEGER,active INTEGER);
@@ -27,7 +29,7 @@ async function fixture(t){
   db.exec(extract('CREATE TABLE IF NOT EXISTS marketplace_orders (','`);\nensureColumn(\'marketplace_orders\'').replace(/\r/g,''));
   const ensureColumn=(table,name,definition)=>{if(!db.prepare(`PRAGMA table_info(${table})`).all().some(row=>row.name===name))db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);};
   vm.runInNewContext(source.split(/\r?\n/).filter(line=>/^ensureColumn\('(marketplace_orders|marketplace_order_items)'/.test(line)).join('\n'),{ensureColumn});
-  const app=express();app.use(express.json());const provider=[],captures=[],analytics=[];
+  const app=express();app.use(express.json());const provider=[],captures=[],analytics=[],shippingProvider=[],localDeliveryProvider=[];
   const course={slug:'canva-para-lojas',title:'Canva para Lojas',status:'active',priceCents:2399};let eligible=true,shipping=100,afterShipping=()=>{};
   const context={app,db,courseLiaQuote,marketplaceLiaQuote,publicLiaQuote,assertLiaQuoteAccepted,randomUUID,AbortSignal,console,
     siteSalesExperience:{canApplyLiaDiscount:()=>eligible},
@@ -36,8 +38,8 @@ async function fixture(t){
     process:{env:{MERCADOPAGO_ACCESS_TOKEN:'fixture',MERCADOPAGO_WEBHOOK_SECRET:'fixture'}},
     checkoutAttempts:new Map(),allowAttempt:()=>true,referralAffiliate:()=>null,recordConsent:()=>{},readAdAttribution:()=>null,readStoreAdAttribution:()=>null,
     MARKETPLACE_COMMISSION_BPS:1000,MARKETPLACE_FIXED_FEE_CENTS:200,MARKETPLACE_RETURN_PROVISION_CENTS:50,
-    officialMarketplaceShippingQuote:async()=>{afterShipping();return {shippingCents:shipping,provider:'fixture',service:'Entrega teste'};},
-    localDeliveryQuote:async()=>{throw Error('No local delivery in this fixture');},
+    officialMarketplaceShippingQuote:async(...args)=>{shippingProvider.push(args);afterShipping();return {shippingCents:shipping,provider:'fixture',service:'Entrega teste'};},
+    localDeliveryQuote:async(...args)=>{localDeliveryProvider.push(args);afterShipping();return {feeCents:200,platformCents:100,courierCents:100,distanceMeters:1000,duration:180,preparationMinutes:{min:10,max:20},routeDurationSeconds:180,estimatedMinMinutes:13,estimatedMaxMinutes:23,provider:'vitrinecity_local',service:'Entrega local teste'};},
     mpHeaders:()=>({}),SITE_URL:'https://vitrinecity.test',marketplaceWebhookRouteSignature:()=> 'fixture',conversionHeader:()=>{},
     adminAnalytics:{recordOrderAttribution:()=>{},recordCheckout:(...args)=>analytics.push(args)},recordSiteSales:(...args)=>captures.push(args),
     fetch:async(url,options)=>{assert.equal(url,'https://api.mercadopago.com/checkout/preferences');provider.push(JSON.parse(options.body));return {ok:true,json:async()=>({id:'fixture-preference',init_point:'https://www.mercadopago.com.br/checkout/fixture'})};}
@@ -46,7 +48,7 @@ async function fixture(t){
   const listener=await new Promise(resolve=>{const server=app.listen(0,'127.0.0.1',()=>resolve(server));});
   t.after(async()=>{await new Promise(resolve=>listener.close(resolve));db.close();});
   const request=async(path,body,headers={})=>{const response=await fetch(`http://127.0.0.1:${listener.address().port}${path}`,{method:body?'POST':'GET',headers:{'Content-Type':'application/json',...headers},...(body?{body:JSON.stringify(body)}:{})});return {status:response.status,body:await response.json(),headers:response.headers};};
-  return {db,provider,captures,analytics,request,course,setEligible:value=>{eligible=value;},setAfterShipping:fn=>{afterShipping=fn;}};
+  return {db,provider,captures,analytics,shippingProvider,localDeliveryProvider,request,course,setEligible:value=>{eligible=value;},setAfterShipping:fn=>{afterShipping=fn;}};
 }
 
 test('five percent rounds once for the whole cart; unit splitting conserves cents and quantities',()=>{
@@ -131,4 +133,69 @@ test('compensating item price changes during shipping cannot pass only because t
   f.setAfterShipping(()=>f.db.exec('UPDATE store_products SET price_cents=price_cents+10 WHERE id=1;UPDATE store_products SET price_cents=price_cents-10 WHERE id=2;'));
   const result=await f.request('/api/marketplace/checkout',{items,addressId:7,termsAccepted:true,couponCode:'LIA5',expectedAmountCents:preview.body.quote.amountCents+100});
   assert.equal(result.status,409);assert.equal(result.body.code,'lia_quote_changed');assert.equal(result.body.quote.amountCents,preview.body.quote.amountCents);assert.equal(f.provider.length,0);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM marketplace_orders').get().n,0);
+});
+
+for(const eligible of [false,true])test(`paused products reject quote and checkout before payment (Lia eligible: ${eligible})`,async t=>{
+  const f=await fixture(t),items=[{productId:2,quantity:1,available:true}];
+  f.setEligible(eligible);
+  f.db.exec('UPDATE store_products SET available=0 WHERE id=2');
+  const before=f.db.prepare('SELECT * FROM store_products ORDER BY id').all();
+  const preview=await f.request('/api/marketplace/checkout/quote',{items,available:true});
+  assert.equal(preview.status,409);assert.equal(preview.body.error,'Um produto não está mais disponível.');
+  const checkout=await f.request('/api/marketplace/checkout',{items,addressId:7,termsAccepted:true,couponCode:eligible?'LIA5':'',expectedAmountCents:eligible?2379:2499});
+  assert.equal(checkout.status,409);assert.equal(checkout.body.error,'Um produto não está mais disponível.');
+  assert.equal(f.provider.length,0);assert.equal(f.captures.length,0);assert.equal(f.analytics.length,0);
+  assert.equal(f.shippingProvider.length,0);assert.equal(f.localDeliveryProvider.length,0);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM marketplace_orders').get().n,0);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM marketplace_order_items').get().n,0);
+  assert.deepEqual(f.db.prepare('SELECT * FROM store_products ORDER BY id').all(),before);
+});
+
+test('a mixed cart is rejected entirely when one item is paused',async t=>{
+  const f=await fixture(t),items=[{productId:1,quantity:1},{productId:2,quantity:1}];
+  f.db.exec('UPDATE store_products SET available=0 WHERE id=2');
+  const preview=await f.request('/api/marketplace/checkout/quote',{items});
+  const checkout=await f.request('/api/marketplace/checkout',{items,addressId:7,termsAccepted:true});
+  assert.equal(preview.status,409);assert.equal(checkout.status,409);
+  assert.equal(f.provider.length,0);assert.equal(f.shippingProvider.length,0);assert.equal(f.localDeliveryProvider.length,0);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM marketplace_orders').get().n,0);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM marketplace_order_items').get().n,0);
+});
+
+for(const [deliveryMode,shippingCents] of [['carrier',100],['local',200]])test(`pausing during ${deliveryMode} shipping blocks payment without changing price or stock`,async t=>{
+  const f=await fixture(t),items=[{productId:2,quantity:1}];
+  const preview=await f.request('/api/marketplace/checkout/quote',{items});assert.equal(preview.status,200);
+  const before=f.db.prepare('SELECT price_cents,stock_quantity FROM store_products WHERE id=2').get();
+  let shippingCalls=0;
+  f.setAfterShipping(()=>{shippingCalls++;f.db.exec('UPDATE store_products SET available=0 WHERE id=2');});
+  const result=await f.request('/api/marketplace/checkout',{items,addressId:7,termsAccepted:true,deliveryMode,couponCode:'LIA5',expectedAmountCents:preview.body.quote.amountCents+shippingCents});
+  assert.equal(shippingCalls,1);assert.equal(result.status,409);assert.equal(result.body.error,'Um produto não está mais disponível.');
+  assert.equal(f.provider.length,0);assert.equal(f.captures.length,0);assert.equal(f.analytics.length,0);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM marketplace_orders').get().n,0);
+  assert.deepEqual(f.db.prepare('SELECT price_cents,stock_quantity FROM store_products WHERE id=2').get(),before);
+});
+
+test('pausing prevents new checkouts but does not rewrite existing orders, items or reconciliation',async t=>{
+  const f=await fixture(t),body={items:[{productId:2,quantity:1}],addressId:7,termsAccepted:true,couponCode:'LIA5',expectedAmountCents:2379};
+  assert.equal((await f.request('/api/marketplace/checkout',body)).status,201);
+  const snapshot=()=>({orders:f.db.prepare('SELECT * FROM marketplace_orders ORDER BY reference').all(),items:f.db.prepare('SELECT * FROM marketplace_order_items ORDER BY id').all(),reconciliation:f.db.prepare('SELECT * FROM marketplace_payment_reconciliation ORDER BY order_reference').all()});
+  const before=snapshot();assert.equal(before.orders.length,1);assert.equal(f.provider.length,1);
+  f.db.exec('UPDATE store_products SET available=0 WHERE id=2');
+  assert.equal((await f.request('/api/marketplace/checkout',body)).status,409);
+  assert.equal(f.provider.length,1);assert.deepEqual(snapshot(),before);
+});
+
+for(const [path,expectedStatus,providerName,priceKey,shippingCents] of [
+  ['/api/marketplace/shipping/quote',409,'shippingProvider','shippingCents',100],
+  ['/api/marketplace/local-delivery/quote',400,'localDeliveryProvider','feeCents',200]
+])test(`${path} rejects paused products before calling its provider and still quotes available products`,async t=>{
+  const f=await fixture(t),body={items:[{productId:2,quantity:1,available:true}],addressId:7,postalCode:'12345678'};
+  f.db.exec('UPDATE store_products SET available=0 WHERE id=2');
+  const before=f.db.prepare('SELECT * FROM store_products ORDER BY id').all();
+  const paused=await f.request(path,body);assert.equal(paused.status,expectedStatus);
+  assert.equal(f.shippingProvider.length,0);assert.equal(f.localDeliveryProvider.length,0);assert.equal(f.provider.length,0);
+  assert.deepEqual(f.db.prepare('SELECT * FROM store_products ORDER BY id').all(),before);
+  f.db.exec('UPDATE store_products SET available=1 WHERE id=2');
+  const available=await f.request(path,body);assert.equal(available.status,200);assert.equal(available.body.quote[priceKey],shippingCents);
+  assert.equal(f[providerName].length,1);assert.equal(f.provider.length,0);
 });

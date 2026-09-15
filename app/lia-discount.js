@@ -56,7 +56,7 @@ export function marketplaceLiaQuote(db, requested, eligible = false) {
   }
   const ids = [...quantities.keys()];
   const products = db.prepare(`SELECT p.*,s.business_name AS store_name FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
-    WHERE p.id IN (${ids.map(() => '?').join(',')}) AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND s.review_status='published' ORDER BY p.id`).all(...ids);
+    WHERE p.id IN (${ids.map(() => '?').join(',')}) AND p.active=1 AND p.marketplace_enabled=1 AND p.available=1 AND p.price_cents>0 AND s.review_status='published' ORDER BY p.id`).all(...ids);
   if (products.length !== ids.length) fail('Um produto não está mais disponível.', 409);
   const storeReference = products[0].store_reference;
   if (products.some(product => product.store_reference !== storeReference)) fail('Finalize produtos de uma loja por vez.');
