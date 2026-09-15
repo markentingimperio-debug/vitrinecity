@@ -13,7 +13,7 @@ test('homepage prominently links the personal chat with an ordinary login fallba
   const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
   const hero=html.match(/<section class="home-hero"[\s\S]*?<\/section>/)?.[0]||'';
   assert.match(hero,/<h2>Vitrine Neural<\/h2>/);
-  assert.match(hero,/Conversar com a IA/);assert.match(hero,/Converse, pesquise e transforme suas ideias em conteúdo\./);
+  assert.match(hero,/Conversar com a IA/);assert.match(hero,/Converse com a IA\. Transforme suas ideias em imagens, vídeos ou mensagens\./);
   assert.doesNotMatch(hero,/\bLia\b/i,'personal paid-chat entry must not impersonate the sales assistant');
   assert.match(hero,/Vitrine Coins/);assert.match(hero,/antes de confirmar/);
   assert.match(hero,/href="\/multiverso\?city=vitrine-city"/);
