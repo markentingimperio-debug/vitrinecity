@@ -30,8 +30,27 @@ try{
   // The full-page journey is complete. Close it before the independent scene
   // fixture so two continuously animated WebGL worlds do not compete in CI.
   await page.close();
-  const scene=await newPage({viewport:{width:1000,height:800}});await scene.goto(origin+'/__walking-fixture');await scene.waitForFunction(()=>window.walkReport?.modelStatus==='ready');const beforeWalkActions=actions.length;assert.equal(await scene.evaluate(()=>window.sceneTest.navigateTo({kind:'plot',plot:11})),true);assert.equal(await scene.evaluate(()=>window.sceneTest.interact()),false,'cannot act from a distance');await scene.waitForFunction(()=>window.walkReport?.near===true&&!window.walkReport.walking,{},{timeout:15000});assert.deepEqual(await scene.evaluate(()=>window.interactions),[],'arrival never automatically dispatches');assert.equal(await scene.evaluate(()=>window.sceneTest.interact()),true);assert.deepEqual(await scene.evaluate(()=>window.interactions),[{kind:'plot',plot:11}]);assert.equal(actions.length,beforeWalkActions);checks++;
-  await scene.evaluate(()=>{window.sceneTest.navigateTo({kind:'plot',plot:0});window.sceneTest.setPaused(true);});assert.equal(await scene.evaluate(()=>window.walkReport.walking),false);await scene.waitForTimeout(250);assert.equal(await scene.evaluate(()=>window.walkReport.near),false);await scene.evaluate(()=>{window.sceneTest.setMode('overview');window.sceneTest.dispose();window.sceneTest.dispose();});assert.equal(await scene.locator('canvas').count(),0);checks++;
+  const scene=await newPage({viewport:{width:1000,height:800}});
+  // This independent fixture checks movement/interaction, not software-WebGL FPS.
+  // Install before the scene schedules frames; let its real avatar load normally.
+  // runFor fires every animation callback (unlike fastForward), retaining the real
+  // walker, renderer and dt cap while making elapsed simulation time deterministic.
+  // https://playwright.dev/docs/clock#tick-through-time-manually-firing-all-the-timers-consistently
+  await scene.clock.install({time:new Date('2026-09-15T12:00:00Z')});
+  await scene.goto(origin+'/__walking-fixture');
+  await scene.waitForFunction(()=>window.walkReport?.modelStatus==='ready');
+  await scene.clock.pauseAt(new Date('2026-09-15T13:00:00Z'));
+  const beforeWalkActions=actions.length;
+  assert.equal(await scene.evaluate(()=>window.sceneTest.navigateTo({kind:'plot',plot:11})),true);
+  assert.equal(await scene.evaluate(()=>window.sceneTest.interact()),false,'cannot act from a distance');
+  const movementClockStarted=performance.now();
+  await scene.clock.runFor(2000);
+  const movementWallMs=Math.round(performance.now()-movementClockStarted);
+  await scene.waitForFunction(()=>window.walkReport?.near===true&&!window.walkReport.walking,{},{timeout:15000});assert.deepEqual(await scene.evaluate(()=>window.interactions),[],'arrival never automatically dispatches');assert.equal(await scene.evaluate(()=>window.sceneTest.interact()),true);assert.deepEqual(await scene.evaluate(()=>window.interactions),[{kind:'plot',plot:11}]);assert.equal(actions.length,beforeWalkActions);checks++;
+  await scene.evaluate(()=>{window.sceneTest.navigateTo({kind:'plot',plot:0});window.sceneTest.setPaused(true);});assert.equal(await scene.evaluate(()=>window.walkReport.walking),false);
+  // Exercise actual paused frames; frozen time alone cannot prove pause behavior.
+  await scene.clock.runFor(250);
+  assert.equal(await scene.evaluate(()=>window.walkReport.near),false);await scene.evaluate(()=>{window.sceneTest.setMode('overview');window.sceneTest.dispose();window.sceneTest.dispose();});assert.equal(await scene.locator('canvas').count(),0);checks++;
   const no3d=await newPage({viewport:{width:390,height:844},reducedMotion:'reduce'});await no3d.addInitScript(()=>{const original=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,...args){if(String(type).includes('webgl'))return null;return original.call(this,type,...args);};});state=newFarm();await loaded(no3d);await no3d.waitForFunction(()=>document.querySelector('.farm-world').classList.contains('scene-unavailable'));assert.equal(await no3d.locator('#pauseFarm').isVisible(),false);assert.equal(await no3d.locator('#plots button:enabled').count(),3);await no3d.locator('#plots button').first().click();await no3d.waitForFunction(()=>document.querySelector('#coins').textContent==='58');assert.equal(state.plots[0].crop,'carrot');checks++;
-  assert.deepEqual(errors,[]);assert.deepEqual(outbound,[]);checks++;console.log(JSON.stringify({ok:true,checks,actualActions:actions.length,paidCalls:0,productionCalls:0,desktop:true,mobile390:true,webglFallback:true,realAvatar:true,arrivalRequiresExplicitAction:true}));
+  assert.deepEqual(errors,[]);assert.deepEqual(outbound,[]);checks++;console.log(JSON.stringify({ok:true,checks,actualActions:actions.length,paidCalls:0,productionCalls:0,desktop:true,mobile390:true,webglFallback:true,realAvatar:true,arrivalRequiresExplicitAction:true,movementClockMs:2000,movementWallMs}));
 }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
