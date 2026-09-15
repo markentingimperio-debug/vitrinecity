@@ -62,8 +62,9 @@
     <meta name="theme-color" content="#10212c" />
     <link rel="preload" as="image" href="/assets/vitrinecity-avenida-premium.webp" fetchpriority="high" />
     <link rel="stylesheet" href="/search-autocomplete.css" />
-    <link rel="stylesheet" href="/vitriny-home.css?v=20260908-avenida" />
+    <link rel="stylesheet" href="/vitriny-home.css?v=20260915-neural" />
     <script src="/vitriny-home.js?v=20260908" defer></script>
+    <script type="module" src="/vitriny-home-neural.js?v=20260915"></script>
     <script src="/analytics.js" defer></script>
   </head>
   <body class="vc-home">
@@ -84,7 +85,12 @@
           <p class="eyebrow"><span aria-hidden="true">✦</span> BEM-VINDO À VITRINECITY</p>
           <h1 id="hero-title">Uma cidade.<br />Infinitas descobertas.</h1>
           <p class="hero-lead">Lojas, encontros e novas experiências.<br />Seu próximo destino está aqui.</p>
-          <a class="button hero-cta" href="/multiverso?city=vitrine-city" data-asset-type="city" data-asset-id="home-explore-city">Explorar a cidade <span aria-hidden="true">↗</span></a>
+          <div class="hero-neural-intro"><span class="neural-emblem" aria-hidden="true">✦</span><div><h2>Vitrine Neural</h2><p>Sua ideia começa em uma conversa com a Lia.</p></div></div>
+          <div class="hero-actions">
+            <a class="button hero-neural-cta" data-home-neural href="/entrar.html?returnTo=%2Fneural-workspace.html%3Fpersonal%3D1" aria-describedby="home-neural-note">Conversar com a IA <span aria-hidden="true">↗</span></a>
+            <a class="button hero-cta" href="/multiverso?city=vitrine-city" data-asset-type="city" data-asset-id="home-explore-city">Explorar a cidade <span aria-hidden="true">↗</span></a>
+          </div>
+          <p class="hero-note neural-note" id="home-neural-note">Use sua conta para conversar, planejar e criar. Recursos de IA podem consumir Vitrine Coins; confira o valor antes de confirmar.</p>
           <p class="hero-note">Visite sem cadastro. Entre na sua conta para jogar e conversar.</p>
         </div>
         <div class="panorama-caption">VITRINECITY <span>Visão conceitual da cidade</span></div>
@@ -126,7 +132,7 @@
           <article class="directory-group"><span class="directory-number" aria-hidden="true">02 /</span><h3>Aprender & criar</h3><p>Conhecimento, ideias e ferramentas para ir além.</p><ul>
             <li><a href="/centro-educacional">Centro Educacional <span>↗</span></a></li>
             <li><a href="/stories">Web Stories · Guias visuais <span>↗</span></a></li>
-            <li><a href="/jarvis-public.html">Perguntar ao Jarvis <span>↗</span></a></li>
+            <li><a data-home-neural href="/entrar.html?returnTo=%2Fneural-workspace.html%3Fpersonal%3D1">Vitrine Neural · conversar e criar <span>↗</span></a></li>
             <li><a href="/guias/plantas-em-vasos.html">Guia gratuito de jardinagem <span>↗</span></a></li>
             <li><a href="/pesquisar">Pesquisar na web <span>↗</span></a></li>
           </ul></article>
