@@ -184,7 +184,7 @@ if(mode==='dry-run'){
   process.exit(0);
 }
 for(const key of ['DEEPSEEK_API_KEY','OPENAI_API_KEY'])if(typeof process.env[key]!=='string'||!/^[\x21-\x7e]{1,512}$/.test(process.env[key]))fail('sales_provider_keys_missing');
-let db=new Database(ledgerPath);let pilot;
+let db=new Database(ledgerPath);fs.chmodSync(ledgerPath,0o600);let pilot;
 try{
   const config={...teachingPilotConfig(),budgetMicroBrl:'20000000',maxOutputTokens:4096,openAiRequestProfile:profile};
   pilot=createAdminTeachingPilot({db,config,providerKeys:{deepseek:process.env.DEEPSEEK_API_KEY,openai:process.env.OPENAI_API_KEY},now});
