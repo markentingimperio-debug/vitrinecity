@@ -25,6 +25,9 @@ test('public store guides have stable identities independent of order and no pri
 });
 
 test('studio contains three distinct units with only the user-provided public profile links',()=>{
+  const studio=RESIDENT_DEPARTMENTS.find(d=>d.id==='studio');
+  assert.equal(studio.href,'/social');assert.match(studio.description,/feed da Vitriny Social/);
+  assert.match(CITY_RESIDENTS.find(p=>p.id==='noa').line,/feed da Vitriny Social/);
   assert.deepEqual(STUDIO_CHANNELS.map(c=>c.href),['https://www.youtube.com/@agrotecnica362','https://www.instagram.com/agrotecniica/','https://www.tiktok.com/@agrotecnica5']);
   for(const platform of ['YouTube','Instagram','TikTok'])assert.ok(CITY_RESIDENTS.some(p=>p.departmentId==='studio'&&p.profession.includes(platform)));
 });
@@ -45,7 +48,7 @@ test('three new pavilions reserve their bounded lots without replacing existing 
   const newLots=RESIDENT_DEPARTMENTS.filter(d=>d.newBuilding);assert.equal(newLots.length,3);
   for(const d of newLots)assert.equal(intersectsResidentBuilding({position:d.position,size:{width:10,depth:10}}),true);
   assert.equal(intersectsResidentBuilding({position:{x:0,z:0},size:{width:10,depth:10}}),false);
-  for(const path of ['neural-workspace.html','recursos-social.html','centro-educacional.html','vitriny-games.html'])assert.ok(existsSync(new URL('../public/'+path,import.meta.url)));
+  for(const path of ['neural-workspace.html','social.html','centro-educacional.html','vitriny-games.html'])assert.ok(existsSync(new URL('../public/'+path,import.meta.url)));
   assert.ok(readFileSync(new URL('../server.js',import.meta.url),'utf8').includes("'/receitas'"));
 });
 
