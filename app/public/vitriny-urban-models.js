@@ -51,17 +51,20 @@ export function createUrbanPerson({skinColor='#c88d61',outfitColor='#496878',var
     for(const y of [1.14,1.26,1.37])ellipsoid(group,white,0,y,.136,.007,.007,.005);
     ellipsoid(group,lip,0,1.455,.06,.024,.005,.005);
   }
-  function pose(phase,moving){
+  function pose(phase,moving,activity=''){
     const stride=moving?Math.sin(phase)*.47:0;
     for(let i=0;i<2;i++){const sign=i?1:-1;legs[i].rotation.x=sign*stride;knees[i].rotation.x=moving?Math.max(0,-Math.sin(phase+(i?0:Math.PI)))*.56:0;arms[i].rotation.x=-sign*stride*.7;elbows[i].rotation.x=-.12-(moving?Math.max(0,sign*stride)*.35:0);}
     head.rotation.y=moving?Math.sin(phase*.5)*.025:0;
+    head.rotation.x=activity==='work'?.14:0;
+    if(!moving&&activity==='work')for(let i=0;i<2;i++){arms[i].rotation.x=-.72;elbows[i].rotation.x=-.58+Math.sin(phase*.45+i)*.045;}
+    if(!moving&&activity==='talk'){arms[0].rotation.x=-.38;elbows[0].rotation.x=-.65+Math.sin(phase*.2)*.06;}
   }
   pose(0,false);return {group,materials,legs,arms,knees,elbows,pose};
 }
 
-export function createUrbanCrowd({parent,count=24}){
+export function createUrbanCrowd({parent,count=24,identities=null}){
   const skins=['#e4b38f','#b57e59','#87593d','#583c30'],outfits=['#c1b69d','#507888','#815b62','#39465e','#788560','#c59960'];
-  const people=Array.from({length:count},(_,i)=>createUrbanPerson({skinColor:skins[i%4],outfitColor:outfits[i%6],variant:i,detailed:false}));
+  const people=Array.from({length:count},(_,i)=>createUrbanPerson({...{skinColor:skins[i%4],outfitColor:outfits[i%6],variant:i},...identities?.[i]?.appearance,detailed:false}));
   const buckets=new Map();
   for(const person of people)person.group.traverse(mesh=>{if(!mesh.isMesh)return;const key=mesh.geometry.uuid;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(mesh);});
   const batches=[];
@@ -69,7 +72,7 @@ export function createUrbanCrowd({parent,count=24}){
     const batch=new THREE.InstancedMesh(objects[0].geometry,modelMaterial('#ffffff',.82),objects.length);batch.frustumCulled=false;batch.castShadow=true;batch.name='detailed-pedestrians';batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     objects.forEach((mesh,i)=>batch.setColorAt(i,mesh.material.color));parent.add(batch);batches.push({batch,objects});
   }
-  return {people,update(){for(const person of people)person.group.updateMatrixWorld(true);for(const {batch,objects} of batches){objects.forEach((mesh,i)=>batch.setMatrixAt(i,mesh.matrixWorld));batch.instanceMatrix.needsUpdate=true;}},dispose(){const materials=new Set();for(const person of people)Object.values(person.materials).forEach(m=>materials.add(m));for(const m of materials)m.dispose();}};
+  return {people,update(){for(const person of people)person.group.updateMatrixWorld(true);for(const {batch,objects} of batches){objects.forEach((mesh,i)=>batch.setMatrixAt(i,mesh.matrixWorld));batch.instanceMatrix.needsUpdate=true;}},dispose(){const materials=new Set();for(const person of people)Object.values(person.materials).forEach(m=>materials.add(m));for(const {batch} of batches){parent.remove(batch);batch.material.dispose();batch.dispose();}for(const m of materials)m.dispose();}};
 }
 
 export function createUrbanVehicle({architecture,color='#aeb7be',variant=0}){

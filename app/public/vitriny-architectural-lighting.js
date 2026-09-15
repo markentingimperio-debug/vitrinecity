@@ -5,7 +5,9 @@ import {spatialCityHour,resolveSpatialDayPhase} from './vitriny-spatial-adaptive
 // A shared Brasilia clock drives gradual light/sky transitions. Night retains
 // enough fill light for shopping and navigation, including phones without shadows.
 const NIGHT={exposure:.98,ambient:.065,hemi:.8,sun:.25,environment:.24,photo:0,daylight:0,sky:'#09152f',horizon:'#30476a',fog:'#283d58',ground:'#596b85',sunColor:'#adcaff'};
-const DAY={exposure:1.02,ambient:.09,hemi:1.55,sun:2.65,environment:.78,photo:0,daylight:1,sky:'#3887cd',horizon:'#c8e5f3',fog:'#bdd5e0',ground:'#bac2b0',sunColor:'#fff2dc'};
+// Soft daylight: retain broad fill for storefronts while reducing the direct sun
+// and reflected highlights that washed out pale stone. No extra lights or passes.
+const DAY={exposure:.96,ambient:.09,hemi:1.4,sun:1.95,environment:.62,photo:0,daylight:1,sky:'#528eb8',horizon:'#bfd2dc',fog:'#adc3cf',ground:'#afb7a7',sunColor:'#f6e8d3'};
 const DAWN={exposure:1,ambient:.075,hemi:1.1,sun:1.2,environment:.5,photo:.65,daylight:.48,sky:'#557bae',horizon:'#f5ba91',fog:'#c9b5a2',ground:'#a99a86',sunColor:'#ffd1a0'};
 const DUSK={...DAWN,hemi:1.05,sun:1.5,photo:1,daylight:.36};
 const KEYFRAMES=[[0,NIGHT],[5,NIGHT],[6,DAWN],[7,DAY],[16,DAY],[18,DUSK],[19,NIGHT],[24,NIGHT]];
