@@ -28,6 +28,8 @@ import {mountEmissoraBuilding} from './vitriny-emissora-building.js';
 import {EMISSORA_BUILDING,intersectsEmissoraLot} from './vitriny-emissora-core.js';
 import {mountCreditsBuilding} from './vitriny-credits-building.js';
 import {mountCityLife} from './vitriny-city-life.js';
+import {mountCityResidents} from './vitriny-city-residents-scene.js';
+import {createResidentCatalog,intersectsResidentBuilding} from './vitriny-city-residents-core.js';
 import {mountCommerceAvenue,mountMusicArena} from './vitriny-commerce-avenue.js';
 import {intersectsCommerceAvenue} from './vitriny-affiliate-centers-core.js';
 
@@ -77,6 +79,8 @@ const cityGround=new THREE.Mesh(new THREE.PlaneGeometry(2600,2600),groundMat);ci
 const premiumAtmosphere=mountPremiumAtmosphere({scene,identity:cityIdentity,profileId:profile.id});
 const architecturalLighting=isActiveCity?configureArchitecturalLighting({renderer,scene,sun,profile}):{dispose(){}};
 const cityLife=mountCityLife({scene,architecture,profileId:profile.id});
+let residentCatalog=createResidentCatalog();
+const cityResidents=isActiveCity?mountCityResidents({scene,architecture,profileId:profile.id}):null;
 if(isActiveCity)mountPromenadeGardens({scene,architecture,lite:profile.id==='LITE'});
 const reducedMotion=matchMedia('(prefers-reduced-motion:reduce)');
 let animationPaused=reducedMotion.matches,avatarMode=false;
@@ -102,6 +106,7 @@ function createChunkGroup(chunk){
   for(const building of chunk.buildings){
     if(intersectsTransitPlaza(building))continue;
     if(isActiveCity&&intersectsEmissoraLot(building))continue;
+    if(isActiveCity&&intersectsResidentBuilding(building))continue;
     if(storeBuildingLots.some(store=>intersectsStoreBuilding(building,store)))continue;
     const px=building.position.x,pz=building.position.z;
     if(isActiveCity&&Math.abs(px+164)<58&&pz>-275&&pz<-172)continue;
@@ -193,6 +198,7 @@ const cinemaBuilding=mountCinemaBuilding({scene,architecture});storeTargets.push
 const emissoraBuilding=isActiveCity?mountEmissoraBuilding({scene,architecture}):null;
 if(emissoraBuilding)storeTargets.push(emissoraBuilding);
 const creditsBuilding=mountCreditsBuilding({scene,architecture});storeTargets.push(creditsBuilding);
+for(const venue of cityResidents?.venues||[])storeTargets.push(venue);
 for(const building of [...storeTargets,deliveryBase].filter(Boolean))buildingBrands.register(building);
 for(const [group,z,x=0]of [[cinemaBuilding,24],[musicArena,16],[creditsBuilding,18],[deliveryBase,12,-15],...(emissoraBuilding?[[emissoraBuilding,EMISSORA_BUILDING.entrance.z]]:[])]){const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=group.userData.href;entry.textContent='Entrar em '+group.userData.label;entry.addEventListener('click',()=>saveSpatialContext());entranceLayer.append(entry);const anchor=group.localToWorld(new THREE.Vector3(x,2,z));storeEntrances.push({element:entry,anchor,normal:new THREE.Vector3(0,0,1).transformDirection(group.matrixWorld),href:group.userData.href,reference:group.userData.reference});}
 $('openCredits').addEventListener('click',()=>{saveSpatialContext();location.assign('/meus-creditos');});
@@ -292,6 +298,8 @@ async function loadLiveStores(){
     const entities=await fetchSpatialStores({limit:profile.id==='LITE'?20:48});if(disposed)return;
     const links=$('storeLinks');links.replaceChildren();
     storeBuildingLots=arrangeStoreBuildings(entities);
+    residentCatalog=createResidentCatalog(storeBuildingLots);cityResidents?.setCatalog(residentCatalog);
+    dispatchEvent(new CustomEvent('vitriny:residents-catalog',{detail:{stores:storeBuildingLots.map(({reference,name,href,position})=>({reference,name,href,position}))}}));
     for(const chunk of chunkGroups.values())for(const child of [...chunk.children])if(child.userData.proceduralBuilding&&storeBuildingLots.some(store=>intersectsStoreBuilding(child.userData.proceduralBuilding,store))){disposeGroup(child);chunk.remove(child);}
     for(const entity of storeBuildingLots){addLiveStore(entity);const link=document.createElement('a');link.href=entity.href;link.textContent=entity.name;link.dataset.storeReference=entity.reference;links.append(link);}
     worldStat.textContent=`${cityContext.name} · ${entities.length} lojas conectadas`;
@@ -362,6 +370,15 @@ function releaseControls(){keys.clear();dragging=false;}
 addEventListener('vitriny:guide-open',releaseControls);
 addEventListener('vitriny:hud-open',releaseControls);
 addEventListener('vitriny:assistant-open',releaseControls);
+addEventListener('vitriny:resident-visit',event=>{
+  if(!cityResidents)return;
+  const person=residentCatalog.residents.find(p=>p.id===event.detail?.residentId);if(!person)return;
+  releaseControls();avatarMode=false;doorEntry.reset();const pose=cityResidents.select(person.id);if(!pose)return;
+  position.set(pose.x+5,3.2,pose.z+9);yaw=Math.PI-Math.atan2(5,9);pitch=-.16;
+  updateViewButton();renderer.domElement.focus({preventScroll:true});
+  $('guideArrival').textContent=`${person.name} · ${person.profession}. Personagem e rotina simulados.`;
+  clearTimeout(guideArrivalTimer);guideArrivalTimer=setTimeout(()=>$('guideArrival').textContent='',7000);
+});
 addEventListener('vitriny:guide-leave',()=>{releaseControls();saveSpatialContext();});
 let guideArrivalTimer;
 addEventListener('vitriny:guide-visit',event=>{
@@ -455,9 +472,9 @@ function animate(now){
   const fieldOfView=avatarMode||position.y<10?58:innerWidth<=760?50:44;
   if(camera.fov!==fieldOfView){camera.fov=fieldOfView;camera.updateProjectionMatrix();}
   camera.lookAt(lookTarget);avatar.tick(dt,{position,yaw,moving:velocity.lengthSq()>0,visible:avatarMode});
-  if(!animationPaused)neuralCore.rotation.y+=dt*.45;premiumAtmosphere.tick(dt,{paused:animationPaused});cityLife.tick(dt,{paused:animationPaused});billboards.tick(dt,{paused:animationPaused});storefronts.tick(dt,{paused:animationPaused});buildingBrands.tick(dt,{camera,paused:animationPaused});
+  if(!animationPaused)neuralCore.rotation.y+=dt*.45;premiumAtmosphere.tick(dt,{paused:animationPaused});cityLife.tick(dt,{paused:animationPaused});cityResidents?.tick(dt,{paused:animationPaused||document.hidden});billboards.tick(dt,{paused:animationPaused});storefronts.tick(dt,{paused:animationPaused});buildingBrands.tick(dt,{camera,paused:animationPaused});
   updatePortal();syncChunks();renderer.render(scene,camera);updateStoreEntrances();
-  if(firstFrame){firstFrame=false;$('loading').classList.add('hide');document.documentElement.dataset.cityGuideReady=isActiveCity?'true':'preview';dispatchEvent(new CustomEvent('vitriny:city-ready'));}
+  if(firstFrame){firstFrame=false;$('loading').classList.add('hide');document.documentElement.dataset.cityGuideReady=isActiveCity?'true':'preview';dispatchEvent(new CustomEvent('vitriny:city-ready'));dispatchEvent(new CustomEvent('vitriny:residents-ready',{detail:{ready:isActiveCity,profileId:profile.id}}));}
 }
 raf=requestAnimationFrame(animate);
 loadCityConnections().catch(()=>{$('travelStatus').textContent='Conexões indisponíveis. Use o World Gate.';});
@@ -466,6 +483,6 @@ addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updat
 addEventListener('pagehide',event=>{
   if(!navigating)saveSpatialContext();releaseControls();
   if(event.persisted)return;
-  disposed=true;cancelAnimationFrame(raf);buildingBrands.dispose();billboards.dispose();storefronts.dispose();modeledBuildings.dispose();cityLife.dispose?.();architecture.dispose();cityEnvironmentMount?.dispose();cityEnvironmentMount=null;architecturalLighting.dispose();disposeGroup(scene,{keepShared:false});disposeReflections();renderer.dispose();
+  disposed=true;cancelAnimationFrame(raf);buildingBrands.dispose();billboards.dispose();storefronts.dispose();modeledBuildings.dispose();cityLife.dispose?.();cityResidents?.dispose();architecture.dispose();cityEnvironmentMount?.dispose();cityEnvironmentMount=null;architecturalLighting.dispose();disposeGroup(scene,{keepShared:false});disposeReflections();renderer.dispose();
 });
 addEventListener('pageshow',()=>{doorEntry.reset();navigating=false;last=performance.now();fpsClock=last;frames=0;});

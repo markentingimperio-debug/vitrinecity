@@ -59,9 +59,9 @@ export function createUrbanPerson({skinColor='#c88d61',outfitColor='#496878',var
   pose(0,false);return {group,materials,legs,arms,knees,elbows,pose};
 }
 
-export function createUrbanCrowd({parent,count=24}){
+export function createUrbanCrowd({parent,count=24,identities=null}){
   const skins=['#e4b38f','#b57e59','#87593d','#583c30'],outfits=['#c1b69d','#507888','#815b62','#39465e','#788560','#c59960'];
-  const people=Array.from({length:count},(_,i)=>createUrbanPerson({skinColor:skins[i%4],outfitColor:outfits[i%6],variant:i,detailed:false}));
+  const people=Array.from({length:count},(_,i)=>createUrbanPerson({...{skinColor:skins[i%4],outfitColor:outfits[i%6],variant:i},...identities?.[i]?.appearance,detailed:false}));
   const buckets=new Map();
   for(const person of people)person.group.traverse(mesh=>{if(!mesh.isMesh)return;const key=mesh.geometry.uuid;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(mesh);});
   const batches=[];
@@ -69,7 +69,7 @@ export function createUrbanCrowd({parent,count=24}){
     const batch=new THREE.InstancedMesh(objects[0].geometry,modelMaterial('#ffffff',.82),objects.length);batch.frustumCulled=false;batch.castShadow=true;batch.name='detailed-pedestrians';batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     objects.forEach((mesh,i)=>batch.setColorAt(i,mesh.material.color));parent.add(batch);batches.push({batch,objects});
   }
-  return {people,update(){for(const person of people)person.group.updateMatrixWorld(true);for(const {batch,objects} of batches){objects.forEach((mesh,i)=>batch.setMatrixAt(i,mesh.matrixWorld));batch.instanceMatrix.needsUpdate=true;}},dispose(){const materials=new Set();for(const person of people)Object.values(person.materials).forEach(m=>materials.add(m));for(const m of materials)m.dispose();}};
+  return {people,update(){for(const person of people)person.group.updateMatrixWorld(true);for(const {batch,objects} of batches){objects.forEach((mesh,i)=>batch.setMatrixAt(i,mesh.matrixWorld));batch.instanceMatrix.needsUpdate=true;}},dispose(){const materials=new Set();for(const person of people)Object.values(person.materials).forEach(m=>materials.add(m));for(const {batch} of batches){parent.remove(batch);batch.material.dispose();batch.dispose();}for(const m of materials)m.dispose();}};
 }
 
 export function createUrbanVehicle({architecture,color='#aeb7be',variant=0}){
