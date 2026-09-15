@@ -7,6 +7,9 @@ import {publicMarketplaceProducts,renderMarketplaceCatalog} from './marketplace-
 import {setupCityMembership} from './city-membership.js';
 import {setupCampaignPreferences} from './campaign-preferences.js';
 import {setupCustomerRetention} from './customer-retention.js';
+import {setupCommerceCenter,sheetsCostReferences} from './commerce-center.js';
+import {createCommerceSheetsOAuth} from './commerce-sheets-oauth.js';
+import {createCommerceShopeeOAuth} from './commerce-shopee-oauth.js';
 import { integrationObserver, openRouterOperation } from './integration-health.js';
 import { createAiTextClient } from './ai-text-provider.js';
 import { createMediaProvider } from './ai-media-provider.js';
@@ -2159,6 +2162,8 @@ ADMIN_HTML_PATHS.add('/admin-avaliacoes');
 ADMIN_HTML_PATHS.add('/admin-avaliacoes.html');
 ADMIN_HTML_PATHS.add('/admin-recompra');
 ADMIN_HTML_PATHS.add('/admin-recompra.html');
+ADMIN_HTML_PATHS.add('/admin-commerce');
+ADMIN_HTML_PATHS.add('/admin-commerce.html');
 ADMIN_HTML_PATHS.add('/admin-youtube.html');
 ADMIN_HTML_PATHS.add('/admin-youtube');
 
@@ -2753,6 +2758,13 @@ const customerRetention=setupCustomerRetention({app,db,requireAdmin,requireUser,
   signingSecret:managementSecret,allowAttempt:(key,limit,windowMs)=>allowAttempt(authAttempts,key,limit,windowMs),
   sendVerification:mailTransport?message=>mailTransport.sendMail({from:`VitrineCity <${SMTP_USER}>`,...message}):null});
 const adminAnalytics = setupAdminAnalytics({ app, db, requireAdmin, publicDir: path.join(dir, 'public') });
+const commerceSheets = createCommerceSheetsOAuth({db,siteUrl:SITE_URL,getConfig:googleSearchOAuthConfig,
+  encrypt:encryptGoogleSearchToken,decrypt:decryptGoogleSearchToken,
+  commitRead:result=>commerceCenter.saveAuditSnapshot(sheetsCostReferences(result),'google_sheets_api')});
+const commerceShopee = createCommerceShopeeOAuth({db,siteUrl:SITE_URL,encrypt:encryptSocialToken,decrypt:decryptSocialToken,
+  getConfig:()=>({enabled:process.env.COMMERCE_SHOPEE_ENABLED==='true',partnerId:process.env.COMMERCE_SHOPEE_PARTNER_ID,partnerKey:process.env.COMMERCE_SHOPEE_PARTNER_KEY})});
+const commerceCenter = setupCommerceCenter({app,db,requireAdmin,sameOriginOnly,publicDir:path.join(dir,'public'),siteUrl:SITE_URL,
+  sheets:commerceSheets,shopee:commerceShopee,getSessionKey:req=>parseCookies(req)[SESSION_COOKIE]});
 setupOpenAIPurchaseMeasurement({ app, db, requireUser });
 const courseLandingPages = setupCourseLandingPages({ app, managedCourse, courseReady, originalCourse, origin: SITE_URL });
 setupReviewImporter({ app, db, requireAdmin, sameOriginOnly, publicDir: path.join(dir, 'public') });
