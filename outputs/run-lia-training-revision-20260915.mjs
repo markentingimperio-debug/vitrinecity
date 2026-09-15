@@ -66,10 +66,12 @@ const mode=process.argv[2]||'dry-run';
 if(!['dry-run','execute'].includes(mode))fail('revision_mode_invalid');
 const videoFile=process.env.VIDEO_REPORT||'/tmp/video-training-report-v1.json';
 const salesFile=process.env.SALES_REPORT||'/tmp/sales-training-report-v1.json';
+const videoReportMeta=JSON.parse(fs.readFileSync(videoFile,'utf8'));
+const salesReportMeta=JSON.parse(fs.readFileSync(salesFile,'utf8'));
 const rows=[...readReport(videoFile),...readReport(salesFile)];
 if(rows.length!==maxLessons||new Set(rows.map(x=>x.id)).size!==maxLessons)fail('revision_target_count_invalid');
 const sources=sourcePack(rows);
-const base={format:'vitrinecity-lia-training-revision-report-v1',reviewProfile:profile,targetCount:rows.length,coinDebits:0,weightTraining:false,externalPublication:false,sourceReports:[videoFile,salesFile]};
+const base={format:'vitrinecity-lia-training-revision-report-v1',reviewProfile:profile,targetCount:rows.length,coinDebits:0,weightTraining:false,externalPublication:false,sourceReports:[videoFile,salesFile],sourceRevisions:[videoReportMeta.sourceRevision,salesReportMeta.sourceRevision],sourcePlanHashes:[videoReportMeta.planHash,salesReportMeta.planHash]};
 if(mode==='dry-run'){console.log(JSON.stringify({...base,mode,state:'prepared',targets:rows.map(x=>({id:x.id,domain:x.domain,reason:x.reason})),budgetMicroBrl:'20000000',providerCalls:0}));process.exit(0);}
 for(const key of ['DEEPSEEK_API_KEY','OPENAI_API_KEY'])if(typeof process.env[key]!=='string'||!/^[\x21-\x7e]{1,512}$/.test(process.env[key]))fail('revision_provider_keys_missing');
 const root=process.env.TRAINING_ROOT||'/data/lia-training-revision-20260915';fs.mkdirSync(root,{recursive:true,mode:0o700});
