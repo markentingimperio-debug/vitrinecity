@@ -1,6 +1,6 @@
 FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
 WORKDIR /app
-RUN apk add --no-cache python3 make g++ ffmpeg
+RUN apk add --no-cache python3 make g++ ffmpeg font-dejavu
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY *.js ./
@@ -8,6 +8,9 @@ COPY vitriny-neural ./vitriny-neural
 COPY vitriny-spatial ./vitriny-spatial
 RUN mkdir -p ./scripts
 COPY scripts/run-vitriny-neural-live-benchmark.mjs ./scripts/run-vitriny-neural-live-benchmark.mjs
+COPY scripts/run-vitriny-neural-task-acceptance.mjs ./scripts/run-vitriny-neural-task-acceptance.mjs
+COPY scripts/run-admin-teaching-pilot.mjs ./scripts/run-admin-teaching-pilot.mjs
+COPY scripts/diagnose-admin-teaching-openai.mjs ./scripts/diagnose-admin-teaching-openai.mjs
 COPY scripts/smoke-vitriny-multiversal.mjs ./scripts/smoke-vitriny-multiversal.mjs
 COPY affiliate-catalog-seed.json ./
 COPY public ./public

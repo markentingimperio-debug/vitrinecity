@@ -68,7 +68,7 @@ test('public alias analytics use the same classification and do not expose priva
   for (const [clean, legacy] of Object.entries(CLEAN_PUBLIC_ROUTES)) {
     assert.deepEqual(measurementPage(clean), measurementPage(legacy), clean);
   }
-  for (const excludedPath of ['/multiverso', '/jogos', '/mini-fazenda', '/arena-musical', '/sala-de-cinema', '/meus-creditos', '/carteira', '/acessos', '/comprar-lote', '/admin', '/api/auth/me']) {
+  for (const excludedPath of ['/jogos', '/mini-fazenda', '/arena-musical', '/sala-de-cinema', '/meus-creditos', '/carteira', '/acessos', '/admin', '/api/auth/me']) {
     assert.equal(measurementPage(excludedPath), null, excludedPath);
   }
   assert.deepEqual(measurementContext({ pathname: '/pesquisar', origin: 'https://vitrinecity.com', search: '?q=private-query&email=user%40example.test&utm_source=city-guide' }, 'https://example.test/path?private=1'), {

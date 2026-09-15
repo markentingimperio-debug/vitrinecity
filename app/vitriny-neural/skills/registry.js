@@ -1,11 +1,12 @@
 import {randomUUID} from 'node:crypto';
+import {isIncompleteResponse} from '../response-state.js';
 
 const ID=/^[a-z][a-z0-9._-]{1,63}$/;
 
 function ensureId(value,label){const v=String(value||'').trim();if(!ID.test(v))throw new Error(`${label} inválido.`);return v;}
 function ensureFn(value,label){if(typeof value!=='function')throw new TypeError(`${label} precisa ser função.`);return value;}
 function abortIfRequested(signal){if(signal?.aborted)throw signal.reason instanceof Error?signal.reason:Object.assign(new Error('provider_aborted'),{name:'AbortError'});}
-function statOf(stats,id){if(!stats.has(id))stats.set(id,{success:0,fail:0,consecutiveFail:0,totalMs:0,lastMs:0,openedUntil:0,inputTokens:0,outputTokens:0,totalTokens:0});return stats.get(id);}
+function statOf(stats,id){if(!stats.has(id))stats.set(id,{success:0,fail:0,incomplete:0,consecutiveFail:0,totalMs:0,lastMs:0,openedUntil:0,inputTokens:0,outputTokens:0,totalTokens:0});return stats.get(id);}
 function usageOf(output){
   const u=output?.usage||output?.output?.usage||{};
   const field=names=>{for(const name of names)if(Object.prototype.hasOwnProperty.call(u,name))return u[name];};
@@ -91,7 +92,7 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
       let available=false;try{available=await provider.available(capability);}catch{}
       abortIfRequested(signal);
       if(!available)continue;
-      const reliability=(s.success+1)/(s.success+s.fail+2);
+      const reliability=(s.success+1)/(s.success+s.fail+s.incomplete+2);
       rows.push({provider,reliability,preferred:preferred.has(provider.id)?preferred.get(provider.id):999});
     }
     return rows.sort((a,b)=>a.preferred-b.preferred||a.provider.priority-b.provider.priority||b.reliability-a.reliability).map(x=>x.provider);
@@ -113,6 +114,11 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
     const attempts=[];
     for(const provider of list){
       abortIfRequested(signal);
+      // Availability awaits and earlier attempts allow policy revocation after
+      // candidate selection. Admission must still hold at each dispatch.
+      const currentPolicy=providerPolicies.get(provider.id)||{enabled:true,allowedCapabilities:null};
+      if(!evaluation&&(!currentPolicy.enabled||(currentPolicy.allowedCapabilities&&!currentPolicy.allowedCapabilities.has(capability))))continue;
+      if(statOf(stats,provider.id).openedUntil>now())continue;
       const started=now(),attemptId=randomUUID(),identity={attemptId,provider:provider.id,modelName:provider.modelName};
       const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);
       const forwardAbort=()=>controller.abort(signal.reason);
@@ -139,7 +145,11 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
         // inference. Do not turn a failed completion hook into a second event.
         emitAttempt(onAttempt,{type:'completed',...identity,inputTokens:usage.known?usage.inputTokens:null,outputTokens:usage.known?usage.outputTokens:null,known:usage.known,durationMs:elapsed});
         abortIfRequested(signal);
-        const s=statOf(stats,provider.id);s.success++;s.consecutiveFail=0;s.lastMs=elapsed;s.totalMs+=elapsed;s.openedUntil=0;s.inputTokens+=usage.inputTokens;s.outputTokens+=usage.outputTokens;s.totalTokens+=usage.totalTokens;
+        const incomplete=isIncompleteResponse(output);
+        const s=statOf(stats,provider.id);if(incomplete)s.incomplete++;else s.success++;s.consecutiveFail=0;s.lastMs=elapsed;s.totalMs+=elapsed;s.openedUntil=0;s.inputTokens+=usage.inputTokens;s.outputTokens+=usage.outputTokens;s.totalTokens+=usage.totalTokens;
+        // A partial response still consumed inference. Return it visibly marked;
+        // do not replay the request on another provider or record answer success.
+        if(incomplete)return {provider:provider.id,output:{...output,incomplete:true},durationMs:elapsed,usage,attempts:[...attempts,{provider:provider.id,ok:false,incomplete:true,error:'provider_response_incomplete'}]};
         return {provider:provider.id,output,durationMs:elapsed,usage,attempts:[...attempts,{provider:provider.id,ok:true}]};
       }finally{clearTimeout(timer);signal?.removeEventListener('abort',forwardAbort);}
     }
@@ -154,7 +164,7 @@ export function createSkillRegistry({now=Date.now,circuitFailureThreshold=3,circ
     return skill.execute({input,context,invoke:invokeForSkill,candidates:candidatesForSkill,registry:{skills,providers,stats,providerPolicies}});
   }
 
-  function status(){const clock=now();return {skills:[...skills.values()].map(s=>({id:s.id,version:s.version,capabilities:s.capabilities,risk:s.risk})),providers:[...providers.values()].map(p=>{const s=statOf(stats,p.id),calls=s.success+s.fail,policy=providerPolicies.get(p.id)||{enabled:true,allowedCapabilities:null,source:'default'};return{id:p.id,modelName:p.modelName,capabilities:[...p.capabilities],priority:p.priority,costClass:p.costClass,local:p.local,policy:{enabled:policy.enabled,allowedCapabilities:policy.allowedCapabilities?[...policy.allowedCapabilities]:null,source:policy.source},stats:{success:s.success,fail:s.fail,consecutiveFail:s.consecutiveFail,reliability:(s.success+1)/(calls+2),avgMs:calls?s.totalMs/calls:0,lastMs:s.lastMs,inputTokens:s.inputTokens,outputTokens:s.outputTokens,totalTokens:s.totalTokens,circuit:s.openedUntil>clock?'open':'closed',openedUntil:s.openedUntil||null}};})};}
+  function status(){const clock=now();return {skills:[...skills.values()].map(s=>({id:s.id,version:s.version,capabilities:s.capabilities,risk:s.risk})),providers:[...providers.values()].map(p=>{const s=statOf(stats,p.id),calls=s.success+s.fail+s.incomplete,policy=providerPolicies.get(p.id)||{enabled:true,allowedCapabilities:null,source:'default'};return{id:p.id,modelName:p.modelName,capabilities:[...p.capabilities],priority:p.priority,costClass:p.costClass,local:p.local,policy:{enabled:policy.enabled,allowedCapabilities:policy.allowedCapabilities?[...policy.allowedCapabilities]:null,source:policy.source},stats:{success:s.success,fail:s.fail,incomplete:s.incomplete,consecutiveFail:s.consecutiveFail,reliability:(s.success+1)/(calls+2),avgMs:calls?s.totalMs/calls:0,lastMs:s.lastMs,inputTokens:s.inputTokens,outputTokens:s.outputTokens,totalTokens:s.totalTokens,circuit:s.openedUntil>clock?'open':'closed',openedUntil:s.openedUntil||null}};})};}
 
   return {registerSkill,registerProvider,setProviderPolicy,run,invoke,candidates,status};
 }

@@ -1,9 +1,17 @@
 // Run in an isolated container without production credentials, data or network.
-import {readdirSync} from 'node:fs';
+import {readFileSync,readdirSync} from 'node:fs';
+import assert from 'node:assert/strict';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 const directory=fileURLToPath(new URL('.',import.meta.url));
-const excluded=new Set(['test-platform-release.mjs','test-public-smoke.mjs']);
+// The release verifier runs this exact manifest in its mandatory browser container.
+// Keep browser-only dependencies out of the application image.
+const browserTests=JSON.parse(readFileSync(new URL('../../ops/browser-tests/suites.json',import.meta.url),'utf8'));
+assert.ok(Array.isArray(browserTests)&&browserTests.length>0);
+assert.equal(new Set(browserTests).size,browserTests.length);
+for(const name of browserTests)assert.ok(/^test-[a-z0-9-]+-browser\.mjs$/.test(name)&&readdirSync(directory).includes(name),`Invalid browser suite: ${name}`);
+const excluded=new Set(['test-platform-release.mjs','test-public-smoke.mjs',...browserTests]);
+console.log('Required in the isolated browser release runner: '+browserTests.join(', '));
 const files=readdirSync(directory).filter(name=>/^test-.+\.mjs$/.test(name)&&!excluded.has(name)).sort();
 const failures=[];
 for(const name of files){

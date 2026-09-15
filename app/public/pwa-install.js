@@ -1,5 +1,7 @@
 (() => {
   'use strict';
+  if (window.top !== window.self || document.documentElement.hasAttribute('amp') || document.documentElement.hasAttribute('⚡') || document.querySelector('amp-story')) return;
+  import('/public-share.js?v=20260913-1').then(module => module.mountPublicShare()).catch(() => {});
   const DISMISS_KEY = 'vc_pwa_install_dismissed_at';
   const DISMISS_DAYS = 30;
   let installEvent = null;

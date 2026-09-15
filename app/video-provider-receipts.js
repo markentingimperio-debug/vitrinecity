@@ -28,7 +28,7 @@ export function videoRetryableFailure(error){
   return ['video_download_timeout','video_download_dns_failed','video_download_failed','video_download_incomplete','video_download_http_temporary'].includes(error?.code)||[408,429].includes(Number(error?.status))||Number(error?.status)>=500;
 }
 export function videoProjectUnchanged(current,expected){
-  return !!current&&['format','production_status','remote_job_id','polling_url','output_url','prompt','model','duration_seconds','aspect_ratio'].every(key=>current[key]===expected[key]);
+  return !!current&&['format','production_status','video_provider','remote_job_id','polling_url','output_url','prompt','model','duration_seconds','aspect_ratio'].every(key=>current[key]===expected[key]);
 }
 // Only fixed diagnostics cross into the admin UI; provider messages may contain
 // signed URLs, credentials or private prompt details.

@@ -66,16 +66,33 @@ function sourceBetween(startPattern, endPattern) {
 }
 
 const escapeSource = sourceBetween(/const\s+esc\s*=/, /async\s+function\s+api\s*\(/);
+const providerLabelSource = sourceBetween(/function\s+aiProviderLabel\s*\(/, /async\s+function\s+loadViralAutomation\s*\(/);
+const modelsSource = sourceBetween(/function\s+updateFactoryModels\s*\(/, /function\s+renderFactory\s*\(/);
 const renderSource = sourceBetween(/function\s+renderFactory\s*\(/, /\$\(["']#factoryForm["']\)\.onsubmit/);
 
-function render(projects) {
-  const nodes = {'#factoryJobs': {}, '#factoryBudget': {}};
-  const context = {
-    window: {}, mediaProjects: projects,
-    $: id => nodes[id], updateFactoryModels: () => {}, usd: value => `$${Number(value || 0).toFixed(2)}`,
+function renderFixture(projects, factory = {}, format = 'short_video') {
+  const option = value => ({value, disabled: false});
+  const formatOptions = ['image', 'short_video'].map(option);
+  const nodes = {
+    '#factoryJobs': {}, '#factoryBudget': {}, '#factoryModel': {}, '#factoryVideoInfo': {},
+    '#factoryFormat': {value: format, options: formatOptions, querySelector(selector) {
+      assert.equal(selector, 'option[value="short_video"]');
+      return formatOptions.find(item => item.value === 'short_video');
+    }},
+    '#factoryRatio': {value: '9:16', options: ['9:16', '16:9', '1:1'].map(option)},
+    '#factoryDuration': {value: '4', options: ['4', '5', '6', '8'].map(option), dataset: {}},
   };
-  vm.runInNewContext(`${escapeSource}\n${renderSource}\nrenderFactory({});`, context, {timeout: 1000});
-  return nodes['#factoryJobs'].innerHTML;
+  const context = {
+    window: {}, mediaProjects: projects, factory,
+    $: id => {assert.ok(nodes[id], `Unexpected factory control ${id}`); return nodes[id];},
+    usd: value => `$${Number(value || 0).toFixed(2)}`,
+  };
+  vm.runInNewContext(`${escapeSource}\n${providerLabelSource}\n${modelsSource}\n${renderSource}\nrenderFactory(factory);`, context, {timeout: 1000});
+  return nodes;
+}
+
+function render(projects, factory = {}) {
+  return renderFixture(projects, factory)['#factoryJobs'].innerHTML;
 }
 
 function project(overrides = {}) {
@@ -174,6 +191,20 @@ test('publication and reconciliation buttons require their respective eligibilit
       ]);
     }
   }
+});
+
+test('disabled video generation preserves the labelled image controls and provider explanation', () => {
+  const reason = 'A geração de novos vídeos está desativada.';
+  const nodes = renderFixture([project({production_status: 'script', generationAvailable: false,
+    generationBlockReason: reason})], {provider: 'openai', videoEnabled: false, videoReason: reason,
+    imageConfigured: true, models: {image: 'gpt-image-2', imageOptions: ['gpt-image-2']}});
+  assert.equal(nodes['#factoryFormat'].options.find(item => item.value === 'short_video').disabled, true);
+  assert.equal(nodes['#factoryFormat'].value, 'image');
+  assert.equal(nodes['#factoryDuration'].disabled, true);
+  assert.match(nodes['#factoryModel'].innerHTML, /gpt-image-2/);
+  assert.ok(nodes['#factoryBudget'].textContent.includes(reason));
+  assert.ok(nodes['#factoryJobs'].innerHTML.includes(reason));
+  assert.deepEqual(actions(nodes['#factoryJobs'].innerHTML), []);
 });
 
 test('uncertain sends cannot be resent and reconciliation uses the existing receipt', () => {

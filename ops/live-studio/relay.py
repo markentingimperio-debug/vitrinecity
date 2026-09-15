@@ -4,9 +4,9 @@ import threading
 import time
 from urllib.parse import urlsplit, urlunsplit
 
-PLATFORMS = ('instagram', 'youtube', 'tiktok')
+PLATFORMS = ('instagram', 'youtube', 'tiktok', 'facebook')
 INGEST = 'rtmp://127.0.0.1:19350/live/source'
-PORTS = dict(zip(PLATFORMS, (19401, 19402, 19403)))
+PORTS = dict(zip(PLATFORMS, (19401, 19402, 19403, 19404)))
 
 
 def target_url(profile):

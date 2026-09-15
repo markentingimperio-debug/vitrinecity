@@ -18,5 +18,7 @@ jobs:
         run: docker build -t vitrinecity-test:app app
       - name: Build live-studio test runtime
         run: docker build -t vitrinecity-test:studio ops/live-studio
-      - name: Run isolated application and live-studio tests
-        run: bash ops/verify-release.sh vitrinecity-test:app vitrinecity-test:studio
+      - name: Build pinned browser-only test runtime
+        run: docker build -t vitrinecity-test:browser ops/browser-tests
+      - name: Run isolated application, live-studio and browser tests
+        run: bash ops/verify-release.sh vitrinecity-test:app vitrinecity-test:studio vitrinecity-test:browser

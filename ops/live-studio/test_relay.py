@@ -4,12 +4,41 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 import relay
 
 
 class RelayTests(unittest.TestCase):
+    def test_four_outputs_keep_existing_ports_and_stop_facebook_without_restarting(self):
+        self.assertEqual(relay.PORTS, {'instagram': 19401, 'youtube': 19402, 'tiktok': 19403, 'facebook': 19404})
+        profiles = {p: {'server': 'rtmps://live-api-s.facebook.com:443/rtmp/', 'key': 'private-fixture-'+p} for p in relay.PLATFORMS}
+        processes = []
+        def launch(*_args, **_kwargs):
+            process = Mock(); process.poll.return_value = None
+            process.terminate.side_effect = lambda: setattr(process.poll, 'return_value', 0)
+            processes.append(process); return process
+        manager = relay.Relay()
+        with patch.object(relay.subprocess, 'Popen', side_effect=launch) as start, patch.object(relay.threading, 'Thread'), patch.object(relay.time, 'sleep'):
+            manager.start(profiles)
+            self.assertEqual(start.call_count, 5)
+            for p in relay.PLATFORMS:
+                args = start.call_args_list[list(relay.PLATFORMS).index(p)].args[0]
+                self.assertIn(f'127.0.0.1:{relay.PORTS[p]}', args[args.index('-i')+1])
+                self.assertEqual(args[args.index('-c')+1], 'copy')
+                self.assertIn('-tls_verify', args)
+            self.assertNotIn('private-fixture', json.dumps(manager.snapshot()))
+            manager.stop('facebook')
+            self.assertEqual(manager.snapshot()['facebook']['state'], 'stopped')
+            self.assertTrue(all(manager.snapshot()[p]['state'] == 'connecting' for p in ('instagram','youtube','tiktok')))
+            processes[-1].terminate.assert_not_called()
+            manager.stop()
+            self.assertFalse(manager.active())
+            self.assertEqual(start.call_count, 5)
+            self.assertTrue(all(p.poll() == 0 for p in processes))
+
     def test_urls_and_secret_free_telemetry(self):
+        for host in ('rtmp-api.facebook.com', 'live-api-s.facebook.com'):
+            self.assertEqual(relay.target_url({'server':f'rtmps://{host}:443/rtmp/','key':'abc?token=def'}), f'rtmps://{host}:443/rtmp/abc?token=def')
         self.assertEqual(relay.target_url({'server':'rtmps://a.rtmps.youtube.com/live2','key':'abc?token=def'}), 'rtmps://a.rtmps.youtube.com/live2/abc?token=def')
         for server,key in [('rtmps://youtube.com/live2?bad=1','abc'),('rtmps://youtube.com/live2','/bad'),('rtmps://youtube.com/live2','abc#bad')]:
             with self.assertRaises(ValueError): relay.target_url({'server':server,'key':key})
@@ -19,7 +48,7 @@ class RelayTests(unittest.TestCase):
         self.assertIn('127.0.0.1',relay.INGEST)
         self.assertEqual(relay.Relay().snapshot(),{})
 
-    def test_three_real_local_outputs_and_independent_stop(self):
+    def test_four_real_local_outputs_and_independent_stop(self):
         # Only loopback synthetic media. No platform credential or public network.
         processes=[]
         manager=relay.Relay()
@@ -40,7 +69,7 @@ class RelayTests(unittest.TestCase):
                     states=manager.snapshot()
                     if all(s['state']=='sending' for s in states.values()): break
                     time.sleep(1)
-                self.assertEqual([s['state'] for s in states.values()],['sending']*3,states)
+                self.assertEqual([s['state'] for s in states.values()],['sending']*len(relay.PLATFORMS),states)
                 before=states['youtube']['seconds']
                 manager.stop('instagram')
                 time.sleep(3)

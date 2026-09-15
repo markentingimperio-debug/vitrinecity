@@ -71,6 +71,7 @@ function portalFor(title) {
 }
 
 function renderIndex(portal, rows, siteUrl='https://vitrinecity.com') {
+  const canonical = new URL('/' + portal, siteUrl).href;
   const names = {
     conteudo: "Conteúdos em destaque",
     noticias: "Vitrine Notícias",
@@ -90,7 +91,7 @@ function renderIndex(portal, rows, siteUrl='https://vitrinecity.com') {
       })
       .join("") ||
     '<div class="empty">Os primeiros artigos estão em preparação editorial.</div>';
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(names[portal])} — VitrineCity</title><meta name="description" content="Notícias, tecnologia, inteligência artificial, entretenimento e conteúdos úteis selecionados pela VitrineCity."><style>${INDEX_CSS}</style></head><body><header><a href="/">VitrineCity</a><nav><a href="/noticias">Notícias</a><a href="/tecnologia">Tecnologia</a><a href="/inteligencia-artificial">IA</a><a href="/entretenimento">Famosos</a><a href="/social">Vitriny Social</a></nav></header><main><div class="hero"><small>CONTEÚDO COM REVISÃO EDITORIAL</small><h1>${esc(names[portal])}</h1><p>Tendências transformadas em conteúdo útil, com fontes identificadas e revisão antes da publicação.</p></div><section>${cards}</section></main><footer>VitrineCity · conteúdo informativo · <a href="/contato.html">Contato</a></footer></body></html>`;
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(names[portal])} — VitrineCity</title><link rel="canonical" href="${esc(canonical)}"><meta name="description" content="Notícias, tecnologia, inteligência artificial, entretenimento e conteúdos úteis selecionados pela VitrineCity."><style>${INDEX_CSS}</style></head><body><header><a href="/">VitrineCity</a><nav><a href="/noticias">Notícias</a><a href="/tecnologia">Tecnologia</a><a href="/inteligencia-artificial">IA</a><a href="/entretenimento">Famosos</a><a href="/social">Vitriny Social</a></nav></header><main><div class="hero"><small>CONTEÚDO COM REVISÃO EDITORIAL</small><h1>${esc(names[portal])}</h1><p>Tendências transformadas em conteúdo útil, com fontes identificadas e revisão antes da publicação.</p></div><section>${cards}</section></main><footer>VitrineCity · conteúdo informativo · <a href="/contato.html">Contato</a></footer></body></html>`;
 }
 
 export function publishedStoryForArticle(db, row) {

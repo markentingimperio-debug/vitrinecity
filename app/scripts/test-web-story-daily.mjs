@@ -9,16 +9,31 @@ import {setupDailyWebStories} from '../web-story-daily.js';
 const origin='https://vitrinecity.test',sha=value=>createHash('sha256').update(value).digest('hex');
 const paragraph='Observe as informações disponíveis e consulte a página de origem antes de escolher. O guia explica os cuidados, as condições e as possibilidades em detalhes para ajudar a compreender o assunto. ';
 const recipe='Ingredientes da massa: 3 cenouras médias; 3 ovos; 1 xícara de óleo; 2 xícaras de açúcar; 2 e meia xícaras de farinha; 1 colher de sopa de fermento. Para a cobertura: 4 colheres de sopa de chocolate em pó; 4 colheres de sopa de açúcar; 2 colheres de sopa de manteiga; meia xícara de leite. Preparo: aqueça o forno a 180 °C e unte uma forma média. Bata as cenouras, os ovos e o óleo até obter uma mistura uniforme. Misture o açúcar e a farinha em uma tigela. Adicione o líquido aos poucos e mexa até incorporar. Acrescente o fermento delicadamente. Asse por aproximadamente 35 a 45 minutos, conforme o forno. Faça o teste do palito no centro e retire quando ele sair sem massa crua. Espere amornar antes de desenformar. Para a cobertura, leve os ingredientes ao fogo baixo, mexendo até engrossar levemente. Espalhe sobre o bolo morno. Conserve o bolo coberto e sob refrigeração em dias quentes se a cobertura levar leite.';
-function setup({trends=[],enrich,getEnriched,automaticEligible=()=>false,text,configured=true,services=()=>[]}={}) {
+function setup({trends=[],enrich,getEnriched,automaticEligible=()=>false,text,configured=true,services=()=>[],publicDir=fileURLToPath(new URL('../public',import.meta.url))}={}) {
   const db=new Database(':memory:');db.exec('CREATE TABLE editorial_articles(id TEXT PRIMARY KEY,slug TEXT,title TEXT,summary TEXT,body TEXT,image_url TEXT,portal TEXT,status TEXT,updated_at TEXT,published_at TEXT,sources_json TEXT);');
   const add=(id,portal='receitas')=>db.prepare('INSERT INTO editorial_articles VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,id.replace(/:/g,'-'),'Guia público completo '+id,paragraph,portal==='receitas'?recipe:paragraph.repeat(5),'/assets/guide.png',portal,'published','2026-09-08T12:00:00Z','2026-09-08T12:00:00Z','[]');
   const app=express();app.use(express.json());const calls={configured:0,text:0,image:0,sync:0};
   const research={list:({q='',group='all',limit=50,offset=0}={})=>trends.filter(x=>(group==='all'||x.group===group)&&x.title.includes(q)).slice(offset,offset+limit),get:key=>trends.find(x=>x.key===key)||null,getEnriched:getEnriched||((s)=>s),enrich:enrich||((s)=>s),automaticEligible,syncTrends:async()=>{calls.sync++;return {count:trends.length};}};
-  const daily=setupDailyWebStories({app,db,siteUrl:origin,publicDir:fileURLToPath(new URL('../public',import.meta.url)),dataDir:'.',schedule:false,research,sourceFetchImpl:async()=>new Response('<invalid/>',{headers:{'content-type':'application/xml'}}),services,courses:()=>[],isConfigured:()=>{calls.configured++;return configured;},requireAdmin:(req,res,next)=>{const role=req.headers['x-test-role'];if(!role)return res.sendStatus(401);if(role!=='admin')return res.sendStatus(403);req.user={id:1};next();},sameOriginOnly:(req,res,next)=>req.headers.origin===origin?next():res.sendStatus(403),requestText:async(...args)=>{calls.text++;if(text)return text(...args);return JSON.stringify({insufficient:true});},requestImage:async()=>{calls.image++;throw Error('unexpected image');},assets:{outputDir:fileURLToPath(new URL('../public/assets',import.meta.url)),image:async(url,{logo=false}={})=>({url,width:logo?192:1080,height:logo?192:1920,hash:'a'.repeat(64)}),poster:async()=>'/story-assets/a.jpg',library:async()=>[]}});
+  research.automaticSourceAllowed=s=>!!trends.find(x=>x.key===s.key&&/^trend:channel-[A-Za-z0-9_-]{11}$/.test(x.key));
+  const daily=setupDailyWebStories({app,db,siteUrl:origin,publicDir,dataDir:'.',schedule:false,research,sourceFetchImpl:async()=>new Response('<invalid/>',{headers:{'content-type':'application/xml'}}),services,courses:()=>[],isConfigured:()=>{calls.configured++;return configured;},requireAdmin:(req,res,next)=>{const role=req.headers['x-test-role'];if(!role)return res.sendStatus(401);if(role!=='admin')return res.sendStatus(403);req.user={id:1};next();},sameOriginOnly:(req,res,next)=>req.headers.origin===origin?next():res.sendStatus(403),requestText:async(...args)=>{calls.text++;if(text)return text(...args);return JSON.stringify({insufficient:true});},requestImage:async()=>{calls.image++;throw Error('unexpected image');},assets:{outputDir:fileURLToPath(new URL('../public/assets',import.meta.url)),image:async(url,{logo=false}={})=>({url,width:logo?192:1080,height:logo?192:1920,hash:'a'.repeat(64)}),poster:async()=>'/story-assets/a.jpg',library:async()=>[]}});
   return {db,add,app,calls,daily,close:()=>{daily.close();db.close();}};
 }
 test('schedule=false constructs without timers, provider calls, sync or eager configuration (TDZ safe)',()=>{
   const x=setup();assert.deepEqual(x.calls,{configured:0,text:0,image:0,sync:0});assert.equal(x.daily.automation.status().enabled,false);assert.equal(x.calls.configured,1);x.close();
+});
+
+test('manual stories are filtered before automatic pagination and claims while remaining available in the editor',async()=>{
+  const x=setup();x.add('recipe-manual');x.add('recipe-new');
+  const stamp='2026-09-08T12:00:00Z';
+  x.db.prepare('INSERT INTO editorial_web_stories(id,slug,article_id,source_hash,draft_json,revision,created_at,updated_at,created_by) VALUES(?,?,?,?,?,1,?,?,?)').run('manual-story','manual-story','recipe-manual','manual-hash','{}',stamp,stamp,'editor');
+  x.db.prepare('INSERT INTO editorial_web_story_events(story_id,event,revision,actor,created_at) VALUES(?,?,?,?,?)').run('manual-story','saved',1,'editor',stamp);
+  const before=x.db.prepare("SELECT * FROM editorial_web_stories WHERE id='manual-story'").get();
+  assert.equal(x.daily.canGenerateAutomatically('recipe-manual'),false);assert.equal(x.daily.canGenerateAutomatically('recipe-new'),true);
+  assert.deepEqual(x.daily.catalog.list({group:'recipes',automatic:true,limit:1}).map(row=>row.key),['recipe-new']);
+  assert.ok(x.daily.catalog.list({group:'recipes'}).some(row=>row.key==='recipe-manual'));
+  x.daily.automation.updateSettings({revision:1,enabled:true,dailyLimit:2,groups:['recipes']});x.daily.automation.run({manual:true});await x.daily.automation.awaitIdle();
+  assert.equal(x.daily.automation.status().quota.attempted,1);assert.equal(x.calls.text,1);assert.equal(x.calls.image,0);
+  assert.equal(x.db.prepare("SELECT COUNT(*) n FROM web_story_automation_jobs WHERE source_key='recipe-manual'").get().n,0);assert.deepEqual(x.db.prepare("SELECT * FROM editorial_web_stories WHERE id='manual-story'").get(),before);x.close();
 });
 test('merged pagination reaches >200 Trends and then own sources; legacy IDs win',()=>{
   const trends=Array.from({length:250},(_,i)=>({key:'trend:'+i,id:'trend:'+i,kind:'trend',group:'news',title:'Tema '+i}));
@@ -56,10 +71,11 @@ test('unknown provider codes never reach history; not-configured API does not en
 
 test('automatic feasibility filters before merged pagination while manual sources remain visible',()=>{
   const trends=Array.from({length:251},(_,i)=>({key:'trend:'+i,id:'trend:'+i,kind:'trend',group:'news',title:'Tema '+i}));
-  const x=setup({trends,automaticEligible:s=>s.key==='trend:250'||s.key.startsWith('eligible-')});
+  trends[250]={...trends[250],key:'trend:channel-abcdefghijk',id:'trend:channel-abcdefghijk'};
+  const x=setup({trends,automaticEligible:s=>s.key==='trend:channel-abcdefghijk'||s.key.startsWith('eligible-')});
   for(let i=0;i<225;i++)x.add('blocked-'+String(i).padStart(3,'0'),'noticias');
   x.add('eligible-a','noticias');x.add('eligible-b','noticias');
-  assert.deepEqual(x.daily.catalog.list({group:'news',automatic:true,limit:2}).map(s=>s.key),['trend:250','eligible-a']);
+  assert.deepEqual(x.daily.catalog.list({group:'news',automatic:true,limit:2}).map(s=>s.key),['trend:channel-abcdefghijk','eligible-a']);
   assert.deepEqual(x.daily.catalog.list({group:'news',automatic:true,offset:1,limit:3}).map(s=>s.key),['eligible-a','eligible-b']);
   assert.deepEqual(x.daily.catalog.list({group:'news',automatic:true,offset:2,limit:2}).map(s=>s.key),['eligible-b']);
   assert.equal(x.daily.catalog.list({group:'news',limit:1})[0].key,'trend:0');
@@ -80,6 +96,44 @@ test('an entirely impossible research list completes with zero attempts, calls o
   x.daily.automation.updateSettings({revision:1,enabled:true,dailyLimit:6,groups:['news']});
   x.daily.automation.run({manual:true});await x.daily.automation.awaitIdle();
   const status=x.daily.automation.status();assert.equal(status.quota.attempted,0);assert.equal(status.quota.remaining,6);assert.equal(status.reason,'no_candidates');assert.deepEqual(status.history,[]);assert.equal(x.calls.text,0);assert.equal(x.calls.image,0);assert.equal(x.calls.sync,0);x.close();
+});
+
+test('Google Trends in every editorial group never claims quota or generates companion articles, even with ready evidence',async()=>{
+  const trends=['news','sports','trends'].map(group=>({key:'trend:google-'+group,id:'trend:google-'+group,kind:'trend',group,title:'Pesquisa verificada '+group,evidenceReady:true}));
+  const x=setup({trends,automaticEligible:()=>true,publicDir:fileURLToPath(new URL('./fixtures/no-public-sources',import.meta.url))});
+  try{
+    x.daily.automation.updateSettings({revision:1,enabled:true,dailyLimit:6,groups:['news','sports','trends']});
+    x.daily.automation.run({manual:true});await x.daily.automation.awaitIdle();
+    for(const source of trends){
+      assert.ok(x.daily.catalog.get(source.key),'manual research remains available');
+      assert.ok(x.daily.catalog.list({group:source.group}).some(item=>item.key===source.key));
+      assert.equal(x.daily.canGenerateAutomatically(source.key),false);
+      // Canonical persisted source wins over fabricated caller provenance/kind.
+      await assert.rejects(x.daily.generateAndPublish({...source,kind:'article',origin:'official-channel'}),error=>error.status===409&&/excluída da produção automática/.test(error.message));
+    }
+    assert.equal(x.daily.automation.status().quota.attempted,0);
+    assert.equal(x.db.prepare('SELECT COUNT(*) n FROM web_story_automation_jobs').get().n,0);
+    assert.equal(x.db.prepare('SELECT COUNT(*) n FROM editorial_web_stories').get().n,0);
+    assert.equal(x.db.prepare('SELECT COUNT(*) n FROM editorial_articles').get().n,0);
+    assert.equal(x.calls.text,0);assert.equal(x.calls.image,0);
+  }finally{x.close();}
+});
+
+test('origin filtering preserves owned plants in trends, official channels and healthy affiliate sources',()=>{
+  const trends=[{key:'trend:google',kind:'trend',group:'news',title:'Assunto do Google'},{key:'trend:channel-abcdefghijk',kind:'trend',group:'news',title:'Canal oficial'}];
+  const x=setup({trends,automaticEligible:()=>true});
+  try{
+    const body='Observe a luminosidade disponível perto da janela antes de posicionar o vaso. Verifique se a água consegue sair pelos furos do recipiente depois da rega. Examine a umidade do substrato antes de acrescentar mais água, pois ambientes e espécies apresentam necessidades diferentes.';
+    x.add('plantas-proprias','tendencias');x.db.prepare('UPDATE editorial_articles SET body=? WHERE id=?').run(body,'plantas-proprias');
+    x.db.exec('CREATE TABLE affiliate_catalog(slug TEXT PRIMARY KEY,platform TEXT,title TEXT,description TEXT,image TEXT,affiliate_url TEXT,status TEXT,availability TEXT,health TEXT)');
+    x.db.prepare('INSERT INTO affiliate_catalog VALUES(?,?,?,?,?,?,?,?,?)').run('vaso-jardim','shopee','Vaso para o jardim',body,'/assets/vaso.png','https://s.shopee.com.br/fixture','published','available','reachable');
+    const plants=x.daily.catalog.get('plantas-proprias');assert.equal(plants.kind,'article');assert.equal(plants.group,'trends');
+    assert.ok(x.daily.catalog.list({group:'trends',automatic:true}).some(item=>item.key==='plantas-proprias'));
+    assert.deepEqual(x.daily.catalog.list({group:'news',automatic:true}).map(item=>item.key),['trend:channel-abcdefghijk']);
+    assert.deepEqual(x.daily.catalog.list({group:'products',automatic:true}).map(item=>item.key),['affiliate:vaso-jardim']);
+    for(const key of ['plantas-proprias','trend:channel-abcdefghijk','affiliate:vaso-jardim'])assert.equal(x.daily.canGenerateAutomatically(key),true);
+    assert.equal(x.calls.text,0);assert.equal(x.calls.image,0);assert.equal(x.daily.automation.status().quota.attempted,0);
+  }finally{x.close();}
 });
 
 test('hundreds of short services or unusable photos do not consume slots or hide a later viable source',async()=>{

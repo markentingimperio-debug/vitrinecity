@@ -2,17 +2,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-export const LIVE_PLATFORMS = ['instagram', 'youtube', 'tiktok'];
+export const LIVE_PLATFORMS = ['instagram', 'youtube', 'tiktok', 'facebook'];
 export function validateLiveServer(server, platform = 'instagram') {
   if (!LIVE_PLATFORMS.includes(platform)) throw Error('Selecione uma rede válida.');
   if (!server) return;
   let url;
   try { url = new URL(server); } catch { throw Error('Servidor de transmissão inválido.'); }
-  const domains = {instagram: ['instagram.com','facebook.com','fbcdn.net'], youtube: ['youtube.com'], tiktok: ['tiktok.com','tiktokv.com']}[platform];
-  const official = domains.some(domain => url.hostname === domain || url.hostname.endsWith('.' + domain));
+  const domains = {instagram: ['instagram.com','facebook.com','fbcdn.net'], youtube: ['youtube.com'], tiktok: ['tiktok.com','tiktokv.com'], facebook: []}[platform];
+  // Facebook Live's explicit ingest, not an arbitrary Facebook subdomain.
+  const official = platform === 'facebook' ? ['rtmp-api.facebook.com','live-api-s.facebook.com'].includes(url.hostname) : domains.some(domain => url.hostname === domain || url.hostname.endsWith('.' + domain));
   const protocol = url.protocol === 'rtmps:' || (platform === 'tiktok' && url.protocol === 'rtmp:');
   const port = url.protocol === 'rtmp:' ? '1935' : '443';
   if (!official || !protocol || url.username || url.password || url.hash || (url.port && url.port !== port) || /[\s\x00]/.test(server)) throw Error('Use o servidor oficial da rede selecionada: RTMPS/443 (TikTok também aceita RTMP/1935).');
+  if (platform === 'facebook' && (url.search || !/^\/rtmp\/?$/.test(url.pathname))) throw Error('Cole somente o servidor RTMPS do Facebook Live; use o campo separado para a chave.');
 }
 
 function profilesOf(config) {
@@ -24,7 +26,7 @@ function profilesOf(config) {
 
 export function selectedPlatforms(config) {
   const targets = config.targets ?? [config.platform || 'instagram'];
-  if (!Array.isArray(targets) || targets.length < 1 || targets.length > 3 || new Set(targets).size !== targets.length || targets.some(p=>!LIVE_PLATFORMS.includes(p))) throw Error('Selecione de uma a três redes distintas.');
+  if (!Array.isArray(targets) || targets.length < 1 || targets.length > LIVE_PLATFORMS.length || new Set(targets).size !== targets.length || targets.some(p=>!LIVE_PLATFORMS.includes(p))) throw Error('Selecione de uma a quatro redes distintas.');
   return targets;
 }
 
@@ -46,7 +48,7 @@ export function validateLiveConfig(input) {
   return { title, media, destination: destination.href, repetitions, platform, server, key, targets:selectedPlatforms(input) };
 }
 
-export function setupLiveStudio({ app, requireAdmin, sameOriginOnly, root = process.env.LIVE_STUDIO_DIR || '/live-studio' }) {
+function liveStudioFiles(root) {
   fs.mkdirSync(root, { recursive: true });
   const file = name => path.join(root, name);
   const read = (name, fallback) => { try { return JSON.parse(fs.readFileSync(file(name), 'utf8')); } catch { return fallback; } };
@@ -54,13 +56,63 @@ export function setupLiveStudio({ app, requireAdmin, sameOriginOnly, root = proc
     const temp = file(`${name}.${randomUUID()}.tmp`);
     fs.writeFileSync(temp, JSON.stringify(value), { mode: 0o600 });
     if (process.getuid?.() === 0) fs.chownSync(temp, 10001, 10001);
-    fs.renameSync(temp, file(name));
+    if(name==='command.json'){
+      // Never replace another administrative command that won the queue race.
+      // The fully written inode becomes visible atomically to the worker.
+      try{fs.linkSync(temp,file(name));}finally{fs.unlinkSync(temp);}
+    }else fs.renameSync(temp, file(name));
   };
   const catalog = () => read('media.json', []).filter(m => /^[a-zA-Z0-9_-]+\.mp4$/.test(m.file) && Number.isFinite(m.duration) && m.duration > 0 && m.duration <= 601);
   const snapshot = () => {
     const status = read('status.json', {});
     return { ...status, online: Date.now() - Number(status.updatedAt || 0) < 20000 };
   };
+  return {file,read,write,catalog,snapshot};
+}
+
+function liveStudioControl({file,read,write,catalog,snapshot}) {
+  return (input={}, {actor}={}) => {
+    const result=(status,body)=>({status,body});
+    const action = input?.action;
+    if (!['preview', 'start', 'stop', 'stop-network'].includes(action)) return result(400,{ error: 'Ação inválida.' });
+    const durationSeconds = input?.durationSeconds;
+    if (durationSeconds !== undefined && (action !== 'start' || durationSeconds !== 7200)) return result(400,{ error: 'O limite disponível para esta transmissão é de 2 horas (7200 segundos).' });
+    const stopping = action === 'stop' || action === 'stop-network';
+    if(action==='stop-network' && !LIVE_PLATFORMS.includes(input.platform)) return result(400,{error:'Rede inválida.'});
+    const status = snapshot();
+    if (!status.online) return result(503,{ error: 'OBS indisponível. Nenhuma ação foi enviada.' });
+    if (fs.existsSync(file('command.json')) || fs.existsSync(file('executing-command.json'))) return result(409,{ error: 'Já existe uma operação pendente ou em execução.' });
+    const config = read('config.json', {});
+    if (!stopping && (status.streaming || status.recording)) return result(409,{ error: 'Uma sessão já está ativa.' });
+    if (!stopping && !catalog().some(m => m.file === config.media)) return result(400,{ error: 'Salve um vídeo válido antes de continuar.' });
+    if (action === 'start' && input.confirm !== 'TRANSMITIR') return result(400,{ error: 'Confirme TRANSMITIR.' });
+    if (action === 'start') {
+      try {
+        const profiles=profilesOf(config);
+        for(const platform of selectedPlatforms(config)){
+          const profile=profiles[platform];
+          if(!profile?.server || !profile?.key) throw Error('Servidor/chave ausente para '+platform+'. Nenhuma rede foi iniciada.');
+          validateLiveServer(profile.server,platform);
+          if(new URL(profile.server).search || profile.key.startsWith('/') || profile.key.includes('#')) throw Error('Separe servidor e chave em '+platform+'.');
+        }
+      }
+      catch (e) { return result(400,{error:e.message}); }
+    }
+    const commandId=randomUUID();
+    try{write('command.json', { id: commandId, action, platform:action==='stop-network'?input.platform:undefined, createdAt: Date.now(), actor, ...(durationSeconds!==undefined?{durationSeconds}:{}) });}
+    catch(error){return result(error.code==='EEXIST'?409:503,{error:error.code==='EEXIST'?'Outra operação entrou na fila. Atualize o status antes de continuar.':'Não foi possível entregar o comando. Confira o estado antes de tentar outra ação.'});}
+    return result(202,{ ok: true, commandId, ...(durationSeconds!==undefined?{durationSeconds}:{}), message: 'Comando recebido; acompanhe o status do OBS.' });
+  };
+}
+
+// Trusted in-process operations only. HTTP authentication remains on every route.
+export function createLiveStudioService({root=process.env.LIVE_STUDIO_DIR||'/live-studio'}={}) {
+  return {control:liveStudioControl(liveStudioFiles(root))};
+}
+
+export function setupLiveStudio({ app, requireAdmin, sameOriginOnly, root = process.env.LIVE_STUDIO_DIR || '/live-studio' }) {
+  const files=liveStudioFiles(root),{file,read,write,catalog,snapshot}=files;
+  const control=liveStudioControl(files);
   app.get('/api/admin/live-studio', requireAdmin, (_req, res) => {
     const saved = read('config.json', {});
     const { key, profiles: _privateProfiles, ...config } = saved;
@@ -96,31 +148,8 @@ export function setupLiveStudio({ app, requireAdmin, sameOriginOnly, root = proc
     } catch (e) { res.status(400).json({ error: e.message }); }
   });
   app.post('/api/admin/live-studio/control', requireAdmin, sameOriginOnly, (req, res) => {
-    const action = req.body?.action;
-    if (!['preview', 'start', 'stop', 'stop-network'].includes(action)) return res.status(400).json({ error: 'Ação inválida.' });
-    const stopping = action === 'stop' || action === 'stop-network';
-    if(action==='stop-network' && !LIVE_PLATFORMS.includes(req.body.platform)) return res.status(400).json({error:'Rede inválida.'});
-    const status = snapshot();
-    if (!status.online) return res.status(503).json({ error: 'OBS indisponível. Nenhuma ação foi enviada.' });
-    if (fs.existsSync(file('command.json')) || fs.existsSync(file('executing-command.json'))) return res.status(409).json({ error: 'Já existe uma operação pendente ou em execução.' });
-    const config = read('config.json', {});
-    if (!stopping && (status.streaming || status.recording)) return res.status(409).json({ error: 'Uma sessão já está ativa.' });
-    if (!stopping && !catalog().some(m => m.file === config.media)) return res.status(400).json({ error: 'Salve um vídeo válido antes de continuar.' });
-    if (action === 'start' && req.body.confirm !== 'TRANSMITIR') return res.status(400).json({ error: 'Confirme TRANSMITIR.' });
-    if (action === 'start') {
-      try {
-        const profiles=profilesOf(config);
-        for(const platform of selectedPlatforms(config)){
-          const profile=profiles[platform];
-          if(!profile?.server || !profile?.key) throw Error('Servidor/chave ausente para '+platform+'. Nenhuma rede foi iniciada.');
-          validateLiveServer(profile.server,platform);
-          if(new URL(profile.server).search || profile.key.startsWith('/') || profile.key.includes('#')) throw Error('Separe servidor e chave em '+platform+'.');
-        }
-      }
-      catch (e) { return res.status(400).json({error:e.message}); }
-    }
-    write('command.json', { id: randomUUID(), action, platform:action==='stop-network'?req.body.platform:undefined, createdAt: Date.now(), actor: req.user?.id });
-    res.status(202).json({ ok: true, message: 'Comando recebido; acompanhe o status do OBS.' });
+    const result=control(req.body,{actor:req.user?.id});
+    return res.status(result.status).json(result.body);
   });
   app.get('/api/admin/live-studio/media/:name', requireAdmin, (req, res) => {
     if (!catalog().some(m => m.file === req.params.name)) return res.sendStatus(404);

@@ -26,8 +26,10 @@ export function contentRelevance(item, query) {
     + terms.filter(term => (' ' + description).includes(' ' + term)).length * 2;
 }
 
-const publicGuides = Object.freeze([
-  {kind:'article',title:'Plantas em vasos: checklist para começar',description:'Organize os cuidados com suas plantas em vasos: luz, rega, drenagem e escolha do substrato. Checklist gratuito, sem cadastro obrigatório.',keywords:'guia jardim jardinagem cuidar planta água adubo',url:'/guias/plantas-em-vasos.html'}
+// Existing public pages outside the editorial database also belong in site search.
+const publicPages = Object.freeze([
+  {kind:'article',title:'Plantas em vasos: checklist para começar',description:'Organize os cuidados com suas plantas em vasos: luz, rega, drenagem e escolha do substrato. Checklist gratuito, sem cadastro obrigatório.',keywords:'guia jardim jardinagem cuidar planta água adubo',url:'/guias/plantas-em-vasos.html'},
+  {kind:'article',title:'Oração do dia · Orações e Esperança',description:'Leia a oração do dia, encontre uma palavra de esperança e compartilhe uma mensagem de carinho. Um espaço de fé da VitrineCity.',keywords:'orações orar fé Jesus amém Bíblia bíblico bíblica versículo versículos esperança acolhimento espiritual religiosidade religião diária diárias hoje',url:'/oracao-do-dia'}
 ]);
 
 export function publishedPlatformContent(db, query, {siteUrl=process.env.SITE_URL||'https://vitrinecity.com'}={}) {
@@ -35,7 +37,7 @@ export function publishedPlatformContent(db, query, {siteUrl=process.env.SITE_UR
   if (!terms.length || normalizeSearch(query).length < 2) return [];
   const hasTable = name => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
   const match = expression => terms.map(() => `instr(' '||vc_normalize(${expression}), ?) > 0`).join(' AND ');
-  const values = terms.map(term => ' ' + term), rows = [...publicGuides];
+  const values = terms.map(term => ' ' + term), rows = [...publicPages];
   if (hasTable('editorial_articles')) {
     rows.push(...db.prepare(`SELECT slug,title,summary description,portal keywords,body searchText,image_url imageUrl
       FROM editorial_articles WHERE status='published' AND ${match("title||' '||summary||' '||portal||' '||body")}

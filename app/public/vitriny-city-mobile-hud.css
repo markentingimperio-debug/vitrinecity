@@ -1,0 +1,40 @@
+/* Applied only after the existing controls have been moved into the mobile menu. */
+#openCityMenu{display:none}
+.city-mobile-menu{width:min(440px,calc(100vw - 24px));max-height:calc(100dvh - 32px);padding:0;border:1px solid #6f9187;border-radius:18px;background:#0d2028;color:#edf5f1;overflow:auto;overscroll-behavior:contain}
+.city-mobile-menu::backdrop{background:#03101799}
+.city-mobile-menu header{position:sticky;top:0;z-index:1;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 16px;background:#0d2028;border-bottom:1px solid #ffffff20}
+.city-mobile-menu h2{margin:0;font-size:20px}
+.city-mobile-menu button,.city-mobile-menu a,.city-mobile-menu summary{touch-action:manipulation}
+.city-mobile-menu header button,.city-mobile-menu-action{min-height:48px;border:1px solid #79968d;border-radius:10px;background:#193b40;color:#f1f7f3;font:600 16px/1.4 system-ui;padding:10px 14px;cursor:pointer}
+.city-mobile-menu-body{padding:14px 16px 20px;display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.city-mobile-menu-body>*{grid-column:1!important;grid-row:auto!important}
+.city-mobile-menu-primary{display:grid;gap:10px}
+.city-mobile-menu-primary:empty{display:none}
+.city-mobile-menu .exploration-goal-open,.city-mobile-menu .vc-assistant-city-launcher{position:static;width:100%;max-width:none;margin:0;min-height:48px;font-size:16px}
+.city-mobile-menu .panel,.city-mobile-menu .city-tools{width:100%;max-width:none;min-width:0;max-height:none;padding:6px 12px;box-shadow:none;overflow:visible}
+.city-mobile-menu [data-hud-panel]>summary{min-height:48px;font-size:16px;gap:12px}
+.city-mobile-menu .view-controls,.city-mobile-menu .city-tools[open]>.view-controls{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.city-mobile-menu .city-tools:not([open])>.view-controls{display:none}
+.city-mobile-menu .view-controls button{min-height:48px;min-width:0;font-size:14px}
+.city-mobile-menu .help{max-width:none;max-height:none;font-size:14px;line-height:1.6}
+.city-mobile-menu .motion-toggle{min-height:48px;font-size:14px}
+.city-mobile-menu .travel a{font-size:14px}
+.city-mobile-menu #vitrinySpatialPresenceBadge{position:static!important;max-width:100%!important;width:auto!important;margin:0;font-size:12px!important;white-space:normal!important;box-shadow:none!important}
+body.city-mobile-clean .hud{padding:max(10px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+body.city-mobile-clean .hud .top{display:block}
+body.city-mobile-clean .hud .brand{display:flex;gap:8px;align-items:center;width:100%;max-width:none;min-width:0;padding:0;border:0;border-radius:0;background:none;box-shadow:none;backdrop-filter:none}
+body.city-mobile-clean .hud .brand> :not(#openCityGuide):not(#openCityMenu){display:none!important}
+body.city-mobile-clean #openCityGuide{flex:1;width:auto;min-width:0;min-height:48px;margin:0;justify-content:center;gap:10px;padding:10px 12px;font-size:14px;box-shadow:0 3px 12px #0003}
+body.city-mobile-clean #openCityMenu{display:flex;align-items:center;justify-content:center;gap:8px;flex:none;min-height:48px;padding:10px 14px;border:1px solid #7d9998;border-radius:9px;background:#0b202aec;color:#f3f8f6;font:600 14px/1.4 system-ui;cursor:pointer;pointer-events:auto}
+body.city-mobile-clean #openCityMenu svg{width:18px;height:18px}
+body.city-mobile-clean .hud .bottom{justify-content:flex-end;align-items:flex-end;gap:10px}
+body.city-mobile-clean .navigation-section{margin-right:auto;max-width:calc(100vw - 190px)}
+body.city-mobile-clean .portal{max-width:100%;padding:10px}
+body.city-mobile-clean .portal button{width:100%;font-size:13px}
+body.city-mobile-clean .pad{display:grid;grid-template-columns:48px 48px 48px;grid-template-rows:48px 48px;gap:5px;flex:none}
+body.city-mobile-clean [data-city-chat]:not(:has(.city-chat[open])){display:none}
+body.city-mobile-clean .vc-assistant[data-kind="city"] .vc-assistant-invite{display:none}
+body.city-mobile-clean [data-city-chat]:has(.city-chat[open]){right:12px;bottom:calc(122px + env(safe-area-inset-bottom));width:calc(100vw - 24px);max-width:420px}
+body.city-mobile-clean .city-chat-body{max-height:calc(100dvh - 260px)}
+body.city-mobile-clean:has(dialog[open]) .pad{visibility:hidden}
+@media(max-height:500px){body.city-mobile-clean [data-city-chat]:has(.city-chat[open]){bottom:12px}.city-mobile-menu{max-height:calc(100dvh - 16px)}}

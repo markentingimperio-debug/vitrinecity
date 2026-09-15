@@ -3,7 +3,7 @@ function columns(db,name){if(!tableExists(db,name))return new Set();return new S
 function has(cols,...names){return names.every(name=>cols.has(name));}
 function scalar(db,sql){const row=db.prepare(sql).get();const value=Number(row?.value??0);return Number.isFinite(value)?value:0;}
 
-export function createShadowObserver({db,neural,now=Date.now,intervalMs=60000,logger=console}={}){
+export function createShadowObserver({db,neural,now=Date.now,intervalMs=60000,logger=console,onSample=null}={}){
   if(!db?.prepare||!neural?.signal)throw new TypeError('Shadow observer requer SQLite e Vitriny Neural.');
   const interval=Math.max(10000,Math.min(15*60*1000,Number(intervalMs)||60000));
   const probes=[];
@@ -42,7 +42,9 @@ export function createShadowObserver({db,neural,now=Date.now,intervalMs=60000,lo
         neural.signal({metric:'social.completion_rate',dimension:'platform',value:Math.max(0,Math.min(1,completions/impressions)),confidence:1,windowStart:lastSampleAt||at,windowEnd:at,metadata:{aggregate:true}});
       }
     }
-    previous=current;lastSampleAt=at;return{at,probeCount:probes.length,current,deltas};
+    previous=current;lastSampleAt=at;
+    if(typeof onSample==='function'){try{Promise.resolve(onSample()).catch(()=>{});}catch{}}
+    return{at,probeCount:probes.length,current,deltas};
   }
   function start(){if(timer)return false;sample();timer=setInterval(()=>{try{sample();}catch(error){logger?.warn?.('[vitriny-neural] shadow sample failed',String(error?.message||error));}},interval);timer.unref?.();return true;}
   function stop(){if(!timer)return false;clearInterval(timer);timer=null;return true;}

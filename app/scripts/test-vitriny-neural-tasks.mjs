@@ -5,10 +5,10 @@ import {createVitrinyNeuralService} from '../vitriny-neural/service.js';
 import {createOpenAICompatibleProvider} from '../vitriny-neural/providers/openai-compatible.js';
 
 const report={score:.99,categories:Object.fromEntries(['safety','code','research','growth','commerce','support','ranking'].map(key=>[key,{score:.99}]))};
-function fixture({respond,env={},qualified=true,now,db=new Database(':memory:')}={}) {
+function fixture({respond,env={},qualified=true,now,usage={prompt_tokens:10,completion_tokens:5},db=new Database(':memory:')}={}) {
   const calls=[];
   const provider={id:'task-local',modelName:'test-local-v1',local:true,priority:10,capabilities:['code.plan','growth.content-plan'],
-    invoke:async request=>{calls.push(request);return {text:typeof respond==='function'?await respond(request,calls.length):JSON.stringify(respond),model:'test-local-v1',usage:{prompt_tokens:10,completion_tokens:5}};}};
+    invoke:async request=>{calls.push(request);return {text:typeof respond==='function'?await respond(request,calls.length):JSON.stringify(respond),model:'test-local-v1',usage};}};
   const service=createVitrinyNeuralService({db,providers:[provider],now,env:{VITRINY_NEURAL_ENABLED:'1',VITRINY_NEURAL_MODE:'advisory',VITRINY_NEURAL_TASKS_ENABLED:'1',VITRINY_NEURAL_TASKS_STORES:'shop-a,shop-b',...env}});
   if(qualified)service.recordQualification({providerId:provider.id,modelName:provider.modelName,suite:'fixture-only',report});
   return {db,calls,service,tasks:service.tasks};
@@ -88,6 +88,41 @@ test('piloto desligado, shadow, falta de benchmark ou outro modelo bloqueiam exe
     assert.throws(()=>f.tasks.start('store:shop-a',item.id),{code:'task_provider_unqualified'});
     assert.equal(f.calls.length,0);
   }finally{f.db.close();}
+});
+test('qualificação revogada durante tentativa impede fallback mesmo com política ainda habilitada',async()=>{
+  let f,backupCalls=0;
+  f=fixture({respond:()=>{
+    // Deliberately restore a stale policy after replacing the qualification to
+    // exercise task admission's independent barrier after candidate selection.
+    f.service.recordQualification({providerId:'backup-local',modelName:'changed-model',report});
+    f.service.runtime.skills.setProviderPolicy('backup-local',{enabled:true,allowedCapabilities:['code.plan'],source:'fixture-stale-policy'});
+    throw Error('first attempt failed');
+  }});
+  try{
+    f.service.runtime.skills.registerProvider({id:'backup-local',modelName:'backup-v1',local:true,priority:90,capabilities:['code.plan'],invoke:async()=>{backupCalls++;return {model:'backup-v1',text:'must not run'};}});
+    f.service.recordQualification({providerId:'backup-local',modelName:'backup-v1',report});
+    const item=submit(f.tasks);f.tasks.start('store:shop-a',item.id);await f.tasks.wait(item.id);
+    const done=f.tasks.get('store:shop-a',item.id);
+    assert.equal(done.errorCode,'task_provider_unqualified');assert.equal(backupCalls,0);
+    assert.equal(done.attempts.length,1);assert.equal(done.attempts[0].state,'failed');
+    assert.equal(done.usage.complete,false);assert.equal(done.files.length,0);
+    assert.equal(f.service.runtime.skills.status().providers.find(provider=>provider.id==='backup-local').policy.enabled,true);
+  }finally{f.db.close();}
+});
+test('totais da API acima do inteiro seguro ficam desconhecidos sem perder recibos individuais',async()=>{
+  for(const direction of ['prompt_tokens','completion_tokens']){
+    const f=fixture({usage:{prompt_tokens:0,completion_tokens:0,[direction]:Number.MAX_SAFE_INTEGER},respond:scripted([
+      {tool:'route',kind:'content',message:'Preparar texto.'},{tool:'finish',message:'Rascunho para revisão.'}
+    ])});
+    try{
+      const item=submit(f.tasks);f.tasks.start('store:shop-a',item.id);await f.tasks.wait(item.id);
+      const done=f.tasks.get('store:shop-a',item.id),field=direction==='prompt_tokens'?'inputTokens':'outputTokens';
+      assert.equal(done.status,'draft_ready');assert.equal(done.usage[field],null);
+      assert.equal(done.usage.overflow,true);assert.equal(done.usage.complete,false);
+      assert.ok(done.attempts.every(attempt=>attempt.known&&attempt[field]===Number.MAX_SAFE_INTEGER));
+      assert.deepEqual(f.tasks.list('store:shop-a')[0].usage,done.usage);
+    }finally{f.db.close();}
+  }
 });
 test('idempotência não cria consumo duplicado e cotas são por loja',()=>{
   const f=fixture({env:{VITRINY_NEURAL_TASKS_DAILY:'1'}});try{
@@ -191,6 +226,8 @@ test('ferramenta arbitrária, path traversal, segredos e falsa conclusão são r
     [{tool:'files.write',path:'../server.js',content:'alteração'},'task_file_invalid'],
     [{tool:'files.write',path:'.env',content:'alteração'},'task_file_invalid'],
     [{tool:'files.write',path:'x.js',content:'ghp_ABCDEFGHIJK1234567890'},'task_input_invalid'],
+    [{tool:'files.write',path:'x.js',content:'sk-'+'a'.repeat(32)},'task_input_invalid'],
+    [{tool:'files.write',path:'x.js',content:'DEEPSEEK_API_KEY=fixture-private-token'},'task_input_invalid'],
     [{tool:'files.write',path:'x.js',content:'a'.repeat(33000)},'task_input_invalid'],
     [{tool:'finish',message:'Site publicado.'},'task_artifact_missing']
   ]){

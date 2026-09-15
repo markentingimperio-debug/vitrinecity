@@ -7,7 +7,8 @@ const db=new Database(':memory:');db.pragma('foreign_keys=ON');db.exec("CREATE T
 const app=express();app.use(express.json());const currentUser=req=>['1','2'].includes(req.headers['x-test-user'])?{id:Number(req.headers['x-test-user']),account_status:'active'}:null;
 const requireUser=(req,res,next)=>{req.user=currentUser(req);return req.user?next():res.sendStatus(401);};
 const sameOriginOnly=(req,res,next)=>req.headers.origin==='https://evil.test'?res.sendStatus(403):next();
-setupCityMembership(app,{db,currentUser,requireUser,sameOriginOnly});app.use((req,res)=>res.send('public or authenticated content'));
+const rewards=[];
+setupCityMembership(app,{db,currentUser,requireUser,sameOriginOnly,grantGameReward:(id,points)=>{rewards.push({id,points});return points;},rewardSettings:()=>({unified:true,coinsPerReal:100})});app.use((req,res)=>res.send('public or authenticated content'));
 const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));const base=`http://127.0.0.1:${server.address().port}`;
 const action=(body,user='1',origin)=>fetch(`${base}/api/games/farm/action`,{method:'POST',headers:{'Content-Type':'application/json','x-test-user':user,...(origin?{origin}:{})},body:JSON.stringify(body)});
 try{
@@ -23,6 +24,7 @@ try{
   assert.equal((await action({type:'harvest',plot:0,now:Date.now()+9999999})).status,409,'The server owns growth time');
   result.state.plots[0].readyAt=Date.now()-1;db.prepare('UPDATE city_farm_progress SET state_json=? WHERE user_id=1').run(JSON.stringify(result.state));
   const concurrent=await Promise.all([action({type:'harvest',plot:0}),action({type:'harvest',plot:0})]);assert.deepEqual(concurrent.map(r=>r.status).sort(),[200,409]);
+  const harvested=await concurrent.find(r=>r.status===200).json();assert.equal(harvested.rewardPoints,4);assert.equal(harvested.rewardAtoms,'3840000');assert.match(harvested.message,/\+0,384 Vitrine Coins/);assert.deepEqual(rewards,[{id:1,points:4}],'Only display converts; grant and duplicate prevention unchanged');
   r=await fetch(base+'/api/games/farm',{headers:{'x-test-user':'1'}});assert.equal((await r.json()).state.coins,64,'Duplicate harvest requests cannot double the reward');
 }finally{await new Promise(resolve=>server.close(resolve));db.close();}
 console.log(JSON.stringify({ok:true,membership:'public city and commerce, private activities, safe return, account isolation, server time, atomic progress'}));

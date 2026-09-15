@@ -94,10 +94,13 @@ export function createStoryAutomation({db,getCandidates,processSource,isConfigur
   }
   function choose(context){
     const s=settings(),groups=selectedGroups(s),start=s.next_group;
-    // New sources receive capacity before updates to an already published story.
+    // Give each eligible category its turn, including categories with only
+    // updates. New sources take precedence within that category, not globally.
+    const attempted=new Map(db.prepare('SELECT group_name,COUNT(*) n FROM web_story_automation_jobs WHERE day=? GROUP BY group_name').all(context.day).map(row=>[row.group_name,row.n]));
+    const order=groups.map((_,g)=>(start+g)%groups.length).sort((a,b)=>(attempted.get(groups[a])||0)-(attempted.get(groups[b])||0));
+    for(const index of order){
+      const group=groups[index];
     for(const updates of [false,true]){
-    for(let g=0;g<groups.length;g++){
-      const index=(start+g)%groups.length,group=groups[index];
       let offset=db.prepare('SELECT source_offset FROM web_story_automation_cursors WHERE group_name=?').get(group).source_offset,wrapped=false;
       for(let page=0;page<MAX_PAGES&&isCurrent(context);page++){
         let candidates;try{candidates=getCandidates({group,limit:PAGE,offset});}catch{context.candidateError=true;break;}

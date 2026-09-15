@@ -66,13 +66,17 @@ export function createEditorialChannelSources({db,canRun=()=>true,fetchImpl,now=
     const take=Math.max(1,Math.min(200,Number(limit)||60)),skip=Math.max(0,Number(offset)||0),channels=EDITORIAL_CHANNELS.map(channel=>{const row=state().find(row=>row.id===channel.id);return {id:channel.id,name:channel.name,topic:channel.topic,channelId:channel.channelId,url:channel.url,feedUrl:channel.feedUrl,status:row.status,lastCheckedAt:iso(row.last_checked_at),lastSuccessAt:iso(row.last_success_at),errorCode:row.error_code||null,itemsCount:row.items_count};});
     const terms=clean(q).toLocaleLowerCase('pt-BR').split(/\s+/).filter(Boolean),items=[];
     for(const row of db.prepare('SELECT * FROM editorial_channel_items WHERE published_at>=? ORDER BY published_at DESC,video_id LIMIT 400').all(now()-90*24*HOUR)){
-      const channel=EDITORIAL_CHANNELS.find(c=>c.id===row.channel_key);if(!channel||topic!=='all'&&channel.topic!==topic||!terms.every(term=>(row.title+' '+channel.name).toLocaleLowerCase('pt-BR').includes(term)))continue;
+      const channel=EDITORIAL_CHANNELS.find(c=>c.id===row.channel_key);if(!channel||!terms.every(term=>(row.title+' '+channel.name).toLocaleLowerCase('pt-BR').includes(term)))continue;
       let evidence={},sourceLinks=[];try{evidence=JSON.parse(row.evidence_json);sourceLinks=JSON.parse(row.source_links_json);}catch{}
       const safeEvidenceUrl=storyResearchUrl(evidence.sourceUrl),evidenceHost=safeEvidenceUrl&&new URL(safeEvidenceUrl).hostname;
       if(!safeEvidenceUrl||!channel.hosts.includes(evidenceHost)&&!(channel.topic==='gardening'&&['www.embrapa.br','embrapa.br'].includes(evidenceHost))||evidence.contentHash!==contentHash(evidence)||!matchesContent(row.title,evidence))evidence={};
+      // Panelinha also publishes interviews/podcasts. The channel identity is
+      // not proof of a recipe: only its matched, fetched recipe qualifies.
+      const itemTopic=channel.topic==='recipes'&&!(evidence.sourceUrl&&evidence.kind==='recipe')?'general':channel.topic;
+      if(topic!=='all'&&itemTopic!==topic)continue;
       const key='trend:channel-'+row.video_id,topicSource=channel.topic==='news'?research?.get(key):null,ready=topicSource?.evidenceReady===true;
       const age=Math.max(1,(now()-row.published_at)/HOUR);
-      items.push({key:'youtube:'+row.video_id,title:row.title,topic:channel.topic,channelName:channel.name,publishedAt:iso(row.published_at),url:row.url,views:row.views,popularityScore:row.views===null?null:Math.round(row.views/age*100)/100,sourceStatus:ready?'evidence_ready':evidence.sourceUrl?'text_ready':channel.topic==='news'?'research_pending':'discovery_only',editorUrl:ready?'/admin-web-stories.html?source='+encodeURIComponent(key):null,sourceLinks,evidence:evidence.sourceUrl?evidence:null});
+      items.push({key:'youtube:'+row.video_id,title:row.title,topic:itemTopic,channelName:channel.name,publishedAt:iso(row.published_at),url:row.url,views:row.views,popularityScore:row.views===null?null:Math.round(row.views/age*100)/100,sourceStatus:ready?'evidence_ready':evidence.sourceUrl?'text_ready':channel.topic==='news'?'research_pending':'discovery_only',editorUrl:ready?'/admin-web-stories.html?source='+encodeURIComponent(key):null,sourceLinks,evidence:evidence.sourceUrl?evidence:null});
     }
     if(sort==='views')items.sort((a,b)=>(b.views??-1)-(a.views??-1)||b.publishedAt.localeCompare(a.publishedAt));
     if(sort==='popular')items.sort((a,b)=>(b.popularityScore??-1)-(a.popularityScore??-1)||b.publishedAt.localeCompare(a.publishedAt));

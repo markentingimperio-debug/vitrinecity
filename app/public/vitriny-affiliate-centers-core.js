@@ -10,5 +10,5 @@ export function intersectsCommerceAvenue(item){
   const {x,z}=item.position,{width,depth}=item.size,angle=Number(item.rotationY)||0;
   const halfWidth=(Math.abs(Math.cos(angle))*width+Math.abs(Math.sin(angle))*depth)/2;
   const halfDepth=(Math.abs(Math.sin(angle))*width+Math.abs(Math.cos(angle))*depth)/2;
-  return x+halfWidth>-252&&x-halfWidth<-80&&z+halfDepth>-155&&z-halfDepth<180;
+  return x+halfWidth>-252&&x-halfWidth<-80&&z+halfDepth>-155&&z-halfDepth<260;
 }

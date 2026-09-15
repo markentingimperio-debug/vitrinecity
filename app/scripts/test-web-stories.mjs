@@ -155,8 +155,8 @@ test('visual library contains validated published/shipped images and excludes dr
   assert.deepEqual((await f.call('/api/admin/web-stories/images?q=privado&articleId=draft-only')).json().items,[]);
   assert.ok((await f.call('/api/admin/web-stories/images?q=cinema')).json().items.some(item=>item.title==='Noite de cinema'));
 });
-test('server exempts only explicitly rendered AMP stories from global HTML injection',async()=>{
-  const source=await fs.readFile(path.join(appDir,'server.js'),'utf8');assert.match(source,/if \(res\.locals\.vcAmpStory === true \|\| req\.method/);assert.match(source,/\.\.\.webStories\.sitemapPaths\(\)/);
+test('server preserves explicit AMP exemption alongside the scoped Cultiva app',async()=>{
+  const source=await fs.readFile(path.join(appDir,'server.js'),'utf8');assert.match(source,/if \(res\.locals\.vcAmpStory === true \|\| isGamesAppPath\(req\.path\) \|\| req\.method/);assert.match(source,/\.\.\.webStories\.sitemapPaths\(\)/);
 });
 test('FFmpeg prepares and reuses a real 900×1200 portrait cover',{skip:process.env.WEB_STORY_FFMPEG_TEST!=='1'},async t=>{
   const f=await fixture(t),asset=await f.realAssets.image('/assets/recipes/bolo-cenoura.jpg'),url=await f.realAssets.poster(asset);
