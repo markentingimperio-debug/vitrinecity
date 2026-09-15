@@ -28,8 +28,8 @@ import {mountEmissoraBuilding} from './vitriny-emissora-building.js';
 import {EMISSORA_BUILDING,intersectsEmissoraLot} from './vitriny-emissora-core.js';
 import {mountCreditsBuilding} from './vitriny-credits-building.js';
 import {mountCityLife} from './vitriny-city-life.js';
-import {mountCityResidents} from './vitriny-city-residents-scene.js';
-import {createResidentCatalog,intersectsResidentBuilding} from './vitriny-city-residents-core.js';
+import {mountCityResidents} from './vitriny-city-residents-scene.js?v=20260915-residents-2';
+import {createResidentCatalog,intersectsResidentBuilding} from './vitriny-city-residents-core.js?v=20260915-residents-2';
 import {mountCommerceAvenue,mountMusicArena} from './vitriny-commerce-avenue.js';
 import {intersectsCommerceAvenue} from './vitriny-affiliate-centers-core.js';
 

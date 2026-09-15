@@ -51,10 +51,13 @@ export function createUrbanPerson({skinColor='#c88d61',outfitColor='#496878',var
     for(const y of [1.14,1.26,1.37])ellipsoid(group,white,0,y,.136,.007,.007,.005);
     ellipsoid(group,lip,0,1.455,.06,.024,.005,.005);
   }
-  function pose(phase,moving){
+  function pose(phase,moving,activity=''){
     const stride=moving?Math.sin(phase)*.47:0;
     for(let i=0;i<2;i++){const sign=i?1:-1;legs[i].rotation.x=sign*stride;knees[i].rotation.x=moving?Math.max(0,-Math.sin(phase+(i?0:Math.PI)))*.56:0;arms[i].rotation.x=-sign*stride*.7;elbows[i].rotation.x=-.12-(moving?Math.max(0,sign*stride)*.35:0);}
     head.rotation.y=moving?Math.sin(phase*.5)*.025:0;
+    head.rotation.x=activity==='work'?.14:0;
+    if(!moving&&activity==='work')for(let i=0;i<2;i++){arms[i].rotation.x=-.72;elbows[i].rotation.x=-.58+Math.sin(phase*.45+i)*.045;}
+    if(!moving&&activity==='talk'){arms[0].rotation.x=-.38;elbows[0].rotation.x=-.65+Math.sin(phase*.2)*.06;}
   }
   pose(0,false);return {group,materials,legs,arms,knees,elbows,pose};
 }

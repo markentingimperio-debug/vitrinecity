@@ -33,7 +33,8 @@ try{
     assert.equal(await page.locator('#residentName').textContent(),'Vera');assert.equal(await dialog.getByRole('button',{name:'Ver na cidade',exact:true}).isDisabled(),true);
     await page.locator('#residentsDepartment').selectOption('studio');await page.locator('#residentsPerson').selectOption('olivia');
     assert.equal(await page.locator('#residentName').textContent(),'Olívia');assert.equal(await dialog.locator('.resident-channels a').count(),3);
-    await dialog.getByRole('button',{name:'Conversar · simulação',exact:true}).click();assert.match(await page.locator('#residentSpeech').textContent(),/Fala simulada de Olívia/);
+    await dialog.getByRole('button',{name:'Conversar · simulação',exact:true}).click();assert.match(await page.locator('#residentSpeech').textContent(),/Conversa simulada · roteiro/);assert.match(await page.locator('#residentSpeech').textContent(),/Olívia:/);
+    assert.equal(await page.locator('#residentsPerson option').count(),12);await page.locator('#residentsPerson').selectOption('studio-specialist-research');assert.match(await dialog.locator('.resident-routine').textContent(),/mesa de trabalho/);await dialog.getByRole('button',{name:'Conversar · simulação',exact:true}).click();assert.match(await page.locator('#residentSpeech').textContent(),/não um registro de trabalho realizado/);assert.match(await dialog.locator('.residents-footer').textContent(),/211 cadastros virtuais/);
     for(const a of await dialog.locator('.resident-channels a').all()){assert.equal(await a.getAttribute('target'),'_blank');assert.match(await a.getAttribute('rel'),/noopener/);}
     const overflow=await dialog.evaluate(d=>({width:d.clientWidth,scroll:d.scrollWidth,left:d.getBoundingClientRect().left,right:d.getBoundingClientRect().right}));
     assert.ok(overflow.scroll<=overflow.width+1,JSON.stringify({width,overflow}));assert.ok(overflow.left>=0&&overflow.right<=width+1);

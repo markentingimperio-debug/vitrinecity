@@ -3,7 +3,7 @@ import {DISTRICT_INTEGRATIONS} from './vitriny-district-integrations.js';
 
 // Public fictional identities, versioned in code. No user records, agent prompts,
 // task inference, traffic counters or paid services are consulted by this catalog.
-export const RESIDENT_CATALOG_VERSION='2026-09-15-v1';
+export const RESIDENT_CATALOG_VERSION='2026-09-15-v2';
 export const STUDIO_CHANNELS=Object.freeze([
   Object.freeze({id:'youtube',name:'YouTube · Agrotécnica',href:'https://www.youtube.com/@agrotecnica362'}),
   Object.freeze({id:'instagram',name:'Instagram · Agrotécnica',href:'https://www.instagram.com/agrotecniica/'}),
@@ -12,6 +12,12 @@ export const STUDIO_CHANNELS=Object.freeze([
 const freeze=value=>{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
 const skins=['#e4b38f','#b57e59','#87593d','#583c30'];
 const outfits=['#397c89','#ad7a38','#795b83','#587340','#9c5558','#455b80'];
+export const RESIDENT_SPECIALTIES=freeze([
+  {id:'coordination',label:'Coordenação'}, {id:'research',label:'Pesquisa'},
+  {id:'writing',label:'Redação'}, {id:'design',label:'Design'},
+  {id:'video',label:'Vídeo'}, {id:'review',label:'Revisão'},
+  {id:'seo',label:'SEO'}, {id:'analysis',label:'Análise'}
+]);
 export function residentHash(value){let n=2166136261;for(const c of String(value))n=Math.imul(n^c.charCodeAt(0),16777619);return n>>>0;}
 export function safeResidentHref(value){
   return typeof value==='string'&&value.startsWith('/')&&!value.startsWith('//')&&!/[\\\u0000-\u0020]/.test(value)&&!/^\/api(?:\/|$)/i.test(value);
@@ -54,7 +60,46 @@ const definitions=[
 function resident([id,name,profession,departmentId,line]){
   const seed=residentHash(id);return {id,name,profession,departmentId,line,appearance:{skinColor:skins[seed%skins.length],outfitColor:outfits[(seed>>>4)%outfits.length],variant:seed%6},status:'unconnected',taskLabel:'Sem tarefa registrada nesta visualização'};
 }
-export const CITY_RESIDENTS=freeze(definitions.map(resident));
+const firstNames=['Aline','Bruno','Camila','Diego','Elisa','Felipe','Giovana','Hugo','Isabel','João','Karina','Lucas','Marina','Nicolas','Paula','Rafael','Sara','Tiago','Valéria','William','Yasmin','Zeca','Amanda','Vitor'];
+const surnames=['Costa','Lima','Rocha','Alves','Reis','Moura','Prado','Duarte','Melo','Nunes','Freitas','Barros','Pires','Campos','Vieira','Ramos','Teixeira','Castro','Machado','Ribeiro','Dias','Azevedo','Monteiro'];
+export const CITY_RESIDENTS=freeze([
+  ...definitions.map(resident),
+  ...RESIDENT_DEPARTMENTS.flatMap((d,index)=>RESIDENT_SPECIALTIES.map((specialty,slot)=>({
+    ...resident([`${d.id}-specialist-${specialty.id}`,`${firstNames[(index*5+slot)%firstNames.length]} ${surnames[index]}`,
+      `Especialista virtual · ${specialty.label}`,d.id,
+      `Meu papel neste roteiro é ${specialty.label.toLowerCase()} em ${d.name}. Posso indicar o conteúdo, mas não estou executando tarefas nem aprendendo automaticamente.`]),
+    specialty:specialty.id,slot
+  })))
+]);
+
+export function residentVisibleRoster(catalog,selectedId,limit=40){
+  const cap=limit===16?16:40,selected=catalog.residents.find(p=>p.id===selectedId);
+  const mappedInteriors=new Set(catalog.departments.filter(d=>d.newBuilding).map(d=>d.id));
+  const initialWorkers=catalog.residents.filter(p=>mappedInteriors.has(p.departmentId)&&p.specialty&&p.slot<(cap===16?2:4)),initialIds=new Set(initialWorkers.map(p=>p.id));
+  const initial=[...initialWorkers,...catalog.residents.filter(p=>!initialIds.has(p.id))];
+  const ordered=selected?[selected,...catalog.residents.filter(p=>p.id!==selectedId&&p.departmentId===selected.departmentId),...initial.filter(p=>p.departmentId!==selected.departmentId)]:initial;
+  return ordered.slice(0,cap);
+}
+
+// Shared with the modeled pavilion: two banks of four desks, central aisle,
+// unobstructed four-metre front doorway. Other buildings have no invented interior.
+export function residentDesk(slot){const i=Math.max(0,Math.min(7,Number(slot)||0));return {x:i%2?7:-7,z:-7+Math.floor(i/2)*4.4};}
+function alongPath(points,t){
+  const lengths=points.slice(1).map((p,i)=>Math.hypot(p.x-points[i].x,p.z-points[i].z)),total=lengths.reduce((a,b)=>a+b,0);
+  let distance=Math.max(0,Math.min(1,t))*total;
+  for(let i=0;i<lengths.length;i++){if(distance<=lengths[i]||i===lengths.length-1){const a=points[i],b=points[i+1],f=lengths[i]?distance/lengths[i]:0;return {x:a.x+(b.x-a.x)*f,z:a.z+(b.z-a.z)*f,yaw:Math.atan2(b.x-a.x,b.z-a.z)};}distance-=lengths[i];}
+  return {...points[0],yaw:0};
+}
+
+export function residentConversation(person,catalog,{crossDepartment=false}={}){
+  if(crossDepartment){
+    const index=catalog.departments.findIndex(d=>d.id===person.departmentId),destination=catalog.departments[(index+1)%catalog.departments.length],source=catalog.departments[index];
+    const partner=catalog.residents.find(p=>p.departmentId===destination.id&&p.specialty==='coordination')||catalog.residents.find(p=>p.departmentId===destination.id);
+    if(partner)return {simulated:true,departments:[source.id,destination.id],speakers:[person.name,partner.name],lines:[`${person.name} · ${source.name}: “Uma ideia para melhorar a cidade: organizar referências e facilitar o acesso aos conteúdos entre nossos departamentos.”`,`${partner.name} · ${destination.name}: “Podemos propor uma revisão conjunta de clareza e acessibilidade. É uma ideia deste roteiro; nenhuma tarefa foi criada ou executada.”`]};
+  }
+  const peers=catalog.residents.filter(p=>p.departmentId===person.departmentId&&p.id!==person.id),partner=peers.find(p=>p.specialty&&Math.floor(p.slot/2)===Math.floor((person.slot??-8)/2))||peers[0];
+  return partner?{simulated:true,speakers:[person.name,partner.name],lines:[`${person.name}: “${person.line}”`,`${partner.name}: “Vamos consultar o conteúdo disponível? Esta conversa é um roteiro, não um registro de trabalho realizado.”`]}:{simulated:true,speakers:[person.name],lines:[`${person.name}: “${person.line}”`]};
+}
 
 export function createResidentCatalog(stores=[]){
   const departments=[...RESIDENT_DEPARTMENTS],residents=[...CITY_RESIDENTS],seen=new Set();
@@ -69,10 +114,21 @@ export function createResidentCatalog(stores=[]){
 }
 
 export function residentPose(person,building,elapsed=0){
+  if(person.specialty&&building.newBuilding){
+    const slot=person.slot,desk=residentDesk(slot),pair=Math.floor(slot/2),phase=(Math.max(0,Number(elapsed)||0)+pair*14)%56;
+    const work={x:desk.x,z:desk.z+1.3},conversation={x:slot%2?2:-2,z:19+pair*.8};
+    const path=[work,{x:0,z:work.z},{x:0,z:16},conversation];let local,action,activity;
+    if(phase<16){local={...work,yaw:Math.PI};action='work';activity='Trabalho simulado na mesa';}
+    else if(phase<28){local=alongPath(path,(phase-16)/12);action='walk';activity='Saída simulada pela entrada';}
+    else if(phase<38){local={...conversation,yaw:slot%2?-Math.PI/2:Math.PI/2};action='talk';activity='Conversa simulada com colega';}
+    else if(phase<50){local=alongPath([...path].reverse(),(phase-38)/12);action='walk';activity='Retorno simulado à mesa';}
+    else{local={...work,yaw:Math.PI};action='reception';activity='Preparação simulada na mesa';}
+    return {x:building.position.x+local.x,z:building.position.z+local.z,yaw:local.yaw,moving:action==='walk',phase,action,activity,interior:local.z<12.5};
+  }
   const seed=residentHash(person.id),phase=(Math.max(0,Number(elapsed)||0)+seed%24)%24;
   const moving=phase<12,angle=moving?phase/12*Math.PI*2:0;
   const baseX=building.position.x+(seed%3-1)*1.8,baseZ=building.position.z+(building.newBuilding?20:0);
-  return {x:baseX+Math.sin(angle)*2.2,z:baseZ+Math.cos(angle)*1.4,yaw:moving?angle+Math.PI/2:Math.PI,moving,phase,activity:moving?'Deslocamento simulado':'Recepção simulada'};
+  return {x:baseX+Math.sin(angle)*2.2,z:baseZ+Math.cos(angle)*1.4,yaw:moving?angle+Math.PI/2:Math.PI,moving,phase,action:moving?'walk':person.specialty?'talk':'reception',interior:false,activity:moving?'Deslocamento simulado na recepção':person.specialty?'Conversa simulada na recepção':'Recepção simulada'};
 }
 
 export function intersectsResidentBuilding(building){
