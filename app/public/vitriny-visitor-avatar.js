@@ -1,5 +1,5 @@
 import * as THREE from '/vendor/three/three.module.js';
-import {createUrbanPerson} from './vitriny-urban-models.js';
+import {createUrbanPerson} from './vitriny-urban-models.js?v=20260915-human-1';
 
 const SKINS=['#f2c5a1','#c88d61','#946342','#593a2a'];
 const OUTFITS=['#2f697b','#c4a15f','#705c84','#485747'];

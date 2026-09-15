@@ -2,10 +2,15 @@ import * as THREE from '/vendor/three/three.module.js';
 
 // Local limestone atlas: a 2:1 running bond gives the boulevard a human scale.
 // Height and roughness share one linear texture (R/G); LITE only needs colour.
-export function architecturalPavingPixels({color='#aaa89b',lite=false}={}){
-  const size=lite?256:512,albedo=new Uint8ClampedArray(size*size*4);
+// The four initial pavements use the same stone pattern with different tints.
+// Reuse the expensive grain/mineral calculation within this synchronous build,
+// then release it at the next microtask (at most two resolutions / 3.5 MiB).
+const pavingPatterns=new Map();
+function pavingPattern(lite){
+  const size=lite?256:512;
+  if(pavingPatterns.has(size))return pavingPatterns.get(size);
+  const shades=new Float64Array(size*size);
   const surface=lite?null:new Uint8ClampedArray(size*size*4);
-  const hex=new THREE.Color(color).getHex(),base=[hex>>16,(hex>>8)&255,hex&255];
   const hash=(x,y)=>{let n=Math.imul(x+11,374761393)^Math.imul(y+7,668265263);n=Math.imul(n^(n>>>13),1274126177);return ((n^(n>>>16))>>>0)/4294967295;};
   for(let y=0;y<size;y++)for(let x=0;x<size;x++){
     const v=y/size*8,row=Math.floor(v),u=x/size*4+(row%2)*.5;
@@ -16,15 +21,30 @@ export function architecturalPavingPixels({color='#aaa89b',lite=false}={}){
     const mineral=Math.sin(fx*19+fy*7+slab*8)*Math.sin(fy*27-fx*4)*.006;
     const shade=joint?.82:(.965+slab*.07+grain*.018+mineral)*(.965+.035*reveal);
     const offset=(y*size+x)*4;
-    for(let channel=0;channel<3;channel++)albedo[offset+channel]=Math.round(Math.min(255,base[channel]*shade));
-    albedo[offset+3]=255;
+    shades[y*size+x]=shade;
     if(surface){
       surface[offset]=joint?64:Math.round(217+reveal*9+grain*3);
       surface[offset+1]=joint?245:Math.round(204+slab*23+grain*6);
       surface[offset+2]=0;surface[offset+3]=255;
     }
   }
-  return {size,albedo,surface};
+  const pattern={size,shades,surface};
+  pavingPatterns.set(size,pattern);
+  if(pavingPatterns.size===1)queueMicrotask(()=>pavingPatterns.clear());
+  return pattern;
+}
+
+export function architecturalPavingPixels({color='#aaa89b',lite=false}={}){
+  const {size,shades,surface}=pavingPattern(lite);
+  const albedo=new Uint8ClampedArray(size*size*4);
+  const hex=new THREE.Color(color).getHex(),base=[hex>>16,(hex>>8)&255,hex&255];
+  for(let i=0;i<shades.length;i++){
+    const offset=i*4,shade=shades[i];
+    for(let channel=0;channel<3;channel++)albedo[offset+channel]=Math.round(Math.min(255,base[channel]*shade));
+    albedo[offset+3]=255;
+  }
+  // Each caller owns its pixels; edits/disposal must not affect another floor.
+  return {size,albedo,surface:surface?surface.slice():null};
 }
 
 export function createArchitecturalPavingMaps({color,lite=false,repeat=12,anisotropy=1}={}){

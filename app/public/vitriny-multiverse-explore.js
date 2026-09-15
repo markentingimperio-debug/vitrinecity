@@ -28,7 +28,7 @@ import {mountEmissoraBuilding} from './vitriny-emissora-building.js';
 import {EMISSORA_BUILDING,intersectsEmissoraLot} from './vitriny-emissora-core.js';
 import {mountCreditsBuilding} from './vitriny-credits-building.js';
 import {mountCityLife} from './vitriny-city-life.js';
-import {mountCityResidents} from './vitriny-city-residents-scene.js?v=20260915-residents-2';
+import {mountCityResidents} from './vitriny-city-residents-scene.js?v=20260915-human-1';
 import {createResidentCatalog,intersectsResidentBuilding} from './vitriny-city-residents-core.js?v=20260915-residents-2';
 import {mountCommerceAvenue,mountMusicArena} from './vitriny-commerce-avenue.js';
 import {intersectsCommerceAvenue} from './vitriny-affiliate-centers-core.js';
@@ -287,10 +287,16 @@ function addLiveStore(entity){
   buildingBrands.register(g,{name:entity.name});
   modeledBuildings.mountStore(g,entity,fallback,{onReady:layout=>storeBillboard.setLayout(layout)}).then(()=>{if(!disposed)buildingBrands.refresh(g);});
   const isPlantStore=entity.reference==='official_agrotecnica';
-  const entry=document.createElement('a');entry.hidden=true;entry.className='store-entrance';entry.href=entity.href;entry.setAttribute('aria-label',isPlantStore?'Ver adubos para plantas da Agrotécnica':`Visitar ${entity.name}`);
+  const entrance=document.createElement('div');entrance.hidden=true;entrance.className='store-entrance-group';
+  const entry=document.createElement('a');entry.className='store-entrance';entry.href=entity.href;entry.setAttribute('aria-label',isPlantStore?'Ver adubos para plantas da Agrotécnica':`Visitar ${entity.name}`);
   const name=document.createElement('small');name.textContent=entity.name;const action=document.createElement('strong');action.textContent=isPlantStore?'Ver adubos →':'Ver produtos →';entry.append(name,action);
-  entry.addEventListener('click',()=>saveSpatialContext({spatialPath:`/v/br/go/${cityId}/commerce/${encodeURIComponent(entity.reference)}`,districtId:'commerce',targetType:'store',targetId:entity.reference}));entranceLayer.append(entry);
-  const anchor=g.localToWorld(new THREE.Vector3(0,2.5,entity.size.depth/2+.4));storeEntrances.push({element:entry,anchor,normal:new THREE.Vector3(0,0,1).transformDirection(g.matrixWorld),href:entity.href,reference:entity.reference});
+  const saveStoreContext=()=>saveSpatialContext({spatialPath:`/v/br/go/${cityId}/commerce/${encodeURIComponent(entity.reference)}`,districtId:'commerce',targetType:'store',targetId:entity.reference});
+  entry.addEventListener('click',saveStoreContext);entrance.append(entry);
+  if(entity.interiorHref&&isSafeInternalHref(entity.interiorHref)){
+    const showroom=document.createElement('a');showroom.className='store-showroom-link';showroom.href=entity.interiorHref;showroom.textContent='Conhecer showroom';showroom.setAttribute('aria-label',`Conhecer showroom de ${entity.name}`);showroom.addEventListener('click',saveStoreContext);entrance.append(showroom);
+  }
+  entranceLayer.append(entrance);
+  const anchor=g.localToWorld(new THREE.Vector3(0,2.5,entity.size.depth/2+.4));storeEntrances.push({element:entrance,anchor,normal:new THREE.Vector3(0,0,1).transformDirection(g.matrixWorld),href:entity.href,reference:entity.reference});
 }
 async function loadLiveStores(){
   if(!isActiveCity){worldStat.textContent=`${cityContext.name} · PREVIEW PROCEDURAL`;$('storefrontProducts').textContent='As vitrines locais estarão disponíveis quando as lojas desta cidade forem conectadas.';return;}
@@ -301,7 +307,10 @@ async function loadLiveStores(){
     residentCatalog=createResidentCatalog(storeBuildingLots);cityResidents?.setCatalog(residentCatalog);
     dispatchEvent(new CustomEvent('vitriny:residents-catalog',{detail:{stores:storeBuildingLots.map(({reference,name,href,position})=>({reference,name,href,position}))}}));
     for(const chunk of chunkGroups.values())for(const child of [...chunk.children])if(child.userData.proceduralBuilding&&storeBuildingLots.some(store=>intersectsStoreBuilding(child.userData.proceduralBuilding,store))){disposeGroup(child);chunk.remove(child);}
-    for(const entity of storeBuildingLots){addLiveStore(entity);const link=document.createElement('a');link.href=entity.href;link.textContent=entity.name;link.dataset.storeReference=entity.reference;links.append(link);}
+    for(const entity of storeBuildingLots){
+      addLiveStore(entity);const link=document.createElement('a');link.href=entity.href;link.textContent=entity.name;link.dataset.storeReference=entity.reference;links.append(link);
+      if(entity.interiorHref&&isSafeInternalHref(entity.interiorHref)){const showroom=document.createElement('a');showroom.href=entity.interiorHref;showroom.textContent=`Showroom · ${entity.name}`;showroom.dataset.storeShowroom=entity.reference;showroom.addEventListener('click',()=>saveSpatialContext());links.append(showroom);}
+    }
     worldStat.textContent=`${cityContext.name} · ${entities.length} lojas conectadas`;
   }catch{worldStat.textContent=`${cityContext.name} · lojas em modo offline`;$('storefrontProducts').textContent='Não foi possível carregar as vitrines agora. Tente novamente mais tarde.';}
 }

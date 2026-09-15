@@ -1,5 +1,5 @@
 import * as THREE from '/vendor/three/three.module.js';
-import {createUrbanCrowd} from './vitriny-urban-models.js?v=20260915-residents-2';
+import {createUrbanCrowd} from './vitriny-urban-models.js?v=20260915-human-1';
 import {createResidentCatalog,residentPose,residentDesk,residentVisibleRoster,RESIDENT_DEPARTMENTS} from './vitriny-city-residents-core.js?v=20260915-residents-2';
 
 export function mountResidentPavilion({building,architecture:a}){
@@ -45,7 +45,7 @@ export function mountCityResidents({scene,architecture,profileId='STANDARD'}){
   function rebuild(){
     crowd?.dispose();
     visible=residentVisibleRoster(catalog,selectedId,limit);
-    crowd=createUrbanCrowd({parent:root,count:visible.length,identities:visible});posed=false;
+    crowd=createUrbanCrowd({parent:root,count:visible.length,identities:visible,profileId});posed=false;
   }
   function tick(dt,{paused=false}={}){
     if(paused&&posed)return;posed=true;if(!paused)elapsed+=Math.min(Math.max(dt,0),.1);

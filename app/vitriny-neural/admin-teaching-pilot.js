@@ -22,8 +22,10 @@ const microCeil=fraction=>{const n=BigInt(fraction.numerator)*1000000n,d=BigInt(
  */
 export function createAdminTeachingPilot({db,config,providerKeys={},fetchImpl=globalThis.fetch,now=Date.now}={}){
   if(!db?.prepare||!db?.transaction||!db?.exec||typeof fetchImpl!=='function'||typeof now!=='function')fail('teaching_config_invalid');
-  fields(config,['budgetMicroBrl','maxOutputTokens','fx','tariffs']);fields(providerKeys,['deepseek','openai']);
+  fields(config,['budgetMicroBrl','maxOutputTokens','fx','tariffs','openAiRequestProfile']);fields(providerKeys,['deepseek','openai']);
   const cfg=copy(config),keys={...providerKeys};
+  if(cfg.openAiRequestProfile!==undefined&&cfg.openAiRequestProfile!=='plain-text-v1')fail('teaching_config_invalid');
+  const openAiProfile=cfg.openAiRequestProfile?{requestProfile:cfg.openAiRequestProfile}:{};
   if(typeof cfg.budgetMicroBrl!=='string'||!/^(?:0|[1-9]\d{0,7})$/.test(cfg.budgetMicroBrl))fail('teaching_config_invalid');
   const budget=integer(Number(cfg.budgetMicroBrl),0,MAX_BUDGET),maxOutputTokens=integer(cfg.maxOutputTokens,1,8192);
   const clock=()=>integer(now(),1,Number.MAX_SAFE_INTEGER-120000);
@@ -72,7 +74,7 @@ export function createAdminTeachingPilot({db,config,providerKeys={},fetchImpl=gl
     if(!Array.isArray(input.messages))fail('teaching_input_invalid');
     const messages=copy(input.messages),bytes=Buffer.byteLength(JSON.stringify(messages),'utf8');
     if(bytes>MAX_INPUT)fail('teaching_input_limit');
-    const request={model,messages,maxOutputTokens,...(providerId==='openai'?{reasoningEffort:'none'}:{})};
+    const request={model,messages,maxOutputTokens,...(providerId==='openai'?{reasoningEffort:'none',...openAiProfile}:{})};
     const requestHash=(providerId==='deepseek'?hashDeepSeekPaidChatRequest:hashOpenAiPaidChatRequest)(request),operationHash=hash(JSON.stringify({role,providerId,requestHash}));
     const prior=row(id);if(prior){if(prior.operation_hash!==operationHash)fail('teaching_id_conflict');return dto(prior);}
     const at=clock(),fxAt=Date.parse(cfg.fx.observedAt);
@@ -85,7 +87,7 @@ export function createAdminTeachingPilot({db,config,providerKeys={},fetchImpl=gl
       const existing=row(id);if(existing){if(existing.operation_hash!==operationHash)fail('teaching_id_conflict');return false;}
       if(Number(status().usedMicroBrl)+maximum>limit)fail('teaching_budget_exhausted');
       db.prepare("INSERT INTO admin_teaching_pilot_runs(id,operation_hash,request_hash,provider,model,role,state,claim_token,maximum_micro,charged_micro,input_json,pricing_json,created_at) VALUES(?,?,?,?,?,?,'reserved',?,?,?,?,?,?)")
-        .run(id,operationHash,requestHash,providerId,model,role,owner,maximum,maximum,JSON.stringify({messages,maxOutputTokens,inputBound}),JSON.stringify({fx:cfg.fx,tariffs:cfg.tariffs[providerId],tariffSchedule:providerId==='deepseek'?DEEPSEEK_TARIFF_SCHEDULE:null}),at);
+        .run(id,operationHash,requestHash,providerId,model,role,owner,maximum,maximum,JSON.stringify({messages,maxOutputTokens,inputBound,...(providerId==='openai'?openAiProfile:{})}),JSON.stringify({fx:cfg.fx,tariffs:cfg.tariffs[providerId],tariffSchedule:providerId==='deepseek'?DEEPSEEK_TARIFF_SCHEDULE:null}),at);
       return true;
     }).immediate();
     if(!won)return dto(row(id));
@@ -99,7 +101,7 @@ export function createAdminTeachingPilot({db,config,providerKeys={},fetchImpl=gl
     try{
       const factory=providerId==='deepseek'?createDeepSeekPaidChatAdapter:createOpenAiPaidChatAdapter;
       const adapter=factory({enabled:true,apiKey:keys[providerId]||'',model,maxOutputTokens,now:clock,fetchImpl,assertAuthorized,maxInputBytes:65536,maxResponseBytes:262144,
-        acceptedResponseModels:providerId==='deepseek'?['deepseek-flash','deepseek-v4-flash']:[model],...(providerId==='openai'?{reasoningEffort:'none'}:{})});
+        acceptedResponseModels:providerId==='deepseek'?['deepseek-flash','deepseek-v4-flash']:[model],...(providerId==='openai'?{reasoningEffort:'none',...openAiProfile}:{})});
       result=await adapter.invoke({requestId:id,messages,maxOutputTokens,permit});
     }catch{result={ok:false,transportStarted:row(id).state==='dispatching',code:'teaching_dispatch_uncertain',usage:{known:false}};}
     let state='held',cost=null,code=result.code||null,receiptId=null;

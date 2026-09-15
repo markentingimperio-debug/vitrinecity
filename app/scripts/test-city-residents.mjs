@@ -55,7 +55,7 @@ test('three new pavilions reserve their bounded lots without replacing existing 
 const threeURL=import.meta.resolve('three'),coreURL=new URL('../public/vitriny-city-residents-core.js',import.meta.url).href;
 const dataModule=source=>'data:text/javascript;base64,'+Buffer.from(source).toString('base64');
 const urbanURL=dataModule(readFileSync(new URL('../public/vitriny-urban-models.js',import.meta.url),'utf8').replaceAll("'/vendor/three/three.module.js'",JSON.stringify(threeURL)));
-const sceneSource=readFileSync(new URL('../public/vitriny-city-residents-scene.js',import.meta.url),'utf8').replaceAll("'/vendor/three/three.module.js'",JSON.stringify(threeURL)).replaceAll("'./vitriny-urban-models.js?v=20260915-residents-2'",JSON.stringify(urbanURL)).replaceAll("'./vitriny-city-residents-core.js?v=20260915-residents-2'",JSON.stringify(coreURL));
+const sceneSource=readFileSync(new URL('../public/vitriny-city-residents-scene.js',import.meta.url),'utf8').replaceAll("'/vendor/three/three.module.js'",JSON.stringify(threeURL)).replaceAll("'./vitriny-urban-models.js?v=20260915-human-1'",JSON.stringify(urbanURL)).replaceAll("'./vitriny-city-residents-core.js?v=20260915-residents-2'",JSON.stringify(coreURL));
 const {mountCityResidents,mountResidentPavilion}=await import(dataModule(sceneSource));
 function fakeArchitecture(){
   const geometry=new THREE.BoxGeometry(1,1,1),a={textSign(parent){const sign=new THREE.Group();parent.add(sign);return sign;}};

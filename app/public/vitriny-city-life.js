@@ -1,5 +1,5 @@
 import * as THREE from '/vendor/three/three.module.js';
-import {createUrbanCrowd,createUrbanVehicle} from './vitriny-urban-models.js';
+import {createUrbanCrowd,createUrbanVehicle} from './vitriny-urban-models.js?v=20260915-human-1';
 
 // These residents and vehicles are ambient scenery, never online visitor counts.
 export function mountCityLife({scene,architecture,profileId='STANDARD'}){
@@ -27,7 +27,7 @@ export function mountCityLife({scene,architecture,profileId='STANDARD'}){
   for(const x of [-15,0,15])for(const z of [-5,6]){part(lounge,wood,x,1.25,z,3.4,.2,2.2);part(lounge,graphite,x,.65,z,.25,1.2,.25);for(const dx of [-2.3,2.3]){part(lounge,wood,x+dx,.75,z,1.2,.18,1.2);part(lounge,graphite,x+dx,.36,z,.12,.7,.12);}}
   for(const x of [-25,25])tree(lounge,x,0,1.2);
   const sign=architecture.textSign(lounge,'PRAÇA DE CONVIVÊNCIA',{width:32,height:2.2,y:7,z:-15.4,subtitle:'MÚSICA · ENCONTROS · DESCOBERTAS'});sign.rotation.y=Math.PI;
-  const count=lite?12:24,crowd=createUrbanCrowd({parent:group,count});
+  const count=lite?12:24,crowd=createUrbanCrowd({parent:group,count,profileId});
   const cars=[];for(let i=0;i<(lite?3:6);i++){
     const car=createUrbanVehicle({architecture,color:['#a6acb7','#253c4f','#a88553','#374949','#74677d','#d2ccc0'][i],variant:i});
     car.userData.direction=i%2?1:-1;car.userData.avenue=false;

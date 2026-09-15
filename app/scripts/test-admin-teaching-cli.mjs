@@ -76,6 +76,26 @@ test('reviewer unknown stays pending across repeat and inspect, without losing t
   assert.equal((await f.run()).state,'partial');assert.equal(f.calls.length,2);
 });
 
+test('explicit review profile resumes only reviewer under a new ID and preserves the uncertain record/report',async t=>{
+  const f=fixture(t,{respond:({data,role,calls})=>{
+    if(role==='reviewer'&&calls.at(-1).body.modalities)return new Response(JSON.stringify({error:{type:'invalid_request_error',param:'modalities'}}),{status:400});
+    return new Response(JSON.stringify(data));
+  }});
+  assert.equal((await f.run()).state,'partial');assert.equal(f.calls.length,2);
+  const original=fs.readFileSync(f.report,'utf8'),check=new Database(f.ledger,{readonly:true});
+  const old=check.prepare('SELECT * FROM admin_teaching_pilot_runs WHERE id=?').get(plan('platform').reviewerId);check.close();
+  const newReport=path.join(f.directory,'platform-plain-text-v1.json');
+  const args=f.options.args.map(a=>a.startsWith('--report=')?'--report='+newReport:a).concat('--review-profile=plain-text-v1');
+  const resumed=await f.run({args});assert.equal(resumed.state,'completed');assert.equal(f.calls.length,3);
+  assert.equal(f.calls[2].role,'reviewer');assert.equal(f.calls[2].body.modalities,undefined);assert.deepEqual(f.calls[2].body.prompt_cache_options,{mode:'explicit'});
+  assert.ok(resumed.reviewer.id.endsWith('-plain-text-v1'));assert.equal(resumed.budget.actualMicroBrl,null);
+  assert.equal(fs.readFileSync(f.report,'utf8'),original);assert.equal(JSON.parse(fs.readFileSync(newReport,'utf8')).reviewProfile,'plain-text-v1');
+  const after=new Database(f.ledger,{readonly:true});assert.deepEqual(after.prepare('SELECT * FROM admin_teaching_pilot_runs WHERE id=?').get(old.id),old);after.close();
+  await f.run({args});await f.run({args:args.map(a=>a==='--execute'?'--inspect':a),env:{}});assert.equal(f.calls.length,3);
+  await assert.rejects(f.run({args:f.options.args.concat('--review-profile=plain-text-v1')}),{code:'teaching_report_conflict'});
+  assert.throws(()=>parseTeachingArgs(['--review-profile=unknown']),{code:'teaching_args_invalid'});
+});
+
 test('strict JSON accepts only exact IDs/fields and optional full fence, never duplicate keys or PII',()=>{
   const p=plan('platform'),valid=teacher(p);assert.equal(validateTeacherResponse('```json\n'+JSON.stringify(valid)+'\n```',p).lessons.length,10);
   assert.equal(validateReviewerResponse(JSON.stringify(review(p)),p).reviews.length,10);
