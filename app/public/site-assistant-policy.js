@@ -42,6 +42,14 @@ export function siteAssistantContextPath(pathname, search = '') {
   return '/cursos/' + slugs[0];
 }
 
+// A literal fragment is an invitation to open the UI, never a message or URL
+// supplied to the model. Checkout and noncommercial pages remain passive.
+export function siteAssistantDirectIntent(pathname, hash) {
+  if (hash !== '#falar-com-lia') return false;
+  const policy = classifySiteAssistantPath(pathname);
+  return policy.enabled && policy.commercial && policy.kind !== 'course_checkout';
+}
+
 export const SITE_ASSISTANT_DISMISS_MS = 24 * 60 * 60 * 1000;
 export function siteAssistantDismissed(until, now = Date.now()) {
   const timestamp = Number(until);
