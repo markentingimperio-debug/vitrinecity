@@ -48,3 +48,37 @@ export function publishLiaTrainingRounds({ db, report, authorization, now = Date
   const publish = () => { let published = 0; for (const record of items) { if (db.prepare('SELECT 1 FROM lia_curated_knowledge WHERE id=?').get(record.id)) continue; db.prepare("INSERT INTO lia_curated_knowledge(id,lesson_id,domain,question,answer,source_ids_json,source_revision,report_hash,review_hash,content_hash,expires_at,policy_id,approval_actor,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, 'active', ?)").run(record.id, record.lesson_id, record.domain, record.question, record.answer, record.source_ids_json, record.source_revision, record.report_hash, record.review_hash, record.content_hash, record.expires_at, record.policy_id, record.approval_actor, new Date(at).toISOString()); if (exists(db, 'neural_audit')) db.prepare('INSERT INTO neural_audit(id,kind,subject_id,actor,details_json,created_at) VALUES(?,?,?,?,?,?)').run(sha(record.id + record.content_hash + at), 'lia_curated_knowledge_published', record.id, LIA_CURATED_ACTOR, JSON.stringify({ policyId: LIA_CURATED_POLICY, reportHash, observedAt: new Date(observed).toISOString(), coinDebits: 0, weightTraining: false, batch: 'five-rounds' }), new Date(at).toISOString()); published += 1; } return published; };
   const published = db.transaction(publish).immediate(); return { policyId: LIA_CURATED_POLICY, actor: LIA_CURATED_ACTOR, accepted: items.length, published, duplicates, dryRun: false, coinDebits: 0, weightTraining: false };
 }
+
+/** Publish accepted lessons from the original, bounded 100-question reports. */
+export function publishLiaApprovedTrainingReports({ db, reports, authorization, now = Date.now, dryRun = false } = {}) {
+  if (!plain(authorization) || canonical(authorization) !== canonical({ policyId: LIA_CURATED_POLICY, scope: SCOPE, confirmed: true })) fail('lia_reports_authorization_required');
+  const at = clock(now); if (!db?.prepare || !db?.transaction || !Array.isArray(reports) || reports.length !== 2 || typeof dryRun !== 'boolean') fail('lia_reports_config_invalid');
+  const accepted = []; const seenReports = new Set();
+  for (const report of reports) {
+    const kind = report?.format === 'vitrinecity-video-training-report-v1' ? 'video' : report?.format === 'vitrinecity-sales-training-report-v1' ? 'sales' : null;
+    if (!kind || seenReports.has(kind) || !plain(report) || report.sourceRevision !== teachingSourceRevision || report.mode !== 'execute' || report.state !== 'completed' || report.lessonCount !== 100 || report.batchCount !== 10 || report.accepted + report.revise !== 100 || report.providerCalls !== 20 || report.coinDebits !== 0 || report.weightTraining !== false || report.externalPublication !== false || !/^[a-f0-9]{64}$/.test(report.planHash) || !Array.isArray(report.batches) || report.batches.length !== 10) fail('lia_reports_report_invalid');
+    const observed = Date.parse(report.observedAt); if (!Number.isFinite(observed) || observed > at) fail('lia_reports_report_invalid');
+    seenReports.add(kind);
+    for (const batch of report.batches) {
+      if (!plain(batch) || !Array.isArray(batch.lessons) || batch.lessons.length !== 10 || !Array.isArray(batch.answers) || batch.answers.length !== 10 || !Array.isArray(batch.reviews) || batch.reviews.length !== 10) fail('lia_reports_batch_invalid');
+      for (const receipt of [batch.teacher, batch.reviewer]) if (!plain(receipt) || receipt.state !== 'completed' || receipt.code !== null || typeof receipt.receiptId !== 'string' || !/^(?:deepseek|openai):[A-Za-z0-9][A-Za-z0-9_.:-]{1,159}$/.test(receipt.receiptId) || ![receipt.chargedMicroBrl, receipt.actualMicroBrl, receipt.actualMicroUsd].every((value) => typeof value === 'string' && /^\d+$/.test(value))) fail('lia_reports_receipt_invalid');
+      const lessons = new Map(batch.lessons.map((lesson) => [lesson.id, lesson]));
+      for (const answer of batch.answers) {
+        const lesson = lessons.get(answer?.id); if (!lesson || !safe(answer.answer, 900) || !Array.isArray(answer.sourceIds) || !answer.sourceIds.length || answer.sourceIds.some((id) => !sourceMap.has(id) || id === 'COINS')) fail('lia_reports_answer_invalid');
+        const review = batch.reviews.find((item) => item?.id === answer.id); if (!review || !['accept', 'revise'].includes(review.decision) || !safe(review.reason, 500)) fail('lia_reports_review_invalid');
+        if (review.decision === 'accept') accepted.push({ kind, report, lesson, answer, review });
+      }
+    }
+    if (accepted.filter((item) => item.report === report).length !== report.accepted) fail('lia_reports_count_invalid');
+  }
+  if (accepted.length !== 191 || new Set(accepted.map((item) => item.answer.id)).size !== accepted.length) fail('lia_reports_count_invalid');
+  const reportHashes = new Map(reports.map((report) => [report.format, sha(canonical(report))]));
+  const items = accepted.map(({ kind, lesson, answer, review, report }) => {
+    const sourceIds = [...new Set(answer.sourceIds)].sort(); const record = { id: `lia-curated-approved-${kind}-${lesson.id}`, lesson_id: lesson.id, domain: lesson.domain, question: lesson.question, answer: answer.answer, source_ids_json: JSON.stringify(sourceIds), source_revision: teachingSourceRevision, report_hash: reportHashes.get(report.format), review_hash: sha(canonical(review)), expires_at: expiry(sourceIds), policy_id: LIA_CURATED_POLICY, approval_actor: LIA_CURATED_ACTOR }; record.content_hash = seal(record); return record;
+  });
+  if (dryRun) return { policyId: LIA_CURATED_POLICY, actor: LIA_CURATED_ACTOR, accepted: items.length, published: 0, duplicates: 0, revise: 9, dryRun: true, coinDebits: 0, weightTraining: false };
+  table(db); let duplicates = 0;
+  for (const record of items) { const prior = db.prepare('SELECT * FROM lia_curated_knowledge WHERE id=?').get(record.id); if (prior) { if (prior.status !== 'active' || prior.content_hash !== record.content_hash || seal(prior) !== prior.content_hash) fail('lia_reports_conflict'); duplicates += 1; } }
+  const publish = () => { let published = 0; for (const record of items) { if (db.prepare('SELECT 1 FROM lia_curated_knowledge WHERE id=?').get(record.id)) continue; db.prepare("INSERT INTO lia_curated_knowledge(id,lesson_id,domain,question,answer,source_ids_json,source_revision,report_hash,review_hash,content_hash,expires_at,policy_id,approval_actor,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, 'active', ?)").run(record.id, record.lesson_id, record.domain, record.question, record.answer, record.source_ids_json, record.source_revision, record.report_hash, record.review_hash, record.content_hash, record.expires_at, record.policy_id, record.approval_actor, new Date(at).toISOString()); if (exists(db, 'neural_audit')) db.prepare('INSERT INTO neural_audit(id,kind,subject_id,actor,details_json,created_at) VALUES(?,?,?,?,?,?)').run(sha(record.id + record.content_hash + at), 'lia_curated_knowledge_published', record.id, LIA_CURATED_ACTOR, JSON.stringify({ policyId: LIA_CURATED_POLICY, reportHash: record.report_hash, coinDebits: 0, weightTraining: false, batch: 'approved-reports' }), new Date(at).toISOString()); published += 1; } return published; };
+  const published = db.transaction(publish).immediate(); return { policyId: LIA_CURATED_POLICY, actor: LIA_CURATED_ACTOR, accepted: items.length, published, duplicates, revise: 9, dryRun: false, coinDebits: 0, weightTraining: false };
+}
