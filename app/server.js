@@ -4602,7 +4602,7 @@ app.post('/api/marketplace/local-delivery/quote',requireUser,sameOriginOnly,asyn
   const address=db.prepare('SELECT * FROM customer_addresses WHERE id=? AND user_id=?').get(Number(req.body?.addressId),req.user.id);
   const ids=[...new Set((Array.isArray(req.body?.items)?req.body.items:[]).map(item=>Number(item?.productId)).filter(Number.isInteger))];
   if(!address||!ids.length)return res.status(400).json({error:'Selecione produtos e um endereço válido.'});
-  const products=db.prepare(`SELECT id,store_reference FROM store_products WHERE id IN (${ids.map(()=>'?').join(',')}) AND active=1 AND marketplace_enabled=1`).all(...ids);
+  const products=db.prepare(`SELECT id,store_reference FROM store_products WHERE id IN (${ids.map(()=>'?').join(',')}) AND active=1 AND marketplace_enabled=1 AND available=1`).all(...ids);
   if(products.length!==ids.length||products.some(product=>product.store_reference!==products[0].store_reference))return res.status(400).json({error:'A entrega local aceita produtos disponíveis de uma única loja.'});
   try{return res.json({quote:await localDeliveryQuote(products[0].store_reference,address)});}
   catch(error){const messages={local_delivery_disabled:'A entrega local ainda não está ativa.',local_delivery_city_unavailable:'A entrega local não está disponível entre esses endereços.',store_not_accepting_delivery:'A loja não está aceitando entregas agora.',routes_not_configured:'Configure a API de rotas do Google no servidor.',distance_out_of_range:'O endereço está fora da distância máxima de entrega.'};return res.status(409).json({error:messages[error.message]||'Não foi possível calcular a rota de entrega local.'});}
@@ -4739,7 +4739,7 @@ app.post('/api/marketplace/shipping/quote', sameOriginOnly, async (req,res) => {
     quantities.set(id,Math.min(50,(quantities.get(id)||0)+quantity));}
   if(!quantities.size)return res.status(400).json({error:'Adicione produtos para calcular o frete.'});
   const ids=[...quantities.keys()],products=db.prepare(`SELECT p.* FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
-    WHERE p.id IN (${ids.map(()=>'?').join(',')}) AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND s.review_status='published'`).all(...ids);
+    WHERE p.id IN (${ids.map(()=>'?').join(',')}) AND p.active=1 AND p.marketplace_enabled=1 AND p.available=1 AND p.price_cents>0 AND s.review_status='published'`).all(...ids);
   if(products.length!==ids.length||products.some(p=>p.stock_quantity<quantities.get(p.id)))return res.status(409).json({error:'Revise a disponibilidade dos produtos.'});
   if(products.some(p=>p.store_reference!==products[0].store_reference))return res.status(400).json({error:'Calcule o frete de uma loja por vez.'});
   try{return res.json({quote:await officialMarketplaceShippingQuote(products,quantities,req.body?.postalCode)});}catch{return res.status(400).json({error:'Informe um CEP válido com 8 números.'});}
@@ -10009,7 +10009,7 @@ app.get(['/loja/:reference', '/loja/:reference/:slug'], (req, res) => {
   const canonicalSlug = marketplaceSlug(store.business_name);
   if (req.params.slug !== canonicalSlug) return res.redirect(301, publicStorePath(store));
   const products = db.prepare(`SELECT id,name,description,category,price_cents,image_url,product_url,sku,stock_quantity
-    FROM store_products WHERE store_reference=? AND active=1 AND marketplace_enabled=1
+    FROM store_products WHERE store_reference=? AND active=1 AND marketplace_enabled=1 AND available=1
       AND price_cents>0 AND stock_quantity>0 ORDER BY updated_at DESC,id DESC LIMIT 120`).all(reference);
   return res.set('Cache-Control', 'public,max-age=60').send(decorateExplorationPage(renderPublicStorePage({
     store, products, siteUrl: SITE_URL, productFallback: PRODUCT_FALLBACK_PATH
@@ -10025,7 +10025,7 @@ app.get(['/produto/:id', '/produto/:id/:slug'], (req, res) => {
       COALESCE((SELECT ROUND(AVG(r.rating),1) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published'),0) rating_average,
       (SELECT COUNT(*) FROM marketplace_product_reviews r WHERE r.product_id=p.id AND r.status='published') rating_count
     FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
-    WHERE p.id=? AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0
+    WHERE p.id=? AND p.active=1 AND p.marketplace_enabled=1 AND p.available=1 AND p.price_cents>0
       AND p.stock_quantity>0 AND s.review_status='published'`).get(id);
   if (!product) return publicErrorPage(res, 404);
   const isDigital = product.product_type === 'digital';
@@ -10104,14 +10104,14 @@ app.get('/categoria/:slug', (req, res) => {
   const requestedSlug = legacyCategory ? 'terras-e-substratos' : req.params.slug;
   const categories = db.prepare(`SELECT DISTINCT p.category FROM store_products p
     JOIN store_profiles s ON s.order_reference=p.store_reference
-    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0 AND p.stock_quantity>0
+    WHERE p.active=1 AND p.marketplace_enabled=1 AND p.available=1 AND p.price_cents>0 AND p.stock_quantity>0
       AND s.review_status='published' AND TRIM(p.category)<>''`).all();
   const category = categories.map(row => row.category).find(value => marketplaceSlug(value, 'categoria') === requestedSlug);
   if (!category) return res.status(404).send('Categoria não encontrada.');
   if (legacyCategory) return res.redirect(301, '/categoria/terras-e-substratos' + (req.query.lia === '1' ? '?lia=1' : ''));
   const products = db.prepare(`SELECT p.id,p.name,p.description,p.price_cents,p.image_url,s.business_name
     FROM store_products p JOIN store_profiles s ON s.order_reference=p.store_reference
-    WHERE p.category=? AND p.active=1 AND p.marketplace_enabled=1 AND p.price_cents>0
+    WHERE p.category=? AND p.active=1 AND p.marketplace_enabled=1 AND p.available=1 AND p.price_cents>0
       AND p.stock_quantity>0 AND s.review_status='published' ORDER BY p.updated_at DESC,p.id DESC LIMIT 120`).all(category);
   const origin = new URL(SITE_URL).origin, slug = marketplaceSlug(category, 'categoria');
   const canonical = `${origin}/categoria/${slug}`;

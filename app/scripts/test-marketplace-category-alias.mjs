@@ -20,9 +20,9 @@ async function fixture(t){
   const db=new Database(':memory:');
   db.exec(`CREATE TABLE store_profiles(order_reference TEXT PRIMARY KEY,business_name TEXT,review_status TEXT);
     CREATE TABLE store_products(id INTEGER PRIMARY KEY,store_reference TEXT,name TEXT,description TEXT,category TEXT,
-      active INTEGER,marketplace_enabled INTEGER,price_cents INTEGER,stock_quantity INTEGER,image_url TEXT,updated_at TEXT);
+      active INTEGER,marketplace_enabled INTEGER,price_cents INTEGER,stock_quantity INTEGER,image_url TEXT,updated_at TEXT,available INTEGER NOT NULL DEFAULT 1);
     INSERT INTO store_profiles VALUES('store','Agrotecnica','published');
-    INSERT INTO store_products VALUES(20,'store','Terra vegetal','Terra para plantio','Terras e Substratos',1,1,1000,3,'','2026-09-13');`);
+    INSERT INTO store_products VALUES(20,'store','Terra vegetal','Terra para plantio','Terras e Substratos',1,1,1000,3,'','2026-09-13',1);`);
   const app=express();
   vm.runInNewContext(`${escape}\n${renderer}\n${handler}`,{
     app,db,marketplaceSlug,URL,SITE_URL:'https://vitrinecity.com',PRODUCT_FALLBACK_PATH:'/assets/store-seed/utilidades.svg',
@@ -60,6 +60,7 @@ test('redirect keeps only valid Lia context and never reflects destination or ar
 
 for(const [name,sql] of [
   ['inactive product','UPDATE store_products SET active=0'],
+  ['paused product','UPDATE store_products SET available=0'],
   ['marketplace disabled','UPDATE store_products SET marketplace_enabled=0'],
   ['no stock','UPDATE store_products SET stock_quantity=0'],
   ['no price','UPDATE store_products SET price_cents=0'],
