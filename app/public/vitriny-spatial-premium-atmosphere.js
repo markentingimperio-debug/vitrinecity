@@ -7,27 +7,50 @@ export function createPremiumFacades({mobile=false}={}){
     const canvas=document.createElement('canvas');canvas.width=mobile?256:512;canvas.height=mobile?512:1024;
     const ctx=canvas.getContext('2d');ctx.scale(canvas.width/256,canvas.height/512);
     const gradient=ctx.createLinearGradient(0,0,256,512);
-    gradient.addColorStop(0,['#417caa','#3c817f','#9b7951'][variant]);
-    gradient.addColorStop(.52,['#285f8c','#286762','#795735'][variant]);
-    gradient.addColorStop(1,['#153c61','#173f40','#4c3525'][variant]);
+    gradient.addColorStop(0,['#819ead','#859e9d','#a7a095'][variant]);
+    gradient.addColorStop(.48,['#52758b','#587b7b','#81786c'][variant]);
+    gradient.addColorStop(1,['#334f65','#355957','#524c45'][variant]);
     ctx.fillStyle=gradient;ctx.fillRect(0,0,256,512);
-    for(let col=0;col<8;col++){
-      const x=col*32;
-      ctx.fillStyle='rgba(205,226,233,'+(.018+(col*7+variant*11)%9*.005)+')';
-      ctx.fillRect(x+1,0,30,512);
-      ctx.fillStyle='#24373f';ctx.fillRect(x,0,.75,512);
-      ctx.fillStyle='#c3ced144';ctx.fillRect(x+1,0,.5,512);
-    }
-    for(let row=0;row<8;row++){
-      const y=row*64;
-      ctx.fillStyle='#20333d';ctx.fillRect(0,y,256,1.3);
-      ctx.fillStyle='#9caaaa55';ctx.fillRect(0,y+1.3,256,.6);
-      // Recessed opaque spandrel strips are subtle; no bright tiled window icons.
-      ctx.fillStyle='#162a3333';ctx.fillRect(0,y+58,256,5);
+    // Shallow reveals, ceiling planes and partially drawn blinds give the flat
+    // atlas depth. These are static architectural hints, never activity claims.
+    for(let row=0;row<8;row++)for(let col=0;col<8;col++){
+      const x=col*32,y=row*64,seed=(row*17+col*11+variant*7)%23;
+      const room=ctx.createLinearGradient(x,y+3,x+30,y+58);
+      room.addColorStop(0,'rgba(15,27,36,.35)');
+      room.addColorStop(.25,'rgba(24,39,49,.16)');
+      room.addColorStop(1,'rgba(154,174,181,.08)');
+      ctx.fillStyle=room;ctx.fillRect(x+1,y+2,30,56);
+      ctx.fillStyle='rgba(10,22,32,.28)';ctx.fillRect(x+1,y+2,30,3);ctx.fillRect(x+1,y+4,2,53);
+      ctx.fillStyle='rgba(203,216,216,.14)';ctx.fillRect(x+3,y+55,28,1);
+      if(seed<7){
+        // Offset rear wall and ceiling: muted warmth behind the reflective pane,
+        // rather than bright yellow window tiles or opaque storefront pictures.
+        ctx.fillStyle='rgba(170,145,109,.20)';ctx.fillRect(x+6,y+13,22,39);
+        ctx.fillStyle='rgba(218,206,179,.23)';ctx.fillRect(x+6,y+10,22,3);
+        ctx.fillStyle='rgba(17,33,44,.19)';ctx.fillRect(x+25,y+13,3,39);
+        ctx.fillStyle='rgba(230,209,169,.30)';ctx.fillRect(x+9,y+12,15,.65);
+      }else if(seed<13){
+        const blindHeight=12+(seed%4)*5;
+        ctx.fillStyle='rgba(172,184,181,.12)';ctx.fillRect(x+3,y+5,27,blindHeight);
+        ctx.fillStyle='rgba(38,56,64,.12)';
+        for(let slat=4;slat<blindHeight;slat+=4)ctx.fillRect(x+3,y+5+slat,27,.55);
+      }
+      // Continuous broad reflection plus fine pane-to-pane variation. Real
+      // environment reflections still come from the existing shared PMREM.
+      const reflection=ctx.createLinearGradient(x,y,x+32,y+64);
+      reflection.addColorStop(0,`rgba(216,231,237,${.04+seed*.002})`);
+      reflection.addColorStop(.46,'rgba(189,210,221,.015)');
+      reflection.addColorStop(.57,'rgba(209,225,232,.10)');
+      reflection.addColorStop(1,'rgba(33,59,77,.06)');
+      ctx.fillStyle=reflection;ctx.fillRect(x+3,y+4,28,53);
+      ctx.fillStyle='#283d4966';ctx.fillRect(x,y,.85,64);ctx.fillRect(x,y,32,1.4);
+      ctx.fillStyle='#d9e2df66';ctx.fillRect(x+.85,y+1.4,.45,56);ctx.fillRect(x+1.3,y+1.4,30,.5);
+      ctx.fillStyle='#20343f77';ctx.fillRect(x,y+58,32,6);
+      ctx.fillStyle='#b8c9cd33';ctx.fillRect(x,y+58,32,.7);
     }
     const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;
     texture.anisotropy=mobile?2:4;texture.wrapS=texture.wrapT=THREE.RepeatWrapping;
-    const material=new THREE.MeshStandardMaterial({map:texture,color:'#c5dced',metalness:.64,roughness:.19,envMapIntensity:1.0});
+    const material=new THREE.MeshStandardMaterial({map:texture,color:'#d5e1e5',metalness:.48,roughness:.23,envMapIntensity:1.16});
     material.name='architectural-curtain-glass-'+variant;
     return material;
   });
