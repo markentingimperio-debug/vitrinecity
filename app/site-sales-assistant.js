@@ -183,7 +183,12 @@ export function setupSiteSalesAssistant({app,db,requestOpenAI,requireAdmin,getSe
       return {kind:row.portal==='receitas'?'recipe':'article',title:plain(row.title,160),path:pathname,group:portalGroup[row.portal]||'',commercial:true,body:plain(row.body,4200),updatedAt:row.updated_at,sourceId:row.id};
     }
     if(pathname.startsWith('/ofertas/')){
-      const id='affiliate:'+pathname.slice(9),item=inventory().find(item=>item.id===id);if(!item)return null;
+      const slug=pathname.slice(9),id='affiliate:'+slug,item=inventory().find(item=>item.id===id);
+      if(!item){
+        const row=db.prepare("SELECT title,description,category FROM affiliate_catalog WHERE slug=? AND status='published'").get(slug);
+        if(!row)return null;
+        return {kind:'offer',title:plain(row.title,140),path:pathname,group:topic(row.category)||topic(row.title),body:plain(row.description,240)+' Disponibilidade e acesso à oferta não confirmados. Não afirme que está disponível para compra.'};
+      }
       return {kind:'offer',title:item.title,path:pathname,group:item.group,body:item.description,offerId:item.id};
     }
     if(pathname.startsWith('/produto/')){

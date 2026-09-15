@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { mountNeuralWorkspace, validateNeuralAttachment } from '../public/neural-workspace.js';
 import { CHAT_MESSAGE_STATES, CHAT_ACTIVE_STATES, isChatActive, assertChatReceipt, assertChatQueueStatus } from '../public/neural-chat-contract.js';
-import {assertCoinStatus,VITRINE_COINS_POLICY} from '../public/vitrine-coins-contract.js';
+import {assertCoinStatus,VITRINE_COINS_POLICY,atomsFromMicroBRL} from '../public/vitrine-coins-contract.js';
+import {formatConsumedCoins,coinSummary} from '../public/vitrine-coins-ui.js';
 const receipt = (overrides={}) => {
   const requestId=overrides.requestId||'request-fixture';
   return assertChatReceipt({id:requestId,requestId,conversationId:'conversation-1',messageId:'message-fixture',status:'completed',createdAt:1,updatedAt:1,...overrides});
@@ -10,6 +11,11 @@ const receipt = (overrides={}) => {
 const html = readFileSync(new URL('../public/neural-workspace.html', import.meta.url), 'utf8');
 const js = readFileSync(new URL('../public/neural-workspace.js', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../public/neural-workspace.css', import.meta.url), 'utf8');
+for (const [atoms, label] of [['0','0'],['1','< 0,01'],['99999','< 0,01'],['100000','0,01'],['149952','≈ 0,01'],['150000','≈ 0,02'],['1200000','0,12'],['9999999','≈ 1'],['123456789012345','≈ 12.345.678,9'],['9000000000000000','900.000.000']]) {
+  assert.equal(formatConsumedCoins(atoms),label);
+}
+for (const invalid of [-1,0.5,NaN,'-1','01','9000000000000001']) assert.throws(()=>formatConsumedCoins(invalid),/coin_amount_invalid/);
+assert.match(css,/font-variant-numeric:tabular-nums/);
 assert.match(html, /lang="pt-BR"/);
 assert.match(html, /name="viewport"/);
 assert.match(html, /<script type="module" src="\/neural-workspace\.js"><\/script>/);
@@ -365,6 +371,32 @@ console.log('Lia chat UI: canonical receipts, durable queue lifecycle/cancellati
 const quotedPayment={quoteId:'quote-paid',currency:'BRL',amountMicro:1150000,expiresAt:Date.now()+600000,kind:'video',summary:'Vídeo de 5 segundos',state:'quoted',chargedMicro:null};
 const paidWallet={currency:'BRL',availableMicro:5000000,reservedMicro:0};
 const paidStatus={...status,paidGenerationEnabled:true,capabilities:{text:true,image:true,video:true},wallet:paidWallet};
+const consumptionWallet=assertCoinStatus({ok:true,currency:'VITRINE_COINS',policyVersion:VITRINE_COINS_POLICY.version,unified:true,frozen:false,availableAtoms:'960000000',reservedAtoms:'0',chargedAtoms:'0',expiredAtoms:'0'});
+for (const [chargedMicro,label] of [[0,'0'],[1,'< 0,01'],[1562,'≈ 0,01'],[12500,'0,12'],[1000000,'9,6']]) {
+  const compact=harness({coinStatus:consumptionWallet,respond:async url=>{
+    if(url.endsWith('/status'))return {data:paidStatus};
+    if(url.endsWith('/conversations'))return {data:{ok:true,items:[conversation]}};
+    return {data:{ok:true,conversation,messages:[{id:'consumption-'+chargedMicro,role:'assistant',requestId:'consumption-request',text:'Resposta pronta.',status:'completed',payment:{...quotedPayment,state:'settled',chargedMicro,summary:malicious},artifacts:[]}]}};
+  }});
+  await settled();
+  const details=compact.created.find(e=>e.className==='payment-card payment-consumption');
+  assert.ok(details,'missing consumption '+chargedMicro+': '+compact.elements.get('error').textContent+' '+compact.elements.get('billing-status').textContent);assert.equal(details.tagName,'details');assert.ok(!details.open);
+  assert.equal(details.children[0].tagName,'summary');
+  assert.equal(details.children[0].textContent,'Usou '+label+' Vitrine Coins');
+  assert.equal(details.children[1].textContent,'Consumo exato: '+coinSummary(atomsFromMicroBRL(chargedMicro))+'.');
+  assert.equal(details.children[2].textContent,malicious,'quote summary remains inert text');
+  assert.equal(compact.calls.filter(c=>c.options.method==='POST').length,0);
+}
+for (const paymentState of ['quoted','reserved','held','released']) {
+  const compact=harness({coinStatus:consumptionWallet,respond:async url=>{
+    if(url.endsWith('/status'))return {data:paidStatus};
+    if(url.endsWith('/conversations'))return {data:{ok:true,items:[conversation]}};
+    return {data:{ok:true,conversation,messages:[{id:'pending-consumption',role:'assistant',requestId:'pending-request',text:'Pedido.',status:paymentState==='quoted'?'awaiting_confirmation':paymentState==='reserved'?'queued':paymentState==='held'?'interrupted':'failed',payment:{...quotedPayment,amountMicro:1562,state:paymentState},artifacts:[]}]}};
+  }});
+  await settled();assert.equal(compact.created.some(e=>e.className==='payment-card payment-consumption'),false,'only settled consumption is collapsed');
+  if(paymentState==='quoted')assert.equal(compact.created.find(e=>e.dataset.confirmPayment==='true').textContent,'Confirmar até '+coinSummary(atomsFromMicroBRL(1562)),'authorization stays exact, never rounded down');
+  assert.equal(compact.calls.filter(c=>c.options.method==='POST').length,0);
+}
 const paidArtifacts=[{id:'artifact-video',requestId:'request-paid',kind:'video',name:'video.mp4',mimeType:'video/mp4',bytes:5,durationSeconds:5,availability:'ready'}, {id:'artifact-image',requestId:'request-paid',kind:'image',name:'imagem.png',mimeType:'image/png',bytes:5,availability:'ready'}];
 let paidState='awaiting_confirmation',confirmPosts=0,loseConfirmation=true,paidDownloadReads=0;
 const paymentView=()=>({...quotedPayment,state:paidState==='completed'?'settled':paidState==='awaiting_confirmation'?'quoted':'reserved',chargedMicro:paidState==='completed'?1000000:null});

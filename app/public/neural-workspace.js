@@ -1,6 +1,6 @@
 import { CHAT_MESSAGE_STATES, CHAT_QUEUE_LANES, CHAT_ARTIFACT_MAX_BYTES, isChatActive, isChatPending, assertChatReceipt, assertChatQueueStatus, assertChatPayment, assertChatWallet, assertChatArtifact, assertAiPurchaseStatus, assertAiPurchaseOrder } from './neural-chat-contract.js';
 import {assertCoinStatus,atomsFromMicroBRL,quoteCoinTopup,VITRINE_COINS_POLICY} from './vitrine-coins-contract.js';
-import {formatCoins,formatCoinBRL,coinSummary} from './vitrine-coins-ui.js';
+import {formatCoins,formatCoinBRL,coinSummary,formatConsumedCoins} from './vitrine-coins-ui.js';
 
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const TEXT_MIMES = { txt: 'text/plain', md: 'text/markdown', csv: 'text/csv' };
@@ -255,6 +255,15 @@ export function mountNeuralWorkspace(environment = globalThis) {
     } catch (error) { showError(error); } finally { button.disabled = false; }
   }
   function paymentCard(message) {
+    if (coinWallet && message.payment.state === 'settled') {
+      const amount = atomsFromMicroBRL(message.payment.chargedMicro ?? 0);
+      const details = node('details', null, 'payment-card payment-consumption');
+      details.setAttribute('aria-label', 'Consumo de Vitrine Coins deste pedido');
+      const summary = node('summary', 'Usou ' + formatConsumedCoins(amount) + ' Vitrine Coins');
+      summary.append(node('span', 'Detalhes', 'consumption-details-label'));
+      details.append(summary, node('p', 'Consumo exato: ' + coinSummary(amount) + '.', 'small'), node('p', message.payment.summary, 'small'));
+      return details;
+    }
     const payment = message.payment, card = node('section', null, 'payment-card');
     card.setAttribute('aria-label', 'Vitrine Coins deste pedido');
     card.append(node('p', payment.summary, 'payment-summary'));

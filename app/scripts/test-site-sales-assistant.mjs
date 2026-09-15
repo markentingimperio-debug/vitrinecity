@@ -39,6 +39,15 @@ async function fixture(t,options={}){
   const call=client();t.after(async()=>{handler.close();experience.close?.();server.closeAllConnections();await new Promise(r=>server.close(r));db.close();});
   return {db,seen,handler,call,client,chat:(message='Quero uma forma para bolo',extra={})=>call('/api/site-assistant/chat',{method:'POST',body:{message,contextPath:page},...extra})};
 }
+test('published offer keeps assistance when availability is unconfirmed without becoming a recommended offer',async t=>{
+  const f=await fixture(t),path='/ofertas/mixer-unknown';
+  const r=await f.call('/api/site-assistant/context?path='+path);
+  assert.equal(r.status,200);assert.equal(r.body.enabled,true);assert.equal(r.body.context.path,path);
+  assert.equal(r.body.offers.some(o=>o.id==='affiliate:mixer-unknown'),false);
+  f.db.prepare("UPDATE affiliate_catalog SET status='draft' WHERE slug='mixer-unknown'").run();
+  assert.equal((await f.call('/api/site-assistant/context?path='+path)).status,404);
+});
+
 test('anonymous context is free and selects only available pertinent catalog entries',async t=>{
   const f=await fixture(t),r=await f.call('/api/site-assistant/context?path='+page);
   assert.equal(r.status,200);assert.equal(r.body.enabled,true);assert.match(r.body.identity,/IA/);assert.match(r.body.greeting,/Oi! Eu sou a Lia/);assert.doesNotMatch(r.body.greeting,/assistente virtual/);assert.equal(r.body.visitorName,undefined);assert.equal(f.seen.calls.length,0);

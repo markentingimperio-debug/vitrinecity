@@ -75,6 +75,23 @@ try{
   await page.locator('#recover-request').click();assert.equal(confirms,1);assert.equal(await page.locator('#recovery').isVisible(),true);
   phase='queued';await page.locator('#recover-request').click();await page.locator('#recovery').waitFor({state:'hidden'});assert.equal(confirms,1);
   phase='completed';await page.locator('video').waitFor({state:'visible'});await page.waitForFunction(()=>document.querySelector('video').readyState>=1);
+  const consumption=page.locator('.payment-consumption'),consumptionSummary=consumption.locator('summary');
+  assert.equal(await consumption.getAttribute('open'),null,'settled details are collapsed by default');
+  assert.match(await consumptionSummary.innerText(),/Usou 9,6 Vitrine Coins/);
+  assert.doesNotMatch(await consumption.innerText(),/Consumo exato|R\$/,'only the small Coins line is visible');
+  const postsBeforeDetails=posts;
+  await consumptionSummary.focus();await page.keyboard.press('Enter');
+  assert.equal(await consumption.evaluate(el=>el.open),true);
+  assert.match(await consumption.innerText(),/Consumo exato: 9,6 Vitrine Coins \(R\$ 1,00\)/);
+  await page.keyboard.press('Enter');assert.equal(await consumption.evaluate(el=>el.open),false);
+  for(const width of [320,390,768,1280]){
+    await page.setViewportSize({width,height:844});
+    const compactMetrics=await consumption.evaluate(el=>({height:el.querySelector('summary').getBoundingClientRect().height,overflow:document.documentElement.scrollWidth-innerWidth,fontSize:parseFloat(getComputedStyle(el.querySelector('summary')).fontSize)}));
+    assert.ok(compactMetrics.height>=44&&compactMetrics.height<=64,'discreet line retains a usable touch target');
+    assert.ok(compactMetrics.overflow<=1);assert.ok(compactMetrics.fontSize>=12&&compactMetrics.fontSize<=13);
+  }
+  await page.setViewportSize({width:390,height:844});assert.equal(posts,postsBeforeDetails,'opening details never sends or charges');
+  if(process.env.NEURAL_QA_OUTPUT){await mkdir(process.env.NEURAL_QA_OUTPUT,{recursive:true});await page.screenshot({path:path.join(process.env.NEURAL_QA_OUTPUT,'lia-consumption-compact-mobile.png')});}
   const video=await page.locator('video').elementHandle();await video.evaluate(element=>{element.muted=true;return element.play();});
   await page.waitForFunction(()=>document.querySelector('video').currentTime>0.1);
   await page.locator('#history-toggle').click();await page.locator('#refresh').click();await page.waitForFunction(()=>!document.getElementById('refresh').disabled);await page.locator('#history-toggle').click();
