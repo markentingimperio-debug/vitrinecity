@@ -140,13 +140,43 @@ test('unsafe or malformed outputs are not delivered but terminal receipt and val
   }
 });
 
-test('reported duration must exactly match authorized duration and polling authorization covers the immutable receipt',async()=>{
+test('reported duration rejects shorter clips and padding beyond 50ms; receipt authorization stays immutable',async()=>{
   const saved=await receipt();assert.equal(saved.durationSeconds,5);
-  for(const duration of ['1','6','5.001','999999999999999999.001']){
+  for(const duration of ['1','6','4.999999999999999999','5.050000000000000001','5.051','999999999999999999.001']){
     const r=await fixture({fetchImpl:async()=>response([item({status:'succeeded',outputs:[{...output(),duration}],billing:[cash()]})])}).adapter.poll({receipt:saved});
     assert.equal(r.status,'invalid_response');assert.equal(r.output,null);assert.equal(r.remoteTerminal,true);assert.equal(r.billing.known,true);
   }
   const f=fixture({assertPollAuthorized:r=>JSON.stringify(r)===JSON.stringify(saved)}),r=await f.adapter.poll({receipt:{...saved,durationSeconds:6}});held(r);assert.equal(f.calls.length,0);
+});
+
+test('final-frame padding uses exact decimals and preserves original receipt, output duration and billing',async()=>{
+  const saved=await receipt();
+  for(const duration of ['5','5.000','5.001','5.041','5.049999999999999999','5.050000000000000000']){
+    const entries=[unit()],f=fixture({fetchImpl:async(url,init)=>{
+      f.calls.push({url,init});return response([item({status:'succeeded',outputs:[{...output(),duration}],billing:entries})]);
+    }}),r=await f.adapter.poll({receipt:saved});
+    assert.equal(r.status,'completed');assert.equal(r.output.duration,duration);assert.equal(r.receipt.durationSeconds,5);
+    assert.deepEqual(r.billing.entries,entries);assert.equal(r.billingDisposition,'reconcile');
+    assert.equal(f.calls.length,1);assert.equal(f.calls[0].init.method,'GET');assert.equal(f.calls[0].init.body,undefined);
+  }
+});
+
+test('recovered 3-second Kling task accepts observed 3.041-second output with only a GET, not another generation',async()=>{
+  const original=fixture(),input=request({durationSeconds:3});
+  input.permit.requestHash=hashKlingPaidVideoRequest({...content(),durationSeconds:3});
+  const saved=(await original.adapter.invoke(input)).receipt;
+  assert.equal(original.calls.length,1);assert.equal(saved.durationSeconds,3);
+  const entries=[{charge_type:'unit',amount:'1.8',package_type:'video'}];
+  const recovery=fixture({assertPollAuthorized:r=>JSON.stringify(r)===JSON.stringify(saved),fetchImpl:async(url,init)=>{
+    recovery.calls.push({url,init});assert.equal(init.method,'GET');
+    return response([item({status:'succeeded',outputs:[{...output(),duration:'3.041'}],billing:entries})]);
+  }});
+  const result=await recovery.adapter.poll({receipt:saved});
+  assert.equal(result.ok,true);assert.equal(result.status,'completed');assert.equal(result.output.duration,'3.041');
+  assert.equal(result.receipt.taskId,saved.taskId);assert.equal(result.receipt.externalTaskId,saved.externalTaskId);
+  assert.equal(result.receipt.maximumMicroBrl,saved.maximumMicroBrl);assert.equal(result.receipt.requestHash,saved.requestHash);
+  assert.deepEqual(result.billing.entries,entries);assert.equal(result.retryAllowed,false);
+  assert.equal(recovery.calls.length,1);assert.equal(recovery.calls[0].url,'https://api-singapore.klingai.com/tasks?task_ids=task-fixture-001');
 });
 
 test('explicit server key accepts bounded long values but rejects whitespace/control and has no arbitrary endpoint',async()=>{

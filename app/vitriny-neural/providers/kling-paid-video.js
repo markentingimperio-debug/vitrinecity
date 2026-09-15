@@ -84,10 +84,14 @@ function outputOf(outputs,durationSeconds){
   if(!Array.isArray(outputs)||outputs.length!==1)return null;
   const o=outputs[0];
   if(!plain(o)||o.type!=='video'||!validId(o.id)||typeof o.duration!=='string'||!DECIMAL.test(o.duration)||!/[1-9]/.test(o.duration))return null;
-  // Bind reported delivery duration to the originally authorized body. Compare
-  // decimal strings exactly without floating point rounding (5.000 equals 5).
+  // Kling can include the final encoded frame (observed 3.041 for a 3s task).
+  // Allow only 0..50ms of container/frame padding, never a shorter clip or an
+  // extra requested second. Exact decimal arithmetic keeps the boundary strict;
+  // this output metadata never changes the authorized duration or billed cost.
   const [whole,fraction='']=o.duration.split('.');
-  if(BigInt(whole)!==BigInt(durationSeconds)||/[1-9]/.test(fraction))return null;
+  const scale=10n**BigInt(fraction.length),reported=BigInt(whole)*scale+BigInt(fraction||'0');
+  const padding=reported-BigInt(durationSeconds)*scale;
+  if(padding<0n||padding*1000n>50n*scale)return null;
   function url(value){
     if(typeof value!=='string'||value.length>8192||/[\\\s\u0000-\u001f\u007f]/.test(value))return null;
     try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&!u.port&&!u.hash&&u.hostname?value:null;}catch{return null;}
