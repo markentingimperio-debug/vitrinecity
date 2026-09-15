@@ -30,6 +30,26 @@ const {mountSpatialBillboards}=await import(moduleUrl('vitriny-spatial-billboard
 const {arrangeStoreBuildings}=await import(moduleUrl('vitriny-store-building-core.js'));
 const {dressRetailGallery}=await import(moduleUrl('vitriny-retail-architecture.js'));
 
+test('formal paving shares packed UVs and releases each owned texture on teardown',()=>{
+  for(const lite of [false,true]){
+    const architecture=createArchitectureKit({renderer:{capabilities:{getMaxAnisotropy:()=>4}},scene:new THREE.Scene(),lite});
+    const paving=architecture.pavingMaterial({color:'#8f8069',repeat:18,formal:true});
+    let albedoDisposed=0,surfaceDisposed=0;
+    paving.map.addEventListener('dispose',()=>albedoDisposed++);
+    assert.equal(paving.metalness,.015);assert.equal(paving.bumpScale,.006);
+    if(lite){assert.equal(paving.bumpMap,null);assert.equal(paving.roughnessMap,null);assert.equal(paving.map.image.width,256);}
+    else{
+      assert.equal(paving.bumpMap,paving.roughnessMap);assert.equal(paving.map.image.width,512);
+      paving.map.repeat.set(18,54);assert.deepEqual(paving.bumpMap.repeat.toArray(),[18,54]);
+      paving.bumpMap.addEventListener('dispose',()=>surfaceDisposed++);
+    }
+    architecture.dispose();
+    assert.equal(albedoDisposed,1);assert.equal(surfaceDisposed,lite?0:1);
+    for(const material of architecture.materials)material.dispose();
+    for(const geometry of architecture.geometries)geometry.dispose();
+  }
+});
+
 function fixture(label='Agrotécnica',lite=false){
   const scene=new THREE.Scene(),architecture=createArchitectureKit({renderer:{capabilities:{getMaxAnisotropy:()=>4}},scene,lite});
   const store=arrangeStoreBuildings([{reference:'retail-geometry-fixture',name:label,href:'/loja/retail-geometry-fixture',interiorHref:'/vitriny-store-interior.html?store=retail-geometry-fixture',productCount:0}])[0];

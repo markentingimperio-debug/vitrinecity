@@ -2,6 +2,7 @@ import * as THREE from '/vendor/three/three.module.js';
 import {dressBoutique} from './vitriny-building-signatures.js';
 import {roundedFootprintGeometry,batchArchitecturalParts,leafyCanopyGeometry} from './vitriny-architectural-geometry.js';
 import {createPremiumFacades} from './vitriny-spatial-premium-atmosphere.js';
+import {createArchitecturalPavingMaps} from './vitriny-architectural-paving.js';
 
 // Dimensions use metres. These are presentation assets, never store registrations.
 export function createArchitectureKit({renderer,scene,shadows=false,lite=false}){
@@ -119,6 +120,13 @@ export function createArchitectureKit({renderer,scene,shadows=false,lite=false})
     return g;
   }
   function pavingMaterial({color='#aaa89b',repeat=12,formal=false}={}){
+    if(formal){
+      const {map,surface}=createArchitecturalPavingMaps({color,repeat,lite,anisotropy:renderer.capabilities.getMaxAnisotropy()});
+      textures.add(map);if(surface)textures.add(surface);
+      // Dry honed stone, not a mirror. Recesses are 6 mm at most and require
+      // neither extra geometry nor another lighting/render pass.
+      return standard({map,bumpMap:surface,bumpScale:.006,roughnessMap:surface,roughness:surface?.9:.76,metalness:.015});
+    }
     const canvas=document.createElement('canvas');canvas.width=512;canvas.height=512;const ctx=canvas.getContext('2d');
     ctx.fillStyle=color;ctx.fillRect(0,0,512,512);
     for(let row=0;row<8;row++)for(let col=0;col<8;col++){
@@ -127,7 +135,6 @@ export function createArchitectureKit({renderer,scene,shadows=false,lite=false})
     ctx.strokeStyle='#4d514a55';ctx.lineWidth=1.4;for(let i=0;i<=8;i++){ctx.beginPath();ctx.moveTo(i*64,0);ctx.lineTo(i*64,512);ctx.moveTo(0,i*64);ctx.lineTo(512,i*64);ctx.stroke();}
     const map=new THREE.CanvasTexture(canvas);map.colorSpace=THREE.SRGBColorSpace;map.wrapS=map.wrapT=THREE.RepeatWrapping;map.repeat.set(repeat,repeat);map.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
     const material=standard({map,roughness:.8,metalness:.03});
-    if(formal){textures.add(map);material.roughness=.67;material.metalness=.05;return material;}
     const photo=pbr('pavement_02','Diffuse',repeat*2);material.map=photo;
     if(!lite){material.normalMap=pbr('pavement_02','nor_gl',repeat*2);material.normalScale=new THREE.Vector2(.35,.35);material.roughnessMap=pbr('pavement_02','Rough',repeat*2);}
     map.dispose();return material;
