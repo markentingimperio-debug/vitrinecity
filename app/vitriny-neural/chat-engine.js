@@ -261,7 +261,10 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
     insert.run(assistantId,conversationId,requestId,'assistant',unavailable?UNAVAILABLE[unavailable]:'',state,count+2,now());
     ids.forEach((id,i)=>db.prepare('INSERT INTO neural_chat_message_attachments(message_id,attachment_id,position) VALUES(?,?,?)').run(messageId,id,i));
     db.prepare('UPDATE neural_chat_conversations SET updated_at=? WHERE id=? AND scope=?').run(now(),conversationId,scope);
-    if(paidRuntime?.enabled&&unavailable&&['text','image','video'].includes(intent.kind)&&!(intent.kind==='text'&&referencedImage)){
+    // Server-owned provider preference affects new text requests only. It never
+    // promotes remote inference into the free/local lane or bypasses a quote.
+    const preferPaidText=intent.kind==='text'&&!referencedImage&&paidRuntime?.prefersText===true;
+    if(paidRuntime?.enabled&&(unavailable||preferPaidText)&&['text','image','video'].includes(intent.kind)&&!(intent.kind==='text'&&referencedImage)){
       const imageReferences=selected.filter(a=>a.kind==='image');
       if(!imageReferences.length&&referencedImage&&previous)imageReferences.push(...messageAttachments(scope,previous.user_message_id).filter(a=>a.kind==='image'));
       if(imageReferences.length>1)throw chatError('chat_media_reference_invalid');
@@ -271,7 +274,7 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
         db.prepare("UPDATE neural_chat_messages SET status='awaiting_confirmation',text=? WHERE id=? AND request_id=?").run('Seu pedido está pronto. Confira o valor máximo e confirme para reservar seu saldo. Nenhuma geração paga foi enviada ainda.',assistantId,requestId);
       }
     }
-    if(state==='queued'){
+    if(state==='queued'&&row(scope,requestId).status==='queued'){
       try{queue.enqueue({id:requestId,scope,lane:'chat',capability:intent.capability,idempotencyKey:key,requestHash:hash,groupKey:conversationId});}
       catch(error){throw chatError(error.code==='queue_quota'?'chat_quota':'chat_busy',error.code==='queue_quota'?429:409);}
     }

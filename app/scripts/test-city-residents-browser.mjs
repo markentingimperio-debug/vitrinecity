@@ -5,6 +5,10 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import path from 'node:path';
 
 // Local UI fixture only: no providers, authentication, analytics or mutations.
+// The isolated browser runner supplies Playwright; use its bundled Chromium by default.
+// Resolve tooling before starting the fixture, so missing dependencies fail without a leaked server.
+const modulePath=process.env.PLAYWRIGHT_MODULE;
+const {chromium}=await import(modulePath?pathToFileURL(modulePath).href:'playwright');
 const publicDir=path.resolve(fileURLToPath(new URL('../public/',import.meta.url)));
 const original=await readFile(path.join(publicDir,'vitriny-multiverse-explore.html'),'utf8');
 const fixture=original.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,'').replace('</head>','<script type="module" src="/vitriny-city-residents.js"></script><style>#loading{display:none}body{background:#152831}</style></head>');
@@ -18,11 +22,9 @@ const server=http.createServer(async(req,res)=>{
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const base=`http://127.0.0.1:${server.address().port}`;
-const modulePath=process.env.PLAYWRIGHT_MODULE;
-const {chromium}=await import(modulePath?pathToFileURL(modulePath).href:'playwright');
 let browser;
 try{
-  browser=await chromium.launch({headless:true,channel:process.env.PLAYWRIGHT_CHANNEL||'chrome'});
+  browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{})});
   for(const width of [320,360,390,412,768,1280]){
     const context=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'}),page=await context.newPage(),errors=[],requests=[];
     page.on('pageerror',error=>errors.push(error.message));

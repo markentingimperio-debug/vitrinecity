@@ -1,0 +1,11 @@
+{
+  "name": "vitrinecity-browser-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Isolated release test tooling; never installed in the application image",
+  "dependencies": {
+    "playwright": "1.63.0",
+    "three": "0.180.0"
+  }
+}
