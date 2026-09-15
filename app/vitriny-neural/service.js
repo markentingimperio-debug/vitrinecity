@@ -18,6 +18,7 @@ import path from 'node:path';
 import {createCoinAiWalletAdapter} from './coin-wallet-adapter.js';
 import {createChatArtifacts} from './chat-artifacts.js';
 import {createPaidChatRuntime} from './paid-chat-runtime.js';
+import {createReviewedTeachingKnowledge} from './reviewed-teaching-knowledge.js';
 
 function primaryProviderId(runtime){const providers=runtime.skills.status().providers||[];return providers.find(provider=>provider.policy?.enabled!==false)?.id||providers[0]?.id||null;}
 function qualificationMatchesProvider(provider,record){
@@ -87,7 +88,9 @@ export function createVitrinyNeuralService({db,coinWallet,env=process.env,fetchI
   const paidEnabled=env.VITRINY_NEURAL_PAID_ENABLED==='true'&&coinWallet?.enabled===true;
   const paidWallet=coinWallet?.enabled===true?createCoinAiWalletAdapter({db,coinWallet,now,adminEmails:String(env.ADMIN_EMAILS||'').split(',')}):null;
   const paidArtifacts=paidEnabled?createChatArtifacts({db,now,directory:path.resolve(env.DATA_DIR||path.dirname(db.name),'neural-private-artifacts')}):null;
-  const paidChat=paidEnabled?createPaidChatRuntime({db,env,wallet:paidWallet,artifacts:paidArtifacts,fetchImpl,now,authorizeScope:scope=>paidWallet.allowsScope(scope)}):null;
+  let reviewedKnowledgeProvider=null;
+  if(paidEnabled)try{reviewedKnowledgeProvider=createReviewedTeachingKnowledge({db,now}).retrieve;}catch{/* Optional public reference cannot disable the chat. */}
+  const paidChat=paidEnabled?createPaidChatRuntime({db,env,wallet:paidWallet,artifacts:paidArtifacts,fetchImpl,now,authorizeScope:scope=>paidWallet.allowsScope(scope),reviewedKnowledgeProvider}):null;
   const chat=createNeuralChatEngine({db,skills:runtime.skills,qualifications,config,env,now,paidRuntime:paidChat});
   const taskDiagnostics=createNeuralTaskDiagnostics({probeLocalProviders:runtime.probeLocalProviders,
     getProviders:()=>runtime.skills.status().providers,getQualification:qualifications.latest,getTaskStatus:()=>tasks.status('admin',{reapExpired:false}),now});

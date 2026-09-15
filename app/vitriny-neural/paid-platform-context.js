@@ -79,15 +79,60 @@ export function createPaidPlatformContext({sources=teachingSources,revision=teac
 
 const publicReference=createPaidPlatformContext();
 
+// This callback is wired by the service, never taken from request JSON. The
+// reader validates dataset approval, provenance, expiry and content hashes.
+// Keep the transport boundary narrow even if a future reader returns extra data.
+function reviewedPassages(provider,question,at){
+  if(typeof provider!=='function'||typeof question!=='string'||!Number.isSafeInteger(at))return [];
+  // Canonical monetary facts always win; teaching is not a second price policy.
+  if([...normalize(question).matchAll(INTENTS[0][1])].length)return [];
+  try{
+    const result=provider(question);
+    if(result&&typeof result.then==='function'){Promise.resolve(result).catch(()=>{});return [];}
+    if(!Array.isArray(result)||result.length>2)return [];
+    const seen=new Set(),passages=[];let total=0;
+    for(const item of result){
+      if(!item||item.trust!=='reference-data-only'||!/^LK[12]$/.test(item.citation)||seen.has(item.citation))return [];
+      const title=text(item.title),source=text(item.source),revision=text(item.revision),passage=text(item.excerpt);
+      const expiry=typeof item.expiresAt==='string'?Date.parse(item.expiresAt):NaN;
+      if(!title||title.length>160||!/^lia-reviewed-knowledge:[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(source)||
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(revision)||!passage||passage.length>600||
+        !Number.isSafeInteger(expiry)||new Date(expiry).toISOString()!==item.expiresAt||expiry<=at)return [];
+      total+=passage.length;if(total>1200)return [];
+      // The reader also rejects lessons whose full allowed curriculum includes
+      // COINS, even when a teacher omitted COINS from its reported citations.
+      if([...normalize(passage).matchAll(INTENTS[0][1])].length)continue;
+      seen.add(item.citation);passages.push({citation:item.citation,title,source,revision,expiresAt:item.expiresAt,excerpt:passage,trust:item.trust});
+    }
+    return passages;
+  }catch{return [];}
+}
+
+function withReviewedPassages(reference,passages,input){
+  let content=reference.content;const accepted=[];
+  for(const passage of passages){
+    const candidate=NOTICE+'\n'+JSON.stringify({scope:'public_platform_reference',revision:reference.revision,
+      identity:reference.identity,topics:reference.topics,reviewedTeaching:[...accepted,passage]});
+    // Never evict canonical topics or shorten a lesson/user message to fit.
+    if(candidate.length>MAX_CHARACTERS||Buffer.byteLength(JSON.stringify({...input,messages:[{role:'user',content:candidate},...input.messages]}),'utf8')>MAX_INPUT_BYTES)continue;
+    accepted.push(passage);content=candidate;
+  }
+  return content;
+}
+
 /** Called only for NEW text quotes, before hashing and pricing. The original
  * user/history input is never shortened to make room for optional public facts.
  */
-export function enrichPaidChatInput(input,{question,at=Date.now()}={}){
+export function enrichPaidChatInput(input,{question,at=Date.now(),reviewedKnowledgeProvider=null}={}){
   if(!input||!Array.isArray(input.messages)||input.messages.length>=32)return input;
   for(const identityOnly of [false,true]){
     const reference=publicReference(question,{at,identityOnly});if(!reference)return input;
     const enriched={...input,messages:[{role:'user',content:reference.content},...input.messages]};
-    if(Buffer.byteLength(JSON.stringify(enriched),'utf8')<=MAX_INPUT_BYTES)return enriched;
+    if(Buffer.byteLength(JSON.stringify(enriched),'utf8')<=MAX_INPUT_BYTES){
+      const passages=reviewedPassages(reviewedKnowledgeProvider,question,at);
+      if(passages.length)enriched.messages[0].content=withReviewedPassages(reference,passages,input);
+      return enriched;
+    }
   }
   return input;
 }

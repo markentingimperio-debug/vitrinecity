@@ -26,7 +26,7 @@ function publicPayment(row){if(!row)return null;const q=JSON.parse(row.quote_jso
  * a prompt: an authenticated explicit quote confirmation must reserve funds.
  * All config and rates originate on the server, never from public request JSON.
  */
-export function createPaidChatRuntime({db,env=process.env,config:inputConfig,wallet:injectedWallet,artifacts,fetchImpl=globalThis.fetch,now=Date.now,pollIntervalMs=1000,authorizeScope=()=>true}={}){
+export function createPaidChatRuntime({db,env=process.env,config:inputConfig,wallet:injectedWallet,artifacts,fetchImpl=globalThis.fetch,now=Date.now,pollIntervalMs=1000,authorizeScope=()=>true,reviewedKnowledgeProvider=null}={}){
   if(!db?.transaction)throw new TypeError('Paid runtime requires SQLite');
   let cfg;try{cfg=clone(inputConfig??JSON.parse(env.VITRINY_NEURAL_PAID_CONFIG_JSON||'{"enabled":false}'));}catch{cfg={enabled:false};}
   const enabled=cfg.enabled===true;
@@ -101,7 +101,7 @@ export function createPaidChatRuntime({db,env=process.env,config:inputConfig,wal
       if(!shortText(content))return null;
       input={messages:[...history,{role:'user',content}],maxOutputTokens:cfg.chat.maxOutputTokens??1024};
       if(Buffer.byteLength(JSON.stringify(input),'utf8')>50000)return null;
-      input=enrichPaidChatInput(input,{question:message,at:time});
+      input=enrichPaidChatInput(input,{question:message,at:time,reviewedKnowledgeProvider});
       q.providerId=cfg.chat.providerId||'openai';
       if(q.providerId==='deepseek'){
         requestHash=hashDeepSeekPaidChatRequest({model:q.model,...input});
