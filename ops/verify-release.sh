@@ -18,6 +18,7 @@ git archive HEAD | docker run --rm -i --network none --cpus=2 --memory=1g \
     tar xf - -C /tmp/release
     ln -s /app/node_modules /tmp/release/app/node_modules
     cd /tmp/release/app
+    npm run test:commerce
     npm test
     npm run test:release
   '
