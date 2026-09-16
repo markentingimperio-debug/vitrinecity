@@ -9,10 +9,10 @@ function pseudonymSalt(env){
   return value||'disabled-neural-no-personal-events';
 }
 
-export function setupVitrinyNeural({app,db,requireAdmin,sameOriginOnly,env=process.env,fetchImpl=globalThis.fetch,logger=console,nodeId='vitrinecity-api'}={}){
+export function setupVitrinyNeural({app,db,coinWallet,requireAdmin,sameOriginOnly,env=process.env,fetchImpl=globalThis.fetch,logger=console,nodeId='vitrinecity-api'}={}){
   if(!app||!db||typeof requireAdmin!=='function'||typeof sameOriginOnly!=='function')throw new TypeError('Integração Neural requer app, db e middlewares administrativos.');
   try{
-    const service=createVitrinyNeuralService({db,env,fetchImpl,nodeId,pseudonymSalt:pseudonymSalt(env),logger});
+    const service=createVitrinyNeuralService({db,coinWallet,env,fetchImpl,nodeId,pseudonymSalt:pseudonymSalt(env),logger});
     mountVitrinyNeuralAdmin({app,service,requireAdmin,sameOriginOnly});
     if(service.config.enabled){service.observer.start();service.webResearch?.schedule?.();}
     const capture=(event)=>{
@@ -26,7 +26,7 @@ export function setupVitrinyNeural({app,db,requireAdmin,sameOriginOnly,env=proce
     logger?.info?.(`[vitriny-neural] initialized mode=${service.config.mode} enabled=${service.config.enabled} webResearch=${service.webResearch?.status?.().enabled===true} spatialBridge=${Boolean(spatialBridge)}`);
     return{
       enabled:service.config.enabled,service,capture,spatialBridge,status:()=>service.status(),
-      stop:()=>{spatialBridge?.stop?.();service.observer.stop();service.webResearch?.stop?.();return true;}
+      stop:()=>{spatialBridge?.stop?.();service.observer.stop();service.webResearch?.stop?.();service.chat?.close?.();return true;}
     };
   }catch(error){
     logger?.error?.('[vitriny-neural] initialization failed',String(error?.message||error));

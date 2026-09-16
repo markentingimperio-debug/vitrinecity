@@ -98,6 +98,20 @@ test('round-robin fairness persists across days with a smaller quota than the ca
   assert.deepEqual(f.called,STORY_AUTOMATION_GROUPS.map(group=>group+':1'));
 });
 
+test('a category with updates keeps its fair turn despite an unlimited backlog of new sources elsewhere',async t=>{
+  const f=await fixture(t,{sources:[source('recipe:1','recipes')]});update(f.engine,{enabled:true,dailyLimit:2,groups:['recipes','products']});await run(f.engine);
+  f.sources[0].fingerprint='v2';f.sources.push(...Array.from({length:8},(_,i)=>source('product:'+i)));f.advance(86400000);
+  await run(f.engine);assert.deepEqual(f.called,['recipe:1','product:0','recipe:1']);assert.equal(f.engine.status().quota.attempted,2);
+  assert.deepEqual(f.db.prepare("SELECT story_id FROM web_story_automation_jobs WHERE source_key='recipe:1' ORDER BY id").all().map(row=>row.story_id),['story:recipe:1','story:recipe:1']);
+});
+
+test('new sources precede updates within one category without resetting consumed quota',async t=>{
+  const f=await fixture(t,{sources:[source('recipe:1','recipes')]});update(f.engine,{enabled:true,dailyLimit:2,groups:['recipes']});await run(f.engine);
+  f.sources[0].fingerprint='v2';f.sources.push(source('recipe:2','recipes'));f.advance(86400000);await run(f.engine);
+  assert.deepEqual(f.called,['recipe:1','recipe:2','recipe:1']);assert.equal(f.engine.status().quota.remaining,0);
+  await run(f.engine);assert.equal(f.called.length,3);
+});
+
 test('pagination reaches candidates after hundreds of previously reviewed sources',async t=>{
   const sources=Array.from({length:420},(_,i)=>source('p:'+i)),f=await fixture(t,{sources});update(f.engine,{enabled:true,dailyLimit:1});
   const fingerprint=(await import('node:crypto')).createHash('sha256').update('v1').digest('hex');

@@ -181,7 +181,7 @@ export function createJarvis(db, { env = process.env, fetchImpl = fetch, now = D
   };
 }
 
-export function mountJarvis({ app, db, requireAdmin, sameOriginOnly, env, fetchImpl, now = Date.now, researchSchedule = false, researchFetchImpl }) {
+export function mountJarvis({ app, db, coinWallet, requireAdmin, sameOriginOnly, env, fetchImpl, now = Date.now, researchSchedule = false, researchFetchImpl }) {
   const core=createJarvis(db,{env,fetchImpl,now}), visitors=new Map();
   app.use(API, (req,res,next)=>{res.set('Cache-Control','no-store');next();}, requireAdmin, (req,res,next)=>{
     res.set('Cache-Control','no-store');
@@ -208,6 +208,6 @@ export function mountJarvis({ app, db, requireAdmin, sameOriginOnly, env, fetchI
   app.post(API+'/research/start',route(req=>{const result=research.start(req.body,req.user.id);req.res.status(202);return result;}));
   app.post(API+'/research/cancel',route(req=>research.cancel(req.body,req.user.id)));
   core.research=research;
-  core.neural=setupVitrinyNeural({app,db,requireAdmin,sameOriginOnly,env,fetchImpl,nodeId:'vitrinecity-api'});
+  core.neural=setupVitrinyNeural({app,db,coinWallet,requireAdmin,sameOriginOnly,env,fetchImpl,nodeId:'vitrinecity-api'});
   return core;
 }

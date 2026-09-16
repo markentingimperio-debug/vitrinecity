@@ -1,4 +1,4 @@
-const CACHE_NAME = 'vitrinecity-pwa-v7';
+const CACHE_NAME = 'vitrinecity-pwa-v10-social';
 const APP_SHELL = [
   '/',
   '/loja',
@@ -8,7 +8,10 @@ const APP_SHELL = [
   '/navegar.js?v=4',
   '/offline.html',
   '/manifest.webmanifest',
-  '/pwa-install.js?v=2',
+  '/pwa-install.js?v=3',
+  '/public-share.js?v=20260913-1',
+  '/public-share.css?v=20260913-1',
+  '/vitriny-public-routes.js',
   '/assets/pwa-icon-192.png',
   '/assets/pwa-icon-512.png'
 ];

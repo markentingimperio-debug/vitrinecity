@@ -111,3 +111,17 @@ test('response observer ignores failures, foreign APIs and form bodies, and leav
   assert.equal((await orders.json()).orders.length, 1); assert.equal(p.receipts.length, 2);
   assert.doesNotMatch(JSON.stringify(p.receipts), /email|private|password|secret/);
 });
+
+test('OpenAI checkout consent is independent, same-origin only, and immediately revocable', async () => {
+  const p = page({ consent: 'accepted', href: 'https://vitrinecity.com/cursos/canva-para-lojas' });
+  await p.sandbox.fetch('/api/courses/canva-para-lojas/checkout', {method:'POST'});
+  assert.equal(p.calls.at(-1).init.headers.get('X-VC-OpenAI-Ads-Consent'), null);
+  p.local.setItem('vc_openai_ads_consent_v1','accepted');
+  await p.sandbox.fetch('/api/courses/canva-para-lojas/checkout', {method:'POST'});
+  assert.equal(p.calls.at(-1).init.headers.get('X-VC-OpenAI-Ads-Consent'), 'accepted');
+  await p.sandbox.fetch('https://third.example/api/checkout');
+  assert.equal(p.calls.at(-1).init.headers, undefined);
+  p.local.setItem('vc_openai_ads_consent_v1','essential');
+  await p.sandbox.fetch('/api/courses/canva-para-lojas/checkout', {method:'POST'});
+  assert.equal(p.calls.at(-1).init.headers.get('X-VC-OpenAI-Ads-Consent'), null);
+});

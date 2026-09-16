@@ -1,0 +1,17 @@
+.vc-public-share{box-sizing:border-box;position:relative;width:calc(100% - 32px);max-width:1100px;margin:24px auto;padding:18px 20px;border:1px solid #b8cce3;border-radius:14px;background:#f4f8fd;color:#143354;font:15px/1.5 Arial,Helvetica,sans-serif;text-align:left;overflow-wrap:anywhere}
+.vc-public-share[hidden],.vc-public-share [hidden]{display:none!important}
+.vc-public-share .vc-public-share-controls,.vc-public-share .vc-public-share-choices{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap}
+.vc-public-share button,.vc-public-share a,.vc-public-share summary{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;max-width:100%;min-height:44px;margin:0;padding:10px 14px;border:1px solid #9bb5d1;border-radius:9px;background:white;color:#143354;font:600 14px/1.4 Arial,Helvetica,sans-serif;text-decoration:none;text-align:center;cursor:pointer;touch-action:manipulation}
+.vc-public-share .vc-public-share-primary{background:#145dbf;color:white;border-color:#145dbf}
+.vc-public-share summary{display:list-item;list-style-position:inside}
+.vc-public-share button:disabled{opacity:.6;cursor:wait}
+.vc-public-share .vc-public-share-choices{margin-top:10px}
+.vc-public-share .vc-public-share-invitation,.vc-public-share .vc-public-share-status{margin:10px 0 0;font-size:14px;color:#345675}
+.vc-public-share .vc-public-share-status:empty{display:none}
+.vc-public-share .vc-public-share-manual{display:block;margin-top:12px;font-size:14px}
+.vc-public-share textarea{box-sizing:border-box;display:block;max-width:100%;width:100%;min-height:70px;margin-top:6px;padding:10px;border:1px solid #577da5;background:#fff;color:#143354;resize:vertical;font:14px/1.5 Arial,Helvetica,sans-serif}
+.vc-public-share :is(a,button,summary,textarea):focus-visible{outline:3px solid #935800;outline-offset:3px}
+.vc-public-share-city{grid-column:1/-1;width:100%;margin:8px 0 0;padding:12px;background:#102a45;border-color:#587999;color:#fff}
+.vc-public-share-city .vc-public-share-invitation,.vc-public-share-city .vc-public-share-status{color:#d5e6f7}
+@media(max-width:600px){.vc-public-share{padding:15px}.vc-public-share .vc-public-share-controls{display:grid;grid-template-columns:minmax(0,1fr)}.vc-public-share .vc-public-share-controls>*,.vc-public-share summary{width:100%}.vc-public-share-city{width:100%;padding:10px}}
+@media(prefers-reduced-motion:reduce){.vc-public-share,.vc-public-share *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}

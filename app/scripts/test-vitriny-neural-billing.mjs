@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import {fileURLToPath} from 'node:url';
 import Database from 'better-sqlite3';
 import {createNeuralBilling} from '../vitriny-neural/billing.js';
 
@@ -279,7 +280,7 @@ test('two independent processes cannot reserve more than the same SQLite allowan
     fixture({db,plan:{...PLAN,taskReserveCredits:60}});
     const moduleUrl=new URL('../vitriny-neural/billing.js',import.meta.url).href;
     const child=task=>`import Database from 'better-sqlite3'; import {createNeuralBilling} from ${JSON.stringify(moduleUrl)}; const db=new Database(${JSON.stringify(file)},{timeout:5000}); const b=createNeuralBilling({db,env:{VITRINY_NEURAL_BILLING_ENABLED:'1'},now:()=>${START}}); try {b.reserve(${JSON.stringify(SCOPE)},${JSON.stringify(task)});process.stdout.write('reserved');}catch(error){process.stdout.write(error.code||'unexpected');}finally{db.close();}`;
-    const results=await Promise.all(['parallel-a','parallel-b'].map(task=>exec(process.execPath,['--input-type=module','-e',child(task)],{cwd:new URL('..',import.meta.url).pathname})));
+    const results=await Promise.all(['parallel-a','parallel-b'].map(task=>exec(process.execPath,['--input-type=module','-e',child(task)],{cwd:fileURLToPath(new URL('..',import.meta.url))})));
     assert.deepEqual(results.map(result=>result.stdout).sort(),['billing_credits_exhausted','reserved']);
     const billing=createNeuralBilling({db,env:{VITRINY_NEURAL_BILLING_ENABLED:'1'},now:()=>START});
     assert.equal(billing.periodStatus(SCOPE).reservedCredits,60);assert.equal(billing.periodStatus(SCOPE).availableCredits,40);

@@ -66,3 +66,12 @@ test('one sanitized page view targets the verified stream, advertising features 
   p.values.set('vc_google_analytics_consent_v1', 'essential'); p.listeners['vc:measurement-consent']();
   assert.equal(p.sandbox['ga-disable-G-0V9KJQMH0V'], true);
 });
+
+test('public pages keep distinct identities and social campaign attribution', () => {
+  for (const path of ['/produto/12/adubo-organico-npk-com-po-de-rocha','/produto/10/adubo','/cursos/canva','/ofertas/adubo','/artigo/horta','/centros/kwai','/oracao-do-dia.html','/emissora','/artigos/organizar-petiscos.html']) {
+    const result=measurementContext(new URL('https://vitrinecity.com'+path+'?utm_source=tiktok&utm_medium=social&token=secret'), '');
+    assert.ok(result,path); assert.ok(!result.page_location.includes('/detalhe'),path);
+    assert.match(result.page_location,/utm_source=tiktok/); assert.doesNotMatch(result.page_location,/secret|token/);
+  }
+  for (const path of ['/produto/../admin','/admin','/minha-conta.html','/course-checkout.html','/neural-workspace.html','/meus-creditos','/api/private']) assert.equal(measurementPage(path),null,path);
+});

@@ -1,7 +1,7 @@
 import {createHash,randomUUID} from 'node:crypto';
+import {webStorySourceHash as sourceHash} from './web-story-source-hash.js';
 
 const hash=value=>createHash('sha256').update(value).digest('hex');
-const sourceHash=a=>hash(JSON.stringify([a.title,a.summary,a.body,a.image_url,a.updated_at,...(a.commercial?[a.facts,a.sourcePath]:[])]));
 const plain=value=>String(value??'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
 const brazilDay=value=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(value);
 

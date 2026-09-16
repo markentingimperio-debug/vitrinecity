@@ -9,7 +9,7 @@ const actions=[{tool:'route',kind:'website',message:'Site.'},{tool:'files.write'
 function fixture({respond,credits=1000,reserve=100,grant=true,env={}}={}){
   const db=new Database(':memory:');let clock=Date.now(),calls=0;
   const provider={id:'billing-local',modelName:'billing-fixture-v1',local:true,capabilities:['code.plan','growth.content-plan'],
-    invoke:async request=>{calls++;return respond?respond(request,calls):{text:JSON.stringify(actions[(calls-1)%3]),usage:{prompt_tokens:10,completion_tokens:5}};}};
+    invoke:async request=>{calls++;return {model:'billing-fixture-v1',...await (respond?respond(request,calls):{text:JSON.stringify(actions[(calls-1)%3]),usage:{prompt_tokens:10,completion_tokens:5}})};}};
   const service=createVitrinyNeuralService({db,providers:[provider],now:()=>clock,env:{VITRINY_NEURAL_ENABLED:'1',VITRINY_NEURAL_MODE:'advisory',VITRINY_NEURAL_TASKS_ENABLED:'1',VITRINY_NEURAL_BILLING_ENABLED:'1',...env}});
   service.recordQualification({providerId:provider.id,modelName:provider.modelName,report});
   service.billing.createPlan({code:'teste-v1',name:'Plano de teste',monthlyCredits:credits,taskReserveCredits:reserve,inputCreditsPer1000:100,outputCreditsPer1000:200},actor);
@@ -64,6 +64,17 @@ test('erro sem recibo não faz fallback para outra inferência',async()=>{
     f.service.recordQualification({providerId:'billing-backup',modelName:'backup',report});
     const done=await run(f);assert.equal(done.billing.state,'review_required');assert.equal(backup,0);assert.equal(f.calls(),1);
     assert.equal(done.attempts[0].state,'failed');assert.equal(JSON.stringify(done).includes('provider secret'),false);
+  }finally{f.db.close();}
+});
+test('modelo divergente interrompe comandos mas liquida o recibo conhecido uma única vez',async()=>{
+  const f=fixture({respond:async()=>({model:'unexpected-private-model',text:JSON.stringify(actions[0]),usage:{prompt_tokens:10,completion_tokens:5}})});
+  try{
+    const done=await run(f);
+    assert.equal(done.status,'failed');assert.equal(done.errorCode,'task_provider_unqualified');
+    assert.equal(f.calls(),1);assert.equal(done.events.length,0);assert.equal(done.files.length,0);
+    assert.equal(done.usage.complete,true);assert.equal(done.billing.chargedCredits,2);
+    assert.equal(done.billing.state,'settled');assert.equal(f.billing.ledger(scope).filter(event=>event.type==='settle').length,1);
+    assert.doesNotMatch(JSON.stringify(done),/unexpected-private-model/);
   }finally{f.db.close();}
 });
 test('cancelamento retém reserva até retorno tardio e contabiliza tokens sem gravar artefatos',async()=>{

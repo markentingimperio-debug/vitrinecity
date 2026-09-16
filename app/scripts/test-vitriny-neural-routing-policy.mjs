@@ -84,6 +84,23 @@ await check('disabled and capability-blocked providers stay blocked despite pref
     assert.deepEqual(probes,[]);
   }
 });
+await check('policy revocation after selection blocks dispatch and every fallback attempt',async()=>{
+  for(const policy of [{enabled:false},{allowedCapabilities:['growth.diagnose']},{allowedCapabilities:[]}]){
+    const registry=createSkillRegistry(),calls=[],events=[];
+    registry.registerProvider({id:'local-primary',local:true,priority:1,capabilities:[capability],invoke:async()=>{
+      calls.push('local-primary');registry.setProviderPolicy('local-backup',policy);throw Error('primary failed');
+    }});
+    registry.registerProvider({id:'local-backup',local:true,priority:2,capabilities:[capability,'growth.diagnose'],invoke:async()=>calls.push('local-backup')});
+    await assert.rejects(registry.invoke(capability,input,{localOnly:true,onAttempt:event=>events.push(event)}),/Todos os providers falharam/);
+    assert.deepEqual(calls,['local-primary']);assert.deepEqual(events.map(event=>event.type),['started','failed']);
+  }
+  const registry=createSkillRegistry(),calls=[];
+  registry.registerProvider({id:'local-primary',local:true,capabilities:[capability],available:async()=>{
+    registry.setProviderPolicy('local-primary',{enabled:false});return true;
+  },invoke:async()=>calls.push('local-primary')});
+  await assert.rejects(registry.invoke(capability,input,{localOnly:true}),/Todos os providers falharam/);
+  assert.deepEqual(calls,[]);
+});
 
 await check('administrative evaluation does not bypass local-only or allowlist restrictions',async()=>{
   const {registry,calls,probes}=fixture();

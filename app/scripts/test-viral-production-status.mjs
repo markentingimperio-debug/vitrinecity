@@ -143,3 +143,11 @@ test("failed and unconfirmed submissions do not imply ongoing processing", () =>
   assert.match(result.detail,/envios sem confirmação/);
   assert.doesNotMatch(result.detail,/na fila ou em processamento/);
 });
+
+test("unavailable video provider is explicit for pending and previously queued scripts", () => {
+  for(const [status,label] of [['awaiting_approval','Roteiro pronto; vídeo indisponível'],['in_production','Produção de vídeo indisponível']]) {
+    const result=checkStatus({status,videoAvailable:false,videoUnavailableReason:'Novos vídeos por IA estão indisponíveis.',scenes:scenes(['pending',9])},label);
+    assert.equal(result.detail,'Novos vídeos por IA estão indisponíveis.');
+  }
+  checkStatus({status:'published',videoAvailable:false,scenes:scenes(['downloaded',9])},'Publicado');
+});

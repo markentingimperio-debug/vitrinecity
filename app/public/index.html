@@ -62,15 +62,18 @@
     <meta name="theme-color" content="#10212c" />
     <link rel="preload" as="image" href="/assets/vitrinecity-avenida-premium.webp" fetchpriority="high" />
     <link rel="stylesheet" href="/search-autocomplete.css" />
-    <link rel="stylesheet" href="/vitriny-home.css?v=20260908-avenida" />
+    <link rel="stylesheet" href="/vitriny-home.css?v=20260915-neural" />
     <script src="/vitriny-home.js?v=20260908" defer></script>
+    <script type="module" src="/vitriny-home-neural.js?v=20260915"></script>
     <script src="/analytics.js" defer></script>
+      <link rel="stylesheet" href="/vitrine-social-launch.css?v=20260916" />
   </head>
   <body class="vc-home">
     <a class="skip-link" href="#conteudo">Ir para o conteúdo</a>
     <header class="home-header">
       <a class="brand" href="/?inicio=1" aria-label="VitrineCity · início"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Vitrine<span>City</span></a>
       <nav class="header-nav" aria-label="Navegação principal">
+        <a class="header-social" href="/social">Vitrine Social <span aria-hidden="true">↗</span></a>
         <a class="header-directory" href="#encontre">Encontre na cidade</a>
         <a class="header-business" href="#seu-negocio">Seu negócio aqui</a>
         <a class="account-entry" href="/acessos">Minha conta <span aria-hidden="true">↗</span></a>
@@ -84,10 +87,28 @@
           <p class="eyebrow"><span aria-hidden="true">✦</span> BEM-VINDO À VITRINECITY</p>
           <h1 id="hero-title">Uma cidade.<br />Infinitas descobertas.</h1>
           <p class="hero-lead">Lojas, encontros e novas experiências.<br />Seu próximo destino está aqui.</p>
-          <a class="button hero-cta" href="/multiverso?city=vitrine-city" data-asset-type="city" data-asset-id="home-explore-city">Explorar a cidade <span aria-hidden="true">↗</span></a>
+          <div class="hero-neural-intro"><span class="neural-emblem" aria-hidden="true">✦</span><div><h2>Vitrine Neural</h2><p>Converse com a IA. Transforme suas ideias em imagens, vídeos ou mensagens.</p></div></div>
+          <div class="hero-actions">
+            <a class="button hero-social-cta" href="/social">Entrar na Vitrine Social <span aria-hidden="true">↗</span></a>
+            <a class="button hero-neural-cta" data-home-neural href="/entrar.html?returnTo=%2Fneural-workspace.html%3Fpersonal%3D1" aria-describedby="home-neural-note">Conversar com a IA <span aria-hidden="true">↗</span></a>
+            <a class="button hero-cta" href="/multiverso?city=vitrine-city" data-asset-type="city" data-asset-id="home-explore-city">Explorar a cidade <span aria-hidden="true">↗</span></a>
+          </div>
+          <p class="hero-note neural-note" id="home-neural-note">Use sua conta para conversar, planejar e criar. Recursos de IA podem consumir Vitrine Coins; confira o valor antes de confirmar.</p>
           <p class="hero-note">Visite sem cadastro. Entre na sua conta para jogar e conversar.</p>
         </div>
         <div class="panorama-caption">VITRINECITY <span>Visão conceitual da cidade</span></div>
+      </section>
+
+      <section class="social-invitation home-width" id="vitrine-social" aria-labelledby="social-invitation-title">
+        <div class="social-invitation-copy">
+          <p class="eyebrow">VITRINE SOCIAL · SUA COMUNIDADE COMEÇA AQUI</p>
+          <h2 id="social-invitation-title">Seu talento merece<br />uma vitrine.</h2>
+          <p class="social-invitation-lead">Publique suas ideias. Conquiste seguidores. Faça parte de uma comunidade que conecta pessoas, criadores e negócios.</p>
+          <ul class="social-benefits"><li>Seu perfil, sua voz</li><li>Vídeos, fotos e novas conexões</li><li>Pessoas e oportunidades da sua cidade</li></ul>
+          <div class="social-invitation-actions"><a class="button" href="/social">Quero participar <span aria-hidden="true">↗</span></a><a class="text-link" href="/criadores-social.html">Conhecer os benefícios →</a></div>
+          <p class="social-program-note"><strong>Vem aí: programa de criadores.</strong> Proposta de R$ 5 por nível de 1.000 seguidores e R$ 5 por 1.000 visualizações válidas. Programa em preparação, sujeito às regras de elegibilidade. <a href="/criadores-social.html#monetizacao">Entenda os critérios</a>.</p>
+        </div>
+        <figure class="social-invitation-cover"><img src="/assets/vitrine-social-criadores-20260916.webp" width="1536" height="1024" loading="lazy" decoding="async" alt="Capa ilustrativa da Vitrine Social: criadores compartilhando vídeos sobre culinária, plantas e o dia a dia." /><figcaption>Histórias reais começam com pessoas como você.</figcaption></figure>
       </section>
 
       <section class="home-search-section" aria-labelledby="search-title">
@@ -108,7 +129,7 @@
         <a href="/jogos"><span aria-hidden="true">03</span> Jogos <b aria-hidden="true">↗</b></a>
         <a href="/arena-musical"><span aria-hidden="true">04</span> Música <b aria-hidden="true">↗</b></a>
         <a href="/sala-de-cinema"><span aria-hidden="true">05</span> Cinema <b aria-hidden="true">↗</b></a>
-        <a href="#encontre"><span aria-hidden="true">06</span> Ver tudo <b aria-hidden="true">↓</b></a>
+        <a href="/social"><span aria-hidden="true">06</span> Vitrine Social <b aria-hidden="true">↗</b></a>
       </nav>
 
       <div id="home-promotions" class="home-width"></div>
@@ -126,15 +147,16 @@
           <article class="directory-group"><span class="directory-number" aria-hidden="true">02 /</span><h3>Aprender & criar</h3><p>Conhecimento, ideias e ferramentas para ir além.</p><ul>
             <li><a href="/centro-educacional">Centro Educacional <span>↗</span></a></li>
             <li><a href="/stories">Web Stories · Guias visuais <span>↗</span></a></li>
-            <li><a href="/jarvis-public.html">Perguntar ao Jarvis <span>↗</span></a></li>
+            <li><a data-home-neural href="/entrar.html?returnTo=%2Fneural-workspace.html%3Fpersonal%3D1">Vitrine Neural · conversar e criar <span>↗</span></a></li>
             <li><a href="/guias/plantas-em-vasos.html">Guia gratuito de jardinagem <span>↗</span></a></li>
             <li><a href="/pesquisar">Pesquisar na web <span>↗</span></a></li>
           </ul></article>
           <article class="directory-group"><span class="directory-number" aria-hidden="true">03 /</span><h3>Se divertir & conectar</h3><p>Uma pausa para jogar, ouvir e conhecer histórias.</p><ul>
+            <li><a href="/oracao-do-dia">Oração do dia · Orações e Esperança <span>↗</span></a></li>
             <li><a href="/jogos">Prédio de jogos <span>↗</span></a></li>
             <li><a href="/arena-musical">Pulse Arena · Música <span>↗</span></a></li>
             <li><a href="/sala-de-cinema">Cinema VitrineCity <span>↗</span></a></li>
-            <li><a href="/social">Vitriny Social <span>↗</span></a></li>
+            <li><a href="/social">Vitrine Social <span>↗</span></a></li>
             <li><a href="/multiverso?city=vitrine-city">Explorar o multiverso <span>↗</span></a></li>
           </ul></article>
           <article class="directory-group"><span class="directory-number" aria-hidden="true">04 /</span><h3>Seu negócio na cidade</h3><p>Uma nova vitrine para sua marca e suas oportunidades.</p><ul>

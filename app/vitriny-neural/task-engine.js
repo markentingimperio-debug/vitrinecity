@@ -3,7 +3,7 @@ import {DRAFT_TASK_PROTOCOL as CONTRACT} from './task-protocol.js';
 
 const TOOLS = Object.freeze(['route', 'files.list', 'files.read', 'files.write', 'finish']);
 const TERMINAL = new Set(['draft_ready', 'failed', 'cancelled', 'interrupted', 'blocked']);
-const SECRET = /-----BEGIN [^-]*PRIVATE KEY-----|\b(?:sk-proj-|ghp_|github_pat_|AKIA)[A-Za-z0-9_-]{10,}|\bBearer\s+[A-Za-z0-9._-]{16,}/i;
+const SECRET = /-----BEGIN [^-]*PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{20,}|\bDEEPSEEK_API_KEY\s*[:=]\s*["']?[^\s"']{4,}|\b(?:sk-proj-|ghp_|github_pat_|AKIA)[A-Za-z0-9_-]{10,}|\bBearer\s+[A-Za-z0-9._-]{16,}/i;
 const fail = (code, status=400) => {throw Object.assign(new Error(code), {code, status});};
 const truthy = value => ['1','true','yes','on'].includes(String(value||'').toLowerCase());
 const bounded = (value, fallback, min, max) => value == null || value === '' ? fallback : Number.isInteger(Number(value)) ? Math.max(min, Math.min(max, Number(value))) : fallback;
@@ -23,6 +23,23 @@ function command(value) {
   const keys={route:['tool','kind','message'], 'files.list':['tool'], 'files.read':['tool','path'], 'files.write':['tool','path','content'], finish:['tool','message']}[data.tool];
   if(Object.keys(data).some(key=>!keys.includes(key))) fail('task_protocol_invalid');
   return data;
+}
+function taskUsage(item,attempts) {
+  const valid=value=>Number.isSafeInteger(value)&&value>=0;
+  let input=0n,output=0n,complete=attempts.length>0;
+  for(const attempt of attempts){
+    const known=attempt.known===1&&attempt.state!=='started'&&valid(attempt.inputTokens)&&valid(attempt.outputTokens);
+    if(known){input+=BigInt(attempt.inputTokens);output+=BigInt(attempt.outputTokens);}
+    else complete=false;
+  }
+  // Legacy rows without attempt receipts retain their safe recorded subtotal,
+  // but cannot become complete evidence. Never expose rounded SQL/Number sums.
+  if(!attempts.length){
+    const overflow=!valid(item.input_tokens)||!valid(item.output_tokens);
+    return {inputTokens:valid(item.input_tokens)?item.input_tokens:null,outputTokens:valid(item.output_tokens)?item.output_tokens:null,complete:false,overflow};
+  }
+  const safe=value=>value<=BigInt(Number.MAX_SAFE_INTEGER),overflow=!safe(input)||!safe(output);
+  return {inputTokens:safe(input)?Number(input):null,outputTokens:safe(output)?Number(output):null,complete:complete&&!overflow,overflow};
 }
 /** A bounded draft workbench, NOT an OS/container sandbox. Artifacts are inert
  * SQLite text rows and never evaluated, served as HTML, or written to the host. */
@@ -96,16 +113,15 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, bill
     const attempts=db.prepare('SELECT id,provider,model_name modelName,state,input_tokens inputTokens,output_tokens outputTokens,known,duration_ms durationMs FROM neural_task_attempts WHERE task_id=? ORDER BY created_at,id').all(item.id);
     return {id:item.id,status:item.status,kind:item.kind||null,instruction:item.instruction,stepCount:item.step_count,
       resultText:item.result_text,errorCode:item.error_code||null,createdAt:item.created_at,updatedAt:item.updated_at,
-      draftOnly:true,requiresReview:true,files:files(item.id),usage:{inputTokens:item.input_tokens,outputTokens:item.output_tokens,
-        complete:attempts.length>0&&attempts.every(attempt=>attempt.known===1&&attempt.state!=='started')},
+      draftOnly:true,requiresReview:true,files:files(item.id),usage:taskUsage(item,attempts),
       billing:billable(item.scope)?billing.report(item.scope,item.id):null,
       attempts:attempts.map(attempt=>({...attempt,known:attempt.known===1})),
       events:db.prepare('SELECT step,provider,tool,outcome,created_at createdAt FROM neural_task_steps WHERE task_id=? ORDER BY step').all(item.id)};
   }
   function get(scope,id) {reap(); return view(row(scope,id));}
   function list(scope) {scopeCheck(scope);reap();return db.prepare('SELECT * FROM neural_tasks WHERE scope=? ORDER BY created_at DESC,id DESC LIMIT 50').all(scope).map(view);}
-  function status(scope) {
-    scopeCheck(scope);reap();
+  function status(scope,{reapExpired=true}={}) {
+    scopeCheck(scope);if(reapExpired)reap();
     const today=dayStart();
     const used=db.prepare('SELECT COUNT(*) n FROM neural_tasks WHERE scope=? AND created_at>=?').get(scope,today).n;
     const runs=db.prepare('SELECT COUNT(*) n FROM neural_tasks WHERE scope=? AND started_at>=?').get(scope,today).n;
@@ -187,7 +203,15 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, bill
         let timer;
         const pending=skills.invoke(capability,{task:item.instruction,contract:CONTRACT,kind:item.kind||'route_required',draftFiles:files(id),history:history.slice(-3)},
           // Task deadline fires first, preventing per-attempt timeout from starting another inference.
-          {localOnly:true,allowedProviders,timeoutMs:timeout+1000,evaluation:false,maxTokens:1200,signal:controller.signal,taskProtocol:'draft-v1',onAttempt:event=>recordAttempt(scope,id,event)});
+          {localOnly:true,allowedProviders,timeoutMs:timeout+1000,evaluation:false,maxTokens:1200,signal:controller.signal,taskProtocol:'draft-v1',onAttempt:event=>{
+            if(event.type==='started'){
+              live(scope,id,lease);
+              // A new qualification can revoke a fallback while an earlier
+              // attempt is pending, even if the configured model name is stable.
+              if(!qualified(capability).includes(event.provider))fail('task_provider_unqualified',503);
+            }
+            recordAttempt(scope,id,event);
+          }});
         modelCalls.set(id,{scope,pending});
         pending.finally(()=>{
           modelCalls.delete(id);
@@ -202,6 +226,11 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, bill
         live(scope,id,lease);
         // Unknown usage is not zero, and cannot silently spend another inference.
         if(billable(scope)&&billing.report(scope,id)?.state==='review_required')fail('billing_usage_review_required',409);
+        const provider=skills.status().providers.find(candidate=>candidate.id===result.provider);
+        // Receipts are recorded before rejecting an unidentified/different
+        // response. Its tool commands must never create artifacts or continue.
+        if(!provider?.modelName||result.output?.model!==provider.modelName)fail('task_provider_unqualified',503);
+        if(result.output?.incomplete===true||['length','content_filter'].includes(result.output?.finishReason))fail('task_output_incomplete',503);
         const action=command(result.output?.text);
         const observation=db.transaction(()=>{
           const current=live(scope,id,lease);
@@ -239,7 +268,7 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, bill
       }
       fail('task_step_limit');
     }catch(error){
-      const known=new Set(['task_protocol_invalid','task_input_invalid','task_tool_unavailable','task_file_invalid','task_file_not_found','task_artifact_limit','task_artifact_missing','task_provider_unqualified','task_interrupted','task_timeout','task_step_limit','task_disabled','task_scope_denied']);
+      const known=new Set(['task_protocol_invalid','task_input_invalid','task_tool_unavailable','task_file_invalid','task_file_not_found','task_artifact_limit','task_artifact_missing','task_provider_unqualified','task_output_incomplete','task_interrupted','task_timeout','task_step_limit','task_disabled','task_scope_denied']);
       const billingCodes=['billing_subscription_required','billing_usage_review_required','billing_task_budget_exhausted','billing_insufficient_credits','billing_disabled'];
       const code=known.has(error?.code)||billingCodes.includes(error?.code)?error.code:'task_provider_failed';
       db.prepare("UPDATE neural_tasks SET status='failed',error_code=?,updated_at=? WHERE id=? AND scope=? AND status='running' AND lease_token=?").run(code,now(),id,scope,lease);
@@ -282,6 +311,14 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, bill
     return TERMINAL.has(item.status)&&!modelCalls.has(id)&&!inflight.has(id)&&
       (!db.prepare("SELECT 1 FROM neural_task_attempts WHERE task_id=? AND state='started'").get(id)||item.lease_until<=now());
   }
+  async function waitForInference(id){
+    // A terminal task deadline requests abort but does not prove the transport
+    // settled. Keep diagnostics/shutdown from closing SQLite while a late usage
+    // receipt is still able to arrive. Deliberately no second timeout here:
+    // a provider that ignores cancellation must settle before resources close.
+    await inflight.get(id)?.catch(()=>{});
+    await modelCalls.get(id)?.pending.catch(()=>{});
+  }
   return {status,submit:(scope,input)=>submit.immediate(scope,input),list,get,start,cancel,readFile,billingCanResolve,
-    wait:async(id)=>{await inflight.get(id);},limits};
+    wait:async(id)=>{await inflight.get(id);},waitForInference,limits};
 }

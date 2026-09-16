@@ -8,12 +8,12 @@
     />
     <meta
       name="description"
-      content="Vitriny Social: vídeos, produtos, serviços, estudos e oportunidades perto de você."
+      content="Vitrine Social: vídeos, produtos, serviços, estudos e oportunidades perto de você."
     />
     <link rel="canonical" href="https://vitrinecity.com/social" />
     <meta
       property="og:title"
-      content="Vitriny Social — sua cidade em movimento"
+      content="Vitrine Social — sua cidade em movimento"
     />
     <meta
       property="og:description"
@@ -21,13 +21,13 @@
     />
     <meta
       property="og:image"
-      content="https://vitrinecity.com/assets/vitriny-city-master.jpg"
+      content="https://vitrinecity.com/assets/vitrine-social-criadores-20260916.webp"
     />
     <meta
       property="og:image:alt"
-      content="Vitriny City — cidade digital de pessoas e negócios"
+      content="Vitrine Social — uma comunidade de pessoas e criadores"
     />
-    <title>Vitriny Social — sua cidade em movimento</title>
+    <title>Vitrine Social — sua cidade em movimento</title>
     <style>
       :root {
         --blue: #1768e6;
@@ -1543,10 +1543,11 @@
       }
     </style>
     <script src="/analytics.js" defer></script>
-  <script src="/openai-ads.js" defer></script></head>
+  <script src="/openai-ads.js" defer></script>    <link rel="stylesheet" href="/vitrine-social-launch.css?v=20260916" />
+  </head>
   <body>
     <header class="top">
-      <a class="brand" href="/">Vitriny <span>Social</span></a>
+      <a class="brand" href="/social">Vitrine <span>Social</span></a>
       <div class="top-actions">
         <button class="btn alt notification-button" id="notifications-button">
           🔔<span class="notification-count" id="notification-count" hidden
@@ -1563,6 +1564,7 @@
         ><button class="btn" id="publish-top">＋ Publicar</button>
       </div>
     </header>
+    <a class="social-creator-strip" href="/criadores-social.html"><strong>Seu talento merece uma vitrine.</strong><span>Conheça os benefícios e o programa de criadores em preparação <b aria-hidden="true">→</b></span></a>
     <aside
       class="social-market-ticker"
       id="socialMarketTicker"
@@ -1656,8 +1658,7 @@
         <div class="side-card">
           <h2>Publique o que movimenta sua cidade</h2>
           <p>
-            Mostre produtos, serviços, aulas, vagas e oportunidades em vídeos de
-            até 60 segundos.
+            Mostre produtos, serviços, aulas, vagas e oportunidades em vídeo.
           </p>
           <button class="btn" id="publish-side" style="width: 100%">
             Publicar vídeo
@@ -1716,7 +1717,7 @@
             name="video"
             accept="video/mp4,video/webm,video/quicktime"
             required
-          /><small class="hint"
+          /><small class="hint" id="video-upload-limits"
             >Até 60 segundos e 200 MB. Use conteúdo próprio ou
             autorizado.</small
           ></label
@@ -1911,6 +1912,7 @@
         document.getElementById('notifications-button').hidden = !authenticated;
         if (r.ok) {
           const d = await r.json();
+          if(d.user?.socialDirectPublish)document.getElementById('video-upload-limits').textContent='Seu perfil publica direto, sem limite de 1 minuto ou quantidade diária. Até 200 MB por arquivo. Use conteúdo próprio ou autorizado.';
           document.getElementById('wallet-balance').textContent =
             ((d.wallet?.balanceUnits || 0) / 100).toLocaleString('pt-BR', {
               maximumFractionDigits: 2,
@@ -2457,7 +2459,7 @@
           }).catch(() => {});
           const url = location.origin + '/social/post/' + post.dataset.id;
           if (navigator.share)
-            navigator.share({ title: 'Vitriny Social', url });
+            navigator.share({ title: 'Vitrine Social', url });
           else {
             await navigator.clipboard.writeText(url);
             alert('Link copiado!');
@@ -2512,6 +2514,15 @@
           statusBox.textContent = 'Preparando envio seguro...';
           const body = Object.fromEntries(new FormData(form));
           delete body.video;
+          try {
+            body.durationSeconds=await new Promise((resolve,reject)=>{
+              const probe=document.createElement('video'),url=URL.createObjectURL(file);
+              const done=(error)=>{clearTimeout(timer);URL.revokeObjectURL(url);error?reject(error):resolve(probe.duration);};
+              const timer=setTimeout(()=>done(new Error('timeout')),15000);
+              probe.preload='metadata';probe.onloadedmetadata=()=>Number.isFinite(probe.duration)&&probe.duration>0?done():done(new Error('duration'));
+              probe.onerror=()=>done(new Error('metadata'));probe.src=url;
+            });
+          } catch {statusBox.textContent='Não foi possível ler este vídeo. Selecione um arquivo MP4 válido.';return;}
           const r = await fetch('/api/social/uploads', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -2533,14 +2544,37 @@
             statusBox.textContent = 'O envio falhou. Tente novamente.';
             return;
           }
-          statusBox.textContent =
-            'Vídeo recebido! Ele aparecerá somente depois da análise de segurança.';
+          statusBox.textContent = d.directPublish?'Vídeo recebido! Vai ao ar assim que o processamento terminar.':'Vídeo recebido! O agente fará a análise automaticamente.';
+          trackUploadedVideo(d.postId);
           form.reset();
           setTimeout(() => {
             modal.classList.remove('open');
             load(true);
           }, 1800);
         });
+      function trackUploadedVideo(id) {
+        const notice=document.createElement('div');notice.setAttribute('role','status');
+        notice.style.cssText='padding:14px 18px;margin:12px;border:1px solid #395375;border-radius:14px;background:#101e31;color:#fff';
+        notice.textContent='Vídeo recebido. Preparando a reprodução; não é necessário enviar novamente.';
+        document.querySelector('main').prepend(notice);
+        const started=Date.now();
+        async function check(){
+          try{const r=await fetch('/api/social/posts/'+encodeURIComponent(id)+'/status');
+            if(r.status===401||r.status===404){notice.remove();return;}
+            if(r.ok){const p=await r.json();notice.textContent=p.message;
+              if(currentTab==='mine')loadMine();
+              if(['ready','error','rejected','deleted'].includes(p.status)||p.agentState==='review'){
+                if(p.status==='ready'){const link=document.createElement('a');link.href='/social?post='+encodeURIComponent(id);link.textContent=' Ver publicação';link.style.color='#f7ca62';notice.append(link);if(currentTab==='feed')load(true);}
+                return;
+              }
+            }
+          }catch{}
+          if(Date.now()-started<15*60*1000)setTimeout(check,5000);
+          else notice.textContent='O vídeo foi recebido e continua em processamento. Acompanhe em Meus vídeos.';
+        }
+        setTimeout(check,3000);
+      }
+      setInterval(()=>{if(currentTab==='mine'&&!document.hidden)loadMine();},15000);
       async function openComments(id) {
         activePost = id;
         document.getElementById('comments').classList.add('open');
@@ -2750,7 +2784,7 @@
           d.items
             ?.map(
               (n) =>
-                `<div class="notice"><b>${escapeHtml(n.actor_name || 'Vitriny Social')}</b> ${escapeHtml(n.message)}<br><small>${new Date(n.created_at + 'Z').toLocaleString('pt-BR')}</small></div>`,
+                `<div class="notice"><b>${escapeHtml(n.actor_name || 'Vitrine Social')}</b> ${escapeHtml(n.message)}<br><small>${new Date(n.created_at + 'Z').toLocaleString('pt-BR')}</small></div>`,
             )
             .join('') || '<p class="hint">Nenhuma notificação ainda.</p>';
         if (open) {

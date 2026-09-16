@@ -5,8 +5,10 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>Vitriny Neural · Console de IA | VitrineCity</title>
-  <link rel="stylesheet" href="/vitriny-neural-admin.css">
-  <script src="/vitriny-neural-admin.js" defer></script>
+  <link rel="stylesheet" href="/vitriny-neural-admin.css?v=3">
+  <link rel="stylesheet" href="/neural-kling-admin.css">
+  <script src="/vitriny-neural-admin.js?v=5" defer></script>
+  <script type="module" src="/neural-kling-admin.js"></script>
 </head>
 <body>
 <a class="skip" href="#main">Pular para o conteúdo</a>
@@ -16,7 +18,7 @@
     <a href="/admin">Central</a>
     <a href="/admin-agentes.html">Edifício neural</a>
     <a href="/admin-jarvis.html">Jarvis</a>
-    <a href="/neural-workspace.html">Chat de tarefas · piloto</a>
+    <a href="/neural-workspace.html">Abrir chat</a>
     <a href="/neural-billing.html">Planos e créditos de IA</a>
     <a href="/admin-vitriny-neural.html" aria-current="page">Vitriny Neural</a>
   </nav>
@@ -26,7 +28,8 @@
     <div>
       <p class="eyebrow">VITRINY NEURAL · CONSOLE ADMINISTRATIVO</p>
       <h1>Inteligência que<br><span>mede antes de agir.</span></h1>
-      <p class="intro">Teste o modelo, acompanhe aprendizagem, precisão, providers e o modo operacional da IA própria da VitrineCity.</p>
+      <p class="intro">Converse com a Lia em um único espaço: escreva seu pedido e adicione arquivos, sem escolher uma área. Os diagnósticos da Vitriny Neural ficam na administração avançada abaixo.</p>
+      <p><a class="chat-primary-link" href="/neural-workspace.html">Abrir chat da Lia <span aria-hidden="true">↗</span></a></p>
     </div>
     <div class="brain" aria-hidden="true"><div class="ring r1"></div><div class="ring r2"></div><strong>VN</strong><span>NEURAL</span></div>
   </section>
@@ -34,6 +37,35 @@
   <p id="error" class="error" role="alert" hidden></p>
   <p id="announcement" class="sr-only" aria-live="polite" role="status"></p>
 
+  <section id="kling-panel" class="panel kling-panel" aria-labelledby="kling-title" aria-busy="true">
+    <div class="section-head"><div><p class="eyebrow">INTEGRAÇÃO COMERCIAL · PREPARAÇÃO</p><h2 id="kling-title">Kling API · geração para clientes</h2></div><span id="kling-stage" class="kling-stage" data-state="loading">Carregando estado</span></div>
+    <p class="muted">A estrutura de integração está preparada. Isso não significa geração de vídeos ativa: conectar a API, testar a entrega e habilitar a cobrança dos clientes são etapas diferentes.</p>
+    <div class="kling-overview">
+      <article><h3>API comercial para a plataforma</h3><p>Usa a credencial e os créditos próprios da conta de API. A conferência abaixo não compra pacotes, não gera conteúdo e não habilita vendas.</p></article>
+      <article><h3>Kling Studio · assinatura separada</h3><p>Assinatura e créditos do Studio não são compartilhados com a API. Este painel não altera o Studio nem confirma seu plano ou saldo.</p></article>
+    </div>
+    <p id="kling-status" class="kling-status" role="status" aria-live="polite" aria-atomic="true">Carregando o estado salvo, sem iniciar uma conferência de acesso.</p>
+    <p id="kling-error" class="error" role="alert" hidden></p>
+    <a id="kling-login" class="kling-login" href="/admin-login.html" hidden>Entrar novamente na administração</a>
+    <ol class="kling-checklist" aria-label="Etapas para disponibilizar vídeos aos clientes">
+      <li><strong>1. Credencial da API</strong><span id="kling-credential">Aguardando leitura do servidor.</span></li>
+      <li><strong>2. Conferência de acesso</strong><span id="kling-access">Ainda não confirmada nesta página.</span></li>
+      <li><strong>3. Créditos e condições comerciais</strong><span id="kling-commercial">Pendentes de conferência na conta da API. Nenhum saldo foi confirmado.</span></li>
+      <li><strong>4. Teste real de geração</strong><span id="kling-generation">Pendente. Exige autorização específica e pode consumir créditos; não é iniciado aqui.</span></li>
+      <li><strong>5. Cobrança de clientes</strong><span id="kling-billing">Desativada. Preço, consumo de créditos e entrega ainda precisam ser validados antes da ativação.</span></li>
+    </ol>
+    <p id="kling-checked-at" class="fine">Nenhuma conferência de acesso carregada.</p>
+    <p id="kling-package-count" class="fine" hidden></p>
+    <p class="fine">Os dados de pacotes da API podem levar até 12 horas para atualizar. A existência de um pacote não comprova saldo utilizável nem garante geração.</p>
+    <div class="kling-actions"><button id="kling-check" type="button" aria-describedby="kling-check-hint" disabled>Conferir acesso à API · sem custo</button><button id="kling-refresh" type="button" disabled>Atualizar estado salvo</button></div>
+    <p id="kling-check-hint" class="fine">Conferência gratuita e somente leitura, iniciada por você. Não gera vídeo, não compra créditos, não configura pagamentos e não cobra clientes.</p>
+    <nav class="kling-links" aria-label="Recursos oficiais da Kling API"><a id="kling-console-link">Conta e chave da API</a><a id="kling-pricing-link">Preços oficiais atualizados</a><a id="kling-documentation-link">Documentação da API</a><a id="kling-terms-link">Condições do serviço pago</a></nav>
+    <p class="fine">Os links oficiais abrem em outra aba. Não envie credenciais no chat nem cole chaves neste painel.</p>
+  </section>
+
+  <details class="advanced-console">
+  <summary>Administração avançada · diagnósticos, testes e aprendizado</summary>
+  <p><a href="/neural-tasks.html">Tarefas do piloto · histórico, rascunhos e arquivos anteriores</a></p>
   <section class="metrics" aria-label="Resumo da Vitriny Neural">
     <article><span>MODO</span><strong id="mode">—</strong><small id="mode-detail">Carregando configuração</small></article>
     <article><span>MODELO / PROVIDER</span><strong id="provider">—</strong><small id="provider-detail">Aguardando estado</small></article>
@@ -42,6 +74,80 @@
   </section>
 
   <div class="toolbar"><p id="status-line">Aguardando dados…</p><button id="refresh" type="button">Atualizar agora</button></div>
+
+  <section class="panel factual-panel" aria-labelledby="factual-title">
+    <div class="section-head"><div><p class="eyebrow">PREPARAR UM TEXTO</p><h2 id="factual-title">Rascunho com dados confirmados</h2></div><span id="factual-state" class="tag">PRONTO PARA USAR</span></div>
+    <p class="muted">Usa somente os dados que você informar. Organiza suas frases no formato escolhido, preservando o texto de cada uma.</p>
+    <form id="factual-form">
+      <label for="factual-facts">Dados para o rascunho · um fato por linha</label>
+      <textarea id="factual-facts" rows="5" maxlength="15060" required placeholder="Capa para almofada de algodão.&#10;Medida: 45 × 45 cm.&#10;Enchimento não incluso." aria-describedby="factual-facts-help"></textarea>
+      <p id="factual-facts-help" class="fine">Até 30 fatos diferentes, com até 500 caracteres em cada linha.</p>
+      <label for="factual-format">Formato do texto</label>
+      <select id="factual-format">
+        <option value="lines">Linhas</option>
+        <option value="paragraphs">Parágrafos</option>
+        <option value="bullets">Tópicos</option>
+      </select>
+      <div class="form-foot"><small class="fine">Disponível sem consultar um modelo de IA.</small><button class="primary" id="factual-generate" type="submit">Preparar rascunho</button></div>
+    </form>
+    <p id="factual-error" class="error" role="alert" hidden></p>
+    <div class="response" id="factual-response" aria-busy="false">
+      <div class="response-head"><strong>Seu rascunho</strong><button id="factual-copy" type="button" disabled>Copiar texto</button></div>
+      <p id="factual-source" class="fine">Fonte: dados informados por você; sem verificação externa.</p>
+      <pre id="factual-output" tabindex="0">O texto preparado aparecerá aqui.</pre>
+      <p id="factual-notice" class="fine" role="status" aria-live="polite"></p>
+    </div>
+  </section>
+
+  <section class="panel supervisor-panel" id="supervisor-panel" aria-labelledby="supervisor-title">
+    <div class="section-head"><div><p class="eyebrow">SUPERVISÃO · ESTRUTURA EXISTENTE</p><h2 id="supervisor-title">Supervisor Astra</h2></div><span id="supervisor-state" class="tag">CARREGANDO</span></div>
+    <p class="muted">Avalia a estrutura atual da Neural e propõe melhorias. O resultado é um plano candidato para revisão; esta seção não aplica mudanças nem troca o modelo principal ou o modo da plataforma.</p>
+    <div class="shadow-grid supervisor-metrics">
+      <article><span>MODELO CONSULTOR</span><strong id="supervisor-model">—</strong><small id="supervisor-connection">Conferindo configuração</small></article>
+      <article><span>ACESSO AO MODELO</span><strong id="supervisor-access">Não conferido</strong><small id="supervisor-checked">A conferência é uma ação manual.</small></article>
+      <article><span>ORÇAMENTO DE HOJE · USD</span><strong id="supervisor-budget">—</strong><small id="supervisor-day">Sem dados de custo</small></article>
+      <article><span>CUSTO MÁXIMO POR AVALIAÇÃO</span><strong id="supervisor-quote">—</strong><small id="supervisor-limits">Aguardando limite informado pelo servidor</small></article>
+    </div>
+    <p id="supervisor-notice" class="fine" role="status" aria-live="polite">Carregando o estado do supervisor, sem iniciar uma avaliação.</p>
+    <p id="supervisor-error" class="error" role="alert" hidden></p>
+    <details class="supervisor-settings">
+      <summary>Configuração e limite de custo</summary>
+      <form id="supervisor-config-form">
+        <label class="supervisor-check"><input id="supervisor-enabled" type="checkbox" disabled> Habilitar o Supervisor Astra</label>
+        <label class="supervisor-check"><input id="supervisor-automatic" type="checkbox" disabled> Habilitar uma avaliação diária consultiva, dentro do limite de custo</label>
+        <p id="supervisor-automatic-detail" class="fine">Desativada inicialmente. A rotina diária também produz somente planos candidatos.</p>
+        <label for="supervisor-daily-cap">Limite diário em dólares americanos (USD)</label>
+        <input id="supervisor-daily-cap" type="number" min="0" max="0.50" step="0.01" inputmode="decimal" required disabled aria-describedby="supervisor-cap-detail">
+        <p id="supervisor-cap-detail" class="fine">O limite controla o custo reservado e usado pelo supervisor. A rotina diária, quando habilitada, pode consultar a IA no próximo ciclo.</p>
+        <div class="supervisor-actions"><button id="supervisor-save" type="submit" disabled>Salvar configuração</button><button id="supervisor-check" type="button" disabled>Conferir acesso ao modelo</button><button id="supervisor-refresh" type="button">Atualizar estado</button></div>
+        <p class="fine">Conferir acesso consulta a disponibilidade do modelo, sem gerar uma resposta de IA.</p>
+      </form>
+    </details>
+    <form id="supervisor-evaluate-form">
+      <label for="supervisor-objective">O que você quer melhorar na estrutura atual?</label>
+      <textarea id="supervisor-objective" rows="3" minlength="12" maxlength="1000" required disabled placeholder="Ex.: Avalie como aproveitar as capacidades existentes para melhorar o atendimento da Lia. Não inclua dados de clientes ou credenciais." aria-describedby="supervisor-evaluation-detail"></textarea>
+      <div class="form-foot"><small id="supervisor-evaluation-detail">A avaliação manual é uma consulta paga, iniciada por este botão. O plano não executa suas recomendações.</small><button class="primary" id="supervisor-evaluate" type="submit" disabled>Avaliar com Astra</button></div>
+    </form>
+    <div id="supervisor-active" class="response" aria-busy="false" hidden>
+      <div class="response-head"><strong id="supervisor-run-state">Aguardando confirmação</strong><span id="supervisor-run-cost" class="fine">—</span></div>
+      <p id="supervisor-run-id" class="fine"></p>
+      <p id="supervisor-run-detail">O registro desta avaliação será conferido sem repetir o envio.</p>
+      <div id="supervisor-result" class="stack"></div>
+      <p id="supervisor-review-detail" class="fine" hidden>Encerrar esta revisão registra que você conferiu a falha. O custo e o intervalo continuam válidos; esta ação não solicita outra avaliação nem aplica mudanças.</p>
+      <button id="supervisor-acknowledge" type="button" aria-describedby="supervisor-review-detail" hidden>Encerrar revisão desta falha</button>
+      <button id="supervisor-reconcile" type="button" hidden>Conferir avaliação existente</button>
+    </div>
+    <h3>Histórico e planos candidatos</h3>
+    <p class="fine">Uma avaliação concluída cria uma proposta. Aprovação, aplicação e resultados são etapas distintas.</p>
+    <div id="supervisor-history" class="stack"><p class="muted">Carregando histórico…</p></div>
+  </section>
+
+  <section class="panel" aria-labelledby="model-preflight-title">
+    <div class="section-head"><h2 id="model-preflight-title">Diagnóstico do modelo local</h2><button id="model-preflight" type="button">Verificar modelo local</button></div>
+    <p class="muted">Consulta disponibilidade e pré-requisitos do chat sem gerar conteúdo ou consumir tokens de inferência. Não altera permissões nem habilita recursos.</p>
+    <div id="model-preflight-result" aria-live="polite"><p>Verificação ainda não realizada. Conectividade não comprova que uma tarefa será concluída corretamente.</p></div>
+    <p class="fine">Resultados de conectividade são reutilizados por até 10 segundos. O teste real de tarefas é uma etapa separada.</p>
+  </section>
 
   <div class="grid">
     <section class="panel test-panel" aria-labelledby="test-title">
@@ -58,8 +164,22 @@
           <option value="ranking">Ranking</option>
           <option value="media">Imagem / vídeo / áudio</option>
         </select>
+        <div id="growth-action-field" hidden>
+          <label for="growth-action">Tipo de pedido de marketing</label>
+          <select id="growth-action" required disabled aria-describedby="growth-action-help">
+            <option value="" selected>Selecione o tipo de pedido</option>
+            <option value="diagnose">Diagnóstico</option>
+            <option value="campaign-plan">Plano de campanha</option>
+            <option value="content-plan">Rascunho de conteúdo</option>
+            <option value="seo-plan">Plano de SEO</option>
+            <option value="experiment">Experimento</option>
+            <option value="metric-review">Revisão de métricas</option>
+          </select>
+          <p id="growth-action-help" class="fine">Escolha a entrega desejada. Nenhuma opção publica conteúdo ou executa uma campanha.</p>
+        </div>
         <label for="prompt">Pedido para a Neural</label>
-        <textarea id="prompt" rows="5" maxlength="5000" minlength="3" required placeholder="Ex.: Analise como aumentar a conversão das lojas locais sem aumentar o desperdício de anúncios."></textarea>
+        <textarea id="prompt" rows="5" maxlength="6000" minlength="3" required placeholder="Ex.: Analise como aumentar a conversão das lojas locais sem aumentar o desperdício de anúncios." aria-describedby="test-limit test-hint"></textarea>
+        <p id="test-limit" class="fine">Até 6000 caracteres para esta área.</p>
         <div class="form-foot"><small id="test-hint">A resposta é apenas para avaliação administrativa.</small><button class="primary" id="run-test" type="submit">Executar teste ↗</button></div>
       </form>
       <div class="response" id="test-response" aria-busy="false">
@@ -160,6 +280,7 @@
     <div id="qualifications"><p class="muted">Nenhuma qualificação carregada.</p></div>
   </section>
 
+  </details>
   <footer><strong>Vitriny Neural · inteligência mensurável.</strong><p>O console é administrativo. Testes não concedem autonomia e pesquisa web cria candidatos revisáveis, não aprendizado irrestrito.</p><a href="/admin-jarvis.html">Voltar ao Jarvis</a></footer>
 </main>
 </body>

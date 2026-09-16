@@ -1,0 +1,14 @@
+{
+  "file": "vc-visitor-realistic-v1.glb",
+  "sha256": "7a1889147c43d06db100b43da5a2d2d8840a18ad95bc737c0eeec42cb96b92a3",
+  "bytes": 1207076,
+  "triangles": 35064,
+  "bones": 36,
+  "animations": [
+    "Idle",
+    "Walk"
+  ],
+  "upstreamLicense": "CC0-1.0",
+  "upstreamRevision": "a8bc2d54ff0ac92e78ff71431b1023eda42bf482",
+  "baseObjSha256": "8e761e6624b8f54536409135d1636da63b32486a90d4897f84e121d144f6fb4c"
+}

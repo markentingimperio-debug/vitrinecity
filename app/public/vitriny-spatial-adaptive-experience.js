@@ -31,11 +31,17 @@ function finite(value,fallback=0){const n=Number(value);return Number.isFinite(n
 function profileId(value){const id=String(value||'STANDARD').trim().toUpperCase();return PROFILE_POLICY[id]?id:'STANDARD';}
 function distanceTierFactors(tier=0){return DISTANCE_FACTORS[Math.max(0,Math.min(DISTANCE_FACTORS.length-1,Math.trunc(finite(tier,0))))];}
 
-export function resolveSpatialDayPhase(hour=new Date().getHours()){
+// One shared civil clock for the city; no location or personal data is required.
+const CITY_TIME_FORMAT=new Intl.DateTimeFormat('en-GB',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
+export function spatialCityHour(date=new Date()){
+  const parts=Object.fromEntries(CITY_TIME_FORMAT.formatToParts(date).map(part=>[part.type,part.value]));
+  return Number(parts.hour)%24+Number(parts.minute)/60+Number(parts.second)/3600;
+}
+export function resolveSpatialDayPhase(hour=spatialCityHour()){
   const h=((Math.floor(finite(hour,12))%24)+24)%24;
-  if(h>=5&&h<8)return PHASES.dawn;
-  if(h>=8&&h<17)return PHASES.day;
-  if(h>=17&&h<20)return PHASES.dusk;
+  if(h>=5&&h<7)return PHASES.dawn;
+  if(h>=7&&h<17)return PHASES.day;
+  if(h>=17&&h<19)return PHASES.dusk;
   return PHASES.night;
 }
 

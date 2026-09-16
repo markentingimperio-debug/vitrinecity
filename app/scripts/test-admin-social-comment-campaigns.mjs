@@ -12,7 +12,7 @@ const dto=(change={})=>({id:'campaign-1',status:'draft',source,account,surface:'
 const payload=(change={})=>({sourceKey:source.key,accountId:'1',surface:'facebook_page',postId:'1234_789',groupId:'',keyword:'QUERO RECEITA',caption,invite:'none',...change});
 const catalog={items:[source,{...source,key:'editorial:plantas',title:'<b>Plantas</b>',summary:'Cuidados com plantas.'}],accounts:[account]};
 
-function fixture(t,fetcher,{saved='',denyStorage=false}={}){
+function fixture(t,fetcher,{saved='',denyStorage=false,settingsPanel=false}={}){
   class Element{
     constructor(tag='div'){this.tagName=tag.toUpperCase();this.children=[];this.listeners={};this.dataset={};this.attrs={};this.value='';this.textContent='';this.disabled=false;this.hidden=false;this.checked=false;}
     append(...items){this.children.push(...items);}
@@ -28,6 +28,7 @@ function fixture(t,fetcher,{saved='',denyStorage=false}={}){
   const document=new Element(),window=new Element(),root=new Element(),nodes={};document.hidden=false;document.createElement=tag=>new Element(tag);root.ownerDocument=document;document.defaultView=window;window.location={origin};
   let stored=saved,copied='';window.localStorage={getItem:()=>{if(denyStorage)throw Error('denied');return stored;},setItem:(_key,value)=>{if(denyStorage)throw Error('denied');stored=value;}};window.navigator={clipboard:{writeText:async value=>{copied=value;}}};
   for(const id of ['Form','Notice','Reload','Search','SearchCatalog','Source','SourceCount','SourceCard','Account','Surface','CheckConnection','ConnectionState','ConnectionTitle','ConnectionMissing','ConnectionChecks','PostId','GroupId','GroupField','TriggerMode','TriggerHint','KeywordField','Keyword','PublicReplyEnabled','ReactEnabled','ReactionHint','Caption','Suggest','Invite','Prepare','Preview','PreviewTitle','Summary','Readiness','Missing','Cover','PublicCaption','PrivateReply','PublicReplyCard','PublicReply','ReactionPreview','Copy','Counts','PublicCounts','ReactionCounts','PreviewNote','Activate','Pause','Refresh','History'])nodes[id]=new Element();
+  if(settingsPanel)for(const id of ['LimitForm','DailyLimit','LimitUnlimited','LimitSave','LimitReload','LimitStatus','LimitSummary'])nodes[id]=new Element();
   nodes.Surface.value='facebook_page';nodes.TriggerMode.value='keyword';nodes.Keyword.value='QUERO RECEITA';nodes.Invite.value='none';
   root.querySelector=selector=>nodes[selector.slice(3)];nodes.Form.querySelectorAll=()=>['Search','SearchCatalog','Source','Account','Surface','CheckConnection','PostId','GroupId','TriggerMode','Keyword','PublicReplyEnabled','ReactEnabled','Caption','Suggest','Invite','Prepare'].map(key=>nodes[key]);
   const timers=new Map();let timerId=0,keyCount=0;
@@ -134,4 +135,42 @@ test('connection audit includes chosen public actions; Instagram clears reaction
 test('public confirmation cannot activate without server preview; old restored campaigns keep all new actions off',async t=>{
   const f=fixture(t,async(url,options)=>response(url.endsWith('/catalog')?catalog:url.endsWith('/preview')?dto({publicReplyEnabled:true}):{campaigns:[]}));await tick();f.select();f.nodes.PublicReplyEnabled.checked=true;f.nodes.PublicReplyEnabled.dispatch('change');f.nodes.Form.dispatch('submit');await tick();assert.equal(f.nodes.Activate.disabled,true);assert.match(f.nodes.Notice.textContent,/prévia das ações não está completa/);
   const calls=[],restored=fixture(t,async(url,options)=>{calls.push({url,options});return response(url.endsWith('/catalog')?catalog:url.endsWith('/campaign-1')?dto():{campaigns:[]});},{saved:'campaign-1'});await tick();assert.ok(calls.every(call=>!call.options.method));assert.equal(restored.nodes.PublicReplyCard.hidden,true);assert.equal(restored.nodes.PublicCounts.hidden,true);assert.equal(restored.nodes.ReactionCounts.hidden,true);assert.equal(restored.nodes.Activate.disabled,true);assert.match(restored.nodes.Summary.textContent,/Pedido: QUERO RECEITA/);
+});
+
+const limitDto=(dailyLimit=30)=>({dailyLimit,unlimited:dailyLimit===0,attemptsToday:{private:4,public:3,reaction:2}});
+test('limit panel loads read-only and zero is saved only by an explicit single submit with confirmed readback',async t=>{
+  const calls=[];let finish;
+  const f=fixture(t,async(url,options)=>{calls.push({url,options});if(url.endsWith('/settings'))return options.method?new Promise(resolve=>{finish=resolve;}):response(limitDto());return response(url.endsWith('/catalog')?catalog:{campaigns:[]});},{settingsPanel:true});
+  await tick();assert.ok(calls.every(call=>!call.options.method));assert.equal(f.nodes.LimitUnlimited.checked,false);assert.equal(f.nodes.DailyLimit.value,'30');assert.equal(f.nodes.LimitSave.disabled,false);
+  assert.match(f.nodes.LimitSummary.textContent,/30 tentativas por tipo/);assert.match(f.nodes.LimitSummary.textContent,/4 privadas, 3 públicas e 2 curtidas/);
+  f.nodes.LimitUnlimited.checked=true;f.nodes.LimitUnlimited.dispatch('change');assert.equal(f.nodes.DailyLimit.disabled,true);
+  f.nodes.LimitForm.dispatch('submit');f.nodes.LimitForm.dispatch('submit');await tick();
+  const writes=calls.filter(call=>call.options.method);assert.equal(writes.length,1);assert.equal(writes[0].options.method,'PUT');assert.deepEqual(JSON.parse(writes[0].options.body),{dailyLimit:0});
+  assert.equal(f.nodes.LimitSave.disabled,true);assert.doesNotMatch(f.nodes.LimitSummary.textContent,/Sem teto/);
+  finish(response(limitDto(0)));await tick();assert.match(f.nodes.LimitSummary.textContent,/Sem teto diário interno/);assert.match(f.nodes.LimitStatus.textContent,/salvo e confirmado/);assert.equal(f.nodes.LimitSave.disabled,false);
+  assert.equal(calls.filter(call=>/preview|activate/.test(call.url)).length,0);
+});
+
+test('uncertain limit save blocks repetition until a GET recovers the actual saved value',async t=>{
+  const calls=[];let value=30;
+  const f=fixture(t,async(url,options)=>{calls.push({url,options});if(url.endsWith('/settings')){if(options.method){value=0;throw TypeError('timeout');}return response(limitDto(value));}return response(url.endsWith('/catalog')?catalog:{campaigns:[]});},{settingsPanel:true});
+  await tick();f.nodes.LimitUnlimited.checked=true;f.nodes.LimitForm.dispatch('submit');await tick();
+  assert.equal(f.nodes.LimitSave.disabled,true);assert.match(f.nodes.LimitSummary.textContent,/não confirmado/);assert.match(f.nodes.LimitStatus.textContent,/Atualize o limite salvo/);
+  f.nodes.LimitForm.dispatch('submit');await tick();assert.equal(calls.filter(call=>call.options.method).length,1);
+  f.nodes.LimitReload.dispatch('click');await tick();assert.equal(f.nodes.LimitSave.disabled,false);assert.equal(f.nodes.LimitUnlimited.checked,true);assert.match(f.nodes.LimitSummary.textContent,/Sem teto/);assert.equal(calls.filter(call=>call.options.method).length,1);
+});
+
+test('invalid or unauthorized limit settings cannot enable saving and do not disable campaign controls',async t=>{
+  for(const answer of [response({},200),response({error:'Forbidden'},403),response({...limitDto(),unlimited:true})]){
+    const calls=[],f=fixture(t,async(url,options)=>{calls.push({url,options});return url.endsWith('/settings')?answer:response(url.endsWith('/catalog')?catalog:{campaigns:[]});},{settingsPanel:true});await tick();
+    assert.equal(f.nodes.LimitSave.disabled,true);assert.equal(f.nodes.LimitReload.disabled,false);assert.equal(f.nodes.Prepare.disabled,false);
+    f.nodes.LimitForm.dispatch('submit');assert.ok(calls.every(call=>!call.options.method));
+  }
+});
+
+test('finite daily limit input rejects empty, zero without opt-in, fractions and oversized values',async t=>{
+  const calls=[],f=fixture(t,async(url,options)=>{calls.push({url,options});return response(url.endsWith('/settings')?limitDto(options.method?Number(JSON.parse(options.body).dailyLimit):30):url.endsWith('/catalog')?catalog:{campaigns:[]});},{settingsPanel:true});await tick();
+  for(const raw of ['', '0','-1','1.5','100001','2e3']){f.nodes.DailyLimit.value=raw;f.nodes.LimitForm.dispatch('submit');await tick();}
+  assert.ok(calls.every(call=>!call.options.method));
+  f.nodes.DailyLimit.value='250';f.nodes.LimitForm.dispatch('submit');await tick();assert.equal(calls.filter(call=>call.options.method).length,1);assert.equal(f.nodes.DailyLimit.value,'250');assert.equal(f.nodes.LimitUnlimited.checked,false);
 });

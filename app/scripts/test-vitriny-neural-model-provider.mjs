@@ -26,7 +26,7 @@ try{
   assert.equal(requests[0].url,'/v1/chat/completions');
   assert.equal(requests[0].headers.authorization,'Bearer test-key');
   assert.equal(requests[0].json.model,'mock-qwen');
-  assert.equal(requests[0].json.max_tokens,1200,'null options must retain the configured default, not reduce it to 64');
+  assert.equal(requests[0].json.max_tokens,512,'null options retain the local prose budget, not reduce it to 64');
   assert.equal(requests[0].json.chat_template_kwargs.enable_thinking,false);
   assert.match(requests[0].json.messages[0].content,/Não execute pagamentos/);
   assert.match(requests[0].json.messages[0].content,/não afirme que publicou em produção/i);

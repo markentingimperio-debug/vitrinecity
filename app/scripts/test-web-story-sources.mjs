@@ -122,7 +122,7 @@ test('city source comes from the real public home and existing guide, without in
   const db=new Database(':memory:');t.after(()=>db.close());
   const publicDir=fileURLToPath(new URL('../public/',import.meta.url)),sources=createWebStorySources({db,publicDir});
   const item=sources.get('city:vitrine-city');assert.ok(item);assert.equal(item.kind,'city');assert.equal(item.group,'trends');assert.equal(item.commercial,false);assert.equal(item.sourcePath,'/');
-  assert.equal(item.facts.accessNote,'Visite sem cadastro. Entre na sua conta para jogar e conversar.');
+  assert.equal(item.facts.accessNote,'Use sua conta para conversar, planejar e criar. Recursos de IA podem consumir Vitrine Coins; confira o valor antes de confirmar.');
   assert.ok(item.body.includes('Consulte as lojas com entrega local e a disponibilidade na sua cidade.'));
   assert.ok(item.body.includes('Centro Educacional'));assert.ok(item.body.includes('Pulse Arena'));assert.ok(item.body.includes('Lojas e vitrines'));
   assert.ok(item.facts.illustrationDescription.includes('conceitual'));assert.ok(item.body.length>650);
@@ -140,6 +140,38 @@ test('city adapter reads only selected public fields, refreshes text and withdra
   assert.equal(first.title,'Cidade & encontros');assert.equal(first.summary,'Primeira apresentação pública.');assert.ok(!JSON.stringify(first).includes('PRIVATE_'));
   fs.writeFileSync(file,markup('Apresentação atualizada da plataforma.'));assert.notDeepEqual(sources.get('city:vitrine-city'),first);
   fs.unlinkSync(file);assert.equal(sources.get('city:vitrine-city'),null);assert.deepEqual(sources.list(),[]);
+});
+
+test('the real public prayer page is an explicit opt-in source and contains only its published prayer fields',t=>{
+  const db=new Database(':memory:');t.after(()=>db.close());
+  const publicDir=fileURLToPath(new URL('../public/',import.meta.url)),options={db,publicDir};
+  assert.equal(createWebStorySources(options).get('page:oracao-do-dia'),null);
+  assert.equal(createWebStorySources({...options,includePrayerPage:'true'}).get('page:oracao-do-dia'),null);
+  const sources=createWebStorySources({...options,includePrayerPage:true}),item=sources.get('page:oracao-do-dia');
+  assert.ok(item);assert.equal(item.kind,'page');assert.equal(item.commercial,false);assert.equal(item.sourcePath,'/oracao-do-dia.html');
+  assert.equal(item.image_url,'/assets/prayer/jesus-areia-v1.png');assert.match(item.body,/Senhor, neste momento/);assert.match(item.body,/Em nome de Jesus, amém\./);
+  const actualHtml=fs.readFileSync(path.join(publicDir,'oracao-do-dia.html'),'utf8');
+  const expectedParagraphs=[...actualHtml.matchAll(/<p[^>]* data-prayer-paragraph>([^<]+)<\/p>/g)].map(match=>match[1].trim());
+  assert.equal(expectedParagraphs.length,6);for(const paragraph of expectedParagraphs)assert.ok(item.body.includes(paragraph),paragraph);
+  assert.match(item.facts.prayerTitle,/coração mais tranquilo/);assert.match(item.facts.verse,/O Senhor é o meu pastor/);
+  assert.doesNotMatch(item.body,/Mercado Pago|Apoio voluntário|payment|statusToken/);
+  assert.deepEqual(sources.list({q:'oração do dia'}),[item]);
+  for(const key of ['page:../../server.js','page:admin','page:oracao-do-dia.html','https://vitrinecity.com/oracao-do-dia.html','page:https://example.test'])assert.equal(sources.get(key),null);
+});
+
+test('the prayer source refreshes its public text and disappears when its page, required content or local image is unavailable',t=>{
+  const db=new Database(':memory:');t.after(()=>db.close());
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'vitrine-prayer-source-'));
+  t.after(()=>{const resolved=path.resolve(root);assert.equal(path.dirname(resolved),path.resolve(os.tmpdir()));assert.ok(path.basename(resolved).startsWith('vitrine-prayer-source-'));fs.rmSync(resolved,{recursive:true,force:true});});
+  const file=path.join(root,'oracao-do-dia.html'),image=path.join(root,'assets/prayer/jesus.png');fs.mkdirSync(path.dirname(image),{recursive:true});fs.writeFileSync(image,'fixture image');
+  const markup=(text,imageUrl='/assets/prayer/jesus.png')=>`<html><head><title>Oração do dia</title><meta name="description" content="Um momento de oração."><script>PRIVATE_SCRIPT</script></head><body><img id="jesusArt" src="${imageUrl}" alt="Arte de areia"><h2 id="prayerTitle">Uma oração</h2><time id="prayerEdition">10 de setembro</time><p data-prayer-paragraph>${text}</p><p data-prayer-paragraph>Amém.</p><p id="dailyVerse">O Senhor é meu pastor.</p><form>PRIVATE_FORM</form></body></html>`;
+  const sources=createWebStorySources({db,publicDir:root,includePrayerPage:true});assert.equal(sources.get('page:oracao-do-dia'),null);
+  fs.writeFileSync(file,markup('Primeira oração.'));const first=sources.get('page:oracao-do-dia');assert.ok(first);assert.match(first.body,/Primeira oração\./);assert.doesNotMatch(JSON.stringify(first),/PRIVATE_/);
+  fs.writeFileSync(file,markup('Oração atualizada.'));assert.notDeepEqual(sources.get('page:oracao-do-dia'),first);
+  fs.writeFileSync(file,markup('Texto.','https://external.test/image.png'));assert.equal(sources.get('page:oracao-do-dia'),null);
+  fs.writeFileSync(file,markup('Texto.').replaceAll('data-prayer-paragraph','data-other'));assert.equal(sources.get('page:oracao-do-dia'),null);
+  fs.writeFileSync(file,markup('Texto.'));fs.unlinkSync(image);assert.equal(sources.get('page:oracao-do-dia'),null);
+  fs.unlinkSync(file);assert.deepEqual(sources.list(),[]);
 });
 
 function storeDetails(f){

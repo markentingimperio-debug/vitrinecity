@@ -1,0 +1,14 @@
+.vcgames-install{box-sizing:border-box;position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:16px 24px;max-width:1100px;margin:24px auto;padding:20px 24px;width:calc(100% - 32px);border:1px solid #a5b7a5;border-radius:14px;background:#f0f5e9;color:#254d39;font-family:Arial,Helvetica,sans-serif;text-align:left}
+.vcgames-install[hidden],.vcgames-install [hidden]{display:none!important}
+.vcgames-install .vcgames-install-title{margin:0 0 7px;font:600 20px/1.3 Arial,Helvetica,sans-serif;letter-spacing:normal;color:#254d39}
+.vcgames-install .vcgames-install-description,.vcgames-install .vcgames-install-help{margin:0;font:15px/1.55 Arial,Helvetica,sans-serif;color:#385343}
+.vcgames-install .vcgames-install-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.vcgames-install .vcgames-install-action,.vcgames-install .vcgames-install-dismiss{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;min-height:44px;max-width:100%;padding:11px 14px;border:1px solid #42644e;border-radius:8px;font:600 14px/1.35 Arial,Helvetica,sans-serif;text-decoration:none;text-align:center;cursor:pointer;touch-action:manipulation}
+.vcgames-install .vcgames-install-action{background:#315b41;color:#fff}
+.vcgames-install .vcgames-install-dismiss{background:transparent;color:#31553e;border-color:transparent;font-weight:400}
+.vcgames-install .vcgames-install-action:disabled{opacity:.7;cursor:wait}
+.vcgames-install a:focus-visible,.vcgames-install button:focus-visible{outline:3px solid #9c611d;outline-offset:3px}
+.vcgames-install .vcgames-install-help{grid-column:1/-1;padding-top:14px;border-top:1px solid #b8c7b2}
+@media(max-width:700px){.vcgames-install{grid-template-columns:minmax(0,1fr);gap:14px;margin:20px auto;padding:18px}.vcgames-install .vcgames-install-controls{gap:8px}.vcgames-install .vcgames-install-title{font-size:19px}}
+@media(display-mode:standalone),(display-mode:minimal-ui),(display-mode:window-controls-overlay){.vcgames-install{display:none!important}}
+@media(prefers-reduced-motion:reduce){.vcgames-install,.vcgames-install *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}

@@ -810,6 +810,7 @@
       </nav>
       <nav class="side-group">
         <small>Crescimento</small
+        ><a href="/admin-recompra"><i class="side-dot"></i>Clientes e recompra</a
         ><a href="/admin-captacao.html"><i class="side-dot"></i>Captação orgânica</a
         ><a href="/admin-prospeccao.html"><i class="side-dot"></i>Prospecção</a
         ><a href="/admin-oportunidades.html"
@@ -1785,16 +1786,17 @@
       async function loadAi() {
         const data = await api("/api/admin/ai");
         aiConfigured = data.configured;
+        const providerLabel = data.provider === "openai" ? "OpenAI" : data.provider === "openrouter" ? "OpenRouter" : "Provedor";
         const status = $("#aiStatus");
         status.textContent = data.configured
-          ? "API CONECTADA · " + data.model
-          : "AGUARDANDO CHAVE DA OPENAI";
+          ? "API CONFIGURADA · " + providerLabel + " · " + data.model
+          : "CONFIGURAÇÃO PENDENTE · " + providerLabel;
         status.className = "ai-status" + (data.configured ? " ready" : "");
         $("#aiInput").disabled = !data.configured;
         $("#aiSend").disabled = !data.configured;
         $("#aiHint").textContent = data.configured
           ? "Memória privada ativa · propostas supervisionadas"
-          : "Configure OPENAI_API_KEY na VPS para ativar a conversa.";
+          : "Verifique a configuração do provedor selecionado para ativar a conversa.";
         renderAiMessages(data.messages || []);
       }
 

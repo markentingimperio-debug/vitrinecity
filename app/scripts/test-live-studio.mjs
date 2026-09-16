@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { validateLiveConfig, setupLiveStudio, validateLiveServer, selectedPlatforms } from '../live-studio.js';
+import { validateLiveConfig, setupLiveStudio, createLiveStudioService, validateLiveServer, selectedPlatforms } from '../live-studio.js';
 const valid={title:'VitrineCity',media:'quiz.mp4',destination:'https://vitrinecity.com',repetitions:3,server:'',key:''};
 assert.deepEqual(selectedPlatforms({targets:['instagram','youtube','tiktok']}),['instagram','youtube','tiktok']);
+assert.deepEqual(selectedPlatforms({targets:['instagram','youtube','tiktok','facebook']}),['instagram','youtube','tiktok','facebook']);
+assert.deepEqual(selectedPlatforms({platform:'facebook'}),['facebook']);
 for(const targets of [[],['instagram','instagram'],['evil'],'youtube',[null]]) assert.throws(()=>selectedPlatforms({targets}));
 assert.equal(validateLiveConfig(valid).repetitions,3);
 assert.equal(validateLiveConfig({...valid,repetitions:0}).repetitions,0);
@@ -17,6 +19,10 @@ for(const change of [{repetitions:-1},{repetitions:4},{media:'../secret.mp4'},{d
 assert.equal(validateLiveConfig({...valid,server:'rtmps://live-upload.instagram.com:443/rtmp/'}).server,'rtmps://live-upload.instagram.com:443/rtmp/');
 for(const [platform,server] of [['youtube','rtmps://a.rtmps.youtube.com:443/live2'],['tiktok','rtmp://push.tiktok.com/live'],['tiktok','rtmps://push.tiktokv.com/live']]) assert.doesNotThrow(()=>validateLiveServer(server,platform));
 for(const [platform,server] of [['youtube','rtmp://a.rtmp.youtube.com/live2'],['tiktok','rtmp://127.0.0.1/live'],['tiktok','rtmps://tiktok.com.evil.test/live'],['youtube','rtmps://push.tiktok.com/live'],['unknown',''],['youtube','rtmps://a.rtmps.youtube.com:1935/live2'],['youtube','rtmps://user:pass@youtube.com/live']]) assert.throws(()=>validateLiveServer(server,platform));
+for(const host of ['rtmp-api.facebook.com','live-api-s.facebook.com']){
+  for(const server of [`rtmps://${host}:443/rtmp/`,`rtmps://${host}/rtmp`])assert.doesNotThrow(()=>validateLiveServer(server,'facebook'));
+  for(const server of [`rtmp://${host}/rtmp/`,`rtmps://${host}:1935/rtmp/`,`rtmps://${host}.evil.test/rtmp/`,`rtmps://evil.${host}/rtmp/`,'rtmps://facebook.com/rtmp/','rtmps://live-upload.instagram.com/rtmp/',`rtmps://user:pass@${host}/rtmp/`,`rtmps://${host}/rtmp/?key=hidden`,`rtmps://${host}/rtmp/embedded-key`,`rtmps://${host}/rtmp/#key`])assert.throws(()=>validateLiveServer(server,'facebook'));
+}
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'vc-live-test-'));
 const routes=new Map(), auth=()=>{}, origin=()=>{};
 const app=Object.fromEntries(['get','put','post'].map(method=>[method,(url,...handlers)=>routes.set(method+url,handlers)]));
@@ -52,6 +58,39 @@ assert.equal(call('put/api/admin/live-studio/config',{...valid,platform:'tiktok'
 assert.equal(call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR'}).code,202);
 assert.ok(!fs.readFileSync(path.join(root,'command.json'),'utf8').includes('secret-'));
 fs.unlinkSync(path.join(root,'command.json'));
+const otherProfiles=JSON.parse(fs.readFileSync(path.join(root,'config.json'))).profiles;
+const facebook={...valid,platform:'facebook',server:'rtmps://live-api-s.facebook.com:443/rtmp/',key:'',targets:['instagram','youtube','tiktok','facebook']};
+assert.equal(call('put/api/admin/live-studio/config',facebook).code,200);
+assert.equal(call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR',durationSeconds:7200}).code,400);
+assert.ok(!fs.existsSync(path.join(root,'command.json')));
+assert.equal(call('put/api/admin/live-studio/config',{...facebook,key:'secret-facebook'}).code,200);
+const fourProfiles=JSON.parse(fs.readFileSync(path.join(root,'config.json'))).profiles;
+for(const platform of ['instagram','youtube','tiktok'])assert.deepEqual(fourProfiles[platform],otherProfiles[platform]);
+assert.equal(fourProfiles.facebook.key,'secret-facebook');
+view=call('get/api/admin/live-studio').result;assert.equal(view.profiles.facebook.hasKey,true);assert.ok(!JSON.stringify(view).includes('secret-'));
+const configBeforeTimedStart=fs.readFileSync(path.join(root,'config.json'));
+for(const durationSeconds of [null,false,true,'7200',0,-1,3600,7199,7201,36000,{},[]]){
+  assert.equal(call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR',durationSeconds}).code,400);
+  assert.ok(!fs.existsSync(path.join(root,'command.json')));
+}
+for(const action of ['preview','stop','stop-network']){
+  assert.equal(call('post/api/admin/live-studio/control',{action,platform:'youtube',durationSeconds:7200}).code,400);
+  assert.ok(!fs.existsSync(path.join(root,'command.json')));
+}
+assert.equal(call('post/api/admin/live-studio/control',{action:'start',durationSeconds:7200}).code,400);
+const timed=call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR',durationSeconds:7200});
+assert.equal(timed.code,202);assert.equal(timed.result.durationSeconds,7200);
+const boundedCommand=fs.readFileSync(path.join(root,'command.json'));
+assert.equal(JSON.parse(boundedCommand).durationSeconds,7200);
+assert.equal(JSON.parse(boundedCommand).id,timed.result.commandId);
+assert.ok(!boundedCommand.toString().includes('secret-'));
+assert.equal(call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR',durationSeconds:7200}).code,409);
+assert.deepEqual(fs.readFileSync(path.join(root,'command.json')),boundedCommand);
+assert.deepEqual(fs.readFileSync(path.join(root,'config.json')),configBeforeTimedStart);
+fs.unlinkSync(path.join(root,'command.json'));
+assert.equal(call('post/api/admin/live-studio/control',{action:'stop-network',platform:'facebook'}).code,202);
+assert.equal(JSON.parse(fs.readFileSync(path.join(root,'command.json'))).platform,'facebook');
+fs.unlinkSync(path.join(root,'command.json'));
 assert.equal(call('post/api/admin/live-studio/control',{action:'stop-network',platform:'evil'}).code,400);
 assert.equal(call('post/api/admin/live-studio/control',{action:'stop-network',platform:'tiktok'}).code,202);
 assert.equal(JSON.parse(fs.readFileSync(path.join(root,'command.json'))).platform,'tiktok');
@@ -59,4 +98,35 @@ assert.ok(!JSON.stringify(call('get/api/admin/live-studio').result).includes('se
 fs.renameSync(path.join(root,'command.json'),path.join(root,'executing-command.json'));
 assert.equal(call('put/api/admin/live-studio/config',valid).code,409);
 assert.equal(call('post/api/admin/live-studio/control',{action:'preview'}).code,409);
+fs.unlinkSync(path.join(root,'executing-command.json'));
+const originalLink=fs.linkSync;
+try{
+  fs.linkSync=(from,to)=>{fs.writeFileSync(path.join(root,'command.json'),'concurrent Lia command',{flag:'wx'});return originalLink(from,to);};
+  assert.equal(call('post/api/admin/live-studio/control',{action:'preview'}).code,409);
+  assert.equal(fs.readFileSync(path.join(root,'command.json'),'utf8'),'concurrent Lia command');
+  assert.equal(fs.readdirSync(root).filter(name=>name.endsWith('.tmp')).length,0);
+}finally{fs.linkSync=originalLink;}
+// The trusted operational core and protected HTTP route share all validation.
+fs.unlinkSync(path.join(root,'command.json'));
+const core=createLiveStudioService({root});
+for(const input of [{action:'invalid'},{action:'start'},{action:'start',confirm:'TRANSMITIR',durationSeconds:36000},{action:'stop-network',platform:'evil'}]){
+  const http=call('post/api/admin/live-studio/control',input);
+  assert.deepEqual(core.control(input,{actor:'authorized-maintenance'}),{status:http.code,body:http.result});
+  assert.ok(!fs.existsSync(path.join(root,'command.json')));
+}
+fs.writeFileSync(path.join(root,'status.json'),JSON.stringify({updatedAt:0,streaming:false,recording:false}));
+assert.equal(core.control({action:'start',confirm:'TRANSMITIR',durationSeconds:7200}).status,503);
+fs.writeFileSync(path.join(root,'status.json'),JSON.stringify({updatedAt:Date.now(),streaming:true,recording:false}));
+assert.equal(core.control({action:'start',confirm:'TRANSMITIR',durationSeconds:7200}).status,409);
+fs.writeFileSync(path.join(root,'status.json'),JSON.stringify({updatedAt:Date.now(),streaming:false,recording:false}));
+const coreConfig=fs.readFileSync(path.join(root,'config.json'));
+const coreAccepted=core.control({action:'start',confirm:'TRANSMITIR',durationSeconds:7200},{actor:'authorized-maintenance'});
+assert.equal(coreAccepted.status,202);
+const coreCommand=JSON.parse(fs.readFileSync(path.join(root,'command.json')));
+assert.equal(coreCommand.id,coreAccepted.body.commandId);assert.equal(coreCommand.actor,'authorized-maintenance');assert.equal(coreCommand.durationSeconds,7200);
+assert.deepEqual(fs.readFileSync(path.join(root,'config.json')),coreConfig);
+assert.ok(!JSON.stringify(coreCommand).includes('secret-'));
+assert.equal(createLiveStudioService({root}).control({action:'start',confirm:'TRANSMITIR',durationSeconds:7200}).status,409);
+assert.equal(call('post/api/admin/live-studio/control',{action:'start',confirm:'TRANSMITIR',durationSeconds:7200}).code,409);
+assert.equal(JSON.parse(fs.readFileSync(path.join(root,'command.json'))).id,coreCommand.id);
 console.log('Live Studio: validation, admin/CSRF middleware, secret redaction, offline/duplicate guards OK');
