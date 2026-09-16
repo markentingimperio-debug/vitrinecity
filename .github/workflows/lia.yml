@@ -42,6 +42,6 @@ jobs:
         run: |
           cp .env.example .env
           printf '\nLIA_EXECUTOR_TOKEN=%s\n' '01234567890123456789012345678901' >> .env
-          docker compose --profile lia config >/dev/null
+          docker compose -f docker-compose.yml --profile lia config >/dev/null
       - name: Build LIA executor
         run: docker build -f ops/lia-agent/Dockerfile -t vitrinecity-lia-test .
