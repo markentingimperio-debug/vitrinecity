@@ -7,6 +7,8 @@ export function measurementPage(pathname) {
   // Alias visits share their established page classification. This does not
   // expand measurement to private city pages, account pages or payment routes.
   pathname = toLegacyPublicPath(pathname);
+  // The campaign's official public profile only; never export arbitrary member handles.
+  if (pathname === '/perfil/agrotecnica') return {path: pathname, title: 'Vitrine Social — perfil Agrotecnica'};
   const fixed = new Set(['/', '/index.html', '/descobrir', '/descobrir.html', '/loja', '/loja.html',
     '/entregas', '/entregas.html', '/social', '/social.html', '/cidade', '/cidade-premium', '/cidade-premium.html',
     '/pesquisar.html', '/buscar.html', '/plantas-e-jardinagem', '/noticias', '/receitas', '/esportes',
