@@ -11,7 +11,10 @@
   }
 
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-  if (isStandalone) return;
+  if (isStandalone) {
+    document.title='Vitrine Social';
+    return;
+  }
 
   function recentlyDismissed() {
     const value = Number(localStorage.getItem(DISMISS_KEY) || 0);

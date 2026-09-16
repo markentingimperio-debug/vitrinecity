@@ -1,4 +1,5 @@
 import { setupOpenAIProductFeed } from './openai-product-feed.js';
+import {directVideoPublisher,createVideoSafetyReview,createSocialVideoAgent} from './social-video-agent.js';
 import { setupProductionHardening } from './production-hardening.js';
 import {cleanPublicRoutes} from './clean-public-routes.js';
 import {setupGamesAppRoutes,isGamesAppPath} from './games-app-routes.js';
@@ -2689,10 +2690,10 @@ app.use((req, res, next) => {
     page = injectSiteAssistant(page, {path:req.path});
     if (typeof page !== 'string') return send(body);
     if (page.includes('</head>') && !page.includes('rel="manifest"')) {
-      page = page.replace('</head>', '<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#071f4b"><link rel="apple-touch-icon" href="/assets/pwa-icon-192.png"></head>');
+      page = page.replace('</head>', '<link rel="manifest" href="/manifest.webmanifest"><meta name="application-name" content="Vitrine Social"><meta name="apple-mobile-web-app-title" content="Vitrine Social"><meta name="theme-color" content="#071f4b"><link rel="apple-touch-icon" href="/assets/pwa-icon-192.png"></head>');
     }
     if (page.includes('</body>') && !page.includes('/pwa-install.js') && !page.includes('/games/install.js')) {
-      page = page.replace('</body>', '<script src="/pwa-install.js?v=2" defer></script></body>');
+      page = page.replace('</body>', '<script src="/pwa-install.js?v=3" defer></script></body>');
     }
     if (!['/course-checkout.html','/presente.html'].includes(req.path) && page.includes('</body>') && !page.includes('/global-market-banner.js')) {
       page = page.replace('</body>', '<script src="/global-market-banner.js?v=5" defer></script></body>');
@@ -2826,6 +2827,9 @@ const mediaPublications = createMediaPublicationLifecycle({ db, siteUrl:SITE_URL
   getConfig:()=>({accountId:String(process.env.CLOUDFLARE_ACCOUNT_ID||'').trim(),token:String(process.env.CLOUDFLARE_STREAM_API_TOKEN||'').trim()}),
   onReady:post=>notifyFollowers(post.user_id,'new_post',post.media_type==='image'?'publicou uma nova foto':'publicou um novo vídeo',post.id),
   onError:post=>refundSocialLink(post.id,'falha no processamento do vídeo') });
+const socialVideoAgent=createSocialVideoAgent({db,lifecycle:mediaPublications,canRun:ecosystemCanRun,
+  getConfig:()=>({enabled:process.env.SOCIAL_VIDEO_AGENT_ENABLED==='true',accountId:process.env.CLOUDFLARE_ACCOUNT_ID,token:process.env.CLOUDFLARE_STREAM_API_TOKEN,directUserIds:process.env.SOCIAL_DIRECT_PUBLISH_USER_IDS||''}),
+  review:createVideoSafetyReview({apiKey:()=>process.env.OPENAI_API_KEY})});
 setupTrendRadar({ app, db, siteUrl:SITE_URL, requireAdmin, sameOriginOnly, publicPage, generateEditorialDraft, reviewEditorialDraft, canRun:ecosystemCanRun, automationAllowed:()=>!dailyStories?.automation.status().enabled });
 setupEmissora({app,db,siteUrl:SITE_URL});
 const rawStoryOpenAIRequest=createOpenAIStoryRequest({apiKey:()=>process.env.OPENAI_API_KEY});
@@ -3100,6 +3104,10 @@ app.use((req, res, next) => {
   const file = path.join(dir, 'public', req.path.slice(1));
   if (!fs.existsSync(file)) return next();
   return res.type('html').send(fs.readFileSync(file, 'utf8'));
+});
+app.get(['/manifest.webmanifest','/sw.js','/pwa-install.js'],(req,res)=>{
+  res.set('Cache-Control','no-cache, max-age=0, must-revalidate');
+  return res.sendFile(path.join(dir,'public',req.path.slice(1)),{cacheControl:false});
 });
 app.use(express.static(path.join(dir, 'public'), { extensions: ['html'] }));
 
@@ -3491,7 +3499,8 @@ app.get('/api/auth/me', (req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ authenticated: false });
   return res.json({ authenticated: true, user: { name: user.name, email: user.email,
-    whatsapp: user.whatsapp || '', admin: Boolean(user.is_admin || adminEmails.has(String(user.email).toLowerCase())) }, wallet: publicWallet(user.id) });
+    whatsapp: user.whatsapp || '', admin: Boolean(user.is_admin || adminEmails.has(String(user.email).toLowerCase())),
+    socialDirectPublish:directVideoPublisher(user,process.env.SOCIAL_DIRECT_PUBLISH_USER_IDS) }, wallet: publicWallet(user.id) });
 });
 
 function publicAgeVerification(row) {
@@ -8931,7 +8940,11 @@ app.get('/api/social/chat/files/:messageId', requireUser, (req, res) => {
 });
 
 app.post('/api/social/uploads', requireActiveSocialUser, sameOriginOnly, async (req, res) => {
-  const officialProfile = isAdministrativeUser(req.user);
+  const directPublish=directVideoPublisher(req.user,process.env.SOCIAL_DIRECT_PUBLISH_USER_IDS);
+  const officialProfile = isAdministrativeUser(req.user)||directPublish;
+  const duration=Number(req.body?.durationSeconds);
+  if(directPublish&&(!Number.isFinite(duration)||duration<=0||duration>Number.MAX_SAFE_INTEGER-2))return res.status(400).json({error:'Não foi possível ler a duração. Selecione o arquivo novamente.'});
+  const maxDurationSeconds=directPublish?Math.ceil(duration)+1:60;
   if (!officialProfile && !allowAttempt(socialAttempts, `upload:${req.user.id}`, 8, 24 * 60 * 60 * 1000)) {
     return res.status(429).json({ error: 'Limite diário de vídeos atingido para esta conta.' });
   }
@@ -8956,7 +8969,7 @@ app.post('/api/social/uploads', requireActiveSocialUser, sameOriginOnly, async (
       method: 'POST',
       headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        maxDurationSeconds: 60,
+        maxDurationSeconds,
         expiry: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         creator: String(req.user.id),
         allowedOrigins: [new URL(process.env.SITE_URL || 'https://vitrinecity.com').hostname],
@@ -8973,14 +8986,16 @@ app.post('/api/social/uploads', requireActiveSocialUser, sameOriginOnly, async (
     const createPost = db.transaction(() => {
       db.prepare(`INSERT INTO social_posts
         (id,user_id,video_uid,caption,category,city,cta_label,cta_url,status,moderation_status,moderation_reason,cta_charge_units,cta_charge_status)
-        VALUES (?,?,?,?,?,?,?,?, 'uploading','pending',?,?,?)`).run(postId, req.user.id, payload.result.uid,
-          caption, category, city, ctaUrl ? (ctaLabel || 'Saiba mais') : '', ctaUrl, riskReason, chargeUnits,
+        VALUES (?,?,?,?,?,?,?,?, 'uploading',?,?,?,?)`).run(postId, req.user.id, payload.result.uid,
+          caption, category, city, ctaUrl ? (ctaLabel || 'Saiba mais') : '', ctaUrl, directPublish?'approved':'pending', directPublish?'':riskReason, chargeUnits,
           chargeUnits ? 'reserved' : 'not_required');
+      if(directPublish)db.prepare(`INSERT INTO social_moderation_actions(post_id,author_id,admin_id,action,reason_code,note,previous_status,new_status)
+        VALUES (?,?,NULL,'auto_approve','outro','Perfil autorizado para publicação direta.','uploading','uploading')`).run(postId,req.user.id);
       if (chargeUnits) chargeSocialLink(postId, req.user.id);
     });
     createPost();
     return res.status(201).json({ postId, uploadUrl: payload.result.uploadURL, videoUid: payload.result.uid,
-      maxBytes: 200 * 1024 * 1024, maxDurationSeconds: 60 });
+      maxBytes: 200 * 1024 * 1024, maxDurationSeconds, directPublish });
   } catch (error) {
     console.error('Cloudflare Stream request failed', error);
     return res.status(502).json({ error: 'Serviço de vídeo indisponível no momento.' });
@@ -8988,10 +9003,12 @@ app.post('/api/social/uploads', requireActiveSocialUser, sameOriginOnly, async (
 });
 
 app.get('/api/social/posts/:id/status', requireUser, (req, res) => {
-  const post = db.prepare('SELECT id,status,error_message FROM social_posts WHERE id=? AND user_id=?')
+  const post = db.prepare('SELECT id,status,error_message,moderation_status FROM social_posts WHERE id=? AND user_id=?')
     .get(req.params.id, req.user.id);
   if (!post) return res.status(404).json({ error: 'Publicação não encontrada.' });
-  return res.json({ id: post.id, status: post.status, error: post.error_message || '' });
+  const agent=socialVideoAgent.status(post.id);
+  const message=post.status==='ready'?'Publicado! Seu vídeo já está no ar.':post.status==='error'?'O arquivo não pôde ser processado. Envie uma nova cópia.':agent?.state==='review'?'Vídeo recebido. Precisa de uma análise adicional.':post.status==='pending_review'?'Vídeo recebido. O agente está analisando a publicação.':'Vídeo recebido. Preparando a reprodução; não é necessário enviar novamente.';
+  return res.set('Cache-Control','no-store').json({ id: post.id, status: post.status, moderationStatus:post.moderation_status, agentState:agent?.state||null, message, error: post.error_message || '' });
 });
 
 app.post('/api/social/posts/:id/like', requireActiveSocialUser, sameOriginOnly, (req, res) => {
