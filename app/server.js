@@ -3528,7 +3528,7 @@ function requireActiveSocialUser(req, res, next) {
   return requireUser(req, res, () => {
     const restriction = db.prepare(`SELECT status,reason_code,note,restricted_until FROM social_account_restrictions
       WHERE user_id=? AND status='suspended' AND (restricted_until IS NULL OR restricted_until>CURRENT_TIMESTAMP)`).get(req.user.id);
-    if (restriction) return res.status(403).json({ error: 'Sua participação na Vitriny Social está suspensa.', restriction });
+    if (restriction) return res.status(403).json({ error: 'Sua participação na Vitrine Social está suspensa.', restriction });
     return next();
   });
 }
@@ -6700,7 +6700,7 @@ app.post('/api/affiliates/content/submissions',requireUser,sameOriginOnly,(req,r
   const campaign=db.prepare("SELECT * FROM affiliate_content_campaigns WHERE id=? AND status='active'").get(campaignId);
   const post=db.prepare('SELECT id,status FROM social_posts WHERE id=? AND user_id=?').get(socialPostId,req.user.id);
   if(!campaign)return res.status(404).json({error:'Campanha indisponível.'});
-  if(!post)return res.status(404).json({error:'Vídeo da Vitriny Social não encontrado na sua conta.'});
+  if(!post)return res.status(404).json({error:'Vídeo da Vitrine Social não encontrado na sua conta.'});
   if(!validSocialUrl(publicationUrl))return res.status(400).json({error:'Informe o link público da publicação.'});
   try{const result=db.prepare(`INSERT INTO affiliate_content_submissions(affiliate_id,campaign_id,social_post_id,publication_url,reward_units)
     VALUES (?,?,?,?,?)`).run(affiliate.id,campaign.id,post.id,publicationUrl,campaign.reward_units);
@@ -9932,8 +9932,8 @@ app.post('/api/social/notifications/read', requireUser, sameOriginOnly, (req,res
 function localSeoSuggestion(caption,category,city) {
   const subject=caption.replace(/[#@][\wÀ-ÿ]+/g,'').trim().slice(0,90)||'Novidade na Vitriny City';
   const where=city?` em ${city}`:''; const title=`${subject}${where} | Vitriny City`.slice(0,60);
-  const description=`${subject}${where}. Veja fotos, vídeos, produtos, serviços e novidades na Vitriny Social.`.slice(0,155);
-  const keywords=[category,city,'Vitriny City','Vitriny Social',...caption.toLowerCase().match(/[a-zà-ÿ]{4,}/g)||[]].filter(Boolean);
+  const description=`${subject}${where}. Veja fotos, vídeos, produtos, serviços e novidades na Vitrine Social.`.slice(0,155);
+  const keywords=[category,city,'Vitriny City','Vitrine Social',...caption.toLowerCase().match(/[a-zà-ÿ]{4,}/g)||[]].filter(Boolean);
   return {title,description,keywords:[...new Set(keywords)].slice(0,8),optimizedCaption:`${caption||subject}${city?` · ${city}`:''} #vitrinycity #${category}`};
 }
 app.post('/api/social/seo-suggestion', requireActiveSocialUser, sameOriginOnly, async (req,res) => {
@@ -10155,9 +10155,9 @@ app.get('/social/post/:id', (req,res) => {
   const p=db.prepare(`SELECT p.*,u.name,COALESCE(sp.handle,'usuario') handle FROM social_posts p JOIN users u ON u.id=p.user_id LEFT JOIN social_profiles sp ON sp.user_id=p.user_id WHERE p.id=? AND p.status='ready'`).get(req.params.id);
   if(!p)return publicErrorPage(res, 404);
   const esc=v=>String(v||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const title=esc(p.seo_title||p.caption||'Publicação na Vitriny Social'),description=esc(p.seo_description||p.caption||'Veja esta publicação na Vitriny Social');
+  const title=esc(p.seo_title||p.caption||'Publicação na Vitrine Social'),description=esc(p.seo_description||p.caption||'Veja esta publicação na Vitrine Social');
   const origin=new URL(process.env.SITE_URL||'https://vitrinecity.com').origin,image=p.media_type==='image'?new URL(p.image_url,origin).toString():origin+'/assets/vitriny-city-master.jpg';
-  res.set('Cache-Control','public,max-age=60').send('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>'+title+'</title><meta name="description" content="'+description+'"><meta property="og:title" content="'+title+'"><meta property="og:description" content="'+description+'"><meta property="og:type" content="article"><meta property="og:image" content="'+esc(image)+'"><link rel="canonical" href="'+origin+'/social/post/'+encodeURIComponent(p.id)+'"></head><body style="font-family:Arial;max-width:680px;margin:40px auto;padding:20px"><h1>'+title+'</h1>'+(p.media_type==='image'?'<img src="'+esc(p.image_url)+'" style="max-width:100%;border-radius:18px">':'')+'<p>'+esc(p.caption)+'</p><p>Por @'+esc(p.handle)+'</p><a href="/social?post='+encodeURIComponent(p.id)+'">Abrir na Vitriny Social</a></body></html>');
+  res.set('Cache-Control','public,max-age=60').send('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>'+title+'</title><meta name="description" content="'+description+'"><meta property="og:title" content="'+title+'"><meta property="og:description" content="'+description+'"><meta property="og:type" content="article"><meta property="og:image" content="'+esc(image)+'"><link rel="canonical" href="'+origin+'/social/post/'+encodeURIComponent(p.id)+'"></head><body style="font-family:Arial;max-width:680px;margin:40px auto;padding:20px"><h1>'+title+'</h1>'+(p.media_type==='image'?'<img src="'+esc(p.image_url)+'" style="max-width:100%;border-radius:18px">':'')+'<p>'+esc(p.caption)+'</p><p>Por @'+esc(p.handle)+'</p><a href="/social?post='+encodeURIComponent(p.id)+'">Abrir na Vitrine Social</a></body></html>');
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));

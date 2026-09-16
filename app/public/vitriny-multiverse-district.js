@@ -4,7 +4,7 @@ import {explorerReturnHref,isSafeInternalHref} from '/vitriny-spatial-session.js
 
 const palette=[0x6ee7ff,0x8f8cff,0xe48cff,0xffb36b,0x85e6a8,0x6f9cff,0xb58cff,0x6edbcf];
 const definitions={
-  social:{label:'Social District',fallback:'/social.html',description:'Pessoas, perfis e comunidades da Vitriny Social.'},
+  social:{label:'Social District',fallback:'/social.html',description:'Pessoas, perfis e comunidades da Vitrine Social.'},
   education:{label:'Education District',fallback:'/centro-educacional.html',description:'Cursos e experiências de aprendizagem.'},
   services:{label:'Services District',fallback:'/solucoes.html',description:'Serviços digitais e soluções da plataforma.'}
 };
@@ -33,7 +33,7 @@ function addEntity(entity,index){const accent=palette[entity.accentIndex%palette
     const body=new THREE.Mesh(new THREE.BoxGeometry(entity.size.width,entity.size.height,entity.size.depth),new THREE.MeshStandardMaterial({color:0x13253a,emissive:accent,emissiveIntensity:.05,metalness:.48,roughness:.3}));body.position.y=entity.size.height/2;body.castShadow=profile.shadows;body.receiveShadow=profile.shadows;group.add(body);
     const crown=new THREE.Mesh(new THREE.TorusGeometry(entity.size.width*.36,.08,6,32),new THREE.MeshBasicMaterial({color:accent,transparent:true,opacity:.78}));crown.rotation.x=Math.PI/2;crown.position.y=entity.size.height+.3;group.add(crown);
   }
-  const title=entity.entityType==='profile'?`@${entity.handle}`:entity.title,subtitle=entity.entityType==='profile'?`${entity.followers} seguidores · ${entity.city||'Vitriny Social'}`:(entity.amountCents? (entity.amountCents/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}):entity.district);
+  const title=entity.entityType==='profile'?`@${entity.handle}`:entity.title,subtitle=entity.entityType==='profile'?`${entity.followers} seguidores · ${entity.city||'Vitrine Social'}`:(entity.amountCents? (entity.amountCents/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}):entity.district);
   const texture=labelTexture(title,subtitle,accent),sign=new THREE.Mesh(new THREE.PlaneGeometry(6.6,3.3),new THREE.MeshBasicMaterial({map:texture}));sign.position.set(0,entity.entityType==='profile'?6.1:entity.size.height+2.2,0);group.add(sign);scene.add(group);targets.push(group);
 }
 

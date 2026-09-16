@@ -1,4 +1,4 @@
-const CACHE_NAME = 'vitrinecity-pwa-v8-share';
+const CACHE_NAME = 'vitrinecity-pwa-v9-social';
 const APP_SHELL = [
   '/',
   '/loja',

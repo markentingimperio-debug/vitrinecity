@@ -34,7 +34,7 @@ export const RESIDENT_DEPARTMENTS=freeze([
   department('emissora','Emissora VitrineCity','/emissora',50,198,{description:'Conteúdo editorial e notícias.',adminHref:'/admin-conteudos.html'}),
   department('credits','Banco VitrineCity','/central-creditos.html',113,-163,{description:'Saldo e condições de uso das Vitrine Coins.'}),
   department('neural','Vitrine Neural','/neural-workspace.html?personal=1',-300,-72,{newBuilding:true,description:'Abra o chat real. Operações pagas seguem as condições e confirmações do chat.',adminHref:'/admin-vitriny-neural.html'}),
-  department('studio','Estúdio de redes e vídeo','/social',-300,0,{newBuilding:true,description:'Explore o feed da Vitriny Social e consulte os canais oficiais de Instagram, TikTok e YouTube.',adminHref:'/admin-growth.html'}),
+  department('studio','Estúdio de redes e vídeo','/social',-300,0,{newBuilding:true,description:'Explore o feed da Vitrine Social e consulte os canais oficiais de Instagram, TikTok e YouTube.',adminHref:'/admin-growth.html'}),
   department('recipes','Casa de receitas','/receitas',-300,72,{newBuilding:true,description:'Receitas e conteúdo culinário publicado.',adminHref:'/admin-conteudos.html'}),
   ...AFFILIATE_CENTERS.map((c,i)=>department(`center-${c.id}`,c.title,c.href,-180,-115+i*64,{description:c.description,adminHref:'/admin-afiliados.html'})),
   ...DISTRICT_INTEGRATIONS.map((d,i)=>department(`district-${d.id}`,d.label,d.href,Math.cos(i*Math.PI/4)*80,Math.sin(i*Math.PI/4)*80,{description:d.description}))
@@ -49,7 +49,7 @@ const definitions=[
   ['helena','Helena','Guia editorial','emissora','A emissora reúne conteúdos publicados para você explorar.'],
   ['clara','Clara','Orientadora de Vitrine Coins','credits','Consulte seu saldo e as condições na central. Esta simulação não movimenta moedas.'],
   ['iris','Íris','Anfitriã da Vitrine Neural','neural','Sou uma personagem de orientação. Para uma resposta real, abra a Vitrine Neural.'],
-  ['noa','Noa','Guia de criação e vídeo','studio','Abra o feed da Vitriny Social ou consulte os canais oficiais. Esta personagem não publica nas redes.'],
+  ['noa','Noa','Guia de criação e vídeo','studio','Abra o feed da Vitrine Social ou consulte os canais oficiais. Esta personagem não publica nas redes.'],
   ['olivia','Olívia','Guia da unidade YouTube','studio','O canal oficial da Agrotécnica pode ser consultado pelo link. Esta fala não é uma análise do canal.'],
   ['maya-social','Maya','Guia da unidade Instagram','studio','Abra o perfil oficial para consultar as publicações. Não leio dados privados nem envio mensagens.'],
   ['enzo','Enzo','Guia da unidade TikTok','studio','O perfil oficial está disponível no link. Não publico, sigo pessoas nem contabilizo visualizações.'],

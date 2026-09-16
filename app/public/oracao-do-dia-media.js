@@ -44,7 +44,7 @@ export function validPrayerPlayer(value){
 export async function installPrayerVideos({document,fetch,stopAudio=()=>{}}){
   const list=document.getElementById('prayerVideos'),status=document.getElementById('videoStatus'),retry=document.getElementById('retryPrayerVideos');
   async function load(){
-    retry.hidden=true;status.textContent='Buscando vídeos de oração na Vitriny Social…';
+    retry.hidden=true;status.textContent='Buscando vídeos de oração na Vitrine Social…';
     try{
       const day=document.getElementById('prayerEdition').getAttribute('datetime');
       const response=await fetch(`/api/prayer/videos?dia=${encodeURIComponent(day)}`,{signal:AbortSignal.timeout(12000)});
@@ -55,7 +55,7 @@ export async function installPrayerVideos({document,fetch,stopAudio=()=>{}}){
         const player=validPrayerPlayer(video.playerUrl);if(!player)continue;
         const card=document.createElement('article');card.className='prayer-video-card';
         const title=document.createElement('h3');title.textContent=String(video.caption||'Oração em vídeo').split('\n')[0].slice(0,140);
-        const byline=document.createElement('p');byline.className='video-author';byline.textContent=`Por ${video.author} · Vitriny Social`;
+        const byline=document.createElement('p');byline.className='video-author';byline.textContent=`Por ${video.author} · Vitrine Social`;
         const frame=document.createElement('div');frame.className='prayer-player';
         const button=document.createElement('button');button.type='button';button.className='button button-primary';button.textContent='▶ Assistir e ouvir';button.setAttribute('aria-label',`Assistir e ouvir: ${title.textContent}`);
         button.addEventListener('click',()=>{
@@ -68,7 +68,7 @@ export async function installPrayerVideos({document,fetch,stopAudio=()=>{}}){
           iframe.addEventListener('load',()=>{iframe.focus();});
         });
         frame.append(button);
-        const link=document.createElement('a');link.href=`/social?post=${encodeURIComponent(video.id)}`;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Abrir na Vitriny Social ↗';
+        const link=document.createElement('a');link.href=`/social?post=${encodeURIComponent(video.id)}`;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Abrir na Vitrine Social ↗';
         card.append(frame,title,byline,link);list.append(card);
       }
       status.textContent=list.children.length?'Toque em Assistir e ouvir e depois em reproduzir. O som pode ser ajustado no player.':'Ainda não há vídeo de oração publicado para este dia. Você pode ouvir a leitura da oração acima.';

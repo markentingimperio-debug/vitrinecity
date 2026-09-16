@@ -288,7 +288,7 @@ test('a platform question escapes the open course and describes only public sect
   for(const contextPath of ['/cursos/cozinha-basica','/centro-educacional.html']){
     const r=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'O que tem na VitrineCity?',contextPath}});
     assert.equal(r.status,200);assert.equal(r.body.mode,'fallback');
-    for(const phrase of ['cidade virtual','Agrotécnica','afiliado','cursos digitais','receitas publicadas','oração do dia','serviços digitais','VitrineSocial'])assert.ok(r.body.reply.includes(phrase),phrase);
+    for(const phrase of ['cidade virtual','Agrotécnica','afiliado','cursos digitais','receitas publicadas','oração do dia','serviços digitais','Vitrine Social'])assert.ok(r.body.reply.includes(phrase),phrase);
     assert.match(r.body.reply,/sem escolher uma loja antes/);
     assert.deepEqual(r.body.offers.map(o=>o.assetType),['product','affiliate','course']);
     assert.deepEqual(r.body.actions.map(a=>a.url),['/multiverso','/receitas','/oracao-do-dia.html']);
@@ -608,4 +608,12 @@ test('queued visitors reuse a released AI slot and leave capacity for later arri
   assert.equal(f.seen.calls.length,1);gate.resolve(response());
   assert.ok((await Promise.all([first,second,third])).every(r=>r.body.mode==='ai'));
   assert.equal((await send()).body.mode,'ai');assert.equal(f.seen.calls.length,4);
+});
+
+test('social context welcomes without paid AI and explains pending monetization from verified rules',async t=>{
+  const f=await fixture(t),r=await f.call('/api/site-assistant/context?path=/social');
+  assert.equal(r.status,200);assert.equal(r.body.context.kind,'social');assert.match(r.body.greeting,/assistente com IA/);assert.match(r.body.greeting,/assistir ou aprender/);assert.equal(f.seen.calls.length,0);
+  const reply=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'Como funciona a monetização e os pagamentos?',contextPath:'/social'}});
+  assert.equal(reply.status,200);assert.match(reply.body.reply,/pagamentos ainda não estão disponíveis/);assert.equal(f.seen.calls.length,0);assert.ok(reply.body.actions.some(a=>a.url==='/criadores-social.html'));
+  for(const p of ['/perfil-social.html','/chat-social.html'])assert.equal((await f.call('/api/site-assistant/context?path='+p)).status,404);
 });

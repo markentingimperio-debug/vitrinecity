@@ -699,3 +699,13 @@ test('nearby hashes and query parameters preserve the ordinary passive startup w
   const amp = harness({hash:LIA_DIRECT}); amp.doc.documentElement.setAttribute('amp','');
   assert.equal(amp.mount(), null); assert.equal(amp.requests.length, 0);
 });
+
+test('social invitation waits twelve idle seconds and respects dismissal without automatic chat',async()=>{
+  const h=harness({path:'/social'});const widget=h.mount();await widget.ready;
+  h.advance(11000);assert.equal(h.find('.vc-assistant-invite').hidden,true);
+  h.advance(1000);assert.equal(h.find('.vc-assistant-invite').hidden,false);
+  assert.equal(h.count('/chat'),0);widget.dismiss();h.advance(20000);
+  assert.equal(h.find('.vc-assistant-invite').hidden,true);
+  assert.equal(classify('/perfil-social.html').enabled,false);
+  assert.equal(classify('/chat-social.html').enabled,false);
+});
