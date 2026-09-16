@@ -1,0 +1,21 @@
+name: LIA Qwen35 Isolated Pilot Checks
+on:
+  push:
+    branches: ['pilot/lia-qwen35-4b-20260916']
+    paths: ['ops/lia-qwen35-pilot/**', '.github/workflows/lia-qwen35-pilot.yml']
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Python syntax
+        run: python3 -m py_compile ops/lia-qwen35-pilot/pilot.py
+      - name: Fourteen offline guard and regression checks
+        run: python3 ops/lia-qwen35-pilot/pilot.py --self-test
+      - name: Assert no application changes from the installer validation
+        run: git diff --exit-code -- app docker-compose.yml docker-compose.jarvis.yml
