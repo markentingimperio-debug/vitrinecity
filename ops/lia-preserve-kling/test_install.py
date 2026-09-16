@@ -37,7 +37,7 @@ class SafetyTests(unittest.TestCase):
    self.assertEqual(called.call_count,2)
    self.assertEqual(called.call_args_list[0].args[0],COMPOSE+['config','--format','json','app'])
    second=called.call_args_list[1]
-   self.assertEqual(second.args[0],COMPOSE[:7]+['-f','-','config','--hash','app'])
+   self.assertEqual(second.args[0],COMPOSE[:6]+['-f','-','config','--hash','app'])
    self.assertEqual(second.kwargs['input'],MODEL)
  def test_configuration_drift_stops_after_normalization(self):
   with mock.object(mod,'run',side_effect=[MODEL,'app '+OTHER]):
@@ -84,7 +84,7 @@ class SafetyTests(unittest.TestCase):
    (folder/'files').mkdir();(folder/'files/code.js').write_bytes(b'old')
    mount={'Type':'volume','Source':'/data-volume','Destination':'/data'}
    m={'root':str(root),'compose':['docker','compose'],'configHash':HASH,'oldImage':'old-id','newImage':'new-id','oldTag':'app:live','dataMount':mount,'files':[{'path':'code.js','before':mod.sha(b'old'),'after':mod.sha(b'new'),'mode':0o644}]}
-   (folder/'manifest.json').write_text(json.dumps(m));calls=[]
+   (folder/'manifest.json').write_text(json.dumps(m,indent=2));calls=[]
    def run(args,**kw):
     calls.append(args)
     if '--format' in args:return MODEL
