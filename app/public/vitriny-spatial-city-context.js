@@ -4,7 +4,7 @@ const KNOWN_CITY_IDS=new Set(spatialFallbackCities().map(city=>city.id));
 const CITY_RE=/^[a-z0-9][a-z0-9-]{0,79}$/;
 const BLOCKED_PREFIXES=Object.freeze(['/admin','/api','/checkout','/pagamento','/wallet','/carteira']);
 const DESTINATIONS=Object.freeze([
-  Object.freeze({id:'social',label:'Vitriny Social',href:'/social.html',activeOnly:false}),
+  Object.freeze({id:'social',label:'Vitrine Social',href:'/social.html',activeOnly:false}),
   Object.freeze({id:'marketplace',label:'Marketplace & Lojas',href:'/loja.html',activeOnly:true}),
   Object.freeze({id:'map',label:'Mapa real',href:'/mapa-real.html',activeOnly:false}),
   Object.freeze({id:'deliveries',label:'Vitrine Entregas',href:'/entregas.html',activeOnly:true})

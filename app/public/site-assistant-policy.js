@@ -12,6 +12,7 @@ export function classifySiteAssistantPath(value) {
   if (path === '/course-checkout.html') return allow('course_checkout', false);
   if (['/oracao-do-dia', '/oracao-do-dia.html'].includes(path)) return allow('prayer', false, false);
   if (['/', '/index.html'].includes(path)) return allow('home');
+  if (['/social', '/social.html'].includes(path)) return allow('social');
   if (legacy === '/vitriny-multiverse-explore.html') return allow('city');
   if (/^\/produto\/[1-9]\d*(?:\/[a-z0-9-]+)?$/.test(path)) return allow('product');
   if (/^\/loja(?:\.html|\/[a-zA-Z0-9_-]+(?:\/[a-z0-9-]+)?)?$/.test(path)) return allow('store');

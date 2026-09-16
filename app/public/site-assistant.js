@@ -1,4 +1,4 @@
-import { classifySiteAssistantPath, siteAssistantContextPath, siteAssistantDirectIntent, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS } from './site-assistant-policy.js?v=20260915-lia-direct';
+import { classifySiteAssistantPath, siteAssistantContextPath, siteAssistantDirectIntent, safeSiteAssistantUrl, siteAssistantDismissed, SITE_ASSISTANT_DISMISS_MS } from './site-assistant-policy.js?v=20260916-social';
 import { createSiteAssistantContent, siteAssistantDestination } from './site-assistant-content.js';
 
 const DISMISS_KEY = 'vc-assistant-dismiss-until-v1';
@@ -224,6 +224,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     const active = doc.activeElement;
     if (active && !root.contains(active) && active.matches?.('input, textarea, select, [contenteditable="true"]')) return true;
     if (policy.kind === 'city' && doc.documentElement.dataset.cityGuideReady !== 'true') return true;
+    if (policy.kind === 'social' && doc.querySelector('.modal.open, .comments.open, .drawer.open, .story-viewer.open, .media-viewer.open')) return true;
     return false;
   }
   function tick() {
@@ -232,7 +233,7 @@ export function mountSiteAssistant({ window: win = globalThis.window, document: 
     lastTick = current; wasEligible = eligible;
     if (disposed || !policy.proactive || siteAssistantDismissed(dismissedUntil, current)) { invite.hidden = true; stopTimer(); return; }
     if (shown) { invite.hidden = !eligible || !panel.hidden; return; }
-    if (elapsed < 3000 || !eligible || !panel.hidden) return;
+    if (elapsed < (policy.kind === 'social' ? 12000 : 3000) || !eligible || !panel.hidden) return;
     shown = true; invite.hidden = false; track('invitation');
   }
   function messageBubble(role, body) {

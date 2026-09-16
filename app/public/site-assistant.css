@@ -86,3 +86,8 @@
 @media(max-height:560px){.vc-assistant-panel[data-expanded="true"]{height:auto;max-height:calc(100dvh - 16px)}}
 @media(max-height:560px){.vc-assistant-panel[data-view="content"]{height:calc(100dvh - 16px)}.vc-assistant-content,.vc-assistant-content-frame{min-height:180px}}
 @media(prefers-reduced-motion:reduce){.vc-assistant *,.vc-assistant-launcher{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+/* Keep the social bottom navigation usable when Lia is minimized. */
+.vc-assistant[data-kind="social"] .vc-assistant-launcher{bottom:calc(max(18px,env(safe-area-inset-bottom)) + 66px)}
+.vc-assistant[data-kind="social"] .vc-assistant-invite{bottom:calc(max(18px,env(safe-area-inset-bottom)) + 128px)}
+@media(min-width:901px){.vc-assistant[data-kind="social"] .vc-assistant-launcher{bottom:18px}.vc-assistant[data-kind="social"] .vc-assistant-invite{bottom:86px}}

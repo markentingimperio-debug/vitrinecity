@@ -148,7 +148,7 @@ export function createSearchReader({document, origin, getRecommendations}) {
     }
     if(!count)recommendations.append(el('p','Ainda não há outro resultado local para este assunto.','reader-note'));
     const paths=el('div',undefined,'reader-explore');
-    paths.append(link('Visitar nossa loja oficial · Agrotécnica','/loja/official_agrotecnica/agrotecnica'),link('Conhecer a Vitriny Social','/social'),link('Explorar lojas e pessoas','/descobrir'),link('Ver seleção de produtos afiliados','/ofertas'));
+    paths.append(link('Visitar nossa loja oficial · Agrotécnica','/loja/official_agrotecnica/agrotecnica'),link('Conhecer a Vitrine Social','/social'),link('Explorar lojas e pessoas','/descobrir'),link('Ver seleção de produtos afiliados','/ofertas'));
     recommendations.append(paths);
     const channel=el('section',undefined,'reader-channel');
     channel.append(el('h3','Da nossa equipe'),link('Agrotécnica no YouTube ↗','https://www.youtube.com/@agrotecnica362'),link('@agrotecniica no Instagram ↗','https://www.instagram.com/agrotecniica/'),link('@agrotecnica5 no TikTok ↗','https://www.tiktok.com/@agrotecnica5'),el('p','Canais indicados pela equipe VitrineCity. Abrem na plataforma original, em outra aba.','reader-note'));

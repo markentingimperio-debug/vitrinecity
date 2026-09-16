@@ -203,7 +203,7 @@ export function setupSiteSalesAssistant({app,db,requestOpenAI,requireAdmin,getSe
     if(/^\/cursos\//.test(pathname)){
       const item=inventory().find(item=>item.id==='course:'+pathname.split('/')[2]);return item?{kind:'course',title:item.title,path:pathname,group:item.group,body:item.description,offerId:item.id}:null;
     }
-    const policy=classifySiteAssistantPath(pathname),labels={home:'VitrineCity',city:'Cidade VitrineCity',store:'Lojas da VitrineCity',affiliate:'Seleção de produtos',recipe:'Receitas',portal:'Conteúdos da VitrineCity',course:'Centro Educacional',service:'Serviços digitais',prayer:'Oração do dia',info:'Conheça a VitrineCity'};
+    const policy=classifySiteAssistantPath(pathname),labels={social:'Vitrine Social',home:'VitrineCity',city:'Cidade VitrineCity',store:'Lojas da VitrineCity',affiliate:'Seleção de produtos',recipe:'Receitas',portal:'Conteúdos da VitrineCity',course:'Centro Educacional',service:'Serviços digitais',prayer:'Oração do dia',info:'Conheça a VitrineCity'};
     return {kind:policy.kind,title:labels[policy.kind]||'VitrineCity',path:pathname,group:portalGroup[pathname.slice(1)]||'',commercial:policy.commercial,body:''};
   }
   function inventory(){
@@ -235,7 +235,7 @@ export function setupSiteSalesAssistant({app,db,requestOpenAI,requireAdmin,getSe
     if(others.length)sections.push({id:'content',label:'Conhecer outros conteúdos',description:'conteúdos de '+others.map(portal=>editorialPortals[portal]).join(', '),url:'/'+others[0]});
     sections.push({id:'prayer',label:'Oração do dia',description:'a oração do dia',url:'/oracao-do-dia.html'});
     if(items.some(item=>item.kind==='service'))sections.push({id:'service',label:'Conhecer os serviços',description:'serviços digitais',url:'/servicos-digitais.html'});
-    sections.push({id:'social',label:'Conhecer a VitrineSocial',description:'a rede social VitrineSocial',url:'/social'});
+    sections.push({id:'social',label:'Conhecer a Vitrine Social',description:'a rede social Vitrine Social',url:'/social'});
     return sections;
   }
   function platformOverview(context){
@@ -271,14 +271,15 @@ export function setupSiteSalesAssistant({app,db,requestOpenAI,requireAdmin,getSe
     return items.filter(item=>item.group===group).map(item=>({item,score:terms.reduce((n,t)=>n+Number(normalize(item.title).includes(t)),0)})).sort((a,b)=>b.score-a.score||a.item.id.localeCompare(b.item.id)).slice(0,3).map(({item})=>dto(item));
   }
   function greeting(context,name='',style='helpful_question'){
+    if(context.kind==='social')return 'Oi! Eu sou a Lia, assistente com IA da VitrineCity. O que você gosta de assistir ou aprender? Se quiser, posso mostrar o que mais tem na nossa plataforma.';
     const hello=name?`Oi, ${name}! Eu sou a Lia 😊 `:'Oi! Eu sou a Lia 😊 ';
     if(style==='simple_choices')return hello+'Quer tirar uma dúvida ou encontrar algo por aqui?';
     if(style==='direct_product')return hello+'Vamos encontrar algo que combine com o que você precisa?';
     if(style==='checkout_help')return hello+'Posso ajudar você a escolher e dar o próximo passo. O que procura?';
     return hello+(context.kind==='recipe'?'Estou aqui para ajudar. O que você quer preparar?':context.group==='plants'?'Vamos cuidar das suas plantas? Me conta o que você procura.':'Estou aqui para ajudar você. O que está procurando?');
   }
-  const actions=context=>context.kind==='recipe'?[{label:'Sobre a receita',message:'Pode me ajudar a entender esta receita?'},{label:'Utensílios',message:'Quais utensílios do catálogo podem ajudar nesta receita?'}]:context.group==='plants'?[{label:'Cuidados com plantas',message:'O que devo observar nos cuidados com as plantas?'},{label:'Ver produtos',message:'Quais produtos para plantas estão disponíveis no catálogo?'}]:[{label:'Encontrar um produto',message:'Quero encontrar um produto. Pode me ajudar?'},{label:'Como comprar',message:'Como faço para comprar no site?'}];
-  const quickActions=(context,style)=>style==='checkout_help'?[{label:'Como comprar',message:'Como faço para comprar no site?'},actions(context)[0]]:style==='direct_product'?[actions(context)[1],actions(context)[0]]:style==='simple_choices'?[{label:'Tirar uma dúvida',message:'Quero tirar uma dúvida sobre este conteúdo.'},{label:'Escolher um produto',message:'Quero encontrar um produto relacionado a este assunto.'}]:actions(context);
+  const actions=context=>context.kind==='social'?[{label:'Conhecer a plataforma',message:'Quero conhecer melhor a plataforma VitrineCity.'},{label:'Benefícios para criadores',message:'Como funciona a monetização da Vitrine Social?'}]:context.kind==='recipe'?[{label:'Sobre a receita',message:'Pode me ajudar a entender esta receita?'},{label:'Utensílios',message:'Quais utensílios do catálogo podem ajudar nesta receita?'}]:context.group==='plants'?[{label:'Cuidados com plantas',message:'O que devo observar nos cuidados com as plantas?'},{label:'Ver produtos',message:'Quais produtos para plantas estão disponíveis no catálogo?'}]:[{label:'Encontrar um produto',message:'Quero encontrar um produto. Pode me ajudar?'},{label:'Como comprar',message:'Como faço para comprar no site?'}];
+  const quickActions=(context,style)=>context.kind==='social'?actions(context):style==='checkout_help'?[{label:'Como comprar',message:'Como faço para comprar no site?'},actions(context)[0]]:style==='direct_product'?[actions(context)[1],actions(context)[0]]:style==='simple_choices'?[{label:'Tirar uma dúvida',message:'Quero tirar uma dúvida sobre este conteúdo.'},{label:'Escolher um produto',message:'Quero encontrar um produto relacionado a este assunto.'}]:actions(context);
   function coursePurchaseHelp(context,input){
     if(context.kind!=='course'||!/^course:[a-z0-9]+(?:-[a-z0-9]+)*$/.test(context.offerId||''))return null;
     const intent=discoveryIntent(input);
@@ -316,6 +317,7 @@ export function setupSiteSalesAssistant({app,db,requestOpenAI,requireAdmin,getSe
     return 'Se estiver ao seu alcance e não fizer falta para você, pode conhecer nosso apoio voluntário pelo botão abaixo. A oração continua gratuita, com ou sem contribuição.';
   }
   function navigation(context,message=''){
+    if((context.kind==='social'||context.path==='/criadores-social.html')&&/monetiza|seguidores|visualiza|ganhar|pagamento|renda|beneficios.*criadores/.test(normalize(message)))return {reply:'O programa de criadores está em preparação; os pagamentos ainda não estão disponíveis. A proposta prevê bônus único por nível de seguidores e remuneração por visualizações válidas, com requisitos de audiência e atividade. Você pode conhecer os critérios na página de benefícios.',actions:[{label:'Ver regras e benefícios',url:'/criadores-social.html',kind:'internal',assetType:'navigation',assetId:'social-creators'}],contactOffer:null};
     const input=normalize(message),intent=discoveryIntent(message),result=[];let reply='',contact=null;
     if(noInterest(message))return {actions:[],reply:'Claro, fique à vontade para explorar. Se surgir uma dúvida, estou por aqui.',contactOffer:null};
     if(intent==='overview')return platformOverview(context);
@@ -330,11 +332,11 @@ export function setupSiteSalesAssistant({app,db,requestOpenAI,requireAdmin,getSe
     }
     else if(intent==='entertainment'){
       if(publishedPortals().has('entretenimento'))result.push({label:'Ver conteúdos de entretenimento',url:'/entretenimento',kind:'internal',assetId:'portal:entretenimento'});
-      result.push({label:'Passear pela cidade',url:'/multiverso',kind:'internal',assetId:'city'},{label:'Conhecer a VitrineSocial',url:'/social',kind:'internal',assetId:'social'});
-      reply='Para explorar no seu tempo, você pode passear pela cidade virtual e conhecer o feed da VitrineSocial'+(publishedPortals().has('entretenimento')?', além dos conteúdos publicados de entretenimento':'')+'. O que combina mais com você agora?';
+      result.push({label:'Passear pela cidade',url:'/multiverso',kind:'internal',assetId:'city'},{label:'Conhecer a Vitrine Social',url:'/social',kind:'internal',assetId:'social'});
+      reply='Para explorar no seu tempo, você pode passear pela cidade virtual e conhecer o feed da Vitrine Social'+(publishedPortals().has('entretenimento')?', além dos conteúdos publicados de entretenimento':'')+'. O que combina mais com você agora?';
     }
     else if(intent==='city'){result.push({label:'Explorar a cidade',url:'/multiverso',kind:'internal',assetId:'city'});reply='Você pode explorar a cidade virtual e conhecer suas lojas. Também posso explicar as opções por aqui; o que gostaria de descobrir?';}
-    else if(intent==='social'){result.push({label:'Conhecer a VitrineSocial',url:'/social',kind:'internal',assetId:'social'});reply='A VitrineSocial é a rede social da plataforma. Você pode abrir o feed pelo botão abaixo; eu continuo por aqui para ajudar.';}
+    else if(intent==='social'){result.push({label:'Conhecer a Vitrine Social',url:'/social',kind:'internal',assetId:'social'});reply='A Vitrine Social é a rede social da plataforma. Você pode abrir o feed pelo botão abaixo; eu continuo por aqui para ajudar.';}
     else if(intent==='recipe'&&context.kind!=='recipe'){
       const published=platformSections().some(section=>section.id==='recipe');
       if(published)result.push({label:'Conhecer as receitas',url:'/receitas',kind:'internal',assetId:'recipe'});

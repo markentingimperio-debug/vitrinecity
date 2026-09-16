@@ -1,5 +1,5 @@
 // Reviewed public informational pages; no account, checkout or administrative routes.
-export const PUBLIC_INFORMATION_PATHS = new Set(["/cinema", "/musicas", "/stories", "/curiosidades",
+export const PUBLIC_INFORMATION_PATHS = new Set(["/criadores-social.html", "/cinema", "/musicas", "/stories", "/curiosidades",
   "/grupos-whatsapp",
   "/grupos-whatsapp.html",
   "/emissora",
