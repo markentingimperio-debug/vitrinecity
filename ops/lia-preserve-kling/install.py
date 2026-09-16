@@ -41,10 +41,42 @@ def compose_for(info,root):
     cmd=['docker','compose','--project-directory',str(root),'-p',project]
     for f in files:cmd+=['-f',f]
     return cmd
+def config_hash(output):
+    rows=[line.split() for line in str(output).splitlines() if line.strip()]
+    if len(rows)!=1 or len(rows[0])!=2 or rows[0][0]!='app' or not re.fullmatch(r'[a-f0-9]{64}',rows[0][1]):
+        raise RuntimeError('Assinatura Compose invalida. Nenhuma configuracao privada foi exibida.')
+    return rows[0][1]
+def stdin_compose(compose):
+    # Keep project/profile/env-file options; replace only source Compose files.
+    # Otherwise the normalized document would be merged with the originals again.
+    cmd=[];i=0
+    while i<len(compose):
+        value=compose[i]
+        if value in ('-f','--file'):
+            if i+1>=len(compose):raise RuntimeError('Argumento Compose incompleto.')
+            i+=2;continue
+        if value.startswith('--file=') or (value.startswith('-f') and len(value)>2):
+            i+=1;continue
+        cmd.append(value);i+=1
+    return cmd+['-f','-']
 def check_config(compose,info,root):
-    lines=run(compose+['config','--hash','app'],cwd=root).splitlines();values=[s.split()[-1] for s in lines if s.strip()]
     old=(info['Config'].get('Labels') or {}).get('com.docker.compose.config-hash')
-    if len(values)!=1 or values[0]!=old:raise RuntimeError('Compose/.env efetivos diferem do container ativo. Parei sem publicar outras mudancas.')
+    if not isinstance(old,str) or not re.fullmatch(r'[a-f0-9]{64}',old):
+        raise RuntimeError('Container sem assinatura Compose valida. Publicacao bloqueada.')
+    # Compose versions affected by docker/compose#14002 hash unresolved env_file
+    # data differently from container creation. Resolve first, then hash the same
+    # effective model. The JSON contains secrets: memory/STDIN only, never logged,
+    # saved, or put into command arguments. No bypass for a matching direct hash.
+    resolved=run(compose+['config','--format','json','app'],cwd=root)
+    try:
+        model=json.loads(resolved)
+        valid=isinstance(model,dict) and isinstance(model.get('services'),dict) and isinstance(model['services'].get('app'),dict)
+    except (ValueError,TypeError):valid=False
+    if not valid:raise RuntimeError('Configuracao Compose normalizada invalida; detalhes privados omitidos.')
+    effective=config_hash(run(stdin_compose(compose)+['config','--hash','app'],cwd=root,input=resolved))
+    if effective!=old:
+        raise RuntimeError('Compose/.env efetivos diferem do container ativo, mesmo apos normalizacao. Parei sem publicar outras mudancas.')
+    return effective
 def data_mount(info):
     env=dict(e.split('=',1) for e in info['Config'].get('Env',[]) if '=' in e);target=env.get('DATA_DIR','/data')
     rows=[m for m in info.get('Mounts',[]) if m['Destination']==target and m.get('RW')]
@@ -105,6 +137,7 @@ def install(root,cid,check_only=False):
         raise RuntimeError('Patch no disco mas nao confirmado no app. Nao sobrescrevi.')
     if (root/'app/vitriny-neural/lia-connected.mjs').exists():raise RuntimeError('Instalador anterior detectado. Use o rollback daquela versao antes deste pacote.')
     compose=compose_for(info,root);check_config(compose,info,root);mount=data_mount(info);patched=patch(engine.read_bytes())
+    print('Configuracao efetiva normalizada: CONFIRMADA.')
     relevant=[RELATIVE,'app/vitriny-neural/service.js','app/vitriny-neural/paid-chat-runtime.js','app/vitriny-neural/providers/kling-paid-video.js','app/vitriny-neural/providers/kling-paid-image.js']
     expected={p:sha((root/p).read_bytes()) for p in relevant}
     code="""import fs from 'node:fs';import {createHash} from 'node:crypto';const expected=JSON.parse(process.argv[1]);for(const [p,h]of Object.entries(expected)){if(createHash('sha256').update(fs.readFileSync('/'+p)).digest('hex')!==h)process.exit(2);}console.log('ok');"""
