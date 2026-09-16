@@ -1,0 +1,46 @@
+name: LIA
+
+on:
+  pull_request:
+    paths:
+      - 'ops/lia-agent/**'
+      - 'app/vitriny-neural/lia-api.js'
+      - 'app/vitriny-neural/server-integration.js'
+      - 'app/public/admin-lia.*'
+      - 'docker-compose.yml'
+      - '.github/workflows/lia.yml'
+  push:
+    branches:
+      - 'codex/lia-v1'
+    paths:
+      - 'ops/lia-agent/**'
+      - 'app/vitriny-neural/lia-api.js'
+      - 'app/vitriny-neural/server-integration.js'
+      - 'app/public/admin-lia.*'
+      - 'docker-compose.yml'
+      - '.github/workflows/lia.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check JavaScript syntax
+        run: |
+          node --check ops/lia-agent/server.js
+          node --check app/vitriny-neural/lia-api.js
+          node --check app/vitriny-neural/server-integration.js
+          node --check app/public/admin-lia.js
+      - name: Validate compose profile
+        env:
+          LIA_EXECUTOR_TOKEN: 01234567890123456789012345678901
+        run: docker compose --profile lia config >/dev/null
+      - name: Build LIA executor
+        run: docker build -f ops/lia-agent/Dockerfile -t vitrinecity-lia-test .
