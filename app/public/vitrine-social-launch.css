@@ -2,7 +2,7 @@
 .hero-actions .hero-social-cta{background:#f8ce6a;color:#172332;border-color:#f8ce6a;min-height:58px;padding:16px 24px;gap:20px;font-size:16px}
 .hero-actions .hero-social-cta:hover{background:#ffe3a1}
 .social-invitation{display:grid;grid-template-columns:1.05fr 1fr;overflow:hidden;margin-top:38px;margin-bottom:20px;background:#101e2e;border-radius:20px;color:#f7faff}
-.social-invitation-copy{padding:44px 38px}.social-invitation .eyebrow{color:#f8ce6a;font-size:11px;line-height:1.6;letter-spacing:1.6px;margin:0 0 18px}
+.social-invitation-copy{padding:44px 38px;min-width:0}.social-invitation .eyebrow{color:#f8ce6a;font-size:11px;line-height:1.6;letter-spacing:1.6px;margin:0 0 18px}
 .social-invitation h2{font-size:clamp(32px,3.6vw,52px);line-height:1.06;letter-spacing:-1.7px;color:#fff;margin:0 0 20px;font-weight:600}
 .social-invitation-lead{font-size:16px;line-height:1.65;color:#e1e8f2;max-width:480px;margin:0 0 20px}
 .social-benefits{list-style:none;padding:0;margin:0 0 25px;display:grid;gap:10px;font-size:13px;color:#f7faff}.social-benefits li::before{content:'✓';color:#f8ce6a;margin-right:9px}

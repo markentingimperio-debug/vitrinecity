@@ -288,7 +288,7 @@ test('a platform question escapes the open course and describes only public sect
   for(const contextPath of ['/cursos/cozinha-basica','/centro-educacional.html']){
     const r=await f.call('/api/site-assistant/chat',{method:'POST',body:{message:'O que tem na VitrineCity?',contextPath}});
     assert.equal(r.status,200);assert.equal(r.body.mode,'fallback');
-    for(const phrase of ['cidade virtual','Agrotécnica','afiliado','cursos digitais','receitas publicadas','oração do dia','serviços digitais','VitrineSocial'])assert.ok(r.body.reply.includes(phrase),phrase);
+    for(const phrase of ['cidade virtual','Agrotécnica','afiliado','cursos digitais','receitas publicadas','oração do dia','serviços digitais','Vitrine Social'])assert.ok(r.body.reply.includes(phrase),phrase);
     assert.match(r.body.reply,/sem escolher uma loja antes/);
     assert.deepEqual(r.body.offers.map(o=>o.assetType),['product','affiliate','course']);
     assert.deepEqual(r.body.actions.map(a=>a.url),['/multiverso','/receitas','/oracao-do-dia.html']);
