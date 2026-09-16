@@ -11,6 +11,7 @@ services:
       COURSE_FILES_DIR: /private-courses
       LIVE_STUDIO_DIR: /live-studio
       JARVIS_LOCAL_MODEL: ${JARVIS_LOCAL_MODEL:-0}
+      LIA_EXECUTOR_URL: http://lia-agent:8090
     networks:
       - default
       - jarvis_private
@@ -25,10 +26,46 @@ services:
       retries: 4
       start_period: 20s
   jarvis-model:
-    profiles: [jarvis]
+    profiles: [jarvis, lia]
     extends:
       file: docker-compose.jarvis.yml
       service: jarvis-model
+  lia-agent:
+    profiles: [lia]
+    build:
+      context: .
+      dockerfile: ops/lia-agent/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: 8090
+      WORKSPACE: /workspace
+      LIA_DATA_DIR: /data
+      LIA_MODEL_ORIGIN: http://jarvis-model:8080
+      LIA_MODEL_NAME: ${LIA_MODEL_NAME:-jarvis-local}
+    depends_on:
+      jarvis-model:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 1.5
+    mem_limit: 768m
+    pids_limit: 128
+    tmpfs: ['/tmp:size=64m,mode=1777']
+    volumes:
+      - ./:/workspace:rw
+      - lia_data:/data
+    networks:
+      - default
+      - jarvis_private
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/v1/status',{headers:{'x-lia-internal-token':process.env.LIA_EXECUTOR_TOKEN||''}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
   live-studio:
     extends:
       file: docker-compose.live.yml
@@ -54,6 +91,7 @@ services:
 volumes:
   live_studio:
   vitrinecity_data:
+  lia_data:
   caddy_data:
   caddy_config:
 networks:
