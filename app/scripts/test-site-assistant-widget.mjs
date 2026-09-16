@@ -709,3 +709,8 @@ test('social invitation waits twelve idle seconds and respects dismissal without
   assert.equal(classify('/perfil-social.html').enabled,false);
   assert.equal(classify('/chat-social.html').enabled,false);
 });
+
+test('campaign official profile has Lia while other member profiles remain excluded',()=>{
+  assert.equal(classify('/perfil/agrotecnica').kind,'social');
+  for(const path of ['/perfil/outro','/perfil/agrotecnica?secret=x','/perfil-social.html'])assert.equal(classify(path).enabled,false);
+});
