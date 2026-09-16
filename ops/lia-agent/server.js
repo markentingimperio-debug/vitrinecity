@@ -32,14 +32,15 @@ Ferramentas não incluem navegador, publicação, exclusão de arquivo, shell li
 
 await fs.mkdir(DATA_DIR,{recursive:true});
 await fs.mkdir(WORKSPACE,{recursive:true});
+const WORKSPACE_REAL=await fs.realpath(WORKSPACE);
 let tasks=new Map();
 let activeId=null;
 
 async function loadTasks(){
-  try{const parsed=JSON.parse(await fs.readFile(TASKS_FILE,'utf8'));for(const item of Array.isArray(parsed)?parsed:[])tasks.set(item.id,{...item,status:item.status==='running'?'interrupted':item.status});}catch{}
+  try{const parsed=JSON.parse(await fs.readFile(TASKS_FILE,'utf8'));for(const item of Array.isArray(parsed)?parsed:[])tasks.set(item.id,{...item,status:item.status==='running'||item.status==='cancelling'?'interrupted':item.status});}catch{}
 }
 async function persist(){
-  const data=[...tasks.values()].slice(-100).map(({controller,...item})=>item),tmp=TASKS_FILE+'.tmp';
+  const data=[...tasks.values()].slice(-100).map(({controller,cancelRequested,...item})=>item),tmp=TASKS_FILE+'.tmp';
   await fs.writeFile(tmp,JSON.stringify(data,null,2),'utf8');await fs.rename(tmp,TASKS_FILE);
 }
 await loadTasks();await persist();
@@ -50,10 +51,9 @@ function secureEqual(a,b){
   return timingSafeEqual(aa,bb);
 }
 function authorized(req){return TOKEN.length>=24&&secureEqual(req.headers['x-lia-internal-token'],TOKEN);}
-function send(res,status,payload){const body=JSON.stringify(payload);res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','content-length':Buffer.byteLength(body)});res.end(body);}
+function send(res,status,payload){const raw=JSON.stringify(payload);res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','content-length':Buffer.byteLength(raw)});res.end(raw);}
 async function body(req){let raw='';for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>128*1024)throw Object.assign(new Error('payload_too_large'),{status:413});}return raw?JSON.parse(raw):{};}
-function safeTaskView(item){if(!item)return null;const {controller,...safe}=item;return safe;}
-function isUuid(value){return /^[a-f0-9-]{36}$/i.test(String(value||''));}
+function safeTaskView(item){if(!item)return null;const {controller,cancelRequested,...safe}=item;return safe;}
 
 function safeRelative(value,{file=false}={}){
   const raw=String(value??'.').trim().replace(/\\/g,'/');
@@ -67,25 +67,28 @@ function safeRelative(value,{file=false}={}){
   return raw;
 }
 function absolute(rel){return rel==='.'?WORKSPACE:path.resolve(WORKSPACE,rel);}
+function inside(real){return real===WORKSPACE_REAL||real.startsWith(WORKSPACE_REAL+path.sep);}
+async function safeExisting(rel){const target=absolute(rel),real=await fs.realpath(target);if(!inside(real))throw new Error('symlink_escape_blocked');return{target,real};}
+async function safeWriteTarget(rel){const target=absolute(rel);await fs.mkdir(path.dirname(target),{recursive:true});const parentReal=await fs.realpath(path.dirname(target));if(!inside(parentReal))throw new Error('symlink_escape_blocked');try{const real=await fs.realpath(target);if(!inside(real))throw new Error('symlink_escape_blocked');}catch(error){if(error?.code!=='ENOENT')throw error;}return target;}
 function trim(text,max=16000){const value=String(text??'');return value.length<=max?value:value.slice(0,max)+'\n...[truncado]';}
 
 async function walk(rel='.',limit=400){
-  rel=safeRelative(rel);const root=absolute(rel),out=[];
+  rel=safeRelative(rel);const {real:root}=await safeExisting(rel),out=[];
   async function visit(dir){
     if(out.length>=limit)return;
     let entries;try{entries=await fs.readdir(dir,{withFileTypes:true});}catch{return;}
     entries.sort((a,b)=>a.name.localeCompare(b.name));
-    for(const entry of entries){if(out.length>=limit)break;if(entry.name.startsWith('.')||SKIP_DIRS.has(entry.name))continue;
-      const full=path.join(dir,entry.name),r=path.relative(WORKSPACE,full).replace(/\\/g,'/');
+    for(const entry of entries){if(out.length>=limit)break;if(entry.name.startsWith('.')||SKIP_DIRS.has(entry.name)||entry.isSymbolicLink())continue;
+      const full=path.join(dir,entry.name),r=path.relative(WORKSPACE_REAL,full).replace(/\\/g,'/');
       if(entry.isDirectory()){out.push(r+'/');await visit(full);}else if(entry.isFile()&&TEXT_EXT.has(path.extname(entry.name).toLowerCase()))out.push(r);
     }
   }
   await visit(root);return out;
 }
-async function readFile(rel){rel=safeRelative(rel,{file:true});const stat=await fs.stat(absolute(rel));if(!stat.isFile())throw new Error('file_not_found');if(stat.size>MAX_FILE_BYTES)throw new Error('file_too_large');return await fs.readFile(absolute(rel),'utf8');}
+async function readFile(rel){rel=safeRelative(rel,{file:true});const {real}=await safeExisting(rel),stat=await fs.stat(real);if(!stat.isFile())throw new Error('file_not_found');if(stat.size>MAX_FILE_BYTES)throw new Error('file_too_large');return await fs.readFile(real,'utf8');}
 async function writeFile(rel,content){
   rel=safeRelative(rel,{file:true});content=String(content??'');if(Buffer.byteLength(content)>MAX_FILE_BYTES)throw new Error('file_too_large');if(SECRET.test(content))throw new Error('secret_content_blocked');
-  const target=absolute(rel);await fs.mkdir(path.dirname(target),{recursive:true});await fs.writeFile(target,content,'utf8');return{path:rel,bytes:Buffer.byteLength(content)};
+  const target=await safeWriteTarget(rel);await fs.writeFile(target,content,'utf8');return{path:rel,bytes:Buffer.byteLength(content)};
 }
 async function searchText(query,rel='.'){
   query=String(query||'').trim();if(query.length<2||query.length>160)throw new Error('invalid_query');rel=safeRelative(rel);const files=await walk(rel,500),needle=query.toLowerCase(),hits=[];
@@ -94,29 +97,34 @@ async function searchText(query,rel='.'){
 }
 function runFixed(command,args,cwd=WORKSPACE,timeoutMs=120000){return new Promise(resolve=>{
   const child=spawn(command,args,{cwd,stdio:['ignore','pipe','pipe'],env:{PATH:process.env.PATH||'/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',NODE_ENV:'test'}});let stdout='',stderr='',done=false;
-  const finish=(ok,code)=>{if(done)return;done=true;clearTimeout(timer);resolve({ok,code,stdout:trim(stdout),stderr:trim(stderr)});};
+  let timer=null;const finish=(ok,code)=>{if(done)return;done=true;if(timer)clearTimeout(timer);resolve({ok,code,stdout:trim(stdout),stderr:trim(stderr)});};
   child.stdout.on('data',d=>stdout+=d);child.stderr.on('data',d=>stderr+=d);child.on('error',e=>{stderr+=e.message;finish(false,-1);});child.on('close',code=>finish(code===0,code));
-  const timer=setTimeout(()=>{child.kill('SIGKILL');finish(false,-1);},timeoutMs);
+  timer=setTimeout(()=>{child.kill('SIGKILL');finish(false,-1);},timeoutMs);
 });}
 async function tool(name,args={}){
   if(name==='list_files')return{files:await walk(args.path||'.',Math.max(20,Math.min(500,Number(args.limit)||300)))};
   if(name==='read_file')return{path:safeRelative(args.path,{file:true}),content:trim(await readFile(args.path),24000)};
   if(name==='search_text')return{matches:await searchText(args.query,args.path||'.')};
   if(name==='write_file')return await writeFile(args.path,args.content);
-  if(name==='check_syntax'){const rel=safeRelative(args.path,{file:true});if(!['.js','.mjs','.cjs'].includes(path.extname(rel).toLowerCase()))throw new Error('syntax_check_requires_js');return runFixed('node',['--check',absolute(rel)],WORKSPACE,30000);}
+  if(name==='check_syntax'){const rel=safeRelative(args.path,{file:true});if(!['.js','.mjs','.cjs'].includes(path.extname(rel).toLowerCase()))throw new Error('syntax_check_requires_js');const {real}=await safeExisting(rel);return runFixed('node',['--check',real],WORKSPACE,30000);}
   if(name==='git_status')return runFixed('git',['status','--short','--untracked-files=all'],WORKSPACE,30000);
   if(name==='git_diff'){const rel=args.path?safeRelative(args.path):null;return runFixed('git',rel?['diff','--',rel]:['diff','--stat'],WORKSPACE,30000);}
   throw new Error('tool_unavailable');
 }
 
-function usageTokens(data,text){const usage=data?.usage||{};const input=Number(usage.prompt_tokens||usage.input_tokens||0),output=Number(usage.completion_tokens||usage.output_tokens||0);if(input||output)return{input,output,total:input+output,known:true};const estimated=Math.max(1,Math.ceil(String(text||'').length/4));return{input:0,output:estimated,total:estimated,known:false};}
+function usageTokens(data,text,messages){
+  const usage=data?.usage||{},input=Number(usage.prompt_tokens||usage.input_tokens||0),output=Number(usage.completion_tokens||usage.output_tokens||0);
+  if(input||output)return{input,output,total:input+output,known:true};
+  const estimatedInput=Math.max(1,Math.ceil(messages.reduce((sum,item)=>sum+String(item?.content||'').length,0)/4)),estimatedOutput=Math.max(1,Math.ceil(String(text||'').length/4));
+  return{input:estimatedInput,output:estimatedOutput,total:estimatedInput+estimatedOutput,known:false};
+}
 async function modelCall(messages,{fallback=false,signal}={}){
   const origin=fallback?FALLBACK_ORIGIN:MODEL_ORIGIN,model=fallback?FALLBACK_MODEL:MODEL_NAME,key=fallback?FALLBACK_API_KEY:'';
   if(!origin||!model)throw new Error(fallback?'fallback_unconfigured':'model_unconfigured');
   const headers={'content-type':'application/json'};if(key)headers.authorization=`Bearer ${key}`;
   const combined=AbortSignal.any([signal,AbortSignal.timeout(MODEL_TIMEOUT_MS)]);
   const response=await fetch(origin+'/v1/chat/completions',{method:'POST',headers,redirect:'error',signal:combined,body:JSON.stringify({model,stream:false,temperature:0.2,max_tokens:fallback?1400:800,chat_template_kwargs:{enable_thinking:false},messages})});
-  if(!response.ok){await response.body?.cancel();throw new Error(`model_http_${response.status}`);}const data=await response.json();const text=String(data?.choices?.[0]?.message?.content||'').trim();if(!text)throw new Error('model_empty');return{text,usage:usageTokens(data,text),provider:fallback?'fallback':'local',model};
+  if(!response.ok){await response.body?.cancel();throw new Error(`model_http_${response.status}`);}const data=await response.json();const text=String(data?.choices?.[0]?.message?.content||'').trim();if(!text)throw new Error('model_empty');return{text,usage:usageTokens(data,text,messages),provider:fallback?'fallback':'local',model};
 }
 function parseAction(text){let raw=String(text||'').trim();if(raw.startsWith('```'))raw=raw.replace(/^```(?:json)?\s*/,'').replace(/```$/,'').trim();const first=raw.indexOf('{'),last=raw.lastIndexOf('}');if(first<0||last<first)throw new Error('protocol_invalid');const value=JSON.parse(raw.slice(first,last+1));if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('protocol_invalid');return value;}
 
@@ -144,8 +152,10 @@ async function executeTask(item){
       messages.push({role:'assistant',content:result.text},{role:'user',content:'Ação inválida. Use tool, note, escalate ou final.'});
     }
     throw new Error('step_limit');
-  }catch(error){item.status=error?.message==='task_cancelled'?'cancelled':'failed';item.error=String(error?.message||'task_failed').slice(0,300);item.completedAt=new Date().toISOString();await persist();}
-  finally{delete item.controller;activeId=null;await persist();queue();}
+  }catch(error){
+    const cancelled=item.cancelRequested||error?.message==='task_cancelled'||controller.signal.aborted;
+    item.status=cancelled?'cancelled':'failed';if(cancelled)delete item.error;else item.error=String(error?.message||'task_failed').slice(0,300);item.completedAt=new Date().toISOString();await persist();
+  }finally{delete item.controller;delete item.cancelRequested;activeId=null;await persist();queue();}
 }
 function queue(){if(activeId)return;const next=[...tasks.values()].find(item=>item.status==='queued');if(next)Promise.resolve().then(()=>executeTask(next));}
 
@@ -163,7 +173,12 @@ const server=http.createServer(async(req,res)=>{
     }
     const match=url.pathname.match(/^\/v1\/tasks\/([a-f0-9-]{36})(\/cancel)?$/i);
     if(match&&req.method==='GET'&&!match[2]){const item=tasks.get(match[1]);return item?send(res,200,{ok:true,item:safeTaskView(item)}):send(res,404,{ok:false,code:'not_found',error:'Tarefa não encontrada.'});}
-    if(match&&req.method==='POST'&&match[2]){const item=tasks.get(match[1]);if(!item)return send(res,404,{ok:false,code:'not_found',error:'Tarefa não encontrada.'});if(item.status==='running')item.controller?.abort();else if(item.status==='queued'){item.status='cancelled';item.completedAt=new Date().toISOString();await persist();}return send(res,200,{ok:true,item:safeTaskView(item)});}
+    if(match&&req.method==='POST'&&match[2]){
+      const item=tasks.get(match[1]);if(!item)return send(res,404,{ok:false,code:'not_found',error:'Tarefa não encontrada.'});
+      if(item.status==='running'){item.cancelRequested=true;item.status='cancelling';item.updatedAt=new Date().toISOString();await persist();item.controller?.abort(new Error('task_cancelled'));}
+      else if(item.status==='queued'){item.status='cancelled';item.completedAt=new Date().toISOString();await persist();}
+      return send(res,200,{ok:true,item:safeTaskView(item)});
+    }
     return send(res,404,{ok:false,code:'not_found',error:'Endpoint não encontrado.'});
   }catch(error){return send(res,error?.status||500,{ok:false,code:'internal_error',error:error?.status?error.message:'Falha interna do executor LIA.'});}
 });
