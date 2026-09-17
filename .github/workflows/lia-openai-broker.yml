@@ -1,0 +1,23 @@
+name: LIA OpenAI Broker Checks
+on:
+  push:
+    branches: [feat/lia-dev-gateway-20260917]
+    paths:
+      - 'ops/lia-openai-broker/**'
+      - '.github/workflows/lia-openai-broker.yml'
+  workflow_dispatch:
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: bash -n ops/lia-openai-broker/install-vps.sh
+      - name: Node syntax
+        run: node --check ops/lia-openai-broker/server.mjs
+      - name: Guardrails
+        run: |
+          grep -q 'LIA_BROKER_EXECUTION_ENABLED=0' ops/lia-openai-broker/install-vps.sh
+          grep -q "127.0.0.1" ops/lia-openai-broker/install-vps.sh
+          grep -q 'realKeyExposed:false' ops/lia-openai-broker/server.mjs
+          ! grep -q 'api.openai.com' ops/lia-openai-broker/server.mjs
