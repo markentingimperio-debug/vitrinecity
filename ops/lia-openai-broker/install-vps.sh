@@ -3,29 +3,37 @@ set -Eeuo pipefail
 umask 077
 
 [ "$(id -u)" -eq 0 ] || { echo 'PARADO: execute como root.' >&2; exit 1; }
-for cmd in curl systemctl openssl sha256sum sudo grep sed; do command -v "$cmd" >/dev/null || { echo "PARADO: comando ausente: $cmd" >&2; exit 1; }; done
+for cmd in curl systemctl openssl sha256sum sudo grep sed install; do command -v "$cmd" >/dev/null || { echo "PARADO: comando ausente: $cmd" >&2; exit 1; }; done
 id lia >/dev/null 2>&1 || { echo 'PARADO: usuario lia ausente.' >&2; exit 1; }
 
-NODE_BIN="$(sudo -u lia -H bash -c 'cd /; export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24 >/dev/null; command -v node')"
-[ -x "$NODE_BIN" ] || { echo 'PARADO: Node 24 nao encontrado.' >&2; exit 1; }
+LIA_NODE="$(sudo -u lia -H bash -c 'cd /; export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24 >/dev/null; command -v node')"
+[ -x "$LIA_NODE" ] || { echo 'PARADO: Node 24 nao encontrado.' >&2; exit 1; }
 
 if ! id lia-broker >/dev/null 2>&1; then
   useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin lia-broker
 fi
-sudo -u lia-broker "$NODE_BIN" --version >/dev/null || { echo 'PARADO: usuario isolado do broker nao consegue executar Node 24.' >&2; exit 1; }
 
-BROKER_DIR=/opt/lia/broker
+# O Node instalado pelo NVM fica dentro de /home/lia, que deliberadamente nao e
+# atravessavel pelo usuario isolado do broker. Copiamos somente o executavel
+# para um runtime root-owned fora de /home e fora do workspace do agente.
+BROKER_ROOT=/opt/lia-broker
+BROKER_DIR=$BROKER_ROOT/app
+RUNTIME_DIR=$BROKER_ROOT/runtime
+RUNTIME_NODE=$RUNTIME_DIR/node
 ENV_FILE=/etc/lia-openai-broker.env
 SERVICE=/etc/systemd/system/lia-openai-broker.service
 SERVER_URL='https://raw.githubusercontent.com/markentingimperio-debug/vitrinecity/aa695d924b8f5d625787a8334c77d7524fb224d6/ops/lia-openai-broker/server.mjs'
 SERVER_SHA='bd05779fc3cd232b65aa44f74c333d8221b54efd97619b8c60281e94fd224469'
 
-install -d -o root -g root -m 0755 "$BROKER_DIR"
+install -d -o root -g root -m 0755 "$BROKER_ROOT" "$BROKER_DIR" "$RUNTIME_DIR"
+install -o root -g root -m 0755 "$LIA_NODE" "$RUNTIME_NODE"
+sudo -u lia-broker "$RUNTIME_NODE" --version >/dev/null || { echo 'PARADO: runtime Node isolado do broker nao executou.' >&2; exit 1; }
+
 TMP="$(mktemp --suffix=.mjs /tmp/lia-broker.XXXXXX)"
 trap 'rm -f "$TMP" /tmp/lia-broker-health.json /tmp/lia-broker-status.json /tmp/lia-worker-health.json' EXIT
 curl --fail --location --silent --show-error --proto '=https' --proto-redir '=https' --connect-timeout 20 --max-time 120 "$SERVER_URL" -o "$TMP"
 printf '%s  %s\n' "$SERVER_SHA" "$TMP" | sha256sum -c - >/dev/null
-"$NODE_BIN" --check "$TMP"
+"$RUNTIME_NODE" --check "$TMP"
 install -o root -g root -m 0644 "$TMP" "$BROKER_DIR/server.mjs"
 
 if [ -e "$ENV_FILE" ]; then
@@ -62,20 +70,21 @@ User=lia-broker
 Group=lia-broker
 WorkingDirectory=$BROKER_DIR
 EnvironmentFile=$ENV_FILE
-ExecStart=$NODE_BIN $BROKER_DIR/server.mjs
+ExecStart=$RUNTIME_NODE $BROKER_DIR/server.mjs
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
-ProtectHome=read-only
+ProtectHome=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=$BROKER_ROOT
 
 [Install]
 WantedBy=multi-user.target
