@@ -1,0 +1,32 @@
+name: LIA Codex Worker Checks
+
+on:
+  push:
+    branches:
+      - feat/lia-dev-gateway-20260917
+    paths:
+      - 'ops/lia-codex-worker/**'
+      - '.github/workflows/lia-codex-worker.yml'
+  pull_request:
+    paths:
+      - 'ops/lia-codex-worker/**'
+      - '.github/workflows/lia-codex-worker.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: bash -n ops/lia-codex-worker/install-vps.sh
+      - name: Node syntax
+        run: node --check ops/lia-codex-worker/server.mjs
+      - name: Guardrails
+        run: |
+          grep -q "LIA_CODEX_EXECUTION_ENABLED=0" ops/lia-codex-worker/install-vps.sh
+          grep -q "execution_locked" ops/lia-codex-worker/server.mjs
+          ! grep -R -E 'OPENAI_API_KEY=[^[:space:]]+' ops/lia-codex-worker
