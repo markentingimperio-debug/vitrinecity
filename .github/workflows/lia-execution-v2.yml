@@ -29,6 +29,7 @@ jobs:
           bash -n ops/lia-execution-v2/install-vps.sh
           bash -n ops/lia-execution-v2/enable-pilot.sh
           bash -n ops/lia-execution-v2/run-first-task.sh
+          bash -n ops/lia-execution-v2/run-second-task.sh
       - name: Policy checks
         run: |
           node --input-type=module <<'NODE'
@@ -68,3 +69,17 @@ jobs:
           grep -q 'LIA_CODEX_EXECUTION_ENABLED=0' ops/lia-execution-v2/run-first-task.sh
           grep -q 'LIA_BROKER_EXECUTION_ENABLED=0' ops/lia-execution-v2/run-first-task.sh
           grep -q 'Nenhum deploy de producao foi realizado' ops/lia-execution-v2/run-first-task.sh
+      - name: Second paid pilot guard checks
+        run: |
+          grep -q '^BUDGET_USD=0.10$' ops/lia-execution-v2/run-second-task.sh
+          grep -q '^PROFILE=dev$' ops/lia-execution-v2/run-second-task.sh
+          grep -q '^WORKSPACE_NAME=lia-second-task$' ops/lia-execution-v2/run-second-task.sh
+          grep -q 'second-paid-pilot.attempted' ops/lia-execution-v2/run-second-task.sh
+          grep -q 'spentUsd // 0)==0' ops/lia-execution-v2/run-second-task.sh
+          grep -q 'reservedUsd // 0)==0' ops/lia-execution-v2/run-second-task.sh
+          grep -q 'Codex CLI nao esta instalado' ops/lia-execution-v2/run-second-task.sh
+          grep -q 'disable_pilot' ops/lia-execution-v2/run-second-task.sh
+          grep -q 'LIA_GATEWAY_EXECUTION_ENABLED=0' ops/lia-execution-v2/run-second-task.sh
+          grep -q 'LIA_CODEX_EXECUTION_ENABLED=0' ops/lia-execution-v2/run-second-task.sh
+          grep -q 'LIA_BROKER_EXECUTION_ENABLED=0' ops/lia-execution-v2/run-second-task.sh
+          grep -q 'Nenhum deploy de producao foi realizado' ops/lia-execution-v2/run-second-task.sh
