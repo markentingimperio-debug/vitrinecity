@@ -28,6 +28,7 @@ jobs:
           node --check ops/lia-execution-v2/broker-v2.mjs
           bash -n ops/lia-execution-v2/install-vps.sh
           bash -n ops/lia-execution-v2/enable-pilot.sh
+          bash -n ops/lia-execution-v2/run-first-task.sh
       - name: Policy checks
         run: |
           node --input-type=module <<'NODE'
@@ -56,3 +57,14 @@ jobs:
           grep -q "Chamadas OpenAI feitas por este script: ZERO" ops/lia-execution-v2/enable-pilot.sh
           ! grep -q '/v1/run' ops/lia-execution-v2/enable-pilot.sh
           ! grep -q '/v1/responses' ops/lia-execution-v2/enable-pilot.sh
+      - name: First paid pilot guard checks
+        run: |
+          grep -q '^BUDGET_USD=0.10$' ops/lia-execution-v2/run-first-task.sh
+          grep -q '^PROFILE=dev$' ops/lia-execution-v2/run-first-task.sh
+          grep -q '^WORKSPACE_NAME=lia-first-task$' ops/lia-execution-v2/run-first-task.sh
+          grep -q 'first-paid-pilot.attempted' ops/lia-execution-v2/run-first-task.sh
+          grep -q 'disable_pilot' ops/lia-execution-v2/run-first-task.sh
+          grep -q 'LIA_GATEWAY_EXECUTION_ENABLED=0' ops/lia-execution-v2/run-first-task.sh
+          grep -q 'LIA_CODEX_EXECUTION_ENABLED=0' ops/lia-execution-v2/run-first-task.sh
+          grep -q 'LIA_BROKER_EXECUTION_ENABLED=0' ops/lia-execution-v2/run-first-task.sh
+          grep -q 'Nenhum deploy de producao foi realizado' ops/lia-execution-v2/run-first-task.sh
