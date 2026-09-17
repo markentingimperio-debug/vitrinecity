@@ -37,7 +37,7 @@ printf 'Cole a OPENAI_API_KEY diretamente aqui (nao sera exibida) e pressione En
 IFS= read -r -s OPENAI_KEY
 printf '\n' >&2
 [ ${#OPENAI_KEY} -ge 20 ] || { unset OPENAI_KEY; echo 'PARADO: chave muito curta.' >&2; exit 1; }
-case "$OPENAI_KEY" in *$'\n'*|*$'\r'*|*$'\0'*) unset OPENAI_KEY; echo 'PARADO: formato de chave invalido.' >&2; exit 1;; esac
+case "$OPENAI_KEY" in *$'\r'*) unset OPENAI_KEY; echo 'PARADO: formato de chave invalido.' >&2; exit 1;; esac
 ADMIN_TOKEN="$(openssl rand -hex 32)"
 {
   printf 'LIA_BROKER_HOST=127.0.0.1\n'
