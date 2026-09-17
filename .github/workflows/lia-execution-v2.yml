@@ -1,0 +1,53 @@
+name: LIA Execution V2 Checks
+
+on:
+  push:
+    branches:
+      - feat/lia-dev-gateway-20260917
+    paths:
+      - 'ops/lia-execution-v2/**'
+      - '.github/workflows/lia-execution-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax checks
+        run: |
+          node --check ops/lia-execution-v2/model-policy.mjs
+          node --check ops/lia-execution-v2/gateway-v2.mjs
+          node --check ops/lia-execution-v2/worker-v2.mjs
+          node --check ops/lia-execution-v2/broker-v2.mjs
+          bash -n ops/lia-execution-v2/install-vps.sh
+      - name: Policy checks
+        run: |
+          node --input-type=module <<'NODE'
+          import { MODEL_PROFILES, resolveProfile, conservativeReservationMicroUsd } from './ops/lia-execution-v2/model-policy.mjs';
+          const expected = ['economico','dev','codex','avancado','forte','maximo'];
+          for (const name of expected) {
+            const p = resolveProfile(name);
+            if (!p || !p.model || !p.reasoning || !(p.maxOutputTokens > 0)) throw new Error('profile_invalid:'+name);
+          }
+          if (MODEL_PROFILES.maximo.model !== 'gpt-6-astra' || MODEL_PROFILES.maximo.premium !== true) throw new Error('astra_must_be_premium');
+          if (MODEL_PROFILES.dev.model !== 'gpt-5.4-mini') throw new Error('dev_model_changed');
+          if (!(conservativeReservationMicroUsd(1000, resolveProfile('dev')) > 0)) throw new Error('reservation_invalid');
+          console.log('MODEL_POLICY_OK');
+          NODE
+      - name: Safety guard checks
+        run: |
+          grep -q 'LIA_GATEWAY_EXECUTION_ENABLED 0' ops/lia-execution-v2/install-vps.sh
+          grep -q 'LIA_CODEX_EXECUTION_ENABLED 0' ops/lia-execution-v2/install-vps.sh
+          grep -q 'LIA_BROKER_EXECUTION_ENABLED 0' ops/lia-execution-v2/install-vps.sh
+          grep -q "premiumApproval!=='ASTRA'" ops/lia-execution-v2/gateway-v2.mjs
+          grep -q "networkAccessEnabled:false" ops/lia-execution-v2/worker-v2.mjs
+          grep -q "webSearchMode:'disabled'" ops/lia-execution-v2/worker-v2.mjs
+          grep -q "broker_execution_locked" ops/lia-execution-v2/broker-v2.mjs
+          grep -q "lease_budget_exhausted" ops/lia-execution-v2/broker-v2.mjs
