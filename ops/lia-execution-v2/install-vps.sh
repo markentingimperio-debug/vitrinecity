@@ -9,7 +9,7 @@ id lia-broker >/dev/null 2>&1 || { echo 'PARADO: usuario lia-broker ausente.' >&
 
 GATEWAY_DIR=/opt/lia/gateway
 WORKER_DIR=/opt/lia/app/codex-worker
-BROKER_DIR=/opt/lia/broker
+BROKER_DIR=/opt/lia-broker/app
 GATEWAY_ENV=/etc/lia-dev-gateway.env
 WORKER_ENV=/etc/lia-codex-worker.env
 BROKER_ENV=/etc/lia-openai-broker.env
