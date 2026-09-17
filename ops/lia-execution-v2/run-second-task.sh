@@ -21,11 +21,9 @@ for f in "$GATEWAY_ENV" "$WORKER_ENV" "$BROKER_ENV"; do
   [ -f "$f" ] || { echo "PARADO: ambiente ausente: $f" >&2; exit 1; }
 done
 
-# A primeira tentativa precisa existir e ter falhado sem consumo.
 [ -f "$FIRST_MARKER" ] || { echo 'PARADO: marcador da primeira tentativa nao existe.' >&2; exit 1; }
 [ ! -e "$SECOND_MARKER" ] || { echo "PARADO: segunda tentativa ja foi iniciada. Marcador: $SECOND_MARKER" >&2; exit 1; }
 
-# O sistema deve estar novamente travado antes de qualquer nova tentativa.
 for pair in \
   "$GATEWAY_ENV:LIA_GATEWAY_EXECUTION_ENABLED" \
   "$WORKER_ENV:LIA_CODEX_EXECUTION_ENABLED" \
@@ -34,10 +32,9 @@ for pair in \
   grep -q "^${key}=0$" "$file" || { echo "PARADO: $key nao esta em 0; nenhuma mudanca feita." >&2; exit 1; }
 done
 
-# Confirma o reparo do Codex CLI antes de liberar gasto.
 CODEX_BIN=/opt/lia/app/node_modules/.bin/codex
 [ -x "$CODEX_BIN" ] || { echo 'PARADO: Codex CLI nao esta instalado.' >&2; exit 1; }
-CODEX_VERSION="$($CODEX_BIN --version 2>/dev/null || true)"
+CODEX_VERSION="$(sudo -u lia -H bash -c 'cd /opt/lia/app; export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24 >/dev/null; ./node_modules/.bin/codex --version' 2>/dev/null || true)"
 printf '%s' "$CODEX_VERSION" | grep -q '0.154.0' || { echo "PARADO: versao inesperada do Codex CLI: $CODEX_VERSION" >&2; exit 1; }
 
 WORKER_HEALTH="$(curl -fsS http://127.0.0.1:8790/health)"
@@ -47,12 +44,10 @@ printf '%s' "$WORKER_HEALTH" | jq -e '.sdkLoaded == true and .executionEnabled =
 GATEWAY_TOKEN="$(sed -n 's/^LIA_GATEWAY_TOKEN=//p' "$GATEWAY_ENV")"
 [ ${#GATEWAY_TOKEN} -ge 32 ] || { echo 'PARADO: token do gateway invalido.' >&2; exit 1; }
 
-# Confirma pelo historico do gateway que a primeira tentativa terminou sem gasto/reserva.
 TASKS="$(curl -fsS http://127.0.0.1:8787/v1/tasks -H "Authorization: Bearer $GATEWAY_TOKEN")"
 printf '%s' "$TASKS" | jq -e 'any(.tasks[]; .workspace=="lia-first-task" and .status=="failed" and (.spentUsd // 0)==0 and (.reservedUsd // 0)==0)' >/dev/null \
   || { echo 'PARADO: nao consegui confirmar primeira tentativa falha com US$ 0,00.' >&2; exit 1; }
 
-# Workspace novo e isolado para evitar reaproveitar estado da tentativa anterior.
 install -d -o lia -g lia -m 0750 "$WORKSPACE"
 if [ -e "$WORKSPACE/.git" ]; then
   if [ -n "$(sudo -u lia -H git -C "$WORKSPACE" status --porcelain --untracked-files=all 2>/dev/null || true)" ]; then
@@ -84,7 +79,6 @@ disable_pilot(){
 }
 trap 'rc=$?; disable_pilot; exit $rc' EXIT
 
-# Libera apenas durante esta tentativa.
 sed -i 's/^LIA_GATEWAY_EXECUTION_ENABLED=0$/LIA_GATEWAY_EXECUTION_ENABLED=1/' "$GATEWAY_ENV"
 sed -i 's/^LIA_CODEX_EXECUTION_ENABLED=0$/LIA_CODEX_EXECUTION_ENABLED=1/' "$WORKER_ENV"
 sed -i 's/^LIA_BROKER_EXECUTION_ENABLED=0$/LIA_BROKER_EXECUTION_ENABLED=1/' "$BROKER_ENV"
@@ -107,7 +101,6 @@ wait_enabled http://127.0.0.1:8791/health broker
 wait_enabled http://127.0.0.1:8790/health worker
 wait_enabled http://127.0.0.1:8787/health gateway
 
-# Impede terceira tentativa automatica caso algo falhe depois deste ponto.
 printf 'started_at=%s\nworkspace=%s\nprofile=%s\nbudget_usd=%s\ncodex_cli=%s\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$WORKSPACE_NAME" "$PROFILE" "$BUDGET_USD" "$CODEX_VERSION" >"$SECOND_MARKER"
 chmod 0600 "$SECOND_MARKER"; chown root:root "$SECOND_MARKER"
