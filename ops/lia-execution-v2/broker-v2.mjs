@@ -54,11 +54,16 @@ async function reserve(lease,rawBytes){
   entry.reservedMicroUsd+=reservation;entry.requests+=1;entry.lastRequestAt=new Date().toISOString();await persist();return{entry,reservation};
 }
 function copyHeader(res,source,name){const value=source.headers.get(name);if(value)res.setHeader(name,value);}
+function safeErrorSummary(text){
+  const raw=String(text||'').replace(/[\r\n\t]+/g,' ').slice(0,1200);
+  return raw.replace(/sk-[A-Za-z0-9_-]{10,}/g,'[redacted-key]');
+}
+function logEvent(event,payload={}){console.log(JSON.stringify({event,at:new Date().toISOString(),...payload}));}
 
 const server=http.createServer(async(req,res)=>{
   try{
     const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
-    if(req.method==='GET'&&url.pathname==='/health')return send(res,200,{ok:true,service:'lia-openai-broker',version:'2026-09-17-v2',keyConfigured:true,executionEnabled:EXECUTION_ENABLED,leaseEnforced:true,bind:HOST});
+    if(req.method==='GET'&&url.pathname==='/health')return send(res,200,{ok:true,service:'lia-openai-broker',version:'2026-09-17-v2-observe',keyConfigured:true,executionEnabled:EXECUTION_ENABLED,leaseEnforced:true,bind:HOST});
     if(req.method==='GET'&&url.pathname==='/v1/status'){
       if(!adminAuthorized(req))return send(res,401,{error:'unauthorized'});
       return send(res,200,{keyConfigured:true,executionEnabled:EXECUTION_ENABLED,realKeyExposed:false,leaseEnforced:true,ledgerEntries:Object.keys(ledger).length});
@@ -73,9 +78,22 @@ const server=http.createServer(async(req,res)=>{
       body.model=lease.profile.model;
       const requestedMax=Number(body.max_output_tokens);body.max_output_tokens=Number.isFinite(requestedMax)&&requestedMax>0?Math.min(Math.floor(requestedMax),lease.profile.maxOutputTokens):lease.profile.maxOutputTokens;
       body.reasoning={...(body.reasoning&&typeof body.reasoning==='object'?body.reasoning:{}),effort:lease.profile.reasoning};
-      const outgoing=JSON.stringify(body);await reserve(lease,Buffer.byteLength(outgoing));
+      const outgoing=JSON.stringify(body);const reserved=await reserve(lease,Buffer.byteLength(outgoing));
+      logEvent('lia_broker_upstream_start',{taskId:lease.payload.taskId,jti:lease.payload.jti,profile:lease.profile.name,model:lease.profile.model,requestNumber:reserved.entry.requests,reservedMicroUsd:reserved.entry.reservedMicroUsd});
       let upstream;
-      try{upstream=await fetch(UPSTREAM,{method:'POST',headers:{authorization:`Bearer ${API_KEY}`,'content-type':'application/json','user-agent':'VitrineCity-LIA/1.0'},body:outgoing,redirect:'error',signal:AbortSignal.timeout(240000)});}catch{return send(res,502,{error:'openai_transport_failed_no_retry'});}
+      try{
+        upstream=await fetch(UPSTREAM,{method:'POST',headers:{authorization:`Bearer ${API_KEY}`,'content-type':'application/json','user-agent':'VitrineCity-LIA/1.0'},body:outgoing,redirect:'error',signal:AbortSignal.timeout(240000)});
+      }catch(error){
+        logEvent('lia_broker_upstream_transport_error',{taskId:lease.payload.taskId,jti:lease.payload.jti,error:String(error?.message||'transport_failed').slice(0,240)});
+        return send(res,502,{error:'openai_transport_failed_no_retry'});
+      }
+      const requestId=upstream.headers.get('openai-request-id')||upstream.headers.get('x-request-id')||null;
+      if(!upstream.ok){
+        const errorText=await upstream.text();
+        logEvent('lia_broker_upstream_error',{taskId:lease.payload.taskId,jti:lease.payload.jti,status:upstream.status,requestId,error:safeErrorSummary(errorText)});
+        res.statusCode=upstream.status;copyHeader(res,upstream,'content-type');copyHeader(res,upstream,'openai-request-id');copyHeader(res,upstream,'x-request-id');res.setHeader('cache-control','no-store');res.setHeader('x-content-type-options','nosniff');res.end(errorText);return;
+      }
+      logEvent('lia_broker_upstream_ok',{taskId:lease.payload.taskId,jti:lease.payload.jti,status:upstream.status,requestId});
       res.statusCode=upstream.status;copyHeader(res,upstream,'content-type');copyHeader(res,upstream,'openai-request-id');copyHeader(res,upstream,'x-request-id');res.setHeader('cache-control','no-store');res.setHeader('x-content-type-options','nosniff');
       if(!upstream.body){res.end();return;}
       Readable.fromWeb(upstream.body).pipe(res);return;
@@ -84,4 +102,4 @@ const server=http.createServer(async(req,res)=>{
   }catch(error){return send(res,error?.status||500,{error:error?.status?error.message:'internal_error'});}
 });
 server.requestTimeout=260000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
-server.listen(PORT,HOST,()=>console.log(JSON.stringify({event:'lia_openai_broker_started',version:'v2',host:HOST,port:PORT,keyConfigured:true,executionEnabled:EXECUTION_ENABLED,leaseEnforced:true})));
+server.listen(PORT,HOST,()=>logEvent('lia_openai_broker_started',{version:'v2-observe',host:HOST,port:PORT,keyConfigured:true,executionEnabled:EXECUTION_ENABLED,leaseEnforced:true}));
