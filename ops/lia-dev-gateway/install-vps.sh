@@ -13,7 +13,9 @@ done
 
 id lia >/dev/null 2>&1 || { echo 'PARADO: usuario lia nao existe. Execute a etapa anterior primeiro.' >&2; exit 1; }
 
-NODE_BIN="$(sudo -u lia -H bash -lc 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24 >/dev/null; command -v node')"
+# sudo preserva o cwd do chamador; /root nao e acessivel ao usuario lia.
+# Mude para / antes de carregar o NVM para evitar falhas de cwd/permissao.
+NODE_BIN="$(sudo -u lia -H bash -c 'cd /; export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24 >/dev/null; command -v node')"
 [ -x "$NODE_BIN" ] || { echo 'PARADO: Node 24 do usuario lia nao foi encontrado.' >&2; exit 1; }
 
 BASE=/opt/lia
@@ -25,7 +27,8 @@ SERVER_URL='https://raw.githubusercontent.com/markentingimperio-debug/vitrinecit
 SERVER_SHA='6df27dde9855820e926bd69644006046efbab1418125138087ae6dc8baa8ee29'
 
 install -d -o lia -g lia -m 0750 "$GATEWAY_DIR" "$DATA_DIR"
-TMP="$(mktemp)"
+# Node 24 usa a extensao para determinar o formato quando faz --check.
+TMP="$(mktemp --suffix=.mjs /tmp/lia-gateway.XXXXXX)"
 trap 'rm -f "$TMP"' EXIT
 curl --fail --location --silent --show-error --proto '=https' --proto-redir '=https' \
   --connect-timeout 20 --max-time 120 "$SERVER_URL" -o "$TMP"
