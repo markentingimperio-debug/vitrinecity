@@ -27,6 +27,7 @@ jobs:
           node --check ops/lia-execution-v2/worker-v2.mjs
           node --check ops/lia-execution-v2/broker-v2.mjs
           bash -n ops/lia-execution-v2/install-vps.sh
+          bash -n ops/lia-execution-v2/enable-pilot.sh
       - name: Policy checks
         run: |
           node --input-type=module <<'NODE'
@@ -51,3 +52,7 @@ jobs:
           grep -q "webSearchMode:'disabled'" ops/lia-execution-v2/worker-v2.mjs
           grep -q "broker_execution_locked" ops/lia-execution-v2/broker-v2.mjs
           grep -q "lease_budget_exhausted" ops/lia-execution-v2/broker-v2.mjs
+          grep -q "Tarefa paga criada por este script: NAO" ops/lia-execution-v2/enable-pilot.sh
+          grep -q "Chamadas OpenAI feitas por este script: ZERO" ops/lia-execution-v2/enable-pilot.sh
+          ! grep -q '/v1/run' ops/lia-execution-v2/enable-pilot.sh
+          ! grep -q '/v1/responses' ops/lia-execution-v2/enable-pilot.sh
