@@ -66,6 +66,7 @@ Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=read-only
 ProtectKernelTunables=true
@@ -73,7 +74,6 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
-MemoryDenyWriteExecute=true
 ReadWritePaths=$DATA_DIR
 ReadOnlyPaths=$GATEWAY_DIR
 
