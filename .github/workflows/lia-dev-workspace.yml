@@ -1,0 +1,40 @@
+name: LIA Dev Workspace Checks
+
+on:
+  push:
+    branches:
+      - feat/lia-dev-gateway-20260917
+    paths:
+      - 'ops/lia-dev-workspace/**'
+      - '.github/workflows/lia-dev-workspace.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax
+        run: |
+          bash -n ops/lia-dev-workspace/install-vitrinecity-dev.sh
+
+      - name: Workspace safety guards
+        run: |
+          grep -q "BASE_COMMIT='708c2bb294d4dabc08878e32e72b7b5f0af8f037'" ops/lia-dev-workspace/install-vitrinecity-dev.sh
+          grep -q "LOCAL_BRANCH='lia/dev-worker'" ops/lia-dev-workspace/install-vitrinecity-dev.sh
+          grep -q "LIA_GATEWAY_EXECUTION_ENABLED=0" ops/lia-dev-workspace/install-vitrinecity-dev.sh
+          grep -q "LIA_CODEX_EXECUTION_ENABLED=0" ops/lia-dev-workspace/install-vitrinecity-dev.sh
+          grep -q "LIA_BROKER_EXECUTION_ENABLED=0" ops/lia-dev-workspace/install-vitrinecity-dev.sh
+          grep -q "blocked://lia-no-push" ops/lia-dev-workspace/install-vitrinecity-dev.sh
+          grep -q "BLOQUEADO: este workspace da LIA nao possui permissao de push" ops/lia-dev-workspace/install-vitrinecity-dev.sh
+          grep -q '"gitPush": false' ops/lia-dev-workspace/install-vitrinecity-dev.sh
+          grep -q '"productionDeploy": false' ops/lia-dev-workspace/install-vitrinecity-dev.sh
+          grep -q '"credentialsMounted": false' ops/lia-dev-workspace/install-vitrinecity-dev.sh
+          grep -q 'Chamadas OpenAI realizadas nesta instalacao: ZERO' ops/lia-dev-workspace/install-vitrinecity-dev.sh
+          ! grep -q '/v1/run' ops/lia-dev-workspace/install-vitrinecity-dev.sh
+          ! grep -q '/v1/responses' ops/lia-dev-workspace/install-vitrinecity-dev.sh
+          ! grep -q 'OPENAI_API_KEY' ops/lia-dev-workspace/install-vitrinecity-dev.sh
