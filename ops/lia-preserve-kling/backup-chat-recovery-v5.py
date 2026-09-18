@@ -199,19 +199,22 @@ def verify_image_archive(path, image):
         if len(data)>16*1024*1024 or 'sha256:'+digest(data)!=image:
             raise Refused('Imagem salva diferente da imagem ativa.')
 
+def canonical_mounts(mounts):
+    return sorted(json.dumps(m, sort_keys=True) for m in mounts)
+
 def resume(cid, image, mounts):
     state=inspect(cid)
-    if state.get('Image')!=image or state.get('Mounts')!=mounts:
+    if state.get('Image')!=image or canonical_mounts(state.get('Mounts',[]))!=canonical_mounts(mounts):
         raise Refused('O container mudou; retomada automatica recusada.')
     for _ in range(60):
         current=inspect(cid)
-        if current.get('Image')!=image or current.get('Mounts')!=mounts:
+        if current.get('Image')!=image or canonical_mounts(current.get('Mounts',[]))!=canonical_mounts(mounts):
             raise Refused('O container mudou durante a retomada.')
         if not current.get('State',{}).get('Running'):
             run(['docker','start',cid])
             time.sleep(2)
             continue
-        if current.get('Image')==image and current.get('Mounts')==mounts and current.get('State',{}).get('Running') and current.get('State',{}).get('Health',{}).get('Status')=='healthy':
+        if current.get('Image')==image and canonical_mounts(current.get('Mounts',[]))==canonical_mounts(mounts) and current.get('State',{}).get('Running') and current.get('State',{}).get('Health',{}).get('Status')=='healthy':
             return
         time.sleep(2)
     raise Refused('Retomada nao confirmada pelo healthcheck. Verifique o app na VPS.')
@@ -235,8 +238,9 @@ def main():
         raise Refused('Use --backup-with-app-stop para autorizar a parada e retomada do app durante o backup.')
     if os.geteuid()!=0 or socket.gethostname().split('.')[0]!='srv1901029':
         raise Refused('Execute somente como root na VPS principal srv1901029.')
-    # /run/lock may be sticky/writable; O_NOFOLLOW plus owner/type checks protect the lock.
-    lock=os.open('/run/lock/vitrinecity-lia-recovery.lock',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+    # A root-controlled parent prevents another user from precreating the lock.
+    protected_dir(Path('/var/backups'))
+    lock=os.open('/var/backups/.vitrinecity-lia-recovery.lock',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
     if not stat.S_ISREG(os.fstat(lock).st_mode) or os.fstat(lock).st_uid!=0 or os.fstat(lock).st_mode & 0o077:
         raise Refused('Trava de manutencao invalida.')
     try:
