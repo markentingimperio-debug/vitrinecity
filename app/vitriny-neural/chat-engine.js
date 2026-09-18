@@ -144,6 +144,25 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
       notice:queueStatus.requiresReview?'Há um pedido desta conta sem confirmação de término. A capacidade permanece reservada e precisa de revisão segura; não haverá reenvio automático.':
         'Chat local com contexto privado e fila persistente. Sem geração paga, navegação, execução de código ou publicação automática.'};}
   function list(scope){scopeCheck(scope);reap();return db.prepare('SELECT * FROM neural_chat_conversations WHERE scope=? ORDER BY updated_at DESC,id DESC LIMIT 100').all(scope).map(summary);}
+  function deleteConversation(scope,id){
+    reap();const conversation=conversationRow(scope,id);
+    const pending=db.prepare("SELECT id,status FROM neural_chat_requests WHERE scope=? AND conversation_id=? AND status IN ('awaiting_confirmation','queued','running','interrupted') ORDER BY created_at LIMIT 1").get(scope,id);
+    if(pending)throw chatError('chat_delete_blocked',409);
+    const attachmentIds=db.prepare(`SELECT DISTINCT a.attachment_id id FROM neural_chat_message_attachments a
+      JOIN neural_chat_messages m ON m.id=a.message_id WHERE m.conversation_id=?`).all(id).map(row=>row.id);
+    const result=db.transaction(()=>{
+      db.prepare('DELETE FROM neural_chat_message_attachments WHERE message_id IN (SELECT id FROM neural_chat_messages WHERE conversation_id=?)').run(id);
+      db.prepare('DELETE FROM neural_chat_messages WHERE conversation_id=?').run(id);
+      const removed=db.prepare('DELETE FROM neural_chat_conversations WHERE id=? AND scope=?').run(id,scope).changes===1;
+      for(const attachmentId of attachmentIds){
+        const stillUsed=db.prepare('SELECT 1 FROM neural_chat_message_attachments WHERE attachment_id=? LIMIT 1').get(attachmentId);
+        if(!stillUsed)db.prepare('DELETE FROM neural_chat_attachments WHERE id=? AND scope=?').run(attachmentId,scope);
+      }
+      return removed;
+    }).immediate();
+    if(!result)throw chatError('chat_not_found',404);
+    return {id:conversation.id,deleted:true};
+  }
   function messageAttachments(scope,id){return db.prepare('SELECT attachment_id FROM neural_chat_message_attachments WHERE message_id=? ORDER BY position').all(id).map(x=>attachments.metadata(scope,x.attachment_id));}
   function conversation(scope,id){reap();const c=conversationRow(scope,id);return {conversation:summary(c),messages:db.prepare('SELECT * FROM neural_chat_messages WHERE conversation_id=? ORDER BY sequence').all(id).map(m=>({id:m.id,role:m.role,text:m.text,status:m.status,requestId:m.request_id,createdAt:m.created_at,attachments:messageAttachments(scope,m.id),...(m.role==='assistant'&&paidRuntime?.owns(scope,m.request_id)?{payment:paidRuntime.payment(scope,m.request_id),artifacts:paidRuntime.artifacts(scope,m.request_id)}:{}),...(['queued','running'].includes(m.status)?{queue:{lane:paidRuntime?.owns(scope,m.request_id)?paidRuntime.payment(scope,m.request_id).kind:'chat',position:null}}:{})}))};}
   function untrustedContext(scope,r){
@@ -330,7 +349,7 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
     }
   }
   workerTimer=setInterval(()=>{if(!db.open){clearInterval(workerTimer);return;}kick();},pollMs);workerTimer.unref?.();kick();
-  return {status,list,conversation,submit,cancel,
+  return {status,list,conversation,deleteConversation,submit,cancel,
     confirm:(scope,id,input)=>{row(scope,id);if(!paidRuntime?.owns(scope,id))throw chatError('chat_not_found',404);paidRuntime.confirm(scope,id,input);return receipt(row(scope,id));},
     request:(scope,id)=>{reap();return receipt(row(scope,id));},
     requestByKey:(scope,key)=>{scopeCheck(scope);reap();idempotencyKey(key);const r=db.prepare('SELECT * FROM neural_chat_requests WHERE scope=? AND idempotency_key=?').get(scope,key);if(!r)throw chatError('chat_not_found',404);return receipt(r);},
