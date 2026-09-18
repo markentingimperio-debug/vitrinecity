@@ -28,6 +28,7 @@ jobs:
           bash -n ops/lia-dev-workspace/finalize-first-vitrinecity-commit.sh
           bash -n ops/lia-dev-workspace/prepare-review-pack.sh
           bash -n ops/lia-dev-workspace/approve-review-pack.sh
+          bash -n ops/lia-dev-workspace/approve-merge-gate.sh
 
       - name: Workspace safety guards
         run: |
@@ -123,3 +124,15 @@ jobs:
           grep -q 'productionDeployApproved:false' ops/lia-dev-workspace/approve-review-pack.sh
           grep -q 'Git push do Worker: continua BLOQUEADO' ops/lia-dev-workspace/approve-review-pack.sh
           grep -q 'Chamadas OpenAI realizadas: ZERO' ops/lia-dev-workspace/approve-review-pack.sh
+      - name: Merge gate guards
+        run: |
+          grep -q "EXPECTED_PR=207" ops/lia-dev-workspace/approve-merge-gate.sh
+          grep -q "EXPECTED_HEAD='04da947679dc2e7d0ea1985bed541fa180993e30'" ops/lia-dev-workspace/approve-merge-gate.sh
+          grep -q "EXPECTED_BASE='708c2bb294d4dabc08878e32e72b7b5f0af8f037'" ops/lia-dev-workspace/approve-merge-gate.sh
+          grep -q "APROVAR_MERGE" ops/lia-dev-workspace/approve-merge-gate.sh
+          grep -q "Security audit" ops/lia-dev-workspace/approve-merge-gate.sh
+          grep -q "Verify release" ops/lia-dev-workspace/approve-merge-gate.sh
+          grep -q '"approved_for_merge_only"' ops/lia-dev-workspace/approve-merge-gate.sh
+          grep -q 'productionDeployApproved:false' ops/lia-dev-workspace/approve-merge-gate.sh
+          grep -q 'Worker Git push: continua BLOQUEADO' ops/lia-dev-workspace/approve-merge-gate.sh
+          grep -q 'Chamadas OpenAI realizadas: ZERO' ops/lia-dev-workspace/approve-merge-gate.sh
