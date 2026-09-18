@@ -22,6 +22,7 @@ jobs:
         run: |
           python3 -m py_compile ops/lia-preserve-kling/*.py
           python3 ops/lia-preserve-kling/test_install.py
+          python3 ops/lia-preserve-kling/test_prepare_chat_update_v2.py
       - name: Install existing locked application dependencies
         working-directory: app
         run: npm ci --omit=dev
