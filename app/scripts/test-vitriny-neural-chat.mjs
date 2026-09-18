@@ -53,6 +53,28 @@ test('explicit paid primary quotes before dispatch even with a qualified local m
   }finally{f.chat.close();f.db.close();}
 });
 
+test('local-first admin uses local before paid text and only offers paid quote after explicit local escalation',async()=>{
+  const quotes=new Map();let prepares=0;
+  const paidRuntime={enabled:true,prefersText:true,setScopeAuthorizer(){},status(){return {capabilities:{chat:true}};},
+    prepare(scope,input){prepares++;const payment={quoteId:'quote-'+input.requestId.replace(/-/g,'').slice(0,24),currency:'BRL',amountMicro:7,expiresAt:Date.now()+60000,kind:'chat',summary:'Cotação DeepSeek',state:'quoted',chargedMicro:null};quotes.set(input.requestId,{scope,payment});return payment;},
+    owns:(scope,id)=>quotes.get(id)?.scope===scope,payment:(_scope,id)=>quotes.get(id)?.payment,artifacts:()=>[],close(){}};
+  let responseText='Resposta local concluída.';
+  const f=fixture({paidRuntime,env:{LIA_LOCAL_FIRST_ADMIN:'1'},respond:async()=>({provider:'local-fixture',output:{model:'fixture-v1',text:responseText}})});
+  try{
+    const first=request(f.chat,'Escreva um texto curto.','request-local-first-admin-001');await f.chat.wait(first.requestId);
+    assert.equal(f.chat.request('admin:1',first.requestId).status,'completed');assert.equal(prepares,0);assert.equal(f.calls.length,1);
+
+    responseText='[LIA_PRECISA_API] Preciso de um modelo externo para concluir.';
+    const second=request(f.chat,'Analise este pedido mais difícil.','request-local-first-admin-002');await f.chat.wait(second.requestId);
+    for(let i=0;i<6;i++)await tick();
+    const conversation=f.chat.conversation('admin:1',second.conversationId);
+    assert.equal(prepares,1,'paid provider is only quoted after local escalation');
+    const quoted=conversation.messages.find(message=>message.role==='assistant'&&message.status==='awaiting_confirmation');
+    assert.ok(quoted?.payment);assert.equal(quoted.payment.state,'quoted');
+    assert.match(conversation.messages.find(message=>message.requestId===second.requestId&&message.role==='assistant').text,/modelo local não concluiu/i);
+  }finally{f.chat.close();f.db.close();}
+});
+
 test('unavailable paid primary does not prevent already qualified local text',async()=>{
   let prepares=0;const paidRuntime={enabled:true,prefersText:true,setScopeAuthorizer(){},prepare(){prepares++;return null;},owns:()=>false,close(){}};
   const f=fixture({paidRuntime});try{
