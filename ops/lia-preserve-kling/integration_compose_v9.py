@@ -35,7 +35,14 @@ def run():
         work=directory/'release';work.mkdir(mode=0o700)
         m.write_new(work/'before-inspect.private.json',json.dumps(old).encode())
         env=m.intended_env(old,True,'test-token-'+'x'*64)
-        m.frozen_files(work,old,tag,tag,env)
+        print('SYNTHETIC_VALUE_ONLY',json.dumps({'runtime':m.environment(old)['VALUE'],'composeConfig':m.render([cfg])['services']['app']['environment']['VALUE']}),flush=True)
+        try:
+            m.frozen_files(work,old,tag,tag,env)
+        except m.Blocked:
+            if (work/'before.private.json').exists():
+                rendered=m.render([work/'before.private.json'])['services']['app']['environment']
+                print('SYNTHETIC_VALUE_ONLY_FROZEN',json.dumps({'runtime':m.environment(old)['VALUE'],'composeConfig':rendered.get('VALUE'),'differentKeys':[k for k in set(rendered)|set(m.environment(old)) if rendered.get(k)!=m.environment(old).get(k)]}),flush=True)
+            raise
         m.command(['docker','stop','--time','10',old['Id']])
         m.original_resume(old,60)
         assert m.healthy(m.app())
@@ -46,7 +53,6 @@ def run():
         assert m.environment(current)['VALUE']=='a$B${C}'
         print('PASS real Docker: frozen Compose preserves literal dollars, volumes and process options.')
         state={'oldImage':old['Image'],'newImage':old['Image'],'frozenHashes':{n:m.sha(m.private_read(work/n)) for n in ('before.private.json','after.private.json')}}
-        # There is no database in this HTTP-only fixture.
         m.pending=lambda:0
         restored=m.rollback_work(work,state);assert m.environment(restored)==m.environment(old)
         print('PASS real Docker: configuration-only rollback returns the original environment.')
@@ -57,7 +63,6 @@ def run():
         print('PASS real Docker: rollback works after a failed recreation leaves no app container.')
     finally:
         if project.startswith('liav9ci') and len(project)==19:
-            # Only this randomly named synthetic CI project is removed.
             subprocess.run(['docker','compose','--project-directory',str(directory),'-p',project,'-f',str(directory/'compose.json'),'down','--volumes'],capture_output=True,timeout=60)
             subprocess.run(['docker','image','rm',project+':fixture'],capture_output=True,timeout=30)
         shutil.rmtree(directory)
