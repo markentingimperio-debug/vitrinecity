@@ -21,6 +21,7 @@ if(!Number.isInteger(PORT)||PORT<1||PORT>65535)throw new Error('invalid_port');
 if(ADMIN_TOKEN.length<32)throw new Error('broker_token_too_short');
 if(LEASE_SECRET.length<32)throw new Error('lease_secret_too_short');
 if(!API_KEY||/[\r\n\0]/.test(API_KEY)||API_KEY.length<20)throw new Error('invalid_api_key');
+
 await fs.mkdir(DATA_DIR,{recursive:true,mode:0o700});
 let ledger={};
 try{
@@ -41,7 +42,7 @@ function adminAuthorized(req){const b=String(req.headers.authorization||'').repl
 function send(res,status,payload){const raw=JSON.stringify(payload);res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','content-length':Buffer.byteLength(raw)});res.end(raw);}
 async function readRaw(req){let size=0,chunks=[];for await(const c of req){size+=c.length;if(size>MAX_BODY_BYTES)throw Object.assign(new Error('payload_too_large'),{status:413});chunks.push(c);}return Buffer.concat(chunks).toString('utf8');}
 async function persist(){const tmp=`${LEDGER_FILE}.tmp-${process.pid}`;await fs.writeFile(tmp,`${JSON.stringify(ledger,null,2)}\n`,{mode:0o600});await fs.rename(tmp,LEDGER_FILE);}
-function safeErrorSummary(text){const raw=String(text||'').replace(/[\r\n\t]+/g,' ').slice(0,1200);return raw.replace(/sk-[A-Za-z0-9_-]{10,}/g,'[redacted-key]');}
+function safeErrorSummary(text){const raw=String(text||'').replace(/[\r\n\t]+/g,' ').slice(0,1200);return raw.replace(/sk-[A-Za-z0-9_-]{10,}/g,'[redacted-key]').replace(/lia1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,'[redacted-lease]');}
 function logEvent(event,payload={}){console.log(JSON.stringify({event,at:new Date().toISOString(),...payload}));}
 
 function decodeLease(token){
@@ -78,12 +79,12 @@ function ensureEntry(lease){
 }
 function totalCommitted(entry){return entry.spentMicroUsd+entry.uncertainMicroUsd+entry.inFlightMicroUsd;}
 function publicLease(entry){
-  const reservedMicroUsd=totalCommitted(entry);
   return{
     jti:entry.jti,taskId:entry.taskId,profile:entry.profile,model:entry.model,
     budgetMicroUsd:entry.budgetMicroUsd,spentMicroUsd:entry.spentMicroUsd,
     uncertainMicroUsd:entry.uncertainMicroUsd,inFlightMicroUsd:entry.inFlightMicroUsd,
-    reservedMicroUsd,requests:entry.requests,expiresAt:entry.expiresAt,lastRequestAt:entry.lastRequestAt||null
+    reservedMicroUsd:totalCommitted(entry),requests:entry.requests,
+    expiresAt:entry.expiresAt,lastRequestAt:entry.lastRequestAt||null
   };
 }
 function regularInputReserveMicroUsd(bytes,profile){return Math.ceil(Math.max(1,Number(bytes||0))*profile.inputUsdPerMTok);}
@@ -111,7 +112,11 @@ async function reserveForRequest(lease,body){
   remaining=budgetMicroUsd-entry.spentMicroUsd-entry.uncertainMicroUsd;
   affordable=Math.floor((remaining-inputReserve)/profile.outputUsdPerMTok);
   if(!Number.isFinite(affordable)||affordable<1)throw Object.assign(new Error('lease_budget_exhausted'),{status:402});
-  if(body.max_output_tokens>affordable){body.max_output_tokens=affordable;outgoing=JSON.stringify(body);inputReserve=regularInputReserveMicroUsd(Buffer.byteLength(outgoing),profile);}
+  if(body.max_output_tokens>affordable){
+    body.max_output_tokens=affordable;
+    outgoing=JSON.stringify(body);
+    inputReserve=regularInputReserveMicroUsd(Buffer.byteLength(outgoing),profile);
+  }
 
   const reservation=inputReserve+outputReserveMicroUsd(body.max_output_tokens,profile);
   if(entry.spentMicroUsd+entry.uncertainMicroUsd+reservation>budgetMicroUsd)throw Object.assign(new Error('lease_budget_exhausted'),{status:402});
@@ -121,6 +126,7 @@ async function reserveForRequest(lease,body){
   await persist();
   return{entry,reservation,outgoing};
 }
+
 function normalizeUsage(usage){
   if(!usage||typeof usage!=='object')return null;
   const input=Math.max(0,Number(usage.input_tokens||0));
@@ -129,30 +135,53 @@ function normalizeUsage(usage){
   if(!Number.isFinite(input)||!Number.isFinite(cached)||!Number.isFinite(output))return null;
   return{input_tokens:input,cached_input_tokens:Math.min(input,cached),output_tokens:output};
 }
-function extractUsage(text,contentType){
+function extractJsonUsage(text){
   try{
     const parsed=JSON.parse(text);
-    const u=normalizeUsage(parsed?.usage||parsed?.response?.usage);
-    if(u)return u;
-  }catch{}
-  if(String(contentType||'').toLowerCase().includes('text/event-stream')||text.includes('response.completed')){
-    for(const line of text.split(/\r?\n/)){
-      if(!line.startsWith('data:'))continue;
-      const raw=line.slice(5).trim();
-      if(!raw||raw==='[DONE]')continue;
-      try{
-        const event=JSON.parse(raw);
-        if(event?.type==='response.completed'){
-          const u=normalizeUsage(event?.response?.usage);
-          if(u)return u;
-        }
-      }catch{}
-    }
-  }
-  return null;
+    return normalizeUsage(parsed?.usage||parsed?.response?.usage);
+  }catch{return null;}
 }
-async function finalizeSuccess(entry,reservation,responseText,contentType,profile){
-  const usage=extractUsage(responseText,contentType);
+function createSseUsageParser(){
+  const decoder=new TextDecoder();
+  let lineBuffer='',dataLines=[],usage=null;
+  function parseEvent(){
+    if(!dataLines.length)return;
+    const raw=dataLines.join('\n').trim();
+    dataLines=[];
+    if(!raw||raw==='[DONE]')return;
+    try{
+      const event=JSON.parse(raw);
+      if(event?.type==='response.completed'){
+        const parsed=normalizeUsage(event?.response?.usage);
+        if(parsed)usage=parsed;
+      }
+    }catch{}
+  }
+  function consumeLine(line){
+    const clean=line.endsWith('\r')?line.slice(0,-1):line;
+    if(clean===''){parseEvent();return;}
+    if(clean.startsWith('data:'))dataLines.push(clean.slice(5).replace(/^ /,''));
+  }
+  return{
+    push(chunk){
+      lineBuffer+=decoder.decode(chunk,{stream:true});
+      let idx;
+      while((idx=lineBuffer.indexOf('\n'))>=0){
+        const line=lineBuffer.slice(0,idx);
+        lineBuffer=lineBuffer.slice(idx+1);
+        consumeLine(line);
+      }
+    },
+    finish(){
+      lineBuffer+=decoder.decode();
+      if(lineBuffer){consumeLine(lineBuffer);lineBuffer='';}
+      parseEvent();
+      return usage;
+    }
+  };
+}
+
+async function finalizeUsage(entry,reservation,usage,profile){
   entry.inFlightMicroUsd=0;
   if(usage){
     const actual=Math.max(0,actualCostMicroUsd(usage,profile));
@@ -166,17 +195,9 @@ async function finalizeSuccess(entry,reservation,responseText,contentType,profil
     logEvent('lia_broker_usage_missing',{taskId:entry.taskId,jti:entry.jti,reservationMicroUsd:reservation});
   }
   await persist();
-  return usage;
 }
-async function finalizeDefiniteError(entry){
-  entry.inFlightMicroUsd=0;
-  await persist();
-}
-async function finalizeUncertainTransport(entry,reservation){
-  entry.inFlightMicroUsd=0;
-  entry.uncertainMicroUsd+=reservation;
-  await persist();
-}
+async function finalizeDefiniteError(entry){entry.inFlightMicroUsd=0;await persist();}
+async function finalizeUncertain(entry,reservation){entry.inFlightMicroUsd=0;entry.uncertainMicroUsd+=reservation;await persist();}
 
 function copySafeHeaders(res,source){
   const exact=new Set(['content-type','openai-request-id','x-request-id','openai-model','x-openai-model','x-codex-turn-state','x-reasoning-included','x-models-etag','retry-after']);
@@ -188,13 +209,54 @@ function copySafeHeaders(res,source){
   res.setHeader('x-content-type-options','nosniff');
 }
 
+async function relaySse({upstream,res,entry,reservation,lease,requestId}){
+  const parser=createSseUsageParser();
+  const reader=upstream.body?.getReader?.();
+  if(!reader){
+    await finalizeUncertain(entry,reservation);
+    if(!res.headersSent)return send(res,502,{error:'openai_stream_missing'});
+    res.destroy();
+    return;
+  }
+
+  res.statusCode=upstream.status;
+  copySafeHeaders(res,upstream);
+  res.flushHeaders?.();
+
+  let bytes=0;
+  try{
+    for(;;){
+      const {done,value}=await reader.read();
+      if(done)break;
+      bytes+=value.byteLength;
+      if(bytes>MAX_RESPONSE_BYTES){
+        try{await reader.cancel('response_too_large');}catch{}
+        await finalizeUncertain(entry,reservation);
+        logEvent('lia_broker_upstream_response_too_large',{taskId:lease.payload.taskId,jti:lease.payload.jti,status:upstream.status,requestId,bytes});
+        res.destroy();
+        return;
+      }
+      parser.push(value);
+      if(!res.destroyed)res.write(Buffer.from(value));
+    }
+    const usage=parser.finish();
+    await finalizeUsage(entry,reservation,usage,lease.profile);
+    logEvent('lia_broker_upstream_ok',{taskId:lease.payload.taskId,jti:lease.payload.jti,status:upstream.status,requestId,transport:'sse_passthrough',bytes,actualMicroUsd:entry.lastActualMicroUsd??null,spentMicroUsd:entry.spentMicroUsd,uncertainMicroUsd:entry.uncertainMicroUsd,usage});
+    if(!res.destroyed)res.end();
+  }catch(error){
+    await finalizeUncertain(entry,reservation);
+    logEvent('lia_broker_upstream_stream_error',{taskId:lease.payload.taskId,jti:lease.payload.jti,status:upstream.status,requestId,error:String(error?.message||'stream_failed').slice(0,240),bytes});
+    if(!res.destroyed)res.destroy(error);
+  }
+}
+
 const server=http.createServer(async(req,res)=>{
   try{
     const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
-    if(req.method==='GET'&&url.pathname==='/health')return send(res,200,{ok:true,service:'lia-openai-broker',version:'2026-09-18-v3-budget',keyConfigured:true,executionEnabled:EXECUTION_ENABLED,leaseEnforced:true,actualUsageAccounting:true,bind:HOST});
+    if(req.method==='GET'&&url.pathname==='/health')return send(res,200,{ok:true,service:'lia-openai-broker',version:'2026-09-18-v4-stream',keyConfigured:true,executionEnabled:EXECUTION_ENABLED,leaseEnforced:true,actualUsageAccounting:true,ssePassthrough:true,bind:HOST});
     if(req.method==='GET'&&url.pathname==='/v1/status'){
       if(!adminAuthorized(req))return send(res,401,{error:'unauthorized'});
-      return send(res,200,{keyConfigured:true,executionEnabled:EXECUTION_ENABLED,realKeyExposed:false,leaseEnforced:true,actualUsageAccounting:true,ledgerEntries:Object.keys(ledger).length});
+      return send(res,200,{keyConfigured:true,executionEnabled:EXECUTION_ENABLED,realKeyExposed:false,leaseEnforced:true,actualUsageAccounting:true,ssePassthrough:true,ledgerEntries:Object.keys(ledger).length});
     }
     const leaseStatus=url.pathname.match(/^\/v1\/leases\/([0-9a-f-]+)$/i);
     if(req.method==='GET'&&leaseStatus){
@@ -202,6 +264,7 @@ const server=http.createServer(async(req,res)=>{
       const entry=ledger[leaseStatus[1]];
       return entry?send(res,200,publicLease(entry)):send(res,404,{error:'lease_not_seen'});
     }
+
     if(req.method==='POST'&&url.pathname==='/v1/responses'){
       if(!EXECUTION_ENABLED)return send(res,423,{error:'broker_execution_locked'});
       const token=String(req.headers.authorization||'').replace(/^Bearer\s+/i,'');
@@ -209,53 +272,79 @@ const server=http.createServer(async(req,res)=>{
       const raw=await readRaw(req);
       let body;try{body=JSON.parse(raw);}catch{throw Object.assign(new Error('invalid_json'),{status:400});}
       if(!body||typeof body!=='object'||Array.isArray(body))return send(res,400,{error:'invalid_request'});
+
       body.model=lease.profile.model;
       body.reasoning={...(body.reasoning&&typeof body.reasoning==='object'?body.reasoning:{}),effort:lease.profile.reasoning};
 
-      const prepared=await reserveForRequest(lease,body);
-      const {entry,reservation,outgoing}=prepared;
+      const {entry,reservation,outgoing}=await reserveForRequest(lease,body);
       logEvent('lia_broker_upstream_start',{taskId:lease.payload.taskId,jti:lease.payload.jti,profile:lease.profile.name,model:lease.profile.model,requestNumber:entry.requests,reservationMicroUsd:reservation,spentMicroUsd:entry.spentMicroUsd,uncertainMicroUsd:entry.uncertainMicroUsd,maxOutputTokens:body.max_output_tokens});
 
       let upstream;
       try{
         upstream=await fetch(UPSTREAM,{method:'POST',headers:{authorization:`Bearer ${API_KEY}`,'content-type':'application/json','user-agent':'VitrineCity-LIA/1.0'},body:outgoing,redirect:'error',signal:AbortSignal.timeout(240000)});
       }catch(error){
-        await finalizeUncertainTransport(entry,reservation);
+        await finalizeUncertain(entry,reservation);
         logEvent('lia_broker_upstream_transport_error',{taskId:lease.payload.taskId,jti:lease.payload.jti,error:String(error?.message||'transport_failed').slice(0,240),reservedAsUncertainMicroUsd:reservation});
         return send(res,502,{error:'openai_transport_failed_no_retry'});
       }
 
       const requestId=upstream.headers.get('openai-request-id')||upstream.headers.get('x-request-id')||null;
+      const contentType=String(upstream.headers.get('content-type')||'').toLowerCase();
+
+      if(!upstream.ok){
+        let responseText='';
+        try{responseText=await upstream.text();}catch{}
+        await finalizeDefiniteError(entry);
+        logEvent('lia_broker_upstream_error',{taskId:lease.payload.taskId,jti:lease.payload.jti,status:upstream.status,requestId,error:safeErrorSummary(responseText)});
+        res.statusCode=upstream.status;
+        copySafeHeaders(res,upstream);
+        const bytes=Buffer.from(responseText);
+        res.setHeader('content-length',bytes.length);
+        res.end(bytes);
+        return;
+      }
+
+      if(contentType.includes('text/event-stream')){
+        return await relaySse({upstream,res,entry,reservation,lease,requestId});
+      }
+
       const contentLength=Number(upstream.headers.get('content-length')||0);
       if(Number.isFinite(contentLength)&&contentLength>MAX_RESPONSE_BYTES){
-        await finalizeUncertainTransport(entry,reservation);
+        await finalizeUncertain(entry,reservation);
         logEvent('lia_broker_upstream_response_too_large',{taskId:lease.payload.taskId,jti:lease.payload.jti,status:upstream.status,requestId,contentLength});
         return send(res,502,{error:'openai_response_too_large'});
       }
 
-      const responseBytes=Buffer.from(await upstream.arrayBuffer());
+      let responseBytes;
+      try{responseBytes=Buffer.from(await upstream.arrayBuffer());}
+      catch(error){
+        await finalizeUncertain(entry,reservation);
+        logEvent('lia_broker_upstream_body_error',{taskId:lease.payload.taskId,jti:lease.payload.jti,status:upstream.status,requestId,error:String(error?.message||'body_failed').slice(0,240)});
+        return send(res,502,{error:'openai_body_failed_no_retry'});
+      }
       if(responseBytes.length>MAX_RESPONSE_BYTES){
-        await finalizeUncertainTransport(entry,reservation);
+        await finalizeUncertain(entry,reservation);
         return send(res,502,{error:'openai_response_too_large'});
       }
-      const responseText=responseBytes.toString('utf8');
-      const contentType=upstream.headers.get('content-type')||'';
 
-      if(!upstream.ok){
-        await finalizeDefiniteError(entry);
-        logEvent('lia_broker_upstream_error',{taskId:lease.payload.taskId,jti:lease.payload.jti,status:upstream.status,requestId,error:safeErrorSummary(responseText)});
-        res.statusCode=upstream.status;copySafeHeaders(res,upstream);res.setHeader('content-length',responseBytes.length);res.end(responseBytes);return;
-      }
-
-      const usage=await finalizeSuccess(entry,reservation,responseText,contentType,lease.profile);
-      logEvent('lia_broker_upstream_ok',{taskId:lease.payload.taskId,jti:lease.payload.jti,status:upstream.status,requestId,actualMicroUsd:entry.lastActualMicroUsd??null,spentMicroUsd:entry.spentMicroUsd,uncertainMicroUsd:entry.uncertainMicroUsd,usage});
-      res.statusCode=upstream.status;copySafeHeaders(res,upstream);res.setHeader('content-length',responseBytes.length);res.end(responseBytes);return;
+      const usage=extractJsonUsage(responseBytes.toString('utf8'));
+      await finalizeUsage(entry,reservation,usage,lease.profile);
+      logEvent('lia_broker_upstream_ok',{taskId:lease.payload.taskId,jti:lease.payload.jti,status:upstream.status,requestId,transport:'buffered_json',bytes:responseBytes.length,actualMicroUsd:entry.lastActualMicroUsd??null,spentMicroUsd:entry.spentMicroUsd,uncertainMicroUsd:entry.uncertainMicroUsd,usage});
+      res.statusCode=upstream.status;
+      copySafeHeaders(res,upstream);
+      res.setHeader('content-length',responseBytes.length);
+      res.end(responseBytes);
+      return;
     }
+
     return send(res,404,{error:'not_found'});
   }catch(error){
     if(error?.status)logEvent('lia_broker_rejected',{status:error.status,error:error.message});
     return send(res,error?.status||500,{error:error?.status?error.message:'internal_error'});
   }
 });
-server.requestTimeout=260000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
-server.listen(PORT,HOST,()=>logEvent('lia_openai_broker_started',{version:'v3-budget',host:HOST,port:PORT,keyConfigured:true,executionEnabled:EXECUTION_ENABLED,leaseEnforced:true,actualUsageAccounting:true}));
+
+server.requestTimeout=260000;
+server.headersTimeout=10000;
+server.keepAliveTimeout=5000;
+server.listen(PORT,HOST,()=>logEvent('lia_openai_broker_started',{version:'v4-stream',host:HOST,port:PORT,keyConfigured:true,executionEnabled:EXECUTION_ENABLED,leaseEnforced:true,actualUsageAccounting:true,ssePassthrough:true}));
