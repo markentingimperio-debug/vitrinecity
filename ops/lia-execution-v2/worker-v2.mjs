@@ -52,7 +52,7 @@ const GUARD=`Você é o executor de programação da LIA em um workspace Git iso
 const server=http.createServer(async(req,res)=>{
   try{
     const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
-    if(req.method==='GET'&&url.pathname==='/health')return send(res,200,{ok:true,service:'lia-codex-worker',version:'2026-09-17-v2',sdkLoaded:true,executionEnabled:EXECUTION_ENABLED,brokerBaseUrl:BROKER_BASE_URL,bind:HOST,active});
+    if(req.method==='GET'&&url.pathname==='/health')return send(res,200,{ok:true,service:'lia-codex-worker',version:'2026-09-18-v3-diagnostics',sdkLoaded:true,executionEnabled:EXECUTION_ENABLED,brokerBaseUrl:BROKER_BASE_URL,bind:HOST,active});
     if(!authorized(req))return send(res,401,{error:'unauthorized'});
     if(req.method==='GET'&&url.pathname==='/v1/capabilities')return send(res,200,{executionEnabled:EXECUTION_ENABLED,sandboxMode:'workspace-write',networkAccess:false,webSearch:false,productionDeploy:false,concurrency:1});
     if(req.method==='POST'&&url.pathname==='/v1/dry-run'){
@@ -78,10 +78,17 @@ const server=http.createServer(async(req,res)=>{
         let turn;try{turn=await thread.run(`${GUARD}\n\nTAREFA AUTORIZADA:\n${instruction}`,{signal:controller.signal});}finally{clearTimeout(timer);}
         const after=await gitSnapshot(workspace.path);
         return send(res,200,{ok:true,workspace:workspace.name,profile:profile.name,model:profile.model,finalResponse:String(turn.finalResponse||'').slice(0,12000),usage:turn.usage||null,threadId:thread.id||null,git:{before,after}});
-      }catch(error){return send(res,502,{error:'codex_run_failed',detail:String(error?.message||'failed').slice(0,240)});}finally{active=false;}
+      }catch(error){
+        const detail=String(error?.message||'failed')
+          .replace(/sk-[A-Za-z0-9_-]{10,}/g,'[redacted-key]')
+          .replace(/lia1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,'[redacted-lease]')
+          .slice(0,500);
+        console.error(JSON.stringify({event:'lia_codex_run_failed',at:new Date().toISOString(),workspace:workspace.name,profile:profile.name,model:profile.model,detail}));
+        return send(res,502,{error:'codex_run_failed',detail});
+      }finally{active=false;}
     }
     return send(res,404,{error:'not_found'});
   }catch(error){return send(res,error?.status||500,{error:error?.status?error.message:'internal_error'});}
 });
 server.requestTimeout=RUN_TIMEOUT_MS+30000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
-server.listen(PORT,HOST,()=>console.log(JSON.stringify({event:'lia_codex_worker_started',version:'v2',host:HOST,port:PORT,executionEnabled:EXECUTION_ENABLED,brokerBaseUrl:BROKER_BASE_URL})));
+server.listen(PORT,HOST,()=>console.log(JSON.stringify({event:'lia_codex_worker_started',version:'v3-diagnostics',host:HOST,port:PORT,executionEnabled:EXECUTION_ENABLED,brokerBaseUrl:BROKER_BASE_URL})));
