@@ -26,6 +26,8 @@ jobs:
           bash -n ops/lia-dev-workspace/run-first-vitrinecity-task-v5.sh
           bash -n ops/lia-dev-workspace/run-first-vitrinecity-task-v6.sh
           bash -n ops/lia-dev-workspace/finalize-first-vitrinecity-commit.sh
+          bash -n ops/lia-dev-workspace/prepare-review-pack.sh
+          bash -n ops/lia-dev-workspace/approve-review-pack.sh
 
       - name: Workspace safety guards
         run: |
@@ -107,3 +109,17 @@ jobs:
           grep -q 'Git push: BLOQUEADO' ops/lia-dev-workspace/finalize-first-vitrinecity-commit.sh
           grep -q 'Deploy de producao: BLOQUEADO' ops/lia-dev-workspace/finalize-first-vitrinecity-commit.sh
           grep -q 'Chamadas OpenAI realizadas: ZERO' ops/lia-dev-workspace/finalize-first-vitrinecity-commit.sh
+      - name: Review gate guards
+        run: |
+          grep -q "BASE_COMMIT='708c2bb294d4dabc08878e32e72b7b5f0af8f037'" ops/lia-dev-workspace/prepare-review-pack.sh
+          grep -q "EXPECTED_FILE='app/scripts/test-web-story-cta.mjs'" ops/lia-dev-workspace/prepare-review-pack.sh
+          grep -q 'humanApprovalRequired:true' ops/lia-dev-workspace/prepare-review-pack.sh
+          grep -q 'Git push: BLOQUEADO' ops/lia-dev-workspace/prepare-review-pack.sh
+          grep -q 'Deploy de producao: BLOQUEADO' ops/lia-dev-workspace/prepare-review-pack.sh
+          grep -q 'Chamadas OpenAI realizadas: ZERO' ops/lia-dev-workspace/prepare-review-pack.sh
+          grep -q "APROVAR_PR" ops/lia-dev-workspace/approve-review-pack.sh
+          grep -q '"approved_for_pr_publication_only"' ops/lia-dev-workspace/approve-review-pack.sh
+          grep -q '"mergeApproved":false' ops/lia-dev-workspace/approve-review-pack.sh
+          grep -q '"productionDeployApproved":false' ops/lia-dev-workspace/approve-review-pack.sh
+          grep -q 'Git push do Worker: continua BLOQUEADO' ops/lia-dev-workspace/approve-review-pack.sh
+          grep -q 'Chamadas OpenAI realizadas: ZERO' ops/lia-dev-workspace/approve-review-pack.sh
