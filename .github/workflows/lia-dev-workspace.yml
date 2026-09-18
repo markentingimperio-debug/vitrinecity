@@ -119,7 +119,7 @@ jobs:
           grep -q 'Chamadas OpenAI realizadas: ZERO' ops/lia-dev-workspace/prepare-review-pack.sh
           grep -q "APROVAR_PR" ops/lia-dev-workspace/approve-review-pack.sh
           grep -q '"approved_for_pr_publication_only"' ops/lia-dev-workspace/approve-review-pack.sh
-          grep -q '"mergeApproved":false' ops/lia-dev-workspace/approve-review-pack.sh
-          grep -q '"productionDeployApproved":false' ops/lia-dev-workspace/approve-review-pack.sh
+          grep -q 'mergeApproved:false' ops/lia-dev-workspace/approve-review-pack.sh
+          grep -q 'productionDeployApproved:false' ops/lia-dev-workspace/approve-review-pack.sh
           grep -q 'Git push do Worker: continua BLOQUEADO' ops/lia-dev-workspace/approve-review-pack.sh
           grep -q 'Chamadas OpenAI realizadas: ZERO' ops/lia-dev-workspace/approve-review-pack.sh
