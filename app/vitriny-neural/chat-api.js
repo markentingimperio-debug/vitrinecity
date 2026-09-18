@@ -13,7 +13,8 @@ const ERRORS={
   chat_conversation_limit:[429,'Esta conversa atingiu o limite de mensagens. Inicie uma nova conversa.'],
   chat_quota:[429,'O limite de uso do chat foi atingido. Tente novamente mais tarde.'],
   chat_conflict:[409,'Este identificador já pertence a outro pedido. Confira o histórico antes de reenviar.'],
-  chat_busy:[409,'Já existe uma resposta em andamento. Aguarde ou cancele antes de enviar outro pedido.']
+  chat_busy:[409,'Já existe uma resposta em andamento. Aguarde ou cancele antes de enviar outro pedido.'],
+  chat_delete_blocked:[409,'Esta conversa possui um pedido em andamento ou em conferência. Conclua ou cancele antes de excluir.']
 };
 Object.assign(ERRORS,{
   chat_artifact_invalid:[400,'O arquivo gerado não passou na verificação de segurança.'],
@@ -79,6 +80,10 @@ export function mountNeuralChatApi({app,chat,artifacts,requireAdmin,requireUser,
       const result=chat.conversation(scope,req.params.id);
       for(const message of result.messages){if(message.payment)assertChatPayment(message.payment);for(const artifact of message.artifacts||[])assertChatArtifact(artifact);}
       return res.json({ok:true,...result});
+    }));
+    app.post(base+'/conversations/:id/delete',...write,route('deleteConversation',(req,res,scope)=>{
+      if(!req.body||typeof req.body!=='object'||Array.isArray(req.body)||Object.keys(req.body).length)return res.status(400).json({ok:false,code:'chat_input_invalid',error:'Exclusão inválida.'});
+      return res.json({ok:true,...chat.deleteConversation(scope,req.params.id)});
     }));
     app.post(base+'/messages',...write,route('submit',(req,res,scope)=>{
       const result=assertChatReceipt(chat.submit(scope,req.body));return res.status(result.duplicate?200:202).json({ok:true,...result});
