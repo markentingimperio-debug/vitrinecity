@@ -33,7 +33,11 @@ grep -q '^LIA_GATEWAY_EXECUTION_ENABLED=0$' "$GENV" || { echo 'PARADO: gateway n
 grep -q '^LIA_CODEX_EXECUTION_ENABLED=0$' "$WENV" || { echo 'PARADO: worker nao esta bloqueado.' >&2; exit 1; }
 grep -q '^LIA_BROKER_EXECUTION_ENABLED=0$' "$BENV" || { echo 'PARADO: broker nao esta bloqueado.' >&2; exit 1; }
 grep -q '^LIA_BROKER_MAX_REQUESTS_PER_LEASE=20$' "$BENV" || { echo 'PARADO: Broker nao esta com 20 turnos.' >&2; exit 1; }
-grep -q '^LIA_BROKER_BUDGET_SAFETY_RATIO=0.90
+grep -q '^LIA_BROKER_BUDGET_SAFETY_RATIO=0.90$' "$BENV" || { echo 'PARADO: margem de budget V5 ausente.' >&2; exit 1; }
+
+AF="$(systemctl show lia-codex-worker.service -p RestrictAddressFamilies --value)"
+printf '%s' "$AF" | grep -qw 'AF_NETLINK' \
+  || { echo "PARADO: Worker ainda nao possui AF_NETLINK: $AF" >&2; exit 1; }
 
 jq -e   --arg base "$BASE_COMMIT"   --arg branch "$LOCAL_BRANCH"   '.workspace=="vitrinecity-dev"
    and .baseCommit==$base
