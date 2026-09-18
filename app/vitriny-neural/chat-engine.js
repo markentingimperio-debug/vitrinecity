@@ -147,7 +147,9 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
   function deleteConversation(scope,id){
     reap();const conversation=conversationRow(scope,id);
     const pending=db.prepare("SELECT id,status FROM neural_chat_requests WHERE scope=? AND conversation_id=? AND status IN ('awaiting_confirmation','queued','running','interrupted') ORDER BY created_at LIMIT 1").get(scope,id);
-    if(pending)throw chatError('chat_delete_blocked',409);
+    const operationsTable=db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='lia_chat_operations'").get();
+    const pendingOperation=operationsTable?db.prepare("SELECT id,status FROM lia_chat_operations WHERE conversation_id=? AND status IN ('created','reserved') LIMIT 1").get(id):null;
+    if(pending||pendingOperation)throw chatError('chat_delete_blocked',409);
     const attachmentIds=db.prepare(`SELECT DISTINCT a.attachment_id id FROM neural_chat_message_attachments a
       JOIN neural_chat_messages m ON m.id=a.message_id WHERE m.conversation_id=?`).all(id).map(row=>row.id);
     const result=db.transaction(()=>{
