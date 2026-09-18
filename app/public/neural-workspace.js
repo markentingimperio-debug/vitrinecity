@@ -366,7 +366,17 @@ export function mountNeuralWorkspace(environment = globalThis) {
       if (cached?.signature === signature) { if (list.children[index] !== cached.node) list.insertBefore(cached.node, list.children[index] || null); index++; continue; }
       const li = node('li', null, 'message ' + (message.role === 'user' ? 'user-message' : 'assistant-message'));
       li.append(node('p', message.role === 'user' ? 'Você' : 'Lia', 'message-label'));
-      li.append(node('p', message.text || ({ queued: 'Pedido recebido. Aguardando sua vez na fila.', running: 'Preparando sua resposta…' })[message.status] || '', 'message-content'));
+      const operationContent = operationArtifacts(message.text);
+      li.append(node('p', operationContent.text || ({ queued: 'Pedido recebido. Aguardando sua vez na fila.', running: 'Preparando sua resposta…' })[message.status] || '', 'message-content'));
+      if (operationContent.artifacts.length) {
+        const operationFiles=node('div',null,'operation-artifacts');
+        for (const artifact of operationContent.artifacts) {
+          const link=node('a','Baixar '+artifact.name,'operation-artifact-link');
+          link.href='/api/neural/chat/operations/artifact?operation='+encodeURIComponent(artifact.operation)+'&path='+encodeURIComponent(artifact.path);
+          link.setAttribute('download',artifact.name);operationFiles.append(link);
+        }
+        li.append(operationFiles);
+      }
       if (isChatActive(message.status)) li.setAttribute('aria-busy', 'true');
       const queuePosition = message.queue && CHAT_QUEUE_LANES.includes(message.queue.lane) && Number.isSafeInteger(message.queue.position) && message.queue.position >= 1 ? message.queue.position : null;
       const labels = { awaiting_confirmation: 'Aguardando sua confirmação · execução não iniciada', queued: 'Na fila' + (queuePosition === null ? '' : ' · posição ' + queuePosition), running: 'Em andamento', unavailable: 'Recurso ainda indisponível · nenhuma geração realizada', failed: 'Não concluído', cancelled: 'Cancelado', interrupted: 'Interrompido · confira antes de pedir novamente' };
@@ -632,6 +642,8 @@ export function mountNeuralWorkspace(environment = globalThis) {
     const epoch = state.epoch; state.busy = true; clearError(); controls(); renderAttachments();
     let submitted = false;
     try {
+      if (await tryOperationalCommand(message)) return;
+      if (state.attachments.some(item => item.kind === 'operation-media')) throw failure('invalid');
       for (const attachment of state.attachments) {
         if (attachment.id) continue;
         const dataBase64 = await base64(attachment.file);
