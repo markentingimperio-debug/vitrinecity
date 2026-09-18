@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { MODEL_PROFILES, profileNames, resolveProfile, actualCostMicroUsd } from './model-policy.mjs';
+import { createOperationsRouter } from './operations-router.mjs';
 
 const HOST = process.env.LIA_GATEWAY_HOST || '127.0.0.1';
 const PORT = Number(process.env.LIA_GATEWAY_PORT || 8787);
@@ -21,6 +22,7 @@ const MAX_INSTRUCTION_CHARS = 8000;
 const MAX_TASK_BUDGET_USD = Number(process.env.LIA_MAX_TASK_BUDGET_USD || 1.00);
 const MAX_DAILY_BUDGET_USD = Number(process.env.LIA_MAX_DAILY_BUDGET_USD || 5.00);
 const MAX_TASKS_RETAINED = 500;
+const operations=await createOperationsRouter({env:process.env,dataDir:DATA_DIR});
 
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error('invalid_port');
 if (!Number.isFinite(MAX_TASK_BUDGET_USD) || MAX_TASK_BUDGET_USD <= 0) throw new Error('invalid_task_budget');
@@ -110,8 +112,9 @@ const server=http.createServer(async(req,res)=>{
   try{
     const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
     if(req.method==='GET'&&url.pathname==='/health'){
-      return send(res,200,{ok:true,service:'lia-dev-gateway',version:'2026-09-18-v5-budget',executionEnabled:EXECUTION_ENABLED,profiles:profileNames(),bind:HOST});
+      return send(res,200,{ok:true,service:'lia-dev-gateway',version:'2026-09-18-v6-operations',executionEnabled:EXECUTION_ENABLED,operationsEnabled:operations.enabled,profiles:profileNames(),bind:HOST});
     }
+    if(await operations.handle(req,res,url))return;
     if(!authorized(req))return send(res,401,{error:'unauthorized'});
     if(req.method==='GET'&&url.pathname==='/v1/models'){
       return send(res,200,{profiles:Object.entries(MODEL_PROFILES).map(([name,p])=>({name,model:p.model,reasoning:p.reasoning,premium:p.premium,maxOutputTokens:p.maxOutputTokens}))});
@@ -179,4 +182,4 @@ const server=http.createServer(async(req,res)=>{
   }catch(error){return send(res,error?.status||500,{error:error?.status?error.message:'internal_error'});}
 });
 server.requestTimeout=430000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
-server.listen(PORT,HOST,()=>console.log(JSON.stringify({event:'lia_dev_gateway_started',version:'v5-budget',host:HOST,port:PORT,executionEnabled:EXECUTION_ENABLED,profiles:profileNames()})));
+server.listen(PORT,HOST,()=>console.log(JSON.stringify({event:'lia_dev_gateway_started',version:'v6-operations',host:HOST,port:PORT,executionEnabled:EXECUTION_ENABLED,profiles:profileNames()})));
