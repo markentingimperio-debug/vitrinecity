@@ -30,8 +30,14 @@ test('chat API authenticates each owner, protects writes, stores private attachm
     assert.equal(accepted.status,202);const submitted=await accepted.json();assert.equal(submitted.ok,true);assert.equal(submitted.status,'unavailable');
     const saved=await request('/conversations/'+submitted.conversationId);const data=await saved.json();assert.equal(data.messages.length,2);assert.equal(data.messages[0].attachments[0].id,attachment.id);
     assert.equal((await request('/conversations/'+submitted.conversationId,{admin:'2'})).status,404);
+    assert.equal((await request('/conversations/'+submitted.conversationId+'/delete',{method:'POST',body:{},admin:'2'})).status,404);
     assert.equal((await request('/requests/by-key/request-http-test-001',{admin:'2'})).status,404);
     assert.equal((await (await request('/requests/by-key/request-http-test-001')).json()).request.id,submitted.requestId);
+    const deleted=await request('/conversations/'+submitted.conversationId+'/delete',{method:'POST',body:{}});
+    assert.equal(deleted.status,200);assert.equal((await deleted.json()).deleted,true);
+    assert.equal((await request('/conversations/'+submitted.conversationId)).status,404);
+    assert.equal((await request('/attachments/'+attachment.id)).status,404);
+    assert.equal((await (await request('/requests/by-key/request-http-test-001')).json()).request.id,submitted.requestId,'request audit survives conversation deletion');
     assert.equal((await request('/messages',{method:'POST',body:{message:'Teste seguro.',idempotencyKey:'request-http-forged',scope:'admin:2'}})).status,400);
     const storeBase=origin+'/api/store-portal/a/neural/chat';
     assert.equal((await fetch(storeBase+'/status')).status,403);
