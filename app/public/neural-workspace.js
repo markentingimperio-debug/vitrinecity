@@ -3,15 +3,18 @@ import {assertCoinStatus,atomsFromMicroBRL,quoteCoinTopup,VITRINE_COINS_POLICY} 
 import {formatCoins,formatCoinBRL,coinSummary,formatConsumedCoins} from './vitrine-coins-ui.js';
 
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const OPERATION_MEDIA_MIMES = new Set(['video/mp4','video/webm','video/quicktime','audio/mpeg','audio/mp4','audio/wav','audio/ogg']);
 const TEXT_MIMES = { txt: 'text/plain', md: 'text/markdown', csv: 'text/csv' };
 const MESSAGE_STATES = new Set(CHAT_MESSAGE_STATES);
 export function validateNeuralAttachment(file) {
   const extension = String(file?.name || '').split('.').pop().toLowerCase();
-  const mimeType = IMAGE_MIMES.has(file?.type) ? file.type : TEXT_MIMES[extension];
-  const isImage = IMAGE_MIMES.has(mimeType);
+  const rawType = String(file?.type || '').toLowerCase();
+  const mimeType = IMAGE_MIMES.has(rawType) || OPERATION_MEDIA_MIMES.has(rawType) ? rawType : TEXT_MIMES[extension];
+  const isImage = IMAGE_MIMES.has(mimeType), isOperationMedia = OPERATION_MEDIA_MIMES.has(mimeType);
   if (!mimeType || (isImage && !['png', 'jpg', 'jpeg', 'webp'].includes(extension))) throw new Error('attachment_type');
-  if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > (isImage ? 2097152 : 65536)) throw new Error('attachment_size');
-  return { mimeType, kind: isImage ? 'image' : 'text' };
+  const max = isOperationMedia ? 50 * 1024 * 1024 : isImage ? 2097152 : 65536;
+  if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > max) throw new Error('attachment_size');
+  return { mimeType, kind: isOperationMedia ? 'operation-media' : isImage ? 'image' : 'text' };
 }
 export function mountNeuralWorkspace(environment = globalThis) {
   const { document, window, location, URLSearchParams, URL, Blob, AbortController, crypto, FileReader } = environment;
@@ -29,7 +32,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
   const purchaseReady = () => !!coinWallet && credit.status?.canPurchase === true && credit.status?.terms?.version === VITRINE_COINS_POLICY.version;
   const errorText = {
     attachment_type: 'Formato não aceito. Use PNG, JPEG, WebP, TXT, MD ou CSV. PDF e DOCX ainda não são suportados.',
-    attachment_size: 'Arquivo vazio ou muito grande. Imagens: até 2 MB; documentos de texto: até 64 KB.',
+    attachment_size: 'Arquivo vazio ou muito grande. Imagens: até 2 MB; vídeo/áudio para edição: até 50 MB; documentos de texto: até 64 KB.',
     attachment_count: 'Você pode enviar até três arquivos por mensagem.',
     attachment_read: 'Não foi possível ler este arquivo. Remova-o e selecione novamente.',
     unavailable: 'Não foi possível acessar o chat. Seu texto foi preservado. Tente conferir novamente em instantes.',
