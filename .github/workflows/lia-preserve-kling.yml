@@ -26,6 +26,30 @@ jobs:
           python3 ops/lia-preserve-kling/test_resolve_chat_engine_v3.py
           python3 ops/lia-preserve-kling/test_inventory_reconciliation_v3.py
           python3 ops/lia-preserve-kling/test_retry_staged_tests_v4.py
+          python3 ops/lia-preserve-kling/test_backup_image_identity_v6.py
+      - name: Pinned backup helpers and real Docker save identity
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          import runpy
+          import subprocess
+          import tempfile
+          code = runpy.run_path('ops/lia-preserve-kling/backup-image-identity-v6.py')
+          code['load_backup']()
+          print('PASS: both helper SHA-256 pins verified; no backup main executed.', flush=True)
+          with tempfile.TemporaryDirectory() as folder:
+              root = Path(folder)
+              (root / 'marker').write_text('isolated CI fixture; no production data\n')
+              (root / 'Dockerfile').write_text('FROM scratch\nCOPY marker /marker\n')
+              tag = 'lia-image-validator-fixture:ci'
+              subprocess.run(['docker','build','--network=none','--pull=false','-t',tag,str(root)],check=True)
+              image = subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',tag],text=True).strip()
+              archive = root / 'image.tar'
+              subprocess.run(['docker','image','save','-o',str(archive),image],check=True)
+              evidence = code['verify_image_archive'](archive,image)
+              print('PASS: actual Docker save identity and layers verified.')
+              print(json.dumps(evidence,sort_keys=True))
       - name: Install existing locked application dependencies
         working-directory: app
         run: npm ci --omit=dev
