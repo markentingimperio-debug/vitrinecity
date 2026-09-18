@@ -199,12 +199,16 @@ export function mountNeuralWorkspace(environment = globalThis) {
     $('conversation-list').replaceChildren();
     $('history-empty').hidden = state.conversations.length > 0;
     for (const conversation of state.conversations) {
-      const li = node('li'), button = node('button'); button.type = 'button';
+      const li = node('li', null, 'conversation-entry'), button = node('button'), remove = node('button', 'Excluir', 'conversation-delete');
+      button.type = remove.type = 'button'; button.className = 'conversation-open';
       button.setAttribute('aria-current', String(state.selected === conversation.id));
       button.append(node('span', conversation.title || 'Conversa', 'conversation-label'));
-      button.disabled = state.busy;
+      button.disabled = state.busy; remove.disabled = state.busy || state.activeConversation === conversation.id;
       button.addEventListener('click', () => { selectConversation(conversation.id); setHistoryOpen(false); });
-      li.append(button); $('conversation-list').append(li);
+      remove.setAttribute('aria-label', 'Excluir conversa ' + (conversation.title || 'Conversa'));
+      remove.title = state.activeConversation === conversation.id ? 'Conclua ou cancele o pedido antes de excluir.' : 'Excluir esta conversa';
+      remove.addEventListener('click', event => { event.stopPropagation(); deleteConversation(conversation.id); });
+      li.append(button, remove); $('conversation-list').append(li);
     }
   }
   function scrollLatest(force = false) {
@@ -421,6 +425,28 @@ export function mountNeuralWorkspace(environment = globalThis) {
       state.status = nextStatus; rememberConversation(data.conversation); state.messages = messages; state.historyUnverified = false;
       renderStatus(); renderHistory(); renderMessages(forceScroll); schedulePoll();
     } catch (error) { if (selectionEpoch === state.selectionEpoch) showError(error); }
+  }
+  async function deleteConversation(id) {
+    if (state.busy || state.uncertain || state.historyUnverified || state.activeConversation === id) return;
+    const conversation = state.conversations.find(item => item.id === id);
+    const title = conversation?.title || 'esta conversa';
+    if (!window.confirm(`Excluir "${title}" e suas mensagens? Esta ação não pode ser desfeita. Registros financeiros permanecem no extrato.`)) return;
+    const epoch = state.epoch; state.busy = true; clearError(); controls();
+    try {
+      await api('/conversations/' + encodeURIComponent(id) + '/delete', 'POST', {});
+      if (epoch !== state.epoch) return;
+      const selected = state.selected === id;
+      state.conversations = state.conversations.filter(item => item.id !== id);
+      if (selected) {
+        state.selectionEpoch += 1; state.selected = null; state.messages = []; state.activeConversation = null; state.activeRequest = null; state.activeStatus = null;
+        state.pending = null; state.pendingConfirmation = null; state.historyUnverified = false; clearAttachments();
+        for (const url of previewCache.values()) if (url) URL.revokeObjectURL(url); previewCache.clear();
+        for (const entry of artifactCache.values()) if (entry.url) URL.revokeObjectURL(entry.url); artifactCache.clear(); messageNodes.clear();
+      }
+      renderHistory(); renderMessages(); announce('Conversa excluída do histórico privado.');
+      await loadConversations(false);
+    } catch (error) { if (epoch === state.epoch) showError(error); }
+    finally { if (epoch === state.epoch) { state.busy = false; controls(); } }
   }
   async function loadConversations(initial = false) {
     if (state.loading || (storeReference && !state.token)) return;
