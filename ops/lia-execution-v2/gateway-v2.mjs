@@ -110,7 +110,7 @@ const server=http.createServer(async(req,res)=>{
   try{
     const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
     if(req.method==='GET'&&url.pathname==='/health'){
-      return send(res,200,{ok:true,service:'lia-dev-gateway',version:'2026-09-17-v2',executionEnabled:EXECUTION_ENABLED,profiles:profileNames(),bind:HOST});
+      return send(res,200,{ok:true,service:'lia-dev-gateway',version:'2026-09-18-v3-budget',executionEnabled:EXECUTION_ENABLED,profiles:profileNames(),bind:HOST});
     }
     if(!authorized(req))return send(res,401,{error:'unauthorized'});
     if(req.method==='GET'&&url.pathname==='/v1/models'){
@@ -153,12 +153,15 @@ const server=http.createServer(async(req,res)=>{
         const lease=signLease(task,profile);
         task.status='running';task.workspace=workspace;task.startedAt=isoNow();task.updatedAt=task.startedAt;task.note=`Executando com perfil ${profile.name}; sem rede no sandbox.`;await persist();
         const worker=await internalJson(`${WORKER_URL}/v1/run`,{method:'POST',headers:{authorization:`Bearer ${WORKER_TOKEN}`,'content-type':'application/json'},body:JSON.stringify({workspace,instruction:task.instruction,profile:profile.name,model:profile.model,reasoning:profile.reasoning,lease:lease.token}),timeoutMs:420000});
-        if(!worker.ok){task.status='failed';task.error=`worker_${worker.status}:${String(worker.data?.error||'failed').slice(0,160)}`;task.updatedAt=isoNow();task.note='Falha do worker; nenhuma repetição automática.';await persist();return send(res,502,{error:'worker_failed',task:publicTask(task)});}
         let brokerStatus=null;
         try{const b=await internalJson(`${BROKER_URL}/v1/leases/${encodeURIComponent(lease.payload.jti)}`,{headers:{authorization:`Bearer ${BROKER_ADMIN_TOKEN}`},timeoutMs:10000});if(b.ok)brokerStatus=b.data;}catch{}
-        const actualMicro=actualCostMicroUsd(worker.data?.usage||{},profile);
-        task.spentUsd=Number((actualMicro/1e6).toFixed(6));
-        task.reservedUsd=Number(((Number(brokerStatus?.reservedMicroUsd||0))/1e6).toFixed(6));
+        const brokerSpentMicro=Number(brokerStatus?.spentMicroUsd);
+        const brokerReservedMicro=Number(brokerStatus?.reservedMicroUsd);
+        const workerActualMicro=actualCostMicroUsd(worker.data?.usage||{},profile);
+        const effectiveSpentMicro=Number.isFinite(brokerSpentMicro)&&brokerSpentMicro>=0?brokerSpentMicro:workerActualMicro;
+        task.spentUsd=Number((effectiveSpentMicro/1e6).toFixed(6));
+        task.reservedUsd=Number(((Number.isFinite(brokerReservedMicro)&&brokerReservedMicro>=0?brokerReservedMicro:effectiveSpentMicro)/1e6).toFixed(6));
+        if(!worker.ok){task.status='failed';task.error=`worker_${worker.status}:${String(worker.data?.error||'failed').slice(0,160)}`;task.updatedAt=isoNow();task.note='Falha do worker; custo/reserva reconciliados com o broker; nenhuma repetição automática.';await persist();return send(res,502,{error:'worker_failed',task:publicTask(task)});}
         task.status='completed';task.completedAt=isoNow();task.updatedAt=task.completedAt;task.result={finalResponse:String(worker.data?.finalResponse||'').slice(0,12000),usage:worker.data?.usage||null,git:worker.data?.git||null,model:profile.model,profile:profile.name};task.note='Concluída no workspace isolado; nenhuma publicação em produção foi feita.';await persist();
         return send(res,200,{task:publicTask(task)});
       }
@@ -167,4 +170,4 @@ const server=http.createServer(async(req,res)=>{
   }catch(error){return send(res,error?.status||500,{error:error?.status?error.message:'internal_error'});}
 });
 server.requestTimeout=430000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
-server.listen(PORT,HOST,()=>console.log(JSON.stringify({event:'lia_dev_gateway_started',version:'v2',host:HOST,port:PORT,executionEnabled:EXECUTION_ENABLED,profiles:profileNames()})));
+server.listen(PORT,HOST,()=>console.log(JSON.stringify({event:'lia_dev_gateway_started',version:'v3-budget',host:HOST,port:PORT,executionEnabled:EXECUTION_ENABLED,profiles:profileNames()})));
