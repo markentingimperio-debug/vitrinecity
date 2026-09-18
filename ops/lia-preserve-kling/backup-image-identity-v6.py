@@ -18,7 +18,7 @@ import stat
 import sys
 import tarfile
 
-BACKUP_SHA256 = '1cd5eaf48a9abd210a536a6b88a9e270c4a042813ecbe4b9bd1def223f650bf6'
+BACKUP_SHA256 = 'ef3cb48bb90ded32a3fdf0c1675f7e6ba5fa39882d34ddc07c329c9bbeae14b2'
 HELPER_SHA256 = 'a260aff2815395dcebbd15c427acfefdcbe6fea7defb153eb5cc919d68d0889e'
 IMAGE = 'sha256:70fba9043ed420c8d3eb0a3e2904aeccd2cb593db598c450e59345dd95f47628'
 PREVIOUS = Path('/var/backups/vitrinecity-lia-recovery-wlb4bm95/image.tar')
