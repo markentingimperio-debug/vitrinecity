@@ -36,6 +36,7 @@ jobs:
           bash -n ops/lia-execution-v2/run-third-task.sh
           bash -n ops/lia-execution-v2/install-stream-v4.sh
           bash -n ops/lia-execution-v2/install-budget-v5.sh
+          bash -n ops/lia-execution-v2/install-worker-netlink-v6.sh
       - name: Policy checks
         run: |
           node --input-type=module <<'NODE'
@@ -131,3 +132,13 @@ jobs:
           grep -q 'disable_all' ops/lia-execution-v2/run-third-task.sh
           grep -q 'Nenhum deploy de producao foi realizado' ops/lia-execution-v2/run-third-task.sh
           ! grep -q 'premiumApproval' ops/lia-execution-v2/run-third-task.sh
+      - name: Worker netlink v6 guard checks
+        run: |
+          grep -q 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' ops/lia-execution-v2/install-worker-netlink-v6.sh
+          grep -q 'NETLINK_ROUTE_SOCKET_OK' ops/lia-execution-v2/install-worker-netlink-v6.sh
+          grep -q 'socket.AF_NETLINK' ops/lia-execution-v2/install-worker-netlink-v6.sh
+          grep -q 'socket.NETLINK_ROUTE' ops/lia-execution-v2/install-worker-netlink-v6.sh
+          grep -q 'Chamadas OpenAI realizadas: ZERO' ops/lia-execution-v2/install-worker-netlink-v6.sh
+          grep -q '^LIA_GATEWAY_EXECUTION_ENABLED=0$' ops/lia-execution-v2/install-worker-netlink-v6.sh
+          grep -q '^LIA_CODEX_EXECUTION_ENABLED=0$' ops/lia-execution-v2/install-worker-netlink-v6.sh
+          grep -q '^LIA_BROKER_EXECUTION_ENABLED=0$' ops/lia-execution-v2/install-worker-netlink-v6.sh
