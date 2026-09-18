@@ -31,6 +31,8 @@ jobs:
           bash -n ops/lia-dev-workspace/approve-merge-gate.sh
           bash -n ops/lia-dev-workspace/approve-merge-gate-generic.sh
           bash -n ops/lia-dev-workspace/install-generic-merge-gate-v1.sh
+          bash -n ops/lia-dev-workspace/sync-main-generic.sh
+          bash -n ops/lia-dev-workspace/install-generic-sync-main-v1.sh
           bash -n ops/lia-dev-workspace/sync-after-pr207.sh
           bash -n ops/lia-dev-workspace/lia-task-run.sh
           bash -n ops/lia-dev-workspace/install-generic-runner-v1.sh
@@ -213,3 +215,13 @@ jobs:
           grep -q 'productionDeployApproved:false' ops/lia-dev-workspace/approve-merge-gate-generic.sh
           grep -q 'Compara PR x commit local por tree SHA: ATIVO' ops/lia-dev-workspace/install-generic-merge-gate-v1.sh
           grep -q 'Chamadas OpenAI realizadas nesta instalacao: ZERO' ops/lia-dev-workspace/install-generic-merge-gate-v1.sh
+      - name: Generic post-merge sync v1 guards
+        run: |
+          grep -q 'Uso: lia-sync-main <pr-number> <merge-commit-sha>' ops/lia-dev-workspace/sync-main-generic.sh
+          grep -q 'approved_for_merge_only' ops/lia-dev-workspace/sync-main-generic.sh
+          grep -q 'origin/main' ops/lia-dev-workspace/sync-main-generic.sh
+          grep -q 'reset --hard "$MERGE_COMMIT"' ops/lia-dev-workspace/sync-main-generic.sh
+          grep -q '.baseCommit=$base' ops/lia-dev-workspace/sync-main-generic.sh
+          grep -q 'Git push: BLOQUEADO' ops/lia-dev-workspace/sync-main-generic.sh
+          grep -q 'Valida merge approval antes de sincronizar: ATIVO' ops/lia-dev-workspace/install-generic-sync-main-v1.sh
+          grep -q 'Chamadas OpenAI realizadas nesta instalacao: ZERO' ops/lia-dev-workspace/install-generic-sync-main-v1.sh
