@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "id": "exemplo-tarefa-app",
+  "workspace": "vitrinecity-dev",
+  "baseCommit": "cd48fc7acdab17a5751d9543fa8746b31fbcf091",
+  "profile": "dev",
+  "budgetUsd": 0.05,
+  "instruction": "Descreva aqui a alteracao pequena e objetiva que a LIA deve fazer.",
+  "allowedFiles": [
+    "app/caminho/arquivo.js"
+  ],
+  "tests": [
+    {
+      "name": "syntax",
+      "command": [
+        "node",
+        "--check",
+        "app/caminho/arquivo.js"
+      ]
+    }
+  ],
+  "commitMessage": "test: descreva a alteracao"
+}
