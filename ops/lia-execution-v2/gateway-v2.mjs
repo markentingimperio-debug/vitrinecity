@@ -110,7 +110,7 @@ const server=http.createServer(async(req,res)=>{
   try{
     const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
     if(req.method==='GET'&&url.pathname==='/health'){
-      return send(res,200,{ok:true,service:'lia-dev-gateway',version:'2026-09-18-v3-budget',executionEnabled:EXECUTION_ENABLED,profiles:profileNames(),bind:HOST});
+      return send(res,200,{ok:true,service:'lia-dev-gateway',version:'2026-09-18-v4-stream',executionEnabled:EXECUTION_ENABLED,profiles:profileNames(),bind:HOST});
     }
     if(!authorized(req))return send(res,401,{error:'unauthorized'});
     if(req.method==='GET'&&url.pathname==='/v1/models'){
@@ -161,7 +161,16 @@ const server=http.createServer(async(req,res)=>{
         const effectiveSpentMicro=Number.isFinite(brokerSpentMicro)&&brokerSpentMicro>=0?brokerSpentMicro:workerActualMicro;
         task.spentUsd=Number((effectiveSpentMicro/1e6).toFixed(6));
         task.reservedUsd=Number(((Number.isFinite(brokerReservedMicro)&&brokerReservedMicro>=0?brokerReservedMicro:effectiveSpentMicro)/1e6).toFixed(6));
-        if(!worker.ok){task.status='failed';task.error=`worker_${worker.status}:${String(worker.data?.error||'failed').slice(0,160)}`;task.updatedAt=isoNow();task.note='Falha do worker; custo/reserva reconciliados com o broker; nenhuma repetição automática.';await persist();return send(res,502,{error:'worker_failed',task:publicTask(task)});}
+        if(!worker.ok){
+          const workerError=String(worker.data?.error||'failed').slice(0,120);
+          const workerDetail=String(worker.data?.detail||'').replace(/[\r\n\t]+/g,' ').slice(0,360);
+          task.status='failed';
+          task.error=`worker_${worker.status}:${workerError}${workerDetail?`: ${workerDetail}`:''}`;
+          task.updatedAt=isoNow();
+          task.note='Falha do worker; detalhe sanitizado e custo/reserva reconciliados com o broker; nenhuma repetição automática.';
+          await persist();
+          return send(res,502,{error:'worker_failed',detail:workerDetail||null,task:publicTask(task)});
+        }
         task.status='completed';task.completedAt=isoNow();task.updatedAt=task.completedAt;task.result={finalResponse:String(worker.data?.finalResponse||'').slice(0,12000),usage:worker.data?.usage||null,git:worker.data?.git||null,model:profile.model,profile:profile.name};task.note='Concluída no workspace isolado; nenhuma publicação em produção foi feita.';await persist();
         return send(res,200,{task:publicTask(task)});
       }
@@ -170,4 +179,4 @@ const server=http.createServer(async(req,res)=>{
   }catch(error){return send(res,error?.status||500,{error:error?.status?error.message:'internal_error'});}
 });
 server.requestTimeout=430000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
-server.listen(PORT,HOST,()=>console.log(JSON.stringify({event:'lia_dev_gateway_started',version:'v3-budget',host:HOST,port:PORT,executionEnabled:EXECUTION_ENABLED,profiles:profileNames()})));
+server.listen(PORT,HOST,()=>console.log(JSON.stringify({event:'lia_dev_gateway_started',version:'v4-stream',host:HOST,port:PORT,executionEnabled:EXECUTION_ENABLED,profiles:profileNames()})));
