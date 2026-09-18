@@ -90,6 +90,64 @@ export function mountNeuralWorkspace(environment = globalThis) {
     } catch (error) { if (epoch !== state.epoch) throw failure('stale'); if (error?.name === 'AbortError') throw failure('timeout'); throw error; }
     finally { clearTimeout(timeout); requests.delete(controller); }
   }
+  async function operationJson(path, method = 'POST', body, headers = {}, timeoutMs = 30000) {
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch('/api/neural/chat/operations' + path, {
+        method, credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+        headers: { ...(body instanceof Blob ? {} : {'content-type':'application/json'}), ...headers },
+        ...(body === undefined ? {} : {body: body instanceof Blob ? body : JSON.stringify(body)})
+      });
+      let data = {}; try { data = await response.json(); } catch {}
+      if (!response.ok) throw failure(({400:'invalid',401:'unauthorized',402:'quota',403:'forbidden',404:'notFound',409:'conflict',413:'attachment_size',422:'invalid',429:'quota',503:'disabled'})[response.status] || 'unavailable', response.status);
+      if (!data || data.ok !== true) throw failure('invalidResponse');
+      return data;
+    } catch (error) { if (error?.name === 'AbortError') throw failure('timeout'); throw error; }
+    finally { clearTimeout(timeout); }
+  }
+  async function operationUpload(attachment) {
+    const response = await fetch('/api/neural/chat/operations/upload', {
+      method:'POST', credentials:'same-origin', cache:'no-store',
+      headers:{'content-type':attachment.mimeType}, body:attachment.file
+    });
+    let data={};try{data=await response.json();}catch{}
+    if(!response.ok||!data?.upload?.id)throw failure(response.status===413?'attachment_size':'unavailable',response.status);
+    return data.upload.id;
+  }
+  function operationArtifacts(text) {
+    const artifacts=[];const cleanText=String(text||'').replace(/\n?\[\[LIA_ARTIFACT\|([a-f0-9-]{36})\|([^|\]]+)\|([^|\]]+)\]\]/gi,(_all,operation,pathValue,nameValue)=>{
+      try{artifacts.push({operation,path:decodeURIComponent(pathValue),name:decodeURIComponent(nameValue)});}catch{}
+      return '';
+    }).trim();
+    return {text:cleanText,artifacts};
+  }
+  async function tryOperationalCommand(message) {
+    if (!personal) return false;
+    const media = state.attachments.find(item => item.kind === 'operation-media') || state.attachments.find(item => item.kind === 'image');
+    const quoted = await operationJson('/quote','POST',{instruction:message,mimeType:media?.mimeType||''});
+    const quote = quoted.item;
+    if (!quote?.supported) {
+      if (state.attachments.some(item => item.kind === 'operation-media')) throw failure('invalid');
+      return false;
+    }
+    if (quote.needsUpload && !media) throw failure('invalid');
+    const price = String(quote.priceCoins || '—');
+    if (!window.confirm(`A LIA pode executar esta tarefa por até ${price} Vitrine Coins. Confirmar e executar?`)) return true;
+    let uploadId='';
+    if (quote.needsUpload) uploadId=await operationUpload(media);
+    const result=await operationJson('/run','POST',{
+      instruction:message,
+      ...(state.selected?{conversationId:state.selected}:{}),
+      idempotencyKey:crypto.randomUUID(),
+      confirmCharge:true,
+      ...(uploadId?{uploadId}:{})
+    },{'x-lia-operations-request':'1'},16*60*1000);
+    $('command').value='';clearAttachments();resizeComposer();
+    await selectConversation(result.conversationId);
+    await loadCoinWallet();renderStatus();
+    announce('Tarefa operacional concluída pela LIA.');
+    return true;
+  }
   const canSend = () => !!state.status?.enabled && (!storeReference || !!state.token) && !state.loading && !state.busy && !state.historyUnverified && !state.status?.queue?.requiresReview && !state.activeRequest && !state.uncertain;
   function controls() {
     $('send').disabled = !canSend() || !$('command').value.trim();
