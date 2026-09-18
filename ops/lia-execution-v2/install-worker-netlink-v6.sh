@@ -4,7 +4,7 @@ umask 077
 
 [ "$(id -u)" -eq 0 ] || { echo 'PARADO: execute como root.' >&2; exit 1; }
 
-for cmd in systemctl grep install cp sudo sed; do
+for cmd in systemctl systemd-run grep install cp sudo sed python3 curl; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "PARADO: comando ausente: $cmd" >&2; exit 1; }
 done
 
@@ -71,34 +71,15 @@ printf '%s' "$HEALTH" | grep -q '"executionEnabled":false'   || { echo 'PARADO: 
 AF="$(systemctl show "$SERVICE" -p RestrictAddressFamilies --value)"
 printf '%s' "$AF" | grep -qw 'AF_NETLINK'   || { echo "PARADO: AF_NETLINK nao ficou ativo no Worker: $AF" >&2; exit 1; }
 
-# Probe sem API paga: roda uma operacao NETLINK_ROUTE com as mesmas familias permitidas.
-PROBE_JS="$(mktemp /tmp/lia-netlink-probe.XXXXXX.js)"
-trap 'rm -f "$PROBE_JS"' RETURN
-cat >"$PROBE_JS" <<'NODE'
-const { spawnSync } = require('node:child_process');
-const candidates=['/usr/bin/bwrap','/bin/bwrap'];
-const fs=require('node:fs');
-const bwrap=candidates.find(p=>fs.existsSync(p));
-if(!bwrap){ console.log('BWRAP_NOT_IN_STANDARD_PATH'); process.exit(0); }
-const r=spawnSync(bwrap,['--unshare-net','--ro-bind','/','/','--proc','/proc','--dev','/dev','/bin/true'],{encoding:'utf8'});
-if(r.status!==0){
-  process.stderr.write((r.stderr||r.stdout||'bwrap probe failed').slice(0,2000));
-  process.exit(r.status||1);
-}
-console.log('BWRAP_NETLINK_PROBE_OK');
-NODE
-
-NODE_BIN="$(sudo -u lia -H bash -c 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24 >/dev/null; command -v node')"
-[ -x "$NODE_BIN" ] || { echo 'PARADO: Node da LIA nao encontrado.' >&2; exit 1; }
-
+# Probe sem API paga: abre exatamente um socket NETLINK_ROUTE sob restricoes equivalentes.
+PYTHON_BIN="$(command -v python3)"
 set +e
-PROBE_OUT="$(systemd-run --quiet --wait --collect --pipe   -p User=lia   -p Group=lia   -p NoNewPrivileges=yes   -p PrivateTmp=yes   -p PrivateDevices=yes   -p ProtectSystem=strict   -p ProtectHome=read-only   -p RestrictSUIDSGID=yes   -p LockPersonality=yes   -p 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK'   -p "ReadOnlyPaths=$PROBE_JS"   "$NODE_BIN" "$PROBE_JS" 2>&1)"
+PROBE_OUT="$(systemd-run --quiet --wait --collect --pipe   -p User=lia   -p Group=lia   -p NoNewPrivileges=yes   -p PrivateTmp=yes   -p PrivateDevices=yes   -p ProtectSystem=strict   -p ProtectHome=read-only   -p RestrictSUIDSGID=yes   -p LockPersonality=yes   -p 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK'   "$PYTHON_BIN" -c 'import socket; s=socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, socket.NETLINK_ROUTE); s.close(); print("NETLINK_ROUTE_SOCKET_OK")' 2>&1)"
 PROBE_RC=$?
 set -e
-rm -f "$PROBE_JS"
 
-if [ "$PROBE_RC" -ne 0 ]; then
-  echo 'PARADO: probe local do sandbox falhou:' >&2
+if [ "$PROBE_RC" -ne 0 ] || ! printf '%s' "$PROBE_OUT" | grep -q 'NETLINK_ROUTE_SOCKET_OK'; then
+  echo 'PARADO: probe local NETLINK_ROUTE falhou:' >&2
   printf '%s\n' "$PROBE_OUT" >&2
   exit 1
 fi
