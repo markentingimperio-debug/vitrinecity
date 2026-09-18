@@ -30,6 +30,8 @@ jobs:
           bash -n ops/lia-dev-workspace/approve-review-pack.sh
           bash -n ops/lia-dev-workspace/approve-merge-gate.sh
           bash -n ops/lia-dev-workspace/sync-after-pr207.sh
+          bash -n ops/lia-dev-workspace/lia-task-run.sh
+          bash -n ops/lia-dev-workspace/install-generic-runner-v1.sh
 
       - name: Workspace safety guards
         run: |
@@ -149,3 +151,17 @@ jobs:
           grep -q 'networkFromCodexSandbox==false' ops/lia-dev-workspace/sync-after-pr207.sh
           grep -q 'Git push: BLOQUEADO' ops/lia-dev-workspace/sync-after-pr207.sh
           grep -q 'Chamadas OpenAI realizadas: ZERO' ops/lia-dev-workspace/sync-after-pr207.sh
+      - name: Generic runner v1 guards
+        run: |
+          grep -q "MAX_BUDGET_USD='0.10'" ops/lia-dev-workspace/lia-task-run.sh
+          grep -q "profile==\"dev\"" ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'PrivateNetwork=yes' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'blocked://lia-no-push' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'gitPush:false' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'productionDeploy:false' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'humanApprovalRequired:true' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'Aprovacao humana para PR: PENDENTE' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'testStatus=="passed"' ops/lia-dev-workspace/approve-review-pack.sh
+          grep -q "EXPECTED_BASE='cd48fc7acdab17a5751d9543fa8746b31fbcf091'" ops/lia-dev-workspace/install-generic-runner-v1.sh
+          grep -q 'Chamadas OpenAI realizadas nesta instalacao: ZERO' ops/lia-dev-workspace/install-generic-runner-v1.sh
+          jq -e '.schema==1 and .profile=="dev" and .workspace=="vitrinecity-dev"' ops/lia-dev-workspace/generic-task-example.json >/dev/null
