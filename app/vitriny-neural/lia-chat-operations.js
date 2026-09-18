@@ -133,11 +133,11 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
       const amountMicro=plan.kind==='browser'?browserMicro:mediaMicro,maximumAtoms=atomsFromMicroBRL(String(amountMicro)),quoteId=randomUUID();
       opId=randomUUID();const requestHash=createHash('sha256').update(JSON.stringify({opId,instruction,kind:plan.kind,maximumAtoms,quoteId,uploadId:uploadId||null})).digest('hex');
       cid=requestedConversation||randomUUID();
-      if(!requestedConversation)db.prepare('INSERT INTO neural_chat_conversations(id,scope,title,created_at,updated_at) VALUES(?,?,?,?,?)').run(cid,`user:${req.user.id}`,instruction.slice(0,90),Date.now(),Date.now());
       db.prepare(`INSERT INTO lia_chat_operations(id,user_id,conversation_id,idempotency_key,instruction_hash,kind,quote_id,amount_micro,maximum_atoms,request_hash,status,created_at,updated_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,'created',?,?)`).run(opId,req.user.id,cid,key,hash,plan.kind,quoteId,amountMicro,maximumAtoms,requestHash,Date.now(),Date.now());
-      appendMessages(req.user.id,cid,instruction,opId,'Tarefa operacional confirmada. Executando com a LIA…','completed');
       coinWallet.reserve(req.user.id,{requestId:opId,maximumAtoms,quoteId,requestHash,service:'lia_operations'});
+      if(!requestedConversation)db.prepare('INSERT INTO neural_chat_conversations(id,scope,title,created_at,updated_at) VALUES(?,?,?,?,?)').run(cid,`user:${req.user.id}`,instruction.slice(0,90),Date.now(),Date.now());
+      appendMessages(req.user.id,cid,instruction,opId,'Tarefa operacional confirmada. Executando com a LIA…','completed');
       db.prepare("UPDATE lia_chat_operations SET status='reserved',updated_at=? WHERE id=?").run(Date.now(),opId);
       const remoteResult=await remote('/v1/operations/tasks',{method:'POST',body:{instruction,actor:`user:${req.user.id}`,artifactPath:upload?.artifact_path||''},timeout:15*60*1000});
       const item=remoteResult.item||{},artifacts=Array.isArray(item.artifacts)?item.artifacts:[];
@@ -153,11 +153,17 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
       return res.status(201).json({ok:true,conversationId:cid,operationId:opId,balance:coinWallet.status(req.user.id)});
     }catch(error){
       if(opId){
-        try{coinWallet.release(req.user.id,opId,{reason:'operation_not_completed',noConsumptionConfirmed:true});}catch{}
-        try{updateAssistant(cid,opId,'A tarefa operacional não foi concluída. A reserva foi liberada quando não houve consumo confirmado.','failed');}catch{}
-        db.prepare("UPDATE lia_chat_operations SET status='failed',error=?,updated_at=? WHERE id=?").run(String(error?.message||'operation_failed').slice(0,300),Date.now(),opId);
+        const op=db.prepare('SELECT status FROM lia_chat_operations WHERE id=? AND user_id=?').get(opId,req.user.id);
+        if(op?.status==='created'){
+          db.prepare('DELETE FROM lia_chat_operations WHERE id=? AND user_id=?').run(opId,req.user.id);
+        }else if(op){
+          try{coinWallet.release(req.user.id,opId,{reason:'operation_not_completed',noConsumptionConfirmed:true});}catch{}
+          try{updateAssistant(cid,opId,'A tarefa operacional não foi concluída. A reserva foi liberada quando não houve consumo confirmado.','failed');}catch{}
+          db.prepare("UPDATE lia_chat_operations SET status='failed',error=?,updated_at=? WHERE id=?").run(String(error?.message||'operation_failed').slice(0,300),Date.now(),opId);
+        }
       }
-      return res.status(error?.status||502).json({ok:false,error:'A LIA não conseguiu concluir esta operação.'});
+      const status=error?.status||502;
+      return res.status(status).json({ok:false,error:status===402?'Saldo de Vitrine Coins insuficiente para esta tarefa.':'A LIA não conseguiu concluir esta operação.'});
     }
   });
   app.get(BASE+'/artifact',requireUser,async(req,res)=>{
