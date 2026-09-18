@@ -37,6 +37,7 @@ jobs:
           bash -n ops/lia-execution-v2/install-stream-v4.sh
           bash -n ops/lia-execution-v2/install-budget-v5.sh
           bash -n ops/lia-execution-v2/install-worker-netlink-v6.sh
+          bash -n ops/lia-execution-v2/install-worker-toolchain-v7.sh
       - name: Policy checks
         run: |
           node --input-type=module <<'NODE'
@@ -142,3 +143,13 @@ jobs:
           grep -q 'LIA_GATEWAY_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-worker-netlink-v6.sh
           grep -q 'LIA_CODEX_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-worker-netlink-v6.sh
           grep -q 'LIA_BROKER_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-worker-netlink-v6.sh
+      - name: Worker toolchain v7 guard checks
+        run: |
+          grep -q 'Node 24 no PATH do Worker: SIM' ops/lia-execution-v2/install-worker-toolchain-v7.sh
+          grep -q 'command -v node' ops/lia-execution-v2/install-worker-toolchain-v7.sh
+          grep -q 'v24\\.' ops/lia-execution-v2/install-worker-toolchain-v7.sh
+          grep -q 'Codex networkAccessEnabled: continua FALSE' ops/lia-execution-v2/install-worker-toolchain-v7.sh
+          grep -q 'Chamadas OpenAI realizadas: ZERO' ops/lia-execution-v2/install-worker-toolchain-v7.sh
+          grep -q 'LIA_GATEWAY_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-worker-toolchain-v7.sh
+          grep -q 'LIA_CODEX_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-worker-toolchain-v7.sh
+          grep -q 'LIA_BROKER_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-worker-toolchain-v7.sh
