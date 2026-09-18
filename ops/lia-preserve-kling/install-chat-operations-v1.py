@@ -129,7 +129,7 @@ import path from 'node:path';
 const db=new DB(path.join(process.env.DATA_DIR||'/data','vitrinecity.db'),{readonly:true,fileMustExist:true});
 const has=t=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
 let active=0;
-if(has('neural_chat_requests')) active+=db.prepare("SELECT COUNT(*) n FROM neural_chat_requests WHERE status IN ('awaiting_confirmation','queued','running','interrupted')").get().n;
+if(has('neural_chat_requests')) active+=db.prepare("SELECT COUNT(*) n FROM neural_chat_requests WHERE status IN ('awaiting_confirmation','queued','running')").get().n;
 if(has('neural_paid_chat_requests')) active+=db.prepare("SELECT COUNT(*) n FROM neural_paid_chat_requests WHERE state IN ('reserved','dispatched','held') OR phase NOT IN ('finished','quoted')").get().n;
 console.log(String(active));
 db.close();
