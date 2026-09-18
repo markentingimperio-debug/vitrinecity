@@ -29,6 +29,8 @@ jobs:
           bash -n ops/lia-dev-workspace/prepare-review-pack.sh
           bash -n ops/lia-dev-workspace/approve-review-pack.sh
           bash -n ops/lia-dev-workspace/approve-merge-gate.sh
+          bash -n ops/lia-dev-workspace/approve-merge-gate-generic.sh
+          bash -n ops/lia-dev-workspace/install-generic-merge-gate-v1.sh
           bash -n ops/lia-dev-workspace/sync-after-pr207.sh
           bash -n ops/lia-dev-workspace/lia-task-run.sh
           bash -n ops/lia-dev-workspace/install-generic-runner-v1.sh
@@ -199,3 +201,15 @@ jobs:
           grep -q 'MODIFIED_AFTER_TEST.*sudo -u lia -H git -C' ops/lia-dev-workspace/lia-task-run.sh
           grep -q 'Deteccao Git: executada como usuario lia' ops/lia-dev-workspace/upgrade-generic-runner-v1-3.sh
           grep -q 'Chamadas OpenAI realizadas nesta atualizacao: ZERO' ops/lia-dev-workspace/upgrade-generic-runner-v1-3.sh
+      - name: Generic merge gate v1 guards
+        run: |
+          grep -q 'Uso: lia-merge-approve <pr-number> <local-commit> APROVAR_MERGE' ops/lia-dev-workspace/approve-merge-gate-generic.sh
+          grep -q 'refs/pull/$PR/head' ops/lia-dev-workspace/approve-merge-gate-generic.sh
+          grep -q 'LOCAL_TREE' ops/lia-dev-workspace/approve-merge-gate-generic.sh
+          grep -q 'REMOTE_TREE' ops/lia-dev-workspace/approve-merge-gate-generic.sh
+          grep -q 'Security audit' ops/lia-dev-workspace/approve-merge-gate-generic.sh
+          grep -q 'Verify release' ops/lia-dev-workspace/approve-merge-gate-generic.sh
+          grep -q '"approved_for_merge_only"' ops/lia-dev-workspace/approve-merge-gate-generic.sh
+          grep -q 'productionDeployApproved:false' ops/lia-dev-workspace/approve-merge-gate-generic.sh
+          grep -q 'Compara PR x commit local por tree SHA: ATIVO' ops/lia-dev-workspace/install-generic-merge-gate-v1.sh
+          grep -q 'Chamadas OpenAI realizadas nesta instalacao: ZERO' ops/lia-dev-workspace/install-generic-merge-gate-v1.sh
