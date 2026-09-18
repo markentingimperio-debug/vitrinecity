@@ -88,7 +88,7 @@ export function setupLiaCustomerOperations({app,db,requireUser,sameOriginOnly,ex
   });
   const refundCredits=db.transaction((userId,operationId,reason)=>{
     const op=db.prepare('SELECT * FROM lia_customer_operations WHERE id=? AND user_id=?').get(operationId,userId);
-    if(!op||op.status==='refunded'||Number(op.charge_units)<=0)return false;
+    if(!op||!['reserved','executing'].includes(op.status)||Number(op.charge_units)<=0)return false;
     const allocations=db.prepare('SELECT batch_id,units FROM lia_operation_credit_allocations WHERE operation_id=?').all(operationId);
     for(const a of allocations)db.prepare("UPDATE credit_batches SET remaining_units=remaining_units+?,status='active',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(a.units,a.batch_id);
     const current=Number(db.prepare('SELECT balance_units FROM wallets WHERE user_id=?').get(userId)?.balance_units||0),after=current+Number(op.charge_units);
@@ -147,6 +147,7 @@ export function setupLiaCustomerOperations({app,db,requireUser,sameOriginOnly,ex
       db.prepare(`INSERT INTO lia_customer_operations(id,user_id,idempotency_key,instruction_hash,kind,charge_units,status)
         VALUES (?,?,?,?,?,?,'created')`).run(operationId,req.user.id,key,hash,q.kind,q.priceUnits);
       if(q.priceUnits>0)reserveCredits(req.user.id,operationId,q.priceUnits);
+      db.prepare("UPDATE lia_customer_operations SET status='executing',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='reserved'").run(operationId);
       const remoteResult=await remote('/v1/operations/tasks',{method:'POST',body:{instruction,actor:`user:${req.user.id}`,artifactPath},timeout:15*60*1000});
       const item=remoteResult.item;
       db.prepare(`UPDATE lia_customer_operations SET status='completed',remote_task_id=?,result_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
