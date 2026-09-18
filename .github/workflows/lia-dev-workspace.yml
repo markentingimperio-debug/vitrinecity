@@ -29,6 +29,7 @@ jobs:
           bash -n ops/lia-dev-workspace/prepare-review-pack.sh
           bash -n ops/lia-dev-workspace/approve-review-pack.sh
           bash -n ops/lia-dev-workspace/approve-merge-gate.sh
+          bash -n ops/lia-dev-workspace/sync-after-pr207.sh
 
       - name: Workspace safety guards
         run: |
@@ -136,3 +137,15 @@ jobs:
           grep -q 'productionDeployApproved:false' ops/lia-dev-workspace/approve-merge-gate.sh
           grep -q 'Worker Git push: continua BLOQUEADO' ops/lia-dev-workspace/approve-merge-gate.sh
           grep -q 'Chamadas OpenAI realizadas: ZERO' ops/lia-dev-workspace/approve-merge-gate.sh
+      - name: Post-merge workspace sync guards
+        run: |
+          grep -q "OLD_LOCAL_HEAD='310e107cbc98da5a48f7df68ce5312867072244d'" ops/lia-dev-workspace/sync-after-pr207.sh
+          grep -q "NEW_MAIN='cd48fc7acdab17a5751d9543fa8746b31fbcf091'" ops/lia-dev-workspace/sync-after-pr207.sh
+          grep -q "EXPECTED_FILE='app/scripts/test-web-story-cta.mjs'" ops/lia-dev-workspace/sync-after-pr207.sh
+          grep -q 'fetch --prune origin main' ops/lia-dev-workspace/sync-after-pr207.sh
+          grep -q 'reset --hard "$NEW_MAIN"' ops/lia-dev-workspace/sync-after-pr207.sh
+          grep -q 'gitPush==false' ops/lia-dev-workspace/sync-after-pr207.sh
+          grep -q 'productionDeploy==false' ops/lia-dev-workspace/sync-after-pr207.sh
+          grep -q 'networkFromCodexSandbox==false' ops/lia-dev-workspace/sync-after-pr207.sh
+          grep -q 'Git push: BLOQUEADO' ops/lia-dev-workspace/sync-after-pr207.sh
+          grep -q 'Chamadas OpenAI realizadas: ZERO' ops/lia-dev-workspace/sync-after-pr207.sh
