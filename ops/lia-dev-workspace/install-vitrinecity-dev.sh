@@ -50,20 +50,19 @@ trap cleanup_on_error EXIT
 echo 'Clonando a copia de desenvolvimento da Vitrine City...'
 sudo -u lia -H git clone --no-tags --single-branch --branch main "$REPO_URL" "$WORKSPACE" >/dev/null 2>&1
 
-cd "$WORKSPACE"
-git cat-file -e "${BASE_COMMIT}^{commit}" || { echo 'PARADO: commit base nao existe no clone.' >&2; exit 1; }
+sudo -u lia -H git -C "$WORKSPACE" cat-file -e "${BASE_COMMIT}^{commit}" || { echo 'PARADO: commit base nao existe no clone.' >&2; exit 1; }
 
 # Branch local fixa no commit validado.
-sudo -u lia -H git checkout -q -B "$LOCAL_BRANCH" "$BASE_COMMIT"
+sudo -u lia -H git -C "$WORKSPACE" checkout -q -B "$LOCAL_BRANCH" "$BASE_COMMIT"
 
 # Identidade local. Nenhum token, deploy ou credencial externa.
-sudo -u lia -H git config user.name 'LIA Dev Worker'
-sudo -u lia -H git config user.email 'lia-worker@localhost'
-sudo -u lia -H git config fetch.prune true
-sudo -u lia -H git config gc.auto 0
+sudo -u lia -H git -C "$WORKSPACE" config user.name 'LIA Dev Worker'
+sudo -u lia -H git -C "$WORKSPACE" config user.email 'lia-worker@localhost'
+sudo -u lia -H git -C "$WORKSPACE" config fetch.prune true
+sudo -u lia -H git -C "$WORKSPACE" config gc.auto 0
 
 # Bloqueio explícito de push.
-sudo -u lia -H git remote set-url --push origin 'blocked://lia-no-push'
+sudo -u lia -H git -C "$WORKSPACE" remote set-url --push origin 'blocked://lia-no-push'
 
 cat > "$WORKSPACE/.git/hooks/pre-push" <<'HOOK'
 #!/usr/bin/env bash
@@ -98,11 +97,11 @@ chown root:root "$POLICY_FILE"
 chmod 0644 "$POLICY_FILE"
 
 # Validações finais sem IA paga.
-HEAD="$(sudo -u lia -H git rev-parse HEAD)"
-BRANCH="$(sudo -u lia -H git branch --show-current)"
-STATUS="$(sudo -u lia -H git status --porcelain --untracked-files=all)"
-FETCH_URL="$(sudo -u lia -H git remote get-url origin)"
-PUSH_URL="$(sudo -u lia -H git remote get-url --push origin)"
+HEAD="$(sudo -u lia -H git -C "$WORKSPACE" rev-parse HEAD)"
+BRANCH="$(sudo -u lia -H git -C "$WORKSPACE" branch --show-current)"
+STATUS="$(sudo -u lia -H git -C "$WORKSPACE" status --porcelain --untracked-files=all)"
+FETCH_URL="$(sudo -u lia -H git -C "$WORKSPACE" remote get-url origin)"
+PUSH_URL="$(sudo -u lia -H git -C "$WORKSPACE" remote get-url --push origin)"
 
 [ "$HEAD" = "$BASE_COMMIT" ] || { echo "PARADO: HEAD inesperado: $HEAD" >&2; exit 1; }
 [ "$BRANCH" = "$LOCAL_BRANCH" ] || { echo "PARADO: branch inesperada: $BRANCH" >&2; exit 1; }
@@ -111,7 +110,7 @@ PUSH_URL="$(sudo -u lia -H git remote get-url --push origin)"
 [ "$PUSH_URL" = 'blocked://lia-no-push' ] || { echo 'PARADO: push nao ficou bloqueado.' >&2; exit 1; }
 
 set +e
-sudo -u lia -H git push --dry-run origin "$LOCAL_BRANCH" >/tmp/lia-push-test.out 2>/tmp/lia-push-test.err
+sudo -u lia -H git -C "$WORKSPACE" push --dry-run origin "$LOCAL_BRANCH" >/tmp/lia-push-test.out 2>/tmp/lia-push-test.err
 PUSH_RC=$?
 set -e
 rm -f /tmp/lia-push-test.out /tmp/lia-push-test.err
@@ -133,4 +132,4 @@ echo 'Codex sandbox network: continua DESATIVADA'
 echo 'Chamadas OpenAI realizadas nesta instalacao: ZERO'
 echo
 echo 'Status:'
-sudo -u lia -H git status --short --branch
+sudo -u lia -H git -C "$WORKSPACE" status --short --branch
