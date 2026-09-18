@@ -34,8 +34,22 @@ install -d -o lia -g lia -m 0750 "$WORKSPACE_ROOT"
 install -d -o root -g root -m 0755 "$POLICY_DIR"
 
 if [ -e "$WORKSPACE" ]; then
-  echo "PARADO: $WORKSPACE ja existe. Nao vou sobrescrever um workspace existente." >&2
-  exit 1
+  # Recupera somente o clone parcial produzido pela versao anterior deste instalador.
+  if [ -d "$WORKSPACE/.git" ] && [ ! -e "$POLICY_FILE" ]; then
+    EXISTING_FETCH="$(sudo -u lia -H git -C "$WORKSPACE" remote get-url origin 2>/dev/null || true)"
+    EXISTING_HEAD="$(sudo -u lia -H git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || true)"
+    EXISTING_STATUS="$(sudo -u lia -H git -C "$WORKSPACE" status --porcelain --untracked-files=all 2>/dev/null || printf 'unsafe')"
+    if [ "$EXISTING_FETCH" = "$REPO_URL" ] && [ "$EXISTING_HEAD" = "$BASE_COMMIT" ] && [ -z "$EXISTING_STATUS" ]; then
+      echo 'Clone parcial limpo da tentativa anterior detectado; removendo para recriar com as protecoes corretas.'
+      rm -rf -- "$WORKSPACE"
+    else
+      echo "PARADO: $WORKSPACE ja existe e nao corresponde com seguranca ao clone parcial esperado." >&2
+      exit 1
+    fi
+  else
+    echo "PARADO: $WORKSPACE ja existe. Nao vou sobrescrever um workspace existente." >&2
+    exit 1
+  fi
 fi
 
 cleanup_on_error(){
