@@ -16,7 +16,7 @@ function clean(value,max=6000){
 function norm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();}
 function classifier(instruction,mime=''){
   const n=norm(instruction),hasUrl=/https:\/\/[^\s<>"']+/i.test(instruction);
-  const browser=hasUrl&&/\b(abra|abrir|acesse|acessar|navegue|navegar|visite|captura|screenshot|print|leia|verifique)\b/.test(n);
+  const browser=(hasUrl||/\bvitrine\s*city\b|\bvitrinecity\.com\b/.test(n))&&/\b(abra|abrir|acesse|acessar|navegue|navegar|visite|captura|screenshot|print|leia|verifique|veja)\b/.test(n);
   const editVerb=/\b(edite|editar|corte|cortar|recorte|recortar|redimensione|redimensionar|transforme|transformar|thumbnail|capa|normalize|normalizar|melhore|melhorar)\b/.test(n);
   const media=Boolean(mime)&&MEDIA_MIME.has(mime)&&editVerb;
   if(browser&&!media)return {kind:'browser',supported:true,needsUpload:false};
@@ -136,7 +136,7 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
       if(!requestedConversation)db.prepare('INSERT INTO neural_chat_conversations(id,scope,title,created_at,updated_at) VALUES(?,?,?,?,?)').run(cid,`user:${req.user.id}`,instruction.slice(0,90),Date.now(),Date.now());
       db.prepare(`INSERT INTO lia_chat_operations(id,user_id,conversation_id,idempotency_key,instruction_hash,kind,quote_id,amount_micro,maximum_atoms,request_hash,status,created_at,updated_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,'created',?,?)`).run(opId,req.user.id,cid,key,hash,plan.kind,quoteId,amountMicro,maximumAtoms,requestHash,Date.now(),Date.now());
-      appendMessages(req.user.id,cid,instruction,opId,'Tarefa operacional confirmada. Executando com a LIA…','running');
+      appendMessages(req.user.id,cid,instruction,opId,'Tarefa operacional confirmada. Executando com a LIA…','completed');
       coinWallet.reserve(req.user.id,{requestId:opId,maximumAtoms,quoteId,requestHash,service:'lia_operations'});
       db.prepare("UPDATE lia_chat_operations SET status='reserved',updated_at=? WHERE id=?").run(Date.now(),opId);
       const remoteResult=await remote('/v1/operations/tasks',{method:'POST',body:{instruction,actor:`user:${req.user.id}`,artifactPath:upload?.artifact_path||''},timeout:15*60*1000});
