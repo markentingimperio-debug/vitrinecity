@@ -52,7 +52,7 @@ const GUARD=`Você é o executor de programação da LIA em um workspace Git iso
 const server=http.createServer(async(req,res)=>{
   try{
     const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
-    if(req.method==='GET'&&url.pathname==='/health')return send(res,200,{ok:true,service:'lia-codex-worker',version:'2026-09-18-v3-diagnostics',sdkLoaded:true,executionEnabled:EXECUTION_ENABLED,brokerBaseUrl:BROKER_BASE_URL,bind:HOST,active});
+    if(req.method==='GET'&&url.pathname==='/health')return send(res,200,{ok:true,service:'lia-codex-worker',version:'2026-09-18-v4-policy',sdkLoaded:true,executionEnabled:EXECUTION_ENABLED,brokerBaseUrl:BROKER_BASE_URL,bind:HOST,active});
     if(!authorized(req))return send(res,401,{error:'unauthorized'});
     if(req.method==='GET'&&url.pathname==='/v1/capabilities')return send(res,200,{executionEnabled:EXECUTION_ENABLED,sandboxMode:'workspace-write',networkAccess:false,webSearch:false,productionDeploy:false,concurrency:1});
     if(req.method==='POST'&&url.pathname==='/v1/dry-run'){
@@ -91,4 +91,4 @@ const server=http.createServer(async(req,res)=>{
   }catch(error){return send(res,error?.status||500,{error:error?.status?error.message:'internal_error'});}
 });
 server.requestTimeout=RUN_TIMEOUT_MS+30000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
-server.listen(PORT,HOST,()=>console.log(JSON.stringify({event:'lia_codex_worker_started',version:'v3-diagnostics',host:HOST,port:PORT,executionEnabled:EXECUTION_ENABLED,brokerBaseUrl:BROKER_BASE_URL})));
+server.listen(PORT,HOST,()=>console.log(JSON.stringify({event:'lia_codex_worker_started',version:'v4-policy',host:HOST,port:PORT,executionEnabled:EXECUTION_ENABLED,brokerBaseUrl:BROKER_BASE_URL})));
