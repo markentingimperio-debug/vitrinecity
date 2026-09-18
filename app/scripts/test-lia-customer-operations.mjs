@@ -71,3 +71,17 @@ test('failed operation refunds the exact reserved coins',async()=>{
   ]);
   assert.equal(db.prepare('SELECT status FROM lia_customer_operations').get().status,'refunded');
 });
+
+
+test('failed reservation cannot mint coins when active batches are insufficient',async()=>{
+  const {db,run}=mount();
+  db.prepare('UPDATE credit_batches SET remaining_units=50 WHERE id=1').run();
+  const body={instruction:'Abra https://vitrinecity.com e tire uma captura',idempotencyKey:'task_browser_003',confirmCharge:true};
+  const res=response();await run(req(body),res);
+  assert.equal(res.code,402);
+  assert.equal(res.body.ok,false);
+  assert.equal(db.prepare('SELECT balance_units FROM wallets WHERE user_id=1').get().balance_units,1000);
+  assert.equal(db.prepare('SELECT remaining_units FROM credit_batches WHERE id=1').get().remaining_units,50);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM wallet_ledger').get().n,0);
+  assert.equal(db.prepare('SELECT status FROM lia_customer_operations').get().status,'created');
+});
