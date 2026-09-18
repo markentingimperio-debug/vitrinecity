@@ -5,7 +5,7 @@ export const MODEL_PROFILES = Object.freeze({
   }),
   dev: Object.freeze({
     model: 'gpt-5.4-mini', reasoning: 'medium', inputUsdPerMTok: 0.75, cachedInputUsdPerMTok: 0.075, outputUsdPerMTok: 4.50,
-    maxOutputTokens: 2048, premium: false,
+    maxOutputTokens: 4096, premium: false,
   }),
   codex: Object.freeze({
     model: 'gpt-5.3-codex', reasoning: 'medium', inputUsdPerMTok: 1.75, cachedInputUsdPerMTok: 0.175, outputUsdPerMTok: 14.00,
