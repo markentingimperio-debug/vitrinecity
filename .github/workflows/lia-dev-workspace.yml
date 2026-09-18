@@ -34,6 +34,7 @@ jobs:
           bash -n ops/lia-dev-workspace/install-generic-runner-v1.sh
           bash -n ops/lia-dev-workspace/upgrade-generic-runner-v1-1.sh
           bash -n ops/lia-dev-workspace/upgrade-generic-runner-v1-2.sh
+          bash -n ops/lia-dev-workspace/upgrade-generic-runner-v1-3.sh
 
       - name: Workspace safety guards
         run: |
@@ -191,3 +192,10 @@ jobs:
           grep -q 'Rollback automatico em falha: ATIVO' ops/lia-dev-workspace/upgrade-generic-runner-v1-2.sh
           grep -q 'Chamadas OpenAI realizadas nesta atualizacao: ZERO' ops/lia-dev-workspace/upgrade-generic-runner-v1-2.sh
           jq -e --argjson i 0 '((.tests[$i].name|type)=="string") and ((.tests[$i].command|type)=="array") and all(.tests[$i].command[]; (type=="string") and (length>0) and (test("[[:cntrl:]]")|not))' ops/lia-dev-workspace/generic-task-example.json >/dev/null
+      - name: Generic runner v1.3 guards
+        run: |
+          grep -q 'MODIFIED_FILES.*sudo -u lia -H git -C' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'UNTRACKED_FILES.*sudo -u lia -H git -C' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'MODIFIED_AFTER_TEST.*sudo -u lia -H git -C' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'Deteccao Git: executada como usuario lia' ops/lia-dev-workspace/upgrade-generic-runner-v1-3.sh
+          grep -q 'Chamadas OpenAI realizadas nesta atualizacao: ZERO' ops/lia-dev-workspace/upgrade-generic-runner-v1-3.sh
