@@ -33,6 +33,7 @@ jobs:
           bash -n ops/lia-execution-v2/install-broker-observe.sh
           bash -n ops/lia-execution-v2/diagnose-openai-upstream.sh
           bash -n ops/lia-execution-v2/install-budget-v3.sh
+          bash -n ops/lia-execution-v2/run-third-task.sh
       - name: Policy checks
         run: |
           node --input-type=module <<'NODE'
@@ -112,3 +113,13 @@ jobs:
           grep -q 'LIA_GATEWAY_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-budget-v3.sh
           grep -q 'LIA_CODEX_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-budget-v3.sh
           grep -q 'LIA_BROKER_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-budget-v3.sh
+      - name: Third paid pilot guard checks
+        run: |
+          grep -q '^BUDGET_USD=0.10$' ops/lia-execution-v2/run-third-task.sh
+          grep -q '^PROFILE=dev$' ops/lia-execution-v2/run-third-task.sh
+          grep -q '^WORKSPACE_NAME=lia-third-task$' ops/lia-execution-v2/run-third-task.sh
+          grep -q 'third-paid-pilot.attempted' ops/lia-execution-v2/run-third-task.sh
+          grep -q '2026-09-18-v3-budget' ops/lia-execution-v2/run-third-task.sh
+          grep -q 'disable_all' ops/lia-execution-v2/run-third-task.sh
+          grep -q 'Nenhum deploy de producao foi realizado' ops/lia-execution-v2/run-third-task.sh
+          ! grep -q 'premiumApproval' ops/lia-execution-v2/run-third-task.sh
