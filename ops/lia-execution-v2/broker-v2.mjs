@@ -143,7 +143,7 @@ function extractJsonUsage(text){
 }
 function createSseUsageParser(){
   const decoder=new TextDecoder();
-  let lineBuffer='',dataLines=[],usage=null;
+  let lineBuffer='',dataLines=[],usage=null,terminalType=null,terminalSummary=null,eventCount=0;
   function parseEvent(){
     if(!dataLines.length)return;
     const raw=dataLines.join('\n').trim();
@@ -151,9 +151,23 @@ function createSseUsageParser(){
     if(!raw||raw==='[DONE]')return;
     try{
       const event=JSON.parse(raw);
-      if(event?.type==='response.completed'){
+      eventCount+=1;
+      const type=String(event?.type||'');
+      if(type==='response.completed'){
+        terminalType=type;
         const parsed=normalizeUsage(event?.response?.usage);
         if(parsed)usage=parsed;
+      }else if(type==='response.failed'||type==='response.incomplete'){
+        terminalType=type;
+        const parsed=normalizeUsage(event?.response?.usage);
+        if(parsed)usage=parsed;
+        terminalSummary=safeErrorSummary(JSON.stringify({
+          error:event?.response?.error||null,
+          incomplete_details:event?.response?.incomplete_details||null
+        }));
+      }else if(type==='error'){
+        terminalType='error';
+        terminalSummary=safeErrorSummary(JSON.stringify(event?.error||event));
       }
     }catch{}
   }
@@ -176,7 +190,7 @@ function createSseUsageParser(){
       lineBuffer+=decoder.decode();
       if(lineBuffer){consumeLine(lineBuffer);lineBuffer='';}
       parseEvent();
-      return usage;
+      return{usage,terminalType,terminalSummary,eventCount};
     }
   };
 }
@@ -191,6 +205,7 @@ async function finalizeUsage(entry,reservation,usage,profile){
     if(actual>reservation)logEvent('lia_broker_reservation_underestimated',{taskId:entry.taskId,jti:entry.jti,reservationMicroUsd:reservation,actualMicroUsd:actual});
   }else{
     entry.uncertainMicroUsd+=reservation;
+    entry.lastActualMicroUsd=null;
     entry.lastUsage=null;
     logEvent('lia_broker_usage_missing',{taskId:entry.taskId,jti:entry.jti,reservationMicroUsd:reservation});
   }
@@ -239,9 +254,21 @@ async function relaySse({upstream,res,entry,reservation,lease,requestId}){
       parser.push(value);
       if(!res.destroyed)res.write(Buffer.from(value));
     }
-    const usage=parser.finish();
-    await finalizeUsage(entry,reservation,usage,lease.profile);
-    logEvent('lia_broker_upstream_ok',{taskId:lease.payload.taskId,jti:lease.payload.jti,status:upstream.status,requestId,transport:'sse_passthrough',bytes,actualMicroUsd:entry.lastActualMicroUsd??null,spentMicroUsd:entry.spentMicroUsd,uncertainMicroUsd:entry.uncertainMicroUsd,usage});
+    const parsed=parser.finish();
+    await finalizeUsage(entry,reservation,parsed.usage,lease.profile);
+    if(parsed.terminalType!=='response.completed'){
+      logEvent('lia_broker_upstream_terminal_event',{
+        taskId:lease.payload.taskId,jti:lease.payload.jti,status:upstream.status,requestId,
+        terminalType:parsed.terminalType||'stream_ended_without_terminal_event',
+        terminalSummary:parsed.terminalSummary||null,eventCount:parsed.eventCount
+      });
+    }
+    logEvent('lia_broker_upstream_ok',{
+      taskId:lease.payload.taskId,jti:lease.payload.jti,status:upstream.status,requestId,
+      transport:'sse_passthrough',bytes,eventCount:parsed.eventCount,terminalType:parsed.terminalType||null,
+      actualMicroUsd:entry.lastActualMicroUsd??null,spentMicroUsd:entry.spentMicroUsd,
+      uncertainMicroUsd:entry.uncertainMicroUsd,usage:parsed.usage
+    });
     if(!res.destroyed)res.end();
   }catch(error){
     await finalizeUncertain(entry,reservation);
