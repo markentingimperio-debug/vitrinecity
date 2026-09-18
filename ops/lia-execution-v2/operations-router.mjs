@@ -36,7 +36,7 @@ export function classifyOperationInstruction(instruction){
   if(browser&&media)kind='combined';
   else if(browser)kind='browser';
   else if(media)kind='media';
-  return {kind,url,supported:kind!=='unsupported',needsUpload:kind==='media',chargeClass:kind};
+  return {kind,url,supported:['browser','media'].includes(kind),needsUpload:kind==='media',chargeClass:kind};
 }
 
 function parseDimensions(text){
