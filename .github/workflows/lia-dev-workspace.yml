@@ -33,6 +33,7 @@ jobs:
           bash -n ops/lia-dev-workspace/lia-task-run.sh
           bash -n ops/lia-dev-workspace/install-generic-runner-v1.sh
           bash -n ops/lia-dev-workspace/upgrade-generic-runner-v1-1.sh
+          bash -n ops/lia-dev-workspace/upgrade-generic-runner-v1-2.sh
 
       - name: Workspace safety guards
         run: |
@@ -179,3 +180,14 @@ jobs:
           grep -q 'Modo --validate sem custo: ATIVO' ops/lia-dev-workspace/upgrade-generic-runner-v1-1.sh
           grep -q 'Rollback automatico em falha: ATIVO' ops/lia-dev-workspace/upgrade-generic-runner-v1-1.sh
           grep -q 'Chamadas OpenAI realizadas nesta atualizacao: ZERO' ops/lia-dev-workspace/upgrade-generic-runner-v1-1.sh
+      - name: Generic runner v1.2 guards
+        run: |
+          grep -q '\[\[:cntrl:\]\]' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'symlink nao permitido em allowedFiles' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'diretorio nao permitido em allowedFiles' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'ARGS\[0\]="\$NODE_DIR/node"' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'PrivateNetwork=yes' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'ProtectSystem=strict' ops/lia-dev-workspace/lia-task-run.sh
+          grep -q 'Rollback automatico em falha: ATIVO' ops/lia-dev-workspace/upgrade-generic-runner-v1-2.sh
+          grep -q 'Chamadas OpenAI realizadas nesta atualizacao: ZERO' ops/lia-dev-workspace/upgrade-generic-runner-v1-2.sh
+          jq -e --argjson i 0 '((.tests[$i].name|type)=="string") and ((.tests[$i].command|type)=="array") and all(.tests[$i].command[]; (type=="string") and (length>0) and (test("[[:cntrl:]]")|not))' ops/lia-dev-workspace/generic-task-example.json >/dev/null
