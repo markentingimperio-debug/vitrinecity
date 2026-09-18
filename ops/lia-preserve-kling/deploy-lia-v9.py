@@ -284,17 +284,25 @@ def verify_backup(directory, report):
     return {'directory':str(directory),'regularFilesVerified':len(files),'sqliteBackupHashVerified':True,
             'jointPointInTimeSnapshot':False,'offHostBackup':False}
 
-def obtain_token(info, token_file=None):
-    if token_file:
-        token=private_read(Path(token_file),8192).decode().strip()
-    else:
-        token=environment(info).get('LIA_OPERATIONS_TOKEN','')
-        if not token:
-            with open('/dev/tty','w') as tty:
-                token=getpass.getpass('Token EXISTENTE do Operations Gateway (entrada oculta): ',stream=tty).strip()
+def obtain_token(info):
+    # Only the current gateway credential or hidden terminal input is accepted.
+    # Arbitrary CLI file paths are not an input surface.
+    token=environment(info).get('LIA_OPERATIONS_TOKEN','')
+    if not token:
+        with open('/dev/tty','w') as tty:
+            token=getpass.getpass('Token EXISTENTE do Operations Gateway (entrada oculta): ',stream=tty).strip()
     need(re.fullmatch(r'[A-Za-z0-9._~+/=\-]{32,4096}',token or '') is not None,'TOKEN_OPERACIONAL_INVALIDO')
     need(token not in {v for k,v in environment(info).items() if re.search(r'(API_KEY|SECRET|PASSWORD)$',k)},'NAO_USE_CHAVE_DE_PROVEDOR_COMO_TOKEN')
     return token
+
+def release_by_id(identifier):
+    # The argument selects an existing enumerated release; it is never used as a path.
+    controlled(ROOT,private=True)
+    releases = {p.name:p for p in ROOT.iterdir()
+                if re.fullmatch(r'release-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}',p.name)
+                and not p.is_symlink() and p.is_dir()}
+    need(identifier in releases,'IDENTIFICADOR_DE_IMPLANTACAO_INVALIDO')
+    return releases[identifier]
 
 GATEWAY_JS = r'''import fs from 'node:fs';
 try {
@@ -524,8 +532,7 @@ def main():
     parser.add_argument('--revision',default='')
     parser.add_argument('--confirmar-troca',action='store_true')
     parser.add_argument('--ativar-workers',action='store_true')
-    parser.add_argument('--token-file')
-    parser.add_argument('--estado',help='Diretorio de uma implantacao para voltar; omitido usa a ultima.')
+    parser.add_argument('--estado',help='Identificador release-... existente; omitido usa a ultima implantacao.')
     args=parser.parse_args()
     need(os.geteuid()==0 and socket.gethostname().split('.')[0]==HOST,'EXECUTE_COMO_ROOT_NA_VPS_PRINCIPAL')
     os.umask(0o077)
@@ -548,7 +555,7 @@ def main():
     try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     except BlockingIOError:raise Blocked('OUTRA_IMPLANTACAO_EM_ANDAMENTO') from None
     if args.modo=='voltar':
-        ref=Path(args.estado) if args.estado else Path(load(ROOT/'latest.private.json')['directory'])
+        ref=release_by_id(args.estado) if args.estado else Path(load(ROOT/'latest.private.json')['directory'])
         need(ref.parent==ROOT,'ESTADO_FORA_DO_DIRETORIO_DE_IMPLANTACAO');controlled(ref,private=True)
         state=load(ref/'state.private.json');rollback_work(ref,state)
         state['phase']='ROLLED_BACK';atomic_json(ref/'state.private.json',state)
@@ -571,7 +578,7 @@ def main():
         latest=load(ROOT/'latest.private.json');need(info['Image']==latest.get('image'),'IMAGEM_DIFERENTE_DA_ULTIMA_IMPLANTACAO')
     need(consumers()==[info['Id']] and pending()==0,'HA_OPERACOES_OU_OUTROS_CONSUMIDORES')
     enabled=args.modo=='ativar-workers' or (args.modo=='implantar' and args.ativar_workers)
-    token=obtain_token(info,args.token_file) if enabled else None
+    token=obtain_token(info) if enabled else None
     gateway=gateway_probe(info['Id'],token) if enabled else {'gatewayAuthenticated':False,'workersRequested':False}
     backup_dir,backup_report=find_backup()
     print('Validando o backup existente; nenhuma nova copia de anexos e nenhuma parada.',flush=True)
@@ -593,7 +600,7 @@ def main():
            'revision':args.revision,'settings':settings,'gateway':gateway,'backup':backup,'tests':tests,
            'operationsEnabled':enabled,'endToEndTaskVerified':False,'databaseRestored':False}
     atomic_json(work/'state.private.json',state)
-    rollback_command=f'python3 {work}/deploy-lia-v9.py voltar --confirmar-troca --estado {work}'
+    rollback_command=f'python3 {work}/deploy-lia-v9.py voltar --confirmar-troca --estado {work.name}'
     write_new(work/'rollback.sh',('#!/bin/sh\nset -eu\nexec '+rollback_command+'\n').encode())
     print('Retorno de codigo, caso necessario: '+rollback_command,flush=True)
     try:
