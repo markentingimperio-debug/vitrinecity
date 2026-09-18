@@ -25,6 +25,7 @@ jobs:
           bash -n ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
           bash -n ops/lia-dev-workspace/run-first-vitrinecity-task-v5.sh
           bash -n ops/lia-dev-workspace/run-first-vitrinecity-task-v6.sh
+          bash -n ops/lia-dev-workspace/finalize-first-vitrinecity-commit.sh
 
       - name: Workspace safety guards
         run: |
@@ -96,3 +97,13 @@ jobs:
           grep -q "node --test app/scripts/test-web-story-cta.mjs" ops/lia-dev-workspace/run-first-vitrinecity-task-v6.sh
           grep -q "Git push: BLOQUEADO" ops/lia-dev-workspace/run-first-vitrinecity-task-v6.sh
           grep -q "Deploy de producao: BLOQUEADO" ops/lia-dev-workspace/run-first-vitrinecity-task-v6.sh
+      - name: First local commit finalizer guards
+        run: |
+          grep -q "ALLOWED_FILE='app/scripts/test-web-story-cta.mjs'" ops/lia-dev-workspace/finalize-first-vitrinecity-commit.sh
+          grep -q "COMMIT_MESSAGE='test: cover web story CTA mapping'" ops/lia-dev-workspace/finalize-first-vitrinecity-commit.sh
+          grep -q 'node --test app/scripts/test-web-story-cta.mjs' ops/lia-dev-workspace/finalize-first-vitrinecity-commit.sh
+          grep -q 'git -C "$WORKSPACE" add -- "$ALLOWED_FILE"' ops/lia-dev-workspace/finalize-first-vitrinecity-commit.sh
+          grep -q 'push --dry-run' ops/lia-dev-workspace/finalize-first-vitrinecity-commit.sh
+          grep -q 'Git push: BLOQUEADO' ops/lia-dev-workspace/finalize-first-vitrinecity-commit.sh
+          grep -q 'Deploy de producao: BLOQUEADO' ops/lia-dev-workspace/finalize-first-vitrinecity-commit.sh
+          grep -q 'Chamadas OpenAI realizadas: ZERO' ops/lia-dev-workspace/finalize-first-vitrinecity-commit.sh
