@@ -24,6 +24,7 @@ jobs:
           bash -n ops/lia-dev-workspace/run-first-vitrinecity-task.sh
           bash -n ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
           bash -n ops/lia-dev-workspace/run-first-vitrinecity-task-v5.sh
+          bash -n ops/lia-dev-workspace/run-first-vitrinecity-task-v6.sh
 
       - name: Workspace safety guards
         run: |
@@ -86,3 +87,12 @@ jobs:
           grep -q "node --test app/scripts/test-web-story-cta.mjs" ops/lia-dev-workspace/run-first-vitrinecity-task-v5.sh
           grep -q "Git push: BLOQUEADO" ops/lia-dev-workspace/run-first-vitrinecity-task-v5.sh
           grep -q "Deploy de producao: BLOQUEADO" ops/lia-dev-workspace/run-first-vitrinecity-task-v5.sh
+      - name: First real Vitrine City task v6 guards
+        run: |
+          grep -q "^BUDGET_USD=0.10$" ops/lia-dev-workspace/run-first-vitrinecity-task-v6.sh
+          grep -q "vitrinecity-first-real-task-v6.attempted" ops/lia-dev-workspace/run-first-vitrinecity-task-v6.sh
+          grep -q "AF_NETLINK" ops/lia-dev-workspace/run-first-vitrinecity-task-v6.sh
+          grep -q "ALLOWED_FILE='app/scripts/test-web-story-cta.mjs'" ops/lia-dev-workspace/run-first-vitrinecity-task-v6.sh
+          grep -q "node --test app/scripts/test-web-story-cta.mjs" ops/lia-dev-workspace/run-first-vitrinecity-task-v6.sh
+          grep -q "Git push: BLOQUEADO" ops/lia-dev-workspace/run-first-vitrinecity-task-v6.sh
+          grep -q "Deploy de producao: BLOQUEADO" ops/lia-dev-workspace/run-first-vitrinecity-task-v6.sh
