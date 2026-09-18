@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 const source=readFileSync(new URL('../public/sw.js',import.meta.url),'utf8');
-const ORIGIN='https://vitrinecity.test',CURRENT='vitrinecity-pwa-v8-share';
+const ORIGIN='https://vitrinecity.test',CURRENT='vitrinecity-pwa-v10-social';
 function fixture(){
   const handlers=new Map(),stores=new Map(),requests=[],removed=[];let offline=false;
   const key=value=>typeof value==='string'?new URL(value,ORIGIN).href:value.url;
@@ -30,7 +30,7 @@ test('site PWA installs the exact sharing module, stylesheet and route dependenc
 });
 test('upgrade replaces only old website cache and does not touch Cultiva or personal caches',async()=>{
   const f=fixture();for(const name of ['vitrinecity-pwa-v7',CURRENT,'vitrinecity-games-v2-share','customer-data'])await f.caches.open(name);
-  await f.lifecycle('activate');assert.deepEqual(f.removed,['vitrinecity-pwa-v7']);assert.ok(f.stores.has('vitrinecity-games-v2-share'));assert.ok(f.stores.has('customer-data'));
+  await f.lifecycle('activate');assert.deepEqual(f.removed,['vitrinecity-pwa-v7','vitrinecity-pwa-v8-share']);assert.ok(f.stores.has('vitrinecity-games-v2-share'));assert.ok(f.stores.has('customer-data'));
 });
 test('sharing cache does not add API or private navigation persistence or intercept writes',async()=>{
   const f=fixture();await f.lifecycle('install');const before=f.stores.get(CURRENT).size;
