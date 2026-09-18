@@ -17,8 +17,13 @@ function norm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/
 function classifier(instruction,mime=''){
   const n=norm(instruction),hasUrl=/https:\/\/[^\s<>"']+/i.test(instruction);
   const browser=(hasUrl||/\bvitrine\s*city\b|\bvitrinecity\.com\b/.test(n))&&/\b(abra|abrir|acesse|acessar|navegue|navegar|visite|captura|screenshot|print|leia|verifique|veja)\b/.test(n);
-  const editVerb=/\b(edite|editar|corte|cortar|recorte|recortar|redimensione|redimensionar|transforme|transformar|thumbnail|capa|normalize|normalizar|melhore|melhorar)\b/.test(n);
-  const media=Boolean(mime)&&MEDIA_MIME.has(mime)&&editVerb;
+  const isVideo=/^video\//.test(mime),isAudio=/^audio\//.test(mime),isImage=/^image\//.test(mime);
+  const dimensions=/\b\d{2,4}\s*[x×]\s*\d{2,4}\b/.test(n);
+  const clip=isVideo&&/\b(corte|cortar|recorte|recortar)\b/.test(n);
+  const thumbnail=isVideo&&/\b(thumbnail|capa)\b/.test(n);
+  const resize=(isVideo||isImage)&&(/\b(redimensione|redimensionar)\b/.test(n)||dimensions||isVideo&&/\bvertical\b|\b9\s*:\s*16\b/.test(n));
+  const normalize=(isVideo||isAudio)&&/\b(normalize|normalizar)\b/.test(n);
+  const media=Boolean(mime)&&MEDIA_MIME.has(mime)&&(clip||thumbnail||resize||normalize);
   if(browser&&!media)return {kind:'browser',supported:true,needsUpload:false};
   if(media&&!browser)return {kind:'media',supported:true,needsUpload:true};
   return {kind:'unsupported',supported:false,needsUpload:false};
@@ -100,7 +105,7 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
   app.post(BASE+'/quote',...mutation,(req,res)=>{
     try{
       const instruction=clean(req.body?.instruction),mime=String(req.body?.mimeType||'').toLowerCase(),plan=classifier(instruction,mime);
-      if(!plan.supported)return res.json({ok:true,item:{...plan}});
+      if(!configured||!plan.supported)return res.json({ok:true,item:{...plan,supported:false}});
       return res.json({ok:true,item:{...plan,...publicQuote(plan.kind,plan.kind==='browser'?browserMicro:mediaMicro)}});
     }catch(error){return res.status(error?.status||400).json({ok:false,error:'Pedido operacional inválido.'});}
   });
