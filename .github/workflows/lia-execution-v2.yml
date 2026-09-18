@@ -30,6 +30,8 @@ jobs:
           bash -n ops/lia-execution-v2/enable-pilot.sh
           bash -n ops/lia-execution-v2/run-first-task.sh
           bash -n ops/lia-execution-v2/run-second-task.sh
+          bash -n ops/lia-execution-v2/install-broker-observe.sh
+          bash -n ops/lia-execution-v2/diagnose-openai-upstream.sh
       - name: Policy checks
         run: |
           node --input-type=module <<'NODE'
@@ -83,3 +85,15 @@ jobs:
           grep -q 'LIA_CODEX_EXECUTION_ENABLED=0' ops/lia-execution-v2/run-second-task.sh
           grep -q 'LIA_BROKER_EXECUTION_ENABLED=0' ops/lia-execution-v2/run-second-task.sh
           grep -q 'Nenhum deploy de producao foi realizado' ops/lia-execution-v2/run-second-task.sh
+      - name: Direct upstream diagnostic guard checks
+        run: |
+          grep -q '^BUDGET_MICRO_USD=20000$' ops/lia-execution-v2/diagnose-openai-upstream.sh
+          grep -q 'Gateway: BLOQUEADO' ops/lia-execution-v2/diagnose-openai-upstream.sh
+          grep -q 'Worker: BLOQUEADO' ops/lia-execution-v2/diagnose-openai-upstream.sh
+          grep -q 'Reply only with OK' ops/lia-execution-v2/diagnose-openai-upstream.sh
+          grep -q 'max_output_tokens:16' ops/lia-execution-v2/diagnose-openai-upstream.sh
+          grep -q 'disable_broker' ops/lia-execution-v2/diagnose-openai-upstream.sh
+          grep -q 'LIA_GATEWAY_EXECUTION_ENABLED=0' ops/lia-execution-v2/diagnose-openai-upstream.sh
+          grep -q 'LIA_CODEX_EXECUTION_ENABLED=0' ops/lia-execution-v2/diagnose-openai-upstream.sh
+          ! grep -q 'LIA_GATEWAY_EXECUTION_ENABLED=1' ops/lia-execution-v2/diagnose-openai-upstream.sh
+          ! grep -q 'LIA_CODEX_EXECUTION_ENABLED=1' ops/lia-execution-v2/diagnose-openai-upstream.sh
