@@ -34,6 +34,7 @@ grep -q '^LIA_CODEX_EXECUTION_ENABLED=0$' "$WENV" || { echo 'PARADO: worker nao 
 grep -q '^LIA_BROKER_EXECUTION_ENABLED=0$' "$BENV" || { echo 'PARADO: broker nao esta bloqueado.' >&2; exit 1; }
 grep -q '^LIA_BROKER_MAX_REQUESTS_PER_LEASE=20$' "$BENV" || { echo 'PARADO: Broker nao esta com 20 turnos.' >&2; exit 1; }
 grep -q '^LIA_BROKER_BUDGET_SAFETY_RATIO=0.90
+
 jq -e   --arg base "$BASE_COMMIT"   --arg branch "$LOCAL_BRANCH"   '.workspace=="vitrinecity-dev"
    and .baseCommit==$base
    and .localBranch==$branch
@@ -53,13 +54,13 @@ PUSH_URL="$(sudo -u lia -H git -C "$WORKSPACE" remote get-url --push origin)"
 [ "$PUSH_URL" = 'blocked://lia-no-push' ] || { echo 'PARADO: push nao esta bloqueado.' >&2; exit 1; }
 [ ! -e "$WORKSPACE/$ALLOWED_FILE" ] || { echo "PARADO: $ALLOWED_FILE ja existe." >&2; exit 1; }
 
-curl -fsS http://127.0.0.1:8787/health   | jq -e '.version=="2026-09-18-v5-budget" and .executionEnabled==false' >/dev/null   || { echo 'PARADO: Gateway V6 nao confirmado.' >&2; exit 1; }
+curl -fsS http://127.0.0.1:8787/health   | jq -e '.version=="2026-09-18-v5-budget" and .executionEnabled==false' >/dev/null   || { echo 'PARADO: Gateway V5 nao confirmado.' >&2; exit 1; }
 
 curl -fsS http://127.0.0.1:8791/health   | jq -e '.version=="2026-09-18-v5-adaptive-budget"
            and .adaptiveBudgetReservation==true
            and .budgetSafetyRatio==0.9
            and .ssePassthrough==true
-           and .executionEnabled==false' >/dev/null   || { echo 'PARADO: Broker V6 nao confirmado.' >&2; exit 1; }
+           and .executionEnabled==false' >/dev/null   || { echo 'PARADO: Broker V5 nao confirmado.' >&2; exit 1; }
 
 curl -fsS http://127.0.0.1:8790/health   | jq -e '.version=="2026-09-18-v4-policy" and .sdkLoaded==true and .executionEnabled==false' >/dev/null   || { echo 'PARADO: Worker V4 policy nao confirmado.' >&2; exit 1; }
 
@@ -122,7 +123,7 @@ wait_enabled http://127.0.0.1:8787/health gateway
 printf 'started_at=%s\nworkspace=vitrinecity-dev\nprofile=%s\nbudget_usd=%s\nallowed_file=%s\n'   "$START_TS" "$PROFILE" "$BUDGET_USD" "$ALLOWED_FILE" >"$MARKER"
 chmod 0600 "$MARKER"
 
-INSTRUCTION='Use o shell local somente dentro do workspace atual. Primeiro leia app/web-story-cta.js. Depois crie somente app/scripts/test-web-story-cta.mjs usando node:test e node:assert/strict. Nao altere nenhum arquivo existente. Teste: product e affiliate -> Ver oferta; store -> Visitar loja; course -> Ver curso; service -> Ver serviço; city -> Explorar cidade; sourceKind como fallback; recipe, group recipes, group receitas, portal receitas e category receitas -> Ver modo de preparo; fonte desconhecida e objeto vazio -> Ler matéria completa. Rode exatamente node --test app/scripts/test-web-story-cta.mjs uma vez. Se o teste passar, finalize. Nao use rede, npm install, git add, commit, push ou deploy. Resposta final em no maximo 3 linhas.'
+INSTRUCTION='Use o shell local somente dentro do workspace atual. Leia app/web-story-cta.js e crie somente app/scripts/test-web-story-cta.mjs usando node:test e node:assert/strict. Nao altere arquivos existentes. Teste: product e affiliate -> Ver oferta; store -> Visitar loja; course -> Ver curso; service -> Ver serviço; city -> Explorar cidade; sourceKind como fallback; recipe, group recipes, group receitas, portal receitas e category receitas -> Ver modo de preparo; fonte desconhecida e objeto vazio -> Ler matéria completa. Rode exatamente node --test app/scripts/test-web-story-cta.mjs uma vez. Se passar, finalize. Nao use rede, npm install, git add, commit, push ou deploy. Resposta final em no maximo 3 linhas.'
 
 CREATE_JSON="$(jq -nc   --arg instruction "$INSTRUCTION"   --arg profile "$PROFILE"   --argjson budget "$BUDGET_USD"   '{instruction:$instruction,profile:$profile,requestedBudgetUsd:$budget}')"
 
@@ -200,7 +201,7 @@ echo 'Teste local independente: PASSOU'
 echo 'Git push: BLOQUEADO'
 echo 'Deploy de producao: BLOQUEADO'
 echo 'Gateway/Worker/Broker: BLOQUEADOS'
- "$BENV" || { echo 'PARADO: margem de budget V6 ausente.' >&2; exit 1; }
+ "$BENV" || { echo 'PARADO: margem de budget V5 ausente.' >&2; exit 1; }
 
 AF="$(systemctl show lia-codex-worker.service -p RestrictAddressFamilies --value)"
 printf '%s' "$AF" | grep -qw 'AF_NETLINK'   || { echo "PARADO: Worker ainda nao possui AF_NETLINK: $AF" >&2; exit 1; }
@@ -224,13 +225,13 @@ PUSH_URL="$(sudo -u lia -H git -C "$WORKSPACE" remote get-url --push origin)"
 [ "$PUSH_URL" = 'blocked://lia-no-push' ] || { echo 'PARADO: push nao esta bloqueado.' >&2; exit 1; }
 [ ! -e "$WORKSPACE/$ALLOWED_FILE" ] || { echo "PARADO: $ALLOWED_FILE ja existe." >&2; exit 1; }
 
-curl -fsS http://127.0.0.1:8787/health   | jq -e '.version=="2026-09-18-v5-budget" and .executionEnabled==false' >/dev/null   || { echo 'PARADO: Gateway V6 nao confirmado.' >&2; exit 1; }
+curl -fsS http://127.0.0.1:8787/health   | jq -e '.version=="2026-09-18-v5-budget" and .executionEnabled==false' >/dev/null   || { echo 'PARADO: Gateway V5 nao confirmado.' >&2; exit 1; }
 
 curl -fsS http://127.0.0.1:8791/health   | jq -e '.version=="2026-09-18-v5-adaptive-budget"
            and .adaptiveBudgetReservation==true
            and .budgetSafetyRatio==0.9
            and .ssePassthrough==true
-           and .executionEnabled==false' >/dev/null   || { echo 'PARADO: Broker V6 nao confirmado.' >&2; exit 1; }
+           and .executionEnabled==false' >/dev/null   || { echo 'PARADO: Broker V5 nao confirmado.' >&2; exit 1; }
 
 curl -fsS http://127.0.0.1:8790/health   | jq -e '.version=="2026-09-18-v4-policy" and .sdkLoaded==true and .executionEnabled==false' >/dev/null   || { echo 'PARADO: Worker V4 policy nao confirmado.' >&2; exit 1; }
 
