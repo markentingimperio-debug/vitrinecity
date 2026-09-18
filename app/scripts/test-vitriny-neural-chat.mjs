@@ -117,6 +117,29 @@ test('conversation persists, continuation uses only scoped server history and re
   }finally{f.db.close();}
 });
 
+test('completed conversation can be deleted while request audit remains and orphan attachment is removed',async()=>{
+  const f=fixture();try{
+    const attachment=upload(f.chat,'delete-me.txt','Conteúdo temporário.');
+    const item=request(f.chat,'Resuma este documento.','request-delete-chat-001',{attachmentIds:[attachment.id]});await f.chat.wait(item.requestId);
+    assert.equal(f.chat.request('admin:1',item.requestId).status,'completed');
+    const deleted=f.chat.deleteConversation('admin:1',item.conversationId);
+    assert.deepEqual(deleted,{id:item.conversationId,deleted:true});
+    assert.deepEqual(f.chat.list('admin:1'),[]);
+    assert.throws(()=>f.chat.conversation('admin:1',item.conversationId),{code:'chat_not_found'});
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM neural_chat_messages WHERE conversation_id=?').get(item.conversationId).n,0);
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM neural_chat_attachments WHERE id=?').get(attachment.id).n,0);
+    assert.equal(f.chat.requestByKey('admin:1','request-delete-chat-001').requestId,item.requestId,'request audit/idempotency remains');
+  }finally{f.chat.close();f.db.close();}
+});
+
+test('conversation with an active request cannot be deleted',async()=>{
+  const f=stagedFixture();try{
+    const item=request(f.chat,'Escreva um texto.','request-delete-chat-active');
+    assert.throws(()=>f.chat.deleteConversation('admin:1',item.conversationId),{code:'chat_delete_blocked'});
+    f.chat.cancel('admin:1',item.requestId);
+  }finally{f.chat.close();f.db.close();}
+});
+
 test('idempotency includes attachment identity and recovers without replay',async()=>{
   const f=fixture();try{
     const first=upload(f.chat),second=upload(f.chat,'outra.txt','Outro conteúdo.');
