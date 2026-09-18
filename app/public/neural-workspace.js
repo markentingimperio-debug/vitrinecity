@@ -131,7 +131,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
       return false;
     }
     if (quote.needsUpload && !media) throw failure('invalid');
-    const price = String(quote.priceCoins || '—');
+    const numericPrice=Number(quote.priceCoins),price=Number.isFinite(numericPrice)?numericPrice.toLocaleString('pt-BR',{maximumFractionDigits:2}):String(quote.priceCoins||'—');
     if (!window.confirm(`A LIA pode executar esta tarefa por até ${price} Vitrine Coins. Confirmar e executar?`)) return true;
     let uploadId='';
     if (quote.needsUpload) uploadId=await operationUpload(media);
