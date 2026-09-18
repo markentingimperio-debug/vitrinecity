@@ -14,7 +14,8 @@ const DATA_DIR=path.resolve(process.env.LIA_BROKER_DATA_DIR||'/var/lib/lia-opena
 const LEDGER_FILE=path.join(DATA_DIR,'lease-ledger.json');
 const MAX_BODY_BYTES=4*1024*1024;
 const MAX_RESPONSE_BYTES=16*1024*1024;
-const MAX_REQUESTS_PER_LEASE=Math.max(1,Math.min(30,Number(process.env.LIA_BROKER_MAX_REQUESTS_PER_LEASE||12)));
+const MAX_REQUESTS_PER_LEASE=Math.max(1,Math.min(30,Number(process.env.LIA_BROKER_MAX_REQUESTS_PER_LEASE||20)));
+const BUDGET_SAFETY_RATIO=Math.max(0.50,Math.min(0.95,Number(process.env.LIA_BROKER_BUDGET_SAFETY_RATIO||0.90)));
 const UPSTREAM='https://api.openai.com/v1/responses';
 
 if(!Number.isInteger(PORT)||PORT<1||PORT>65535)throw new Error('invalid_port');
@@ -84,11 +85,30 @@ function publicLease(entry){
     budgetMicroUsd:entry.budgetMicroUsd,spentMicroUsd:entry.spentMicroUsd,
     uncertainMicroUsd:entry.uncertainMicroUsd,inFlightMicroUsd:entry.inFlightMicroUsd,
     reservedMicroUsd:totalCommitted(entry),requests:entry.requests,
+    lastBodyBytes:Number(entry.lastBodyBytes||0),lastInputTokens:Number(entry.lastInputTokens||0),
     expiresAt:entry.expiresAt,lastRequestAt:entry.lastRequestAt||null
   };
 }
-function regularInputReserveMicroUsd(bytes,profile){return Math.ceil(Math.max(1,Number(bytes||0))*profile.inputUsdPerMTok);}
+function regularInputReserveMicroUsd(tokens,profile){return Math.ceil(Math.max(1,Number(tokens||0))*profile.inputUsdPerMTok);}
 function outputReserveMicroUsd(tokens,profile){return Math.ceil(Math.max(0,Number(tokens||0))*profile.outputUsdPerMTok);}
+function hasRichInput(body){
+  const raw=JSON.stringify(body);
+  return /"type"\s*:\s*"(?:input_image|input_file|input_audio)"/.test(raw)
+    || /"image_url"\s*:/.test(raw)
+    || /"file_id"\s*:/.test(raw);
+}
+function estimateInputTokenReserve(bodyBytes,entry,body){
+  const bytes=Math.max(1,Number(bodyBytes||0));
+  const previousBytes=Math.max(0,Number(entry.lastBodyBytes||0));
+  const previousTokens=Math.max(0,Number(entry.lastInputTokens||0));
+  if(hasRichInput(body)||previousBytes<1||previousTokens<1){
+    return{tokens:bytes,mode:hasRichInput(body)?'worst_case_rich_input':'worst_case_first_request'};
+  }
+  const scale=bytes/previousBytes;
+  const observedWithMargin=Math.ceil(previousTokens*scale*1.75+512);
+  const textFloor=Math.ceil(bytes/3)+512;
+  return{tokens:Math.min(bytes,Math.max(observedWithMargin,textFloor)),mode:'adaptive_text_observed_175pct'};
+}
 
 async function reserveForRequest(lease,body){
   const {profile,budgetMicroUsd}=lease;
@@ -100,31 +120,41 @@ async function reserveForRequest(lease,body){
   const desiredMax=Number.isFinite(requested)&&requested>0?Math.min(Math.floor(requested),profile.maxOutputTokens):profile.maxOutputTokens;
   body.max_output_tokens=desiredMax;
 
+  const safetyCeilingMicroUsd=Math.floor(budgetMicroUsd*BUDGET_SAFETY_RATIO);
   let outgoing=JSON.stringify(body);
-  let inputReserve=regularInputReserveMicroUsd(Buffer.byteLength(outgoing),profile);
-  let remaining=budgetMicroUsd-entry.spentMicroUsd-entry.uncertainMicroUsd;
+  let bodyBytes=Buffer.byteLength(outgoing);
+  let inputEstimate=estimateInputTokenReserve(bodyBytes,entry,body);
+  let inputReserve=regularInputReserveMicroUsd(inputEstimate.tokens,profile);
+  let remaining=safetyCeilingMicroUsd-entry.spentMicroUsd-entry.uncertainMicroUsd;
   let affordable=Math.floor((remaining-inputReserve)/profile.outputUsdPerMTok);
   if(!Number.isFinite(affordable)||affordable<1)throw Object.assign(new Error('lease_budget_exhausted'),{status:402});
 
   body.max_output_tokens=Math.max(1,Math.min(desiredMax,affordable));
   outgoing=JSON.stringify(body);
-  inputReserve=regularInputReserveMicroUsd(Buffer.byteLength(outgoing),profile);
-  remaining=budgetMicroUsd-entry.spentMicroUsd-entry.uncertainMicroUsd;
+  bodyBytes=Buffer.byteLength(outgoing);
+  inputEstimate=estimateInputTokenReserve(bodyBytes,entry,body);
+  inputReserve=regularInputReserveMicroUsd(inputEstimate.tokens,profile);
+  remaining=safetyCeilingMicroUsd-entry.spentMicroUsd-entry.uncertainMicroUsd;
   affordable=Math.floor((remaining-inputReserve)/profile.outputUsdPerMTok);
   if(!Number.isFinite(affordable)||affordable<1)throw Object.assign(new Error('lease_budget_exhausted'),{status:402});
   if(body.max_output_tokens>affordable){
     body.max_output_tokens=affordable;
     outgoing=JSON.stringify(body);
-    inputReserve=regularInputReserveMicroUsd(Buffer.byteLength(outgoing),profile);
+    bodyBytes=Buffer.byteLength(outgoing);
+    inputEstimate=estimateInputTokenReserve(bodyBytes,entry,body);
+    inputReserve=regularInputReserveMicroUsd(inputEstimate.tokens,profile);
   }
 
   const reservation=inputReserve+outputReserveMicroUsd(body.max_output_tokens,profile);
-  if(entry.spentMicroUsd+entry.uncertainMicroUsd+reservation>budgetMicroUsd)throw Object.assign(new Error('lease_budget_exhausted'),{status:402});
+  if(entry.spentMicroUsd+entry.uncertainMicroUsd+reservation>safetyCeilingMicroUsd)throw Object.assign(new Error('lease_budget_exhausted'),{status:402});
   entry.inFlightMicroUsd=reservation;
+  entry.pendingBodyBytes=bodyBytes;
+  entry.pendingInputTokenReserve=inputEstimate.tokens;
+  entry.pendingReservationMode=inputEstimate.mode;
   entry.requests+=1;
   entry.lastRequestAt=new Date().toISOString();
   await persist();
-  return{entry,reservation,outgoing};
+  return{entry,reservation,outgoing,bodyBytes,inputTokenReserve:inputEstimate.tokens,reservationMode:inputEstimate.mode,safetyCeilingMicroUsd};
 }
 
 function normalizeUsage(usage){
@@ -195,6 +225,11 @@ function createSseUsageParser(){
   };
 }
 
+function clearPendingReservation(entry){
+  entry.pendingBodyBytes=0;
+  entry.pendingInputTokenReserve=0;
+  entry.pendingReservationMode=null;
+}
 async function finalizeUsage(entry,reservation,usage,profile){
   entry.inFlightMicroUsd=0;
   if(usage){
@@ -202,6 +237,12 @@ async function finalizeUsage(entry,reservation,usage,profile){
     entry.spentMicroUsd+=actual;
     entry.lastActualMicroUsd=actual;
     entry.lastUsage=usage;
+    entry.lastBodyBytes=Math.max(1,Number(entry.pendingBodyBytes||entry.lastBodyBytes||0));
+    entry.lastInputTokens=Math.max(1,Number(usage.input_tokens||entry.lastInputTokens||0));
+    const reservedInputTokens=Math.max(0,Number(entry.pendingInputTokenReserve||0));
+    if(reservedInputTokens>0&&usage.input_tokens>reservedInputTokens){
+      logEvent('lia_broker_input_estimate_under',{taskId:entry.taskId,jti:entry.jti,reservedInputTokens,actualInputTokens:usage.input_tokens,reservationMode:entry.pendingReservationMode||null});
+    }
     if(actual>reservation)logEvent('lia_broker_reservation_underestimated',{taskId:entry.taskId,jti:entry.jti,reservationMicroUsd:reservation,actualMicroUsd:actual});
   }else{
     entry.uncertainMicroUsd+=reservation;
@@ -209,10 +250,11 @@ async function finalizeUsage(entry,reservation,usage,profile){
     entry.lastUsage=null;
     logEvent('lia_broker_usage_missing',{taskId:entry.taskId,jti:entry.jti,reservationMicroUsd:reservation});
   }
+  clearPendingReservation(entry);
   await persist();
 }
-async function finalizeDefiniteError(entry){entry.inFlightMicroUsd=0;await persist();}
-async function finalizeUncertain(entry,reservation){entry.inFlightMicroUsd=0;entry.uncertainMicroUsd+=reservation;await persist();}
+async function finalizeDefiniteError(entry){entry.inFlightMicroUsd=0;clearPendingReservation(entry);await persist();}
+async function finalizeUncertain(entry,reservation){entry.inFlightMicroUsd=0;entry.uncertainMicroUsd+=reservation;clearPendingReservation(entry);await persist();}
 
 function copySafeHeaders(res,source){
   const exact=new Set(['content-type','openai-request-id','x-request-id','openai-model','x-openai-model','x-codex-turn-state','x-reasoning-included','x-models-etag','retry-after']);
@@ -280,10 +322,10 @@ async function relaySse({upstream,res,entry,reservation,lease,requestId}){
 const server=http.createServer(async(req,res)=>{
   try{
     const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
-    if(req.method==='GET'&&url.pathname==='/health')return send(res,200,{ok:true,service:'lia-openai-broker',version:'2026-09-18-v4-stream',keyConfigured:true,executionEnabled:EXECUTION_ENABLED,leaseEnforced:true,actualUsageAccounting:true,ssePassthrough:true,bind:HOST});
+    if(req.method==='GET'&&url.pathname==='/health')return send(res,200,{ok:true,service:'lia-openai-broker',version:'2026-09-18-v5-adaptive-budget',keyConfigured:true,executionEnabled:EXECUTION_ENABLED,leaseEnforced:true,actualUsageAccounting:true,ssePassthrough:true,adaptiveBudgetReservation:true,budgetSafetyRatio:BUDGET_SAFETY_RATIO,bind:HOST});
     if(req.method==='GET'&&url.pathname==='/v1/status'){
       if(!adminAuthorized(req))return send(res,401,{error:'unauthorized'});
-      return send(res,200,{keyConfigured:true,executionEnabled:EXECUTION_ENABLED,realKeyExposed:false,leaseEnforced:true,actualUsageAccounting:true,ssePassthrough:true,ledgerEntries:Object.keys(ledger).length});
+      return send(res,200,{keyConfigured:true,executionEnabled:EXECUTION_ENABLED,realKeyExposed:false,leaseEnforced:true,actualUsageAccounting:true,ssePassthrough:true,adaptiveBudgetReservation:true,budgetSafetyRatio:BUDGET_SAFETY_RATIO,ledgerEntries:Object.keys(ledger).length});
     }
     const leaseStatus=url.pathname.match(/^\/v1\/leases\/([0-9a-f-]+)$/i);
     if(req.method==='GET'&&leaseStatus){
@@ -303,8 +345,8 @@ const server=http.createServer(async(req,res)=>{
       body.model=lease.profile.model;
       body.reasoning={...(body.reasoning&&typeof body.reasoning==='object'?body.reasoning:{}),effort:lease.profile.reasoning};
 
-      const {entry,reservation,outgoing}=await reserveForRequest(lease,body);
-      logEvent('lia_broker_upstream_start',{taskId:lease.payload.taskId,jti:lease.payload.jti,profile:lease.profile.name,model:lease.profile.model,requestNumber:entry.requests,reservationMicroUsd:reservation,spentMicroUsd:entry.spentMicroUsd,uncertainMicroUsd:entry.uncertainMicroUsd,maxOutputTokens:body.max_output_tokens});
+      const {entry,reservation,outgoing,bodyBytes,inputTokenReserve,reservationMode,safetyCeilingMicroUsd}=await reserveForRequest(lease,body);
+      logEvent('lia_broker_upstream_start',{taskId:lease.payload.taskId,jti:lease.payload.jti,profile:lease.profile.name,model:lease.profile.model,requestNumber:entry.requests,reservationMicroUsd:reservation,inputTokenReserve,reservationMode,bodyBytes,safetyCeilingMicroUsd,spentMicroUsd:entry.spentMicroUsd,uncertainMicroUsd:entry.uncertainMicroUsd,maxOutputTokens:body.max_output_tokens});
 
       let upstream;
       try{
@@ -374,4 +416,4 @@ const server=http.createServer(async(req,res)=>{
 server.requestTimeout=260000;
 server.headersTimeout=10000;
 server.keepAliveTimeout=5000;
-server.listen(PORT,HOST,()=>logEvent('lia_openai_broker_started',{version:'v4-stream',host:HOST,port:PORT,keyConfigured:true,executionEnabled:EXECUTION_ENABLED,leaseEnforced:true,actualUsageAccounting:true,ssePassthrough:true}));
+server.listen(PORT,HOST,()=>logEvent('lia_openai_broker_started',{version:'v5-adaptive-budget',host:HOST,port:PORT,keyConfigured:true,executionEnabled:EXECUTION_ENABLED,leaseEnforced:true,actualUsageAccounting:true,ssePassthrough:true,adaptiveBudgetReservation:true,budgetSafetyRatio:BUDGET_SAFETY_RATIO}));
