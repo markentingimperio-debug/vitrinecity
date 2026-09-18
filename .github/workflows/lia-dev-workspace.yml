@@ -22,6 +22,7 @@ jobs:
         run: |
           bash -n ops/lia-dev-workspace/install-vitrinecity-dev.sh
           bash -n ops/lia-dev-workspace/run-first-vitrinecity-task.sh
+          bash -n ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
 
       - name: Workspace safety guards
         run: |
@@ -53,3 +54,18 @@ jobs:
           grep -q "LIA_BROKER_EXECUTION_ENABLED=0" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
           grep -q "disable_all" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
           ! grep -q "git push origin" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
+      - name: First real Vitrine City task v4 guards
+        run: |
+          grep -q "^BUDGET_USD=0.10$" ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
+          grep -q "^PROFILE='dev'$" ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
+          grep -q "vitrinecity-first-real-task-v4.attempted" ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
+          grep -q "ALLOWED_FILE='app/scripts/test-web-story-cta.mjs'" ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
+          grep -q "2026-09-18-v4-stream" ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
+          grep -q "2026-09-18-v3-diagnostics" ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
+          grep -q "ssePassthrough==true" ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
+          grep -q "DIAGNOSTICO AUTOMATICO BROKER" ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
+          grep -q "DIAGNOSTICO AUTOMATICO WORKER" ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
+          grep -q "node --test app/scripts/test-web-story-cta.mjs" ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
+          grep -q "Git push: BLOQUEADO" ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
+          grep -q "Deploy de producao: BLOQUEADO" ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
+          grep -q "disable_all" ops/lia-dev-workspace/run-first-vitrinecity-task-v4.sh
