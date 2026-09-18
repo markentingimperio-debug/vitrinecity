@@ -27,7 +27,7 @@ IMAGE = 'sha256:70fba9043ed420c8d3eb0a3e2904aeccd2cb593db598c450e59345dd95f47628
 SOURCE = Path('/var/lib/docker/volumes/vitrinecity_vitrinecity_data/_data')
 PRIOR = Path('/var/backups/vitrinecity-lia-recovery-wla1lnw9')
 PARENT = Path('/var/backups')
-LOCK = Path('/run/lock/vitrinecity-lia-recovery.lock')
+LOCK = PARENT / '.vitrinecity-lia-recovery.lock'
 CONFIGS = tuple(Path('/opt/vitrinecity') / name for name in (
     'docker-compose.yml', 'docker-compose.override.yml', 'docker-compose.lia-1d1958f.yml',
     'docker-compose.social-20260916.yml', 'docker-compose.social-profile-20260916.yml',
