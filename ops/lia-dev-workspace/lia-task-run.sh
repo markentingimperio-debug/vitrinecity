@@ -3,9 +3,16 @@ set -Eeuo pipefail
 umask 077
 
 [ "$(id -u)" -eq 0 ] || { echo 'PARADO: execute como root.' >&2; exit 1; }
-[ "$#" -eq 1 ] || { echo 'Uso: lia-task-run <manifest.json>' >&2; exit 2; }
-
-MANIFEST="$(readlink -f "$1")"
+VALIDATE_ONLY=0
+if [ "$#" -eq 2 ] && [ "$1" = '--validate' ]; then
+  VALIDATE_ONLY=1
+  MANIFEST="$(readlink -f "$2")"
+elif [ "$#" -eq 1 ]; then
+  MANIFEST="$(readlink -f "$1")"
+else
+  echo 'Uso: lia-task-run [--validate] <manifest.json>' >&2
+  exit 2
+fi
 [ -f "$MANIFEST" ] || { echo "PARADO: manifesto ausente: $MANIFEST" >&2; exit 1; }
 
 for cmd in curl jq git sudo systemctl systemd-run sed grep date journalctl sha256sum install readlink python3 stat sort wc tee awk dirname seq; do
@@ -111,6 +118,23 @@ PUSH_URL="$(sudo -u lia -H git -C "$WORKSPACE" remote get-url --push origin)"
 [ -z "$STATUS" ] || { echo 'PARADO: workspace precisa estar limpo.' >&2; printf '%s\n' "$STATUS" >&2; exit 1; }
 [ "$PUSH_URL" = 'blocked://lia-no-push' ] || { echo 'PARADO: push nao esta bloqueado.' >&2; exit 1; }
 
+
+if [ "$VALIDATE_ONLY" -eq 1 ]; then
+  echo
+  echo '=== MANIFESTO LIA VALIDADO ==='
+  echo "Task: $TASK_ID"
+  echo "Base: $BASE_COMMIT"
+  echo "Perfil: $PROFILE"
+  echo "Budget: US$ $BUDGET_USD"
+  echo "Arquivos permitidos: ${#ALLOWED_FILES[@]}"
+  echo "Testes obrigatorios: $TEST_COUNT"
+  echo 'Workspace: LIMPO'
+  echo 'Git push: BLOQUEADO'
+  echo 'Deploy de producao: BLOQUEADO'
+  echo 'Chamadas OpenAI realizadas: ZERO'
+  exit 0
+fi
+
 RUN_DIR="$RUNS_ROOT/$TASK_ID"
 [ ! -e "$RUN_DIR" ] || { echo "PARADO: task id ja utilizado: $TASK_ID" >&2; exit 1; }
 install -d -o root -g root -m 0750 "$RUN_DIR"
@@ -136,6 +160,20 @@ disable_all(){
   chown root:root "$GENV" "$WENV" "$BENV"
   systemctl restart lia-openai-broker.service lia-codex-worker.service lia-dev-gateway.service >/dev/null 2>&1 || true
 }
+rollback_workspace(){
+  set +e
+  sudo -u lia -H git -C "$WORKSPACE" reset --hard "$BASE_COMMIT" >/dev/null 2>&1 || true
+  sudo -u lia -H git -C "$WORKSPACE" clean -fd -- . >/dev/null 2>&1 || true
+  local rh rs
+  rh="$(sudo -u lia -H git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || true)"
+  rs="$(sudo -u lia -H git -C "$WORKSPACE" status --porcelain --untracked-files=all 2>/dev/null || true)"
+  if [ "$rh" = "$BASE_COMMIT" ] && [ -z "$rs" ]; then
+    printf 'rollback=clean\n' >>"$RUN_DIR/state.txt" 2>/dev/null || true
+  else
+    printf 'rollback=FAILED head=%s\n' "$rh" >>"$RUN_DIR/state.txt" 2>/dev/null || true
+    echo 'ALERTA: rollback do workspace nao ficou limpo; requer verificacao manual.' >&2
+  fi
+}
 show_diagnostics(){
   [ -n "$GATEWAY_TASK_ID" ] || return 0
   echo
@@ -150,6 +188,7 @@ finish(){
   if [ "$rc" -ne 0 ]; then
     printf 'failed_at=%s\nexit_code=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rc" >>"$RUN_DIR/state.txt" 2>/dev/null || true
     show_diagnostics
+    rollback_workspace
   fi
   disable_all
   exit "$rc"
@@ -271,7 +310,17 @@ for ((i=0;i<TEST_COUNT;i++)); do
   mapfile -t ARGS < <(jq -r --argjson i "$i" '.tests[$i].command[]' "$MANIFEST")
   echo "--- $TEST_NAME ---" | tee -a "$RUN_DIR/test-output.txt"
   set +e
-  systemd-run --quiet --wait --collect --pipe     -p User=lia -p Group=lia -p PrivateNetwork=yes -p PrivateTmp=yes     -p NoNewPrivileges=yes -p ProtectHome=read-only     -p WorkingDirectory="$WORKSPACE" -p "Environment=PATH=$TOOL_PATH"     -- "${ARGS[@]}" 2>&1 | tee -a "$RUN_DIR/test-output.txt"
+  systemd-run --quiet --wait --collect --pipe \
+    -p User=lia -p Group=lia \
+    -p PrivateNetwork=yes -p PrivateTmp=yes -p PrivateDevices=yes \
+    -p NoNewPrivileges=yes -p ProtectSystem=strict -p ProtectHome=read-only \
+    -p RestrictSUIDSGID=yes -p LockPersonality=yes \
+    -p "ReadWritePaths=$WORKSPACE" \
+    -p WorkingDirectory="$WORKSPACE" \
+    -p "Environment=PATH=$TOOL_PATH" \
+    -p "Environment=HOME=/tmp/lia-test-home" \
+    -p "Environment=XDG_CACHE_HOME=/tmp/lia-test-cache" \
+    -- "${ARGS[@]}" 2>&1 | tee -a "$RUN_DIR/test-output.txt"
   TEST_RC=${PIPESTATUS[0]}
   set -e
   [ "$TEST_RC" -eq 0 ] || { echo "PARADO: teste falhou: $TEST_NAME" >&2; exit 1; }
