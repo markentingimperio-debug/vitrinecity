@@ -1,0 +1,64 @@
+name: LIA Capabilities V1 Checks
+
+on:
+  push:
+    branches:
+      - feat/lia-dev-gateway-20260917
+    paths:
+      - 'ops/lia-capabilities-v1/**'
+      - '.github/workflows/lia-capabilities-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax
+        run: |
+          bash -n ops/lia-capabilities-v1/install.sh
+          node --check ops/lia-capabilities-v1/browser-worker/server.mjs
+          node --check ops/lia-capabilities-v1/media-worker/server.mjs
+          jq -e '.dependencies.playwright=="1.55.0"' ops/lia-capabilities-v1/browser-worker/package.json >/dev/null
+
+      - name: Browser security guards
+        run: |
+          grep -q "LIA_BROWSER_EXECUTION_ENABLED === '1'" ops/lia-capabilities-v1/browser-worker/server.mjs
+          grep -q 'LIA_BROWSER_ALLOWED_DOMAINS' ops/lia-capabilities-v1/browser-worker/server.mjs
+          grep -q "urlAllowed(target)" ops/lia-capabilities-v1/browser-worker/server.mjs
+          grep -q "acceptDownloads: false" ops/lia-capabilities-v1/browser-worker/server.mjs
+          grep -q "serviceWorkers: 'block'" ops/lia-capabilities-v1/browser-worker/server.mjs
+          grep -q "action === 'screenshot'" ops/lia-capabilities-v1/browser-worker/server.mjs
+          ! grep -q 'child_process' ops/lia-capabilities-v1/browser-worker/server.mjs
+          ! grep -q 'eval(' ops/lia-capabilities-v1/browser-worker/server.mjs
+
+      - name: Media security guards
+        run: |
+          grep -q "LIA_MEDIA_EXECUTION_ENABLED === '1'" ops/lia-capabilities-v1/media-worker/server.mjs
+          grep -q "spawn(bin, args" ops/lia-capabilities-v1/media-worker/server.mjs
+          grep -q "shell: false" ops/lia-capabilities-v1/media-worker/server.mjs
+          grep -q "action === 'clip'" ops/lia-capabilities-v1/media-worker/server.mjs
+          grep -q "action === 'videoResize'" ops/lia-capabilities-v1/media-worker/server.mjs
+          grep -q "action === 'imageResize'" ops/lia-capabilities-v1/media-worker/server.mjs
+          grep -q "action === 'audioNormalize'" ops/lia-capabilities-v1/media-worker/server.mjs
+          ! grep -q 'exec(' ops/lia-capabilities-v1/media-worker/server.mjs
+          ! grep -q 'execSync' ops/lia-capabilities-v1/media-worker/server.mjs
+
+      - name: Installer guards
+        run: |
+          grep -q '^SOURCE_REV=' ops/lia-capabilities-v1/install.sh
+          grep -q 'LIA_BROWSER_EXECUTION_ENABLED=0' ops/lia-capabilities-v1/install.sh
+          grep -q 'LIA_MEDIA_EXECUTION_ENABLED=0' ops/lia-capabilities-v1/install.sh
+          grep -q 'PrivateNetwork=true' ops/lia-capabilities-v1/install.sh
+          grep -q 'RestrictAddressFamilies=AF_UNIX' ops/lia-capabilities-v1/install.sh
+          grep -q '127.0.0.1:8792:8792' ops/lia-capabilities-v1/install.sh
+          grep -q 'cap_drop:' ops/lia-capabilities-v1/install.sh
+          grep -q 'no-new-privileges:true' ops/lia-capabilities-v1/install.sh
+          grep -q 'Codex Worker: NAO ALTERADO' ops/lia-capabilities-v1/install.sh
+          grep -q 'Git push: BLOQUEADO' ops/lia-capabilities-v1/install.sh
+          grep -q 'Deploy de producao: BLOQUEADO' ops/lia-capabilities-v1/install.sh
+          grep -q 'Chamadas OpenAI realizadas nesta instalacao: ZERO' ops/lia-capabilities-v1/install.sh
