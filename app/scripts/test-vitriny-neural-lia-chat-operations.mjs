@@ -14,7 +14,7 @@ async function fixture({remoteMode='success',enabled=true}={}){
     CREATE TABLE neural_chat_messages(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL,request_id TEXT NOT NULL,role TEXT NOT NULL,text TEXT NOT NULL,status TEXT NOT NULL,sequence INTEGER NOT NULL,created_at INTEGER NOT NULL,UNIQUE(conversation_id,sequence));`);
   let clock=1000,dispatches=0;const wallet=createCoinWallet({db,enabled:true,now:()=>clock});
   wallet.grant(1,{sourceId:'fixture-grant',amountAtoms:'100000000',origin:'purchase',createdAt:900,expiresAt:100000,termsVersion:VITRINE_COINS_POLICY.version,paymentReference:null});
-  const app=express();app.use(express.json({limit:'5mb'}));
+  const app=express();app.disable('x-powered-by');app.use(express.json({limit:'5mb'}));
   const fetchImpl=async(url)=>{
     if(String(url).endsWith('/v1/operations/tasks')){
       dispatches++;
@@ -41,7 +41,7 @@ const execute=(f,body=command())=>f.json('/api/neural/chat/operations/run',body,
 test('browser quotes, settles canonical Vitrine Coins once and persists result in chat',async()=>{
   const f=await fixture();try{
     const quote=await f.json('/api/neural/chat/operations/quote',{instruction:command().instruction});
-    assert.equal(quote.status,200);const q=(await quote.json()).item;assert.equal(q.kind,'browser');assert.equal(q.supported,true);assert.equal(q.priceCoins,'1.0000032');
+    assert.equal(quote.headers.get('x-powered-by'),null);assert.equal(quote.status,200);const q=(await quote.json()).item;assert.equal(q.kind,'browser');assert.equal(q.supported,true);assert.equal(q.priceCoins,'1.0000032');
     const run=await execute(f);assert.equal(run.status,201);const data=await run.json();assert.equal(data.ok,true);
     const status=f.wallet.status(1);assert.equal(status.chargedAtoms,'10000032');assert.equal(status.reservedAtoms,'0');
     const messages=f.db.prepare('SELECT role,text,status FROM neural_chat_messages WHERE conversation_id=? ORDER BY sequence').all(data.conversationId);

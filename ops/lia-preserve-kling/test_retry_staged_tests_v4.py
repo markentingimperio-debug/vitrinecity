@@ -51,13 +51,13 @@ class RetryTests(unittest.TestCase):
         with self.assertRaises(m.Refused):m.patch_test(b'unknown')
     def test_patch_changes_only_the_reviewed_regex(self):
         data=('header\nassert.match(message,'+m.OLD+');\nassert.equal(calls,0);\n').encode()
-        with patch.dict(m.TEST_BLOBS,{'app/scripts/test-vitriny-neural-chat.mjs':m.blob(data)}):
+        with patch.dict(m.TEST_SHA256,{'app/scripts/test-vitriny-neural-chat.mjs':m.content_sha256(data)}):
             result=m.patch_test(data)
         self.assertEqual(result.replace(m.NEW.encode(),m.OLD.encode()),data)
         self.assertIn(b'assert.equal(calls,0);',result)
     def test_duplicate_assertion_rejected(self):
         data=(m.OLD+'\n'+m.OLD).encode()
-        with patch.dict(m.TEST_BLOBS,{'app/scripts/test-vitriny-neural-chat.mjs':m.blob(data)}):
+        with patch.dict(m.TEST_SHA256,{'app/scripts/test-vitriny-neural-chat.mjs':m.content_sha256(data)}):
             with self.assertRaises(m.Refused):m.patch_test(data)
     def test_node_assertion_reproduced_and_fixed(self):
         js='''import assert from 'node:assert/strict';
@@ -70,9 +70,9 @@ for(const bad of ['O modelo local concluiu o pedido.','O modelo local xyz conclu
 '''
         result=subprocess.run(['node','--input-type=module','-e',js,json.dumps(m.LEGACY_TEXT)],capture_output=True,timeout=10)
         self.assertEqual(result.returncode,0,result.stderr.decode())
-    def test_preparer_has_expected_blob(self):
+    def test_preparer_has_expected_content_sha256(self):
         data=(HERE/'prepare-chat-update-v2.py').read_bytes()
-        self.assertEqual(m.blob(data),m.HELPER_BLOB)
+        self.assertEqual(m.content_sha256(data),m.HELPER_SHA256)
 
 def integration():
     """CI only: reproduce the exact staged engine and run all four suites before/after."""
@@ -85,7 +85,7 @@ def integration():
     resolver_spec=importlib.util.spec_from_file_location('resolver',HERE/'resolve-chat-engine-v3.py')
     resolver=importlib.util.module_from_spec(resolver_spec);resolver_spec.loader.exec_module(resolver)
     target=(app/'vitriny-neural/chat-engine.js').read_bytes()
-    assert resolver.blob(target)==resolver.TARGET_BLOB
+    assert resolver.content_sha256(target)==resolver.TARGET_SHA256
     text=target.decode('utf-8')
     anchors={
         2:"      if(localFirstAdmin&&scope.startsWith('admin:')&&error?.code==='chat_response_invalid'&&run.responseReceived&&!controller.signal.aborted)run.offerExistingApi=true;",
@@ -101,9 +101,16 @@ def integration():
         (work/'node_modules').symlink_to(app/'node_modules',target_is_directory=True)
         (work/'vitriny-neural/chat-engine.js').write_bytes(engine)
         (work/'scripts/test-lia-preserve-kling.mjs').write_bytes((HERE/'test.mjs').read_bytes())
-        for path,expected in m.TEST_BLOBS.items():
-            assert m.blob((work/Path(path).relative_to('app')).read_bytes())==expected
-        command=['node','--test','--test-reporter=tap',*[str(Path(p).relative_to('app')) for p in m.TEST_BLOBS]]
+        for path,expected in m.TEST_SHA256.items():
+            data=(work/Path(path).relative_to('app')).read_bytes()
+            if path == 'app/scripts/test-vitriny-neural-lia-chat-operations.mjs':
+                # The VPS still has the immutable original fixture. Only the CI
+                # fixture changes: remove the header and test its absence.
+                # Verify its exact SHA-256, without widening any other test pin.
+                assert m.content_sha256(data) == 'c2d4053c3949c7f818c495aef0e4b0d9018a18c474a6e87e714618fdf02d86bd'
+            else:
+                assert m.content_sha256(data)==expected
+        command=['node','--test','--test-reporter=tap',*[str(Path(p).relative_to('app')) for p in m.TEST_SHA256]]
         import os
         env={'PATH':os.environ['PATH'],'HOME':directory,'TMPDIR':directory,'DATA_DIR':str(Path(directory)/'data')}
         before=subprocess.run(command,cwd=work,env=env,capture_output=True,text=True,timeout=240)

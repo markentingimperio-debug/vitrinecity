@@ -13,7 +13,7 @@ m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 
 def verify(target: bytes) -> str:
-    if m.blob(target) != m.TARGET_BLOB:
+    if m.content_sha256(target) != m.TARGET_SHA256:
         raise AssertionError('Repository engine is not the reviewed target.')
     text = target.decode('utf-8')
     text = m.once(text, m.DELETE_FUNCTION, '')

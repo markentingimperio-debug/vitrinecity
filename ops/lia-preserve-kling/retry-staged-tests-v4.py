@@ -16,7 +16,7 @@ import sys
 import tempfile
 
 STAGED = Path('/var/backups/vitrinecity-lia-stage-1ikp036m')
-HELPER_BLOB = '0de57860ccf14f950873312f8d8decbbb09ae547'
+HELPER_SHA256 = 'a260aff2815395dcebbd15c427acfefdcbe6fea7defb153eb5cc919d68d0889e'
 FAILURE = 'local-first admin uses local before paid text and only offers paid quote after explicit local escalation'
 OLD = '/modelo local não concluiu/i'
 NEW = '/modelo local n[ãa]o concluiu/i'
@@ -30,18 +30,18 @@ CANDIDATE = {
  'app/public/neural-workspace.html': '84c39cf71a8d1a5c323588b1659dc4ba68cc2072fcfa4854bc02d2f0cc0b1251',
  'app/public/neural-workspace.css': 'bbc9bc34cd3e2e062d627ba07f2ebeb77a2e15a953de46421337e1bedc4749d7',
 }
-TEST_BLOBS = {
- 'app/scripts/test-vitriny-neural-chat.mjs': 'de485e84020113465d33f6babafe169a19b5485e',
- 'app/scripts/test-vitriny-neural-chat-api.mjs': '7b1b59c5d1789f2542d81bcde83af189753e3297',
- 'app/scripts/test-vitriny-neural-lia-chat-operations.mjs': '64269baaa1d7001aa4b541d38bd8e4e65d42c7a4',
- 'app/scripts/test-lia-preserve-kling.mjs': 'd5e741b2e49ec2becbf245eda554a56b172754ca',
+TEST_SHA256 = {
+ 'app/scripts/test-vitriny-neural-chat.mjs': '948e2442c13a1776088832cefd491b8d43ded5fc2db6053a30e81b534efd99e8',
+ 'app/scripts/test-vitriny-neural-chat-api.mjs': '38e78697641d8a37146afb942ab9616c4e5eef9bd4a7d1301564c5d0d0566220',
+ 'app/scripts/test-vitriny-neural-lia-chat-operations.mjs': 'c9d3bcc1c7e288f42783a370e8310b7725612e89d0f44341219088a45e0f5e03',
+ 'app/scripts/test-lia-preserve-kling.mjs': 'efe7ec40a3977d7a097b2335d45a91b8613719abb2524e31b7aca908126558ea',
 }
 
 class Refused(RuntimeError):
     """Only fixed, non-sensitive diagnostic messages."""
 
-def blob(data):
-    return hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+def content_sha256(data):
+    return hashlib.sha256(data).hexdigest()
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
@@ -77,7 +77,7 @@ def summary(text):
             re.search(r'''^\s+operator:\s*['"]?match['"]?\s*$''', text, re.M) is not None}
 
 def patch_test(data):
-    if blob(data) != TEST_BLOBS['app/scripts/test-vitriny-neural-chat.mjs']:
+    if content_sha256(data) != TEST_SHA256['app/scripts/test-vitriny-neural-chat.mjs']:
         raise Refused('Teste diferente da revisao conhecida.')
     old, new = OLD.encode(), NEW.encode()
     if data.count(old) != 1 or new in data:
@@ -90,7 +90,7 @@ def patch_test(data):
 def load_helper():
     path = Path(__file__).resolve().with_name('prepare-chat-update-v2.py')
     data = path.read_bytes()
-    if path.is_symlink() or len(data) > 65536 or blob(data) != HELPER_BLOB:
+    if path.is_symlink() or len(data) > 65536 or content_sha256(data) != HELPER_SHA256:
         raise Refused('Preparador auxiliar diferente da revisao conhecida.')
     spec = importlib.util.spec_from_file_location('lia_pinned_stage', path)
     module = importlib.util.module_from_spec(spec)
@@ -126,11 +126,11 @@ def main():
     for path, expected in stage.EXPECTED.items():
         if stage.digest(live.get(path)) != expected:
             raise Refused('O codigo ativo mudou; repeticao interrompida.')
-    copies = tuple(CANDIDATE) + stage.GUARDS + tuple(TEST_BLOBS)
+    copies = tuple(CANDIDATE) + stage.GUARDS + tuple(TEST_SHA256)
     data = {p:read_private(STAGED / 'candidate' / p) for p in copies}
     if any(digest(data[p]) != h for p,h in CANDIDATE.items()):
         raise Refused('Um arquivo da candidata mudou.')
-    if any(blob(data[p]) != h for p,h in TEST_BLOBS.items()):
+    if any(content_sha256(data[p]) != h for p,h in TEST_SHA256.items()):
         raise Refused('Uma suite de testes mudou.')
     if any(data[p] != live[p] for p in stage.GUARDS):
         raise Refused('As dependencias da candidata divergem do aplicativo ativo.')
@@ -138,7 +138,7 @@ def main():
     print('Copia de testes: ' + str(work), flush=True)
     for p in copies:
         stage.write(work / 'candidate' / p, patch_test(data[p]) if p == 'app/scripts/test-vitriny-neural-chat.mjs' else data[p])
-    stage.TESTS = tuple(TEST_BLOBS)
+    stage.TESTS = tuple(TEST_SHA256)
     result = stage.isolated_tests(work, copies)
     new_details = summary(read_private(work / 'tests.private.log').decode('utf-8','replace'))
     current, _, _ = stage.target_info()

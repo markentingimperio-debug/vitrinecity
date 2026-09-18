@@ -13,11 +13,11 @@ from pathlib import Path
 import stat
 import sys
 
-PREPARER_BLOB = '0de57860ccf14f950873312f8d8decbbb09ae547'
-BASE_BLOB = 'b4a5d4c777bc9fe04ab5ff446c13e98f41ff022c'
+PREPARER_SHA256 = 'a260aff2815395dcebbd15c427acfefdcbe6fea7defb153eb5cc919d68d0889e'
+BASE_SHA256 = '30059f19e18bb8416adae053db11c2054900e42148a5fdf6e54ef879ee5fcac9'
 ACTIVE_SHA256 = 'c60e7af4022f66b90f96a5ebff8812aa1a9f88ad88fcccdc728b5e9245799eb5'
-TARGET_BLOB = 'a0e75a8eac969439206b297ca66422be4db29ce1'
-LOCAL_TEST_BLOB = 'd5e741b2e49ec2becbf245eda554a56b172754ca'
+TARGET_SHA256 = 'c825b6da5878e9b44c211bcd700faa97f992f2b2dea84cae8f3c4e424e4fd619'
+LOCAL_TEST_SHA256 = 'efe7ec40a3977d7a097b2335d45a91b8613719abb2524e31b7aca908126558ea'
 LOCAL_TEST_SOURCE = 'ops/lia-preserve-kling/test.mjs'
 LOCAL_TEST_DEST = 'app/scripts/test-lia-preserve-kling.mjs'
 ANCHOR = '  function messageAttachments(scope,id){'
@@ -62,8 +62,8 @@ REVIEWED_TEXT_DIFFERENCES = (
 class Refused(RuntimeError):
     """Only fixed, non-sensitive error messages."""
 
-def blob(data: bytes) -> str:
-    return hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+def content_sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 def once(text: str, old: str, new: str) -> str:
     if text.count(old) != 1:
@@ -90,7 +90,7 @@ def reconcile_content(active: bytes, target: bytes) -> bytes:
 
 def resolve_engine(active: bytes, base: bytes, target: bytes) -> bytes:
     if (hashlib.sha256(active).hexdigest() != ACTIVE_SHA256 or
-            blob(base) != BASE_BLOB or blob(target) != TARGET_BLOB):
+            content_sha256(base) != BASE_SHA256 or content_sha256(target) != TARGET_SHA256):
         raise Refused('Uma versao do motor mudou; reconciliacao interrompida.')
     return reconcile_content(active, target)
 
@@ -99,7 +99,7 @@ def load_preparer():
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
         raise Refused('Preparador auxiliar invalido.')
-    if blob(path.read_bytes()) != PREPARER_BLOB:
+    if content_sha256(path.read_bytes()) != PREPARER_SHA256:
         raise Refused('Preparador auxiliar diferente da versao revisada.')
     spec = importlib.util.spec_from_file_location('lia_stage_v2_pinned', path)
     if spec is None or spec.loader is None:
@@ -134,7 +134,7 @@ def configure(stage):
             if rev != stage.SOURCE or absent:
                 raise stage.Stop('Origem do teste local-first nao permitida.')
             data = original_download(rev, LOCAL_TEST_SOURCE)
-            if blob(data) != LOCAL_TEST_BLOB:
+            if content_sha256(data) != LOCAL_TEST_SHA256:
                 raise stage.Stop('Teste local-first diferente da versao revisada.')
             return data
         return original_download(rev, path, absent=absent)

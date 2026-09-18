@@ -82,7 +82,7 @@ class ReconciliationTests(unittest.TestCase):
         a, t, expected = fixture()
         base = b'base'
         with patch.object(m, 'ACTIVE_SHA256', hashlib.sha256(a).hexdigest()), \
-             patch.object(m, 'BASE_BLOB', m.blob(base)), patch.object(m, 'TARGET_BLOB', m.blob(t)):
+             patch.object(m, 'BASE_SHA256', m.content_sha256(base)), patch.object(m, 'TARGET_SHA256', m.content_sha256(t)):
             self.assertEqual(m.resolve_engine(a, base, t), expected)
             for args in ((a+b'x',base,t),(a,base+b'x',t),(a,base,t+b'x')):
                 with self.subTest(args=[len(v) for v in args]), self.assertRaises(m.Refused):
@@ -93,12 +93,20 @@ class ReconciliationTests(unittest.TestCase):
                      "id=? AND scope=?", "stillUsed", ").immediate()"):
             self.assertIn(text, m.DELETE_FUNCTION)
 
-    def test_blob_matches_git(self):
-        import subprocess
-        with tempfile.TemporaryDirectory() as d:
-            p=Path(d)/'fixture';p.write_bytes(b'abc\n')
-            expected=subprocess.check_output(['git','hash-object',str(p)],text=True).strip()
-            self.assertEqual(m.blob(p.read_bytes()), expected)
+    def test_no_legacy_security_hashes_in_helpers(self):
+        import ast
+        for name in ('resolve-chat-engine-v3.py', 'retry-staged-tests-v4.py', 'patch.py'):
+            source=(HERE/name).read_text()
+            tree=ast.parse(source)
+            algorithms=[node.attr for node in ast.walk(tree) if isinstance(node,ast.Attribute)
+                        and isinstance(node.value,ast.Name) and node.value.id=='hashlib']
+            self.assertNotIn('sha1', algorithms)
+            self.assertNotIn('md5', algorithms)
+
+    def test_sha256_known_vector(self):
+        self.assertEqual(m.content_sha256(b'abc'),
+                         'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+        self.assertEqual(len(m.content_sha256(b'abc')), 64)
 
     def test_verified_preparer_loads_without_running_main(self):
         stage=m.load_preparer()
@@ -106,7 +114,7 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(stage.EXPECTED['app/vitriny-neural/chat-engine.js'],m.ACTIVE_SHA256)
 
     def test_changed_preparer_is_refused(self):
-        with patch.object(m, 'PREPARER_BLOB', '0'*40), self.assertRaises(m.Refused):
+        with patch.object(m, 'PREPARER_SHA256', '0'*64), self.assertRaises(m.Refused):
             m.load_preparer()
 
     def test_other_files_still_use_three_way_merge(self):
