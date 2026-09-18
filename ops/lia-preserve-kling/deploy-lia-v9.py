@@ -293,7 +293,6 @@ def obtain_token(info, token_file=None):
             with open('/dev/tty','w') as tty:
                 token=getpass.getpass('Token EXISTENTE do Operations Gateway (entrada oculta): ',stream=tty).strip()
     need(re.fullmatch(r'[A-Za-z0-9._~+/=\-]{32,4096}',token or '') is not None,'TOKEN_OPERACIONAL_INVALIDO')
-    # Never send an AI-provider key to the gateway, even if pasted by mistake.
     need(token not in {v for k,v in environment(info).items() if re.search(r'(API_KEY|SECRET|PASSWORD)$',k)},'NAO_USE_CHAVE_DE_PROVEDOR_COMO_TOKEN')
     return token
 
@@ -331,6 +330,15 @@ def compose(paths):
 def render(paths):
     return json.loads(command(compose(paths)+['config','--format','json']).stdout)
 
+def runtime_environment_from_render(document):
+    """Compose config serializes literal dollars as $$; decode only its environment values."""
+    values = document['services']['app']['environment']
+    need(isinstance(values, dict) and all(isinstance(v, str) for v in values.values()),
+         'AMBIENTE_COMPOSE_NAO_RESOLVIDO')
+    need(all(re.search(r'(?<!\$)(?:\$\$)*\$(?!\$)', v) is None for v in values.values()),
+         'SERIALIZACAO_COMPOSE_DESCONHECIDA')
+    return {k:v.replace('$$', '$') for k,v in values.items()}
+
 def current_paths(info):
     label=info['Config'].get('Labels',{}).get('com.docker.compose.project.config_files','')
     paths=tuple(label.split(','))
@@ -364,14 +372,17 @@ def frozen_files(work,info,old_image_ref,new_ref,env):
     need(not appdef.get('pre_start') and not appdef.get('post_start') and not appdef.get('pre_stop'),'HOOKS_DE_CICLO_DE_VIDA_EXIGEM_REVISAO')
     base=copy.deepcopy(original);new=copy.deepcopy(original)
     base['services']['app']['image']=old_image_ref
-    base['services']['app']['environment']=environment(info)
+    base['services']['app']['environment']=escape_values(environment(info))
     new['services']['app']['image']=new_ref
-    new['services']['app']['environment']=env
+    new['services']['app']['environment']=escape_values(env)
     for filename,document in (('before.private.json',base),('after.private.json',new)):
         path=work/filename
-        write_new(path,json.dumps(escape_values(document),ensure_ascii=True,indent=2).encode())
+        # The original render is already escaped for reuse. Escape only replacement env values.
+        write_new(path,json.dumps(document,ensure_ascii=True,indent=2).encode())
         checked=render([path])
         need(checked['services']['app']['environment']==document['services']['app']['environment'],'EXPANSAO_DE_CONFIGURACAO_DIVERGENTE')
+        expected_env = environment(info) if filename=='before.private.json' else env
+        need(runtime_environment_from_render(checked)==expected_env,'AMBIENTE_CONGELADO_DIVERGENTE')
         need(checked.get('volumes')==original.get('volumes') and checked.get('networks')==original.get('networks'),'REDE_OU_VOLUMES_DIVERGENTES')
     return base,new
 
@@ -494,9 +505,8 @@ def rollback_work(work,state):
         need(mounts(current)==mounts(old),'ROLLBACK_RECUSADO_MONTAGENS_DIVERGENTES')
         if current['Id']==old['Id']:
             return original_resume(old)
-        # Compose files contain escaped dollars; compare the rendered values only.
         acceptable=[]
-        if current['Image']==state['newImage']:acceptable.append(render([work/'after.private.json'])['services']['app']['environment'])
+        if current['Image']==state['newImage']:acceptable.append(runtime_environment_from_render(render([work/'after.private.json'])))
         if current['Image']==state['oldImage']:acceptable.append(environment(old))
         need(environment(current) in acceptable,'ROLLBACK_RECUSADO_CONFIGURACAO_MUDOU')
         if current['Image']==old['Image'] and environment(current)==environment(old) and healthy(current):
