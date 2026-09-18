@@ -110,7 +110,7 @@ const server=http.createServer(async(req,res)=>{
   try{
     const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
     if(req.method==='GET'&&url.pathname==='/health'){
-      return send(res,200,{ok:true,service:'lia-dev-gateway',version:'2026-09-18-v4-stream',executionEnabled:EXECUTION_ENABLED,profiles:profileNames(),bind:HOST});
+      return send(res,200,{ok:true,service:'lia-dev-gateway',version:'2026-09-18-v5-budget',executionEnabled:EXECUTION_ENABLED,profiles:profileNames(),bind:HOST});
     }
     if(!authorized(req))return send(res,401,{error:'unauthorized'});
     if(req.method==='GET'&&url.pathname==='/v1/models'){
@@ -179,4 +179,4 @@ const server=http.createServer(async(req,res)=>{
   }catch(error){return send(res,error?.status||500,{error:error?.status?error.message:'internal_error'});}
 });
 server.requestTimeout=430000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
-server.listen(PORT,HOST,()=>console.log(JSON.stringify({event:'lia_dev_gateway_started',version:'v4-stream',host:HOST,port:PORT,executionEnabled:EXECUTION_ENABLED,profiles:profileNames()})));
+server.listen(PORT,HOST,()=>console.log(JSON.stringify({event:'lia_dev_gateway_started',version:'v5-budget',host:HOST,port:PORT,executionEnabled:EXECUTION_ENABLED,profiles:profileNames()})));
