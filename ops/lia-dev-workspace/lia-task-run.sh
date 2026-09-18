@@ -272,20 +272,10 @@ fi
 # Nenhum staging pelo agente.
 sudo -u lia -H git -C "$WORKSPACE" diff --cached --quiet || { echo 'PARADO: agente alterou o index Git.' >&2; exit 1; }
 
+mapfile -d '' -t MODIFIED_FILES < <(sudo -u lia -H git -C "$WORKSPACE" diff --name-only -z HEAD)
+mapfile -d '' -t UNTRACKED_FILES < <(sudo -u lia -H git -C "$WORKSPACE" ls-files --others --exclude-standard -z)
 mapfile -t CHANGED_FILES < <(
-  python3 - "$WORKSPACE" <<'PY'
-import os, subprocess, sys
-w=sys.argv[1]
-paths=set()
-for cmd in [
-    ['git','-C',w,'diff','--name-only','-z','HEAD'],
-    ['git','-C',w,'ls-files','--others','--exclude-standard','-z']
-]:
-    raw=subprocess.check_output(cmd)
-    paths.update(p.decode() for p in raw.split(b'\0') if p)
-for p in sorted(paths):
-    print(p)
-PY
+  printf '%s\n' "${MODIFIED_FILES[@]}" "${UNTRACKED_FILES[@]}" | sed '/^$/d' | sort -u
 )
 [ "${#CHANGED_FILES[@]}" -ge 1 ] || { echo 'PARADO: LIA nao produziu alteracoes.' >&2; exit 1; }
 
@@ -347,14 +337,10 @@ chmod 0440 "$RUN_DIR/test-output.txt"
 AFTER_TEST_HASH="$(hash_allowed)"
 [ "$BEFORE_TEST_HASH" = "$AFTER_TEST_HASH" ] || { echo 'PARADO: testes modificaram arquivos permitidos.' >&2; exit 1; }
 
+mapfile -d '' -t MODIFIED_AFTER_TEST < <(sudo -u lia -H git -C "$WORKSPACE" diff --name-only -z HEAD)
+mapfile -d '' -t UNTRACKED_AFTER_TEST < <(sudo -u lia -H git -C "$WORKSPACE" ls-files --others --exclude-standard -z)
 mapfile -t AFTER_TEST_CHANGED < <(
-  python3 - "$WORKSPACE" <<'PY'
-import subprocess, sys
-w=sys.argv[1]; paths=set()
-for cmd in [['git','-C',w,'diff','--name-only','-z','HEAD'],['git','-C',w,'ls-files','--others','--exclude-standard','-z']]:
-    raw=subprocess.check_output(cmd); paths.update(p.decode() for p in raw.split(b'\0') if p)
-for p in sorted(paths): print(p)
-PY
+  printf '%s\n' "${MODIFIED_AFTER_TEST[@]}" "${UNTRACKED_AFTER_TEST[@]}" | sed '/^$/d' | sort -u
 )
 for p in "${AFTER_TEST_CHANGED[@]}"; do
   is_allowed "$p" || { echo "PARADO: teste gerou arquivo fora do escopo: $p" >&2; exit 1; }
