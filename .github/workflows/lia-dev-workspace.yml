@@ -21,6 +21,7 @@ jobs:
       - name: Syntax
         run: |
           bash -n ops/lia-dev-workspace/install-vitrinecity-dev.sh
+          bash -n ops/lia-dev-workspace/run-first-vitrinecity-task.sh
 
       - name: Workspace safety guards
         run: |
@@ -38,3 +39,17 @@ jobs:
           ! grep -q '/v1/run' ops/lia-dev-workspace/install-vitrinecity-dev.sh
           ! grep -q '/v1/responses' ops/lia-dev-workspace/install-vitrinecity-dev.sh
           ! grep -q 'OPENAI_API_KEY' ops/lia-dev-workspace/install-vitrinecity-dev.sh
+      - name: First real Vitrine City task guards
+        run: |
+          grep -q "^BUDGET_USD=0.10$" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
+          grep -q "^PROFILE='dev'$" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
+          grep -q "ALLOWED_FILE='app/scripts/test-web-story-cta.mjs'" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
+          grep -q "Codigo de producao alterado: NAO" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
+          grep -q "Git push: continua BLOQUEADO" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
+          grep -q "Deploy de producao: continua BLOQUEADO" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
+          grep -q "node --test app/scripts/test-web-story-cta.mjs" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
+          grep -q "LIA_GATEWAY_EXECUTION_ENABLED=0" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
+          grep -q "LIA_CODEX_EXECUTION_ENABLED=0" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
+          grep -q "LIA_BROKER_EXECUTION_ENABLED=0" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
+          grep -q "disable_all" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
+          ! grep -q "git push origin" ops/lia-dev-workspace/run-first-vitrinecity-task.sh
