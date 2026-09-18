@@ -42,7 +42,16 @@ PUSH_URL="$(sudo -u lia -H git -C "$WORKSPACE" remote get-url --push origin)"
   sha256sum -c SHA256SUMS >/dev/null
 ) || { echo 'PARADO: integridade do review pack falhou.' >&2; exit 1; }
 
-jq -e   --arg commit "$COMMIT"   '.headCommit==$commit and .tests.status=="passed" and .gitPush==false and .productionDeploy==false and .humanApprovalRequired==true'   "$REVIEW_DIR/metadata.json" >/dev/null   || { echo 'PARADO: metadata do review nao atende a politica.' >&2; exit 1; }
+jq -e --arg commit "$COMMIT" '
+  .headCommit==$commit
+  and (
+    (.testStatus=="passed")
+    or (((.tests|type)=="object") and .tests.status=="passed")
+  )
+  and .gitPush==false
+  and .productionDeploy==false
+  and .humanApprovalRequired==true
+' "$REVIEW_DIR/metadata.json" >/dev/null || { echo 'PARADO: metadata do review nao atende a politica.' >&2; exit 1; }
 
 install -d -o root -g root -m 0750 "$APPROVALS"
 jq -n   --arg commit "$COMMIT"   --arg reviewDir "$REVIEW_DIR"   --arg approvedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)"   '{
