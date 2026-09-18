@@ -8,7 +8,7 @@ umask 077
 MANIFEST="$(readlink -f "$1")"
 [ -f "$MANIFEST" ] || { echo "PARADO: manifesto ausente: $MANIFEST" >&2; exit 1; }
 
-for cmd in curl jq git sudo systemctl sed grep date journalctl sha256sum install readlink python3; do
+for cmd in curl jq git sudo systemctl systemd-run sed grep date journalctl sha256sum install readlink python3 stat sort wc tee awk dirname seq; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "PARADO: comando ausente: $cmd" >&2; exit 1; }
 done
 
@@ -64,13 +64,15 @@ COMMIT_MESSAGE="$(jq -r '.commitMessage' "$MANIFEST")"
 [ ${#INSTRUCTION} -ge 10 ] && [ ${#INSTRUCTION} -le 6000 ] || { echo 'PARADO: instruction deve ter 10..6000 caracteres.' >&2; exit 1; }
 [ ${#COMMIT_MESSAGE} -ge 5 ] && [ ${#COMMIT_MESSAGE} -le 120 ] || { echo 'PARADO: commitMessage deve ter 5..120 caracteres.' >&2; exit 1; }
 
-python3 - "$BUDGET_USD" "$MAX_BUDGET_USD" <<'PY'
+if ! python3 - "$BUDGET_USD" "$MAX_BUDGET_USD" <<'PY'
 import sys
 v=float(sys.argv[1]); m=float(sys.argv[2])
-if not (0 < v <= m):
-    raise SystemExit(1)
+raise SystemExit(0 if 0 < v <= m else 1)
 PY
-[ "$?" -eq 0 ] || { echo 'PARADO: budget fora do limite.' >&2; exit 1; }
+then
+  echo 'PARADO: budget fora do limite.' >&2
+  exit 1
+fi
 
 POLICY_BASE="$(jq -r '.baseCommit' "$POLICY")"
 [ "$BASE_COMMIT" = "$POLICY_BASE" ] || { echo "PARADO: baseCommit do manifesto difere da policy ($POLICY_BASE)." >&2; exit 1; }
@@ -88,15 +90,12 @@ done
 TEST_COUNT="$(jq '.tests|length' "$MANIFEST")"
 for ((i=0;i<TEST_COUNT;i++)); do
   jq -e --argjson i "$i" '
-    .tests[$i].name|type=="string"
-    and (.tests[$i].command|type=="array" and length>=2 and length<=20)
-    and all(.tests[$i].command[]; type=="string" and length>0 and length<=300)
+    ((.tests[$i].name|type)=="string")
+    and ((.tests[$i].command|type)=="array" and (.tests[$i].command|length)>=2 and (.tests[$i].command|length)<=20)
+    and all(.tests[$i].command[]; (type=="string") and (length>0) and (length<=300) and (test("[\\u0000-\\u001F\\u007F]")|not))
   ' "$MANIFEST" >/dev/null || { echo "PARADO: teste #$i invalido." >&2; exit 1; }
   EXE="$(jq -r --argjson i "$i" '.tests[$i].command[0]' "$MANIFEST")"
   case "$EXE" in node|npm) ;; *) echo "PARADO: executavel de teste nao permitido: $EXE" >&2; exit 1 ;; esac
-  while IFS= read -r arg; do
-    [[ "$arg" != *$'\n'* && "$arg" != *$'\r'* && "$arg" != *$'\0'* ]] || { echo 'PARADO: argumento de teste contem controle.' >&2; exit 1; }
-  done < <(jq -r --argjson i "$i" '.tests[$i].command[]' "$MANIFEST")
 done
 
 grep -q '^LIA_GATEWAY_EXECUTION_ENABLED=0$' "$GENV" || { echo 'PARADO: gateway nao esta bloqueado.' >&2; exit 1; }
@@ -318,11 +317,11 @@ sudo -u lia -H git -C "$WORKSPACE" diff --name-status "$BASE_COMMIT..$LOCAL_COMM
 sudo -u lia -H git -C "$WORKSPACE" show --stat --summary --format=fuller "$LOCAL_COMMIT" >"$REVIEW_DIR/commit.txt"
 
 SPENT_USD="$(jq -r '.task.spentUsd // 0' "$RUN_DIR/gateway-result.json")"
-jq -n   --arg repository 'markentingimperio-debug/vitrinecity'   --arg workspace "$WORKSPACE"   --arg branch "$LOCAL_BRANCH"   --arg baseCommit "$BASE_COMMIT"   --arg headCommit "$LOCAL_COMMIT"   --arg commitMessage "$COMMIT_MESSAGE"   --arg taskId "$TASK_ID"   --arg gatewayTaskId "$GATEWAY_TASK_ID"   --arg profile "$PROFILE"   --argjson budgetUsd "$BUDGET_USD"   --argjson spentUsd "$SPENT_USD"   --arg createdAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)"   --argjson files "$(printf '%s\n' "${ALLOWED_FILES[@]}" | jq -R . | jq -s .)"   --argjson tests "$(jq '.tests' "$MANIFEST")"   '{
+jq -n   --arg repository 'markentingimperio-debug/vitrinecity'   --arg workspace "$WORKSPACE"   --arg branch "$LOCAL_BRANCH"   --arg baseCommit "$BASE_COMMIT"   --arg headCommit "$LOCAL_COMMIT"   --arg commitMessage "$COMMIT_MESSAGE"   --arg taskId "$TASK_ID"   --arg gatewayTaskId "$GATEWAY_TASK_ID"   --arg profile "$PROFILE"   --argjson budgetUsd "$BUDGET_USD"   --argjson spentUsd "$SPENT_USD"   --arg createdAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)"   --argjson files "$(printf '%s\n' "${STAGED[@]}" | jq -R . | jq -s .)"   --argjson allowedFiles "$(printf '%s\n' "${ALLOWED_FILES[@]}" | jq -R . | jq -s .)"   --argjson tests "$(jq '.tests' "$MANIFEST")"   '{
     schema:2,repository:$repository,workspace:$workspace,branch:$branch,
     baseCommit:$baseCommit,headCommit:$headCommit,commitMessage:$commitMessage,
     taskId:$taskId,gatewayTaskId:$gatewayTaskId,profile:$profile,
-    budgetUsd:$budgetUsd,spentUsd:$spentUsd,files:$files,tests:$tests,
+    budgetUsd:$budgetUsd,spentUsd:$spentUsd,files:$files,allowedFiles:$allowedFiles,tests:$tests,
     testStatus:"passed",gitPush:false,productionDeploy:false,
     humanApprovalRequired:true,createdAt:$createdAt
   }' >"$REVIEW_DIR/metadata.json"
