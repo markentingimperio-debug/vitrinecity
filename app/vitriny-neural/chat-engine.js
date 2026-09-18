@@ -58,6 +58,8 @@ function hasToolAttempt(output){
  * a prepaid wallet and explicit per-request quote confirmation. */
 export function createNeuralChatEngine({db,skills,qualifications,config,env=process.env,now=Date.now,timeoutMs=LIMITS.timeoutMs,queueOptions={},paidRuntime=null}={}){
   if(!db||!skills?.invoke||!skills?.status||!qualifications?.latest||!config)throw new TypeError('Chat requires Neural runtime.');
+  // LIA_PRESERVE_KLING_V1 — ADMIN usa local-first; DeepSeek/Kling permanecem existentes e pagos somente após confirmação.
+  const localFirstAdmin=env.LIA_LOCAL_FIRST_ADMIN==='1';
   const attachments=createChatAttachments({db,now}),active=new Map();
   const deadlineMs=Math.max(100,Math.min(LIMITS.timeoutMs,Number(timeoutMs)||LIMITS.timeoutMs));
   const workerId=randomUUID();let closed=false,kickScheduled=false,workerTimer=null;
@@ -212,7 +214,7 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
       const inputKey=r.capability.startsWith('code.')?'task':r.capability.startsWith('research.')?'question':/^(?:growth|commerce|ranking)\./.test(r.capability)?'objective':'message';
       const payload={[inputKey]:user.text,untrustedContext:context,
         dryRun:true,neverSendAutomatically:true,requireEvidence:true,webSearchPerformed:false,
-        requestedOutput:'Responda diretamente ao pedido atual usando o contexto quando relevante. Não invente leitura de imagens, pesquisa web, mídia gerada ou execução. Código e conteúdo são rascunhos.'};
+        requestedOutput:'Responda diretamente ao pedido atual usando o contexto quando relevante. Não invente leitura de imagens, pesquisa web, mídia gerada ou execução. Código e conteúdo são rascunhos.'+(localFirstAdmin&&scope.startsWith('admin:')?' Quando não tiver informação suficiente para responder, comece exatamente com [LIA_PRECISA_API] e explique a limitação. Isso solicita apenas um orçamento; não autoriza chamada paga.':'')};
       const onAttempt=event=>{
         if(event.type==='started'){
           if(!mayWrite()||controller.signal.aborted||run.started||event.provider!==provider.id||event.modelName!==provider.modelName||
@@ -245,11 +247,19 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
       if(!run.started||row(scope,id).status!=='running'||result.provider!==provider.id||result.output?.model!==provider.modelName||!qualified(r.capability).some(p=>p.id===provider.id)||isIncompleteResponse(result.output)||hasToolAttempt(result)||hasToolAttempt(result.output))throw chatError('chat_response_invalid',502);
       const answer=result.output?.text;
       if(typeof answer!=='string'||!answer.trim()||answer.length>16000||containsChatSecret(answer))throw chatError('chat_response_invalid',502);
+      if(localFirstAdmin&&scope.startsWith('admin:')&&answer.trim().startsWith('[LIA_PRECISA_API]')){
+        run.offerExistingApi=true;
+        finish(scope,id,'unavailable','O modelo local informou que precisa de ajuda. Nenhuma API paga foi chamada.',lease);
+        return;
+      }
       finish(scope,id,'completed',answer.trim(),lease);
-    }catch{if(mayWrite())finish(scope,id,'failed','Não foi possível concluir esta resposta com segurança. Seu pedido foi preservado. Nenhuma API paga foi consultada.',lease);}
+    }catch(error){
+      if(mayWrite())finish(scope,id,'failed','Não foi possível concluir esta resposta com segurança. Seu pedido foi preservado. Nenhuma API paga foi consultada.',lease);
+      if(localFirstAdmin&&scope.startsWith('admin:')&&error?.code==='chat_response_invalid'&&run.responseReceived&&!controller.signal.aborted)run.offerExistingApi=true;
+    }
     finally{clearTimeout(timer);run.timer=null;run.finished=true;settleKnown();}
   }
-  const prepare=db.transaction((scope,input)=>{
+  const prepare=db.transaction((scope,input,{apiFallback=false}={})=>{
     scopeCheck(scope);if(closed)throw chatError('chat_busy',409);strictObject(input,['message','conversationId','attachmentIds','idempotencyKey']);
     const message=input.message;
     if(typeof message!=='string'||message.trim().length<1||message.length>LIMITS.messageCharacters||/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(message)||containsChatSecret(message))throw chatError('chat_input_invalid');
@@ -273,7 +283,7 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
     const previous=db.prepare('SELECT intent_kind,user_message_id FROM neural_chat_requests WHERE conversation_id=? AND scope=? ORDER BY created_at DESC,rowid DESC LIMIT 1').get(conversationId,scope);
     const intent=routeChatIntent(message,{previousKind:previous?.intent_kind});
     const referencedImage=selected.some(a=>a.kind==='image')||(!selected.length&&previous&&messageAttachments(scope,previous.user_message_id).some(a=>a.kind==='image')&&/\b(essa|esta|imagem|foto|anexo|isso)\b/.test(normalize(message)));
-    const unavailable=intent.kind!=='text'?intent.kind:referencedImage?'image_context':!enabled()||!qualified(intent.capability).length?'model':null;
+    const unavailable=intent.kind!=='text'?intent.kind:referencedImage?'image_context':apiFallback||!enabled()||!qualified(intent.capability).length?'model':null;
     const state=unavailable?'unavailable':'queued',requestId=randomUUID(),messageId=randomUUID(),assistantId=randomUUID();
     db.prepare('INSERT INTO neural_chat_requests(id,scope,idempotency_key,request_hash,conversation_id,user_message_id,assistant_message_id,status,capability,intent_kind,lease_token,lease_until,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .run(requestId,scope,key,hash,conversationId,messageId,assistantId,state,intent.capability||'',intent.kind,null,0,now(),now());
@@ -284,7 +294,7 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
     db.prepare('UPDATE neural_chat_conversations SET updated_at=? WHERE id=? AND scope=?').run(now(),conversationId,scope);
     // Server-owned provider preference affects new text requests only. It never
     // promotes remote inference into the free/local lane or bypasses a quote.
-    const preferPaidText=intent.kind==='text'&&!referencedImage&&paidRuntime?.prefersText===true;
+    const preferPaidText=intent.kind==='text'&&!referencedImage&&(apiFallback||paidRuntime?.prefersText===true&&(!localFirstAdmin||!scope.startsWith('admin:')));
     if(paidRuntime?.enabled&&(unavailable||preferPaidText)&&['text','image','video'].includes(intent.kind)&&!(intent.kind==='text'&&referencedImage)){
       const imageReferences=selected.filter(a=>a.kind==='image');
       if(!imageReferences.length&&referencedImage&&previous)imageReferences.push(...messageAttachments(scope,previous.user_message_id).filter(a=>a.kind==='image'));
@@ -301,6 +311,26 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
     }
     return receipt(row(scope,requestId));
   });
+  function offerExistingApi(scope,id){
+    if(closed||!db.open||!localFirstAdmin||!scope.startsWith('admin:')||!paidRuntime?.enabled)return;
+    try{
+      db.transaction(()=>{
+        const original=row(scope,id);
+        if(original.intent_kind!=='text'||!['failed','unavailable'].includes(original.status)||paidRuntime.owns(scope,id))return;
+        if(paidRuntime.status(scope)?.capabilities?.chat!==true)return;
+        const user=db.prepare('SELECT text FROM neural_chat_messages WHERE id=?').get(original.user_message_id);
+        if(!user)return;
+        const offered=prepare(scope,{
+          message:user.text,conversationId:original.conversation_id,
+          attachmentIds:messageAttachments(scope,original.user_message_id).map(a=>a.id),
+          idempotencyKey:'lia_api_'+id.replace(/-/g,'')
+        },{apiFallback:true});
+        if(offered.status!=='awaiting_confirmation'||!offered.payment)throw chatError('chat_payment_unavailable',503);
+        db.prepare('UPDATE neural_chat_messages SET text=? WHERE id=? AND request_id=?')
+          .run('O modelo local não concluiu o pedido. Foi preparado um novo orçamento para a API de texto já configurada. Confira e confirme o valor antes de continuar; nenhuma API paga foi chamada.',original.assistant_message_id,id);
+      }).immediate();
+    }catch{/* Fail closed: histórico original permanece e nenhuma API é chamada automaticamente. */}
+  }
   function kick(){
     if(closed||kickScheduled||!db.open)return;kickScheduled=true;
     queueMicrotask(()=>{
@@ -312,7 +342,7 @@ export function createNeuralChatEngine({db,skills,qualifications,config,env=proc
           run.pending=Promise.resolve().then(()=>drive(job,run)).finally(async()=>{
             // Local transport references also stay alive until actual settlement.
             // Durable unknown slots remain occupied even after rejection/restart.
-            try{await run.transport;}catch{}finally{if(active.get(job.id)===run)active.delete(job.id);kick();}
+            try{await run.transport;}catch{}finally{if(active.get(job.id)===run)active.delete(job.id);if(run.offerExistingApi&&!run.controller.signal.aborted)offerExistingApi(job.scope,job.id);kick();}
           }).catch(()=>{});
         }
       }catch{/* Fail closed; durable rows survive and a later worker can inspect them. */}
