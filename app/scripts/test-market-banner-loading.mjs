@@ -147,7 +147,7 @@ for (const prepared of [false, true]) {
   assert.match(checkout, /src="\/site-assistant\.js\?/, 'Servidor: Lia preservada.');
   assert.match(checkout, /id="course-payment-form"/, 'Servidor: formulário preservado.');
   assert.ok(checkout.includes(checkoutLoader), 'Servidor: lógica de pagamento preservada.');
-  assert.match(checkout, /pwa-install\.js\?v=2/, 'Servidor: outros injetores não foram alterados.');
+  assert.match(checkout, /pwa-install\.js\?v=3/, 'Servidor: outros injetores não foram alterados.');
   for (const pathname of ['/', '/loja.html']) {
     const html = serveFixture(pathname, prepared);
     assert.match(html, /global-market-banner\.js\?/, `${pathname}: publicidade preservada.`);
