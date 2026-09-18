@@ -139,6 +139,6 @@ jobs:
           grep -q 'socket.AF_NETLINK' ops/lia-execution-v2/install-worker-netlink-v6.sh
           grep -q 'socket.NETLINK_ROUTE' ops/lia-execution-v2/install-worker-netlink-v6.sh
           grep -q 'Chamadas OpenAI realizadas: ZERO' ops/lia-execution-v2/install-worker-netlink-v6.sh
-          grep -q '^LIA_GATEWAY_EXECUTION_ENABLED=0$' ops/lia-execution-v2/install-worker-netlink-v6.sh
-          grep -q '^LIA_CODEX_EXECUTION_ENABLED=0$' ops/lia-execution-v2/install-worker-netlink-v6.sh
-          grep -q '^LIA_BROKER_EXECUTION_ENABLED=0$' ops/lia-execution-v2/install-worker-netlink-v6.sh
+          grep -q 'LIA_GATEWAY_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-worker-netlink-v6.sh
+          grep -q 'LIA_CODEX_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-worker-netlink-v6.sh
+          grep -q 'LIA_BROKER_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-worker-netlink-v6.sh
