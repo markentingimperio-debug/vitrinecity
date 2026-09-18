@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>LIA · Vitrine City</title>
+  <link rel="stylesheet" href="/lia.css">
+  <script src="/lia.js" defer></script>
+</head>
+<body>
+<header><a href="/" class="brand">VITRINE <span>CITY</span></a><nav><a href="/minha-conta.html">Minha conta</a><a href="/neural-workspace.html">Vitrini Neural</a></nav></header>
+<main>
+  <section class="hero"><p class="eyebrow">LIA · AGENTE OPERACIONAL</p><h1>Dê o comando.<br><span>A LIA executa.</span></h1><p>Navegação em páginas e edição de foto, vídeo ou áudio com cobrança transparente em Vitrine Coins.</p></section>
+  <p id="error" class="error" hidden></p>
+  <section class="stats"><article><small>SALDO</small><strong id="balance">—</strong><span>Vitrine Coins</span></article><article><small>NAVEGAÇÃO</small><strong id="browser-price">—</strong><span>por tarefa suportada</span></article><article><small>MÍDIA</small><strong id="media-price">—</strong><span>por tarefa suportada</span></article></section>
+  <section class="panel">
+    <h2>O que você quer que a LIA faça?</h2>
+    <form id="command-form">
+      <label for="instruction">Comando</label>
+      <textarea id="instruction" minlength="3" maxlength="6000" rows="5" required placeholder="Ex.: abra https://vitrinecity.com e tire uma captura da página."></textarea>
+      <label for="file">Arquivo opcional</label>
+      <input id="file" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/mp4,audio/wav,audio/ogg">
+      <small class="hint">Anexe um arquivo quando pedir edição de foto, vídeo ou áudio. Limite: 50 MB.</small>
+      <div class="actions"><button id="quote" type="submit">Calcular uso</button><button id="confirm" type="button" hidden>Confirmar e executar</button></div>
+    </form>
+  </section>
+  <section id="quote-card" class="panel" hidden><p class="eyebrow">COTAÇÃO</p><h2 id="quote-title">—</h2><p id="quote-text"></p></section>
+  <section id="result-card" class="panel" hidden><p class="eyebrow">RESULTADO</p><h2 id="result-title">Tarefa concluída</h2><pre id="result"></pre><div id="artifacts" class="artifacts"></div></section>
+  <section id="login-card" class="panel" hidden><h2>Entre na sua conta</h2><p>O saldo e as tarefas da LIA ficam vinculados à sua conta Vitrine City.</p><a class="button" href="/entrar.html">Entrar</a></section>
+</main>
+</body>
+</html>

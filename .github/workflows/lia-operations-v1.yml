@@ -1,0 +1,58 @@
+name: LIA Operations V1
+
+on:
+  push:
+    branches:
+      - feat/lia-operations-v1-20260918
+    paths:
+      - 'app/vitriny-neural/lia-customer-operations.js'
+      - 'app/vitriny-neural/lia-api.js'
+      - 'app/server.js'
+      - 'app/public/admin-lia.*'
+      - 'app/public/lia.*'
+      - 'app/scripts/test-lia-customer-operations.mjs'
+      - '.github/workflows/lia-operations-v1.yml'
+  pull_request:
+    paths:
+      - 'app/vitriny-neural/lia-customer-operations.js'
+      - 'app/vitriny-neural/lia-api.js'
+      - 'app/server.js'
+      - 'app/public/admin-lia.*'
+      - 'app/public/lia.*'
+      - 'app/scripts/test-lia-customer-operations.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - name: Syntax
+        run: |
+          node --check vitriny-neural/lia-customer-operations.js
+          node --check vitriny-neural/lia-api.js
+          node --check server.js
+          node --check public/admin-lia.js
+          node --check public/lia.js
+      - name: Billing and refund tests
+        run: node --test scripts/test-lia-customer-operations.mjs
+      - name: Security guards
+        run: |
+          grep -q "lia_operation_reserve" vitriny-neural/lia-customer-operations.js
+          grep -q "lia_operation_refund" vitriny-neural/lia-customer-operations.js
+          grep -q "confirmCharge!==true" vitriny-neural/lia-customer-operations.js
+          grep -q "x-lia-operations-request" vitriny-neural/lia-customer-operations.js
+          grep -q "operationsConfigured" vitriny-neural/lia-api.js
+          grep -q "startsWith('op_')" vitriny-neural/lia-api.js
