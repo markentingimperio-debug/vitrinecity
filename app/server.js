@@ -38,6 +38,7 @@ import { createCryptoObservability, mountCryptoObservability } from './crypto-ob
 import { mountJarvis } from './jarvis-core.js';
 import { mountNeuralTasksApi } from './vitriny-neural/tasks-api.js';
 import { mountNeuralBillingApi } from './vitriny-neural/billing-api.js';
+import { setupLiaCustomerOperations } from './vitriny-neural/lia-customer-operations.js';
 import { mountJarvisPublic } from './jarvis-public.js';
 import { setupDiscoverySearch } from './discovery-search.js';
 import { setupMetasearch } from './metasearch.js';
@@ -5526,6 +5527,11 @@ const consumeMessageCredits = db.transaction((userId, units, description, kind =
     (user_id,delta_units,balance_after_units,kind,description) VALUES (?,?,?,?,?)`)
     .run(userId, -units, balanceAfter, kind, description);
   return balanceAfter;
+});
+
+const liaCustomerOperations = setupLiaCustomerOperations({
+  app, db, requireUser, sameOriginOnly, expireCreditBatches,
+  env: process.env, fetchImpl: globalThis.fetch
 });
 
 async function metaJson(url, options = {}) {
