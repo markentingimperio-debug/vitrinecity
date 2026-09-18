@@ -24,7 +24,7 @@
     return article;
   }
   async function loadStatus(){
-    try{const data=await api('/status');$('state').textContent=data.enabled?'ONLINE':'DESLIGADA';$('state').className=data.enabled?'ok-text':'warn-text';$('state-detail').textContent=data.enabled?'executor interno disponível':'configure LIA_ENABLED e LIA_EXECUTOR_TOKEN na VPS';$('model').textContent=data.model?.name||'—';$('model-detail').textContent=data.fallback?.configured?'local + fallback opcional':'modelo local';$('limits').textContent=data.limits?`${data.limits.maxSteps} / ${Number(data.limits.maxTotalTokens).toLocaleString('pt-BR')}`:'—';$('active').textContent=data.activeTaskId?data.activeTaskId.slice(0,8):'NENHUMA';return data.enabled;}catch(error){$('state').textContent='INDISPONÍVEL';$('state-detail').textContent='executor não respondeu';showError(error.message);return false;}
+    try{const data=await api('/status');$('state').textContent=data.enabled?'ONLINE':'DESLIGADA';$('state').className=data.enabled?'ok-text':'warn-text';$('state-detail').textContent=data.operations?.enabled?'browser e mídia conectados':data.enabled?'executor interno disponível':'configure a LIA na VPS';$('model').textContent=data.model?.name||'—';$('model-detail').textContent=data.fallback?.configured?'local + fallback opcional':'modelo local';$('limits').textContent=data.limits?`${data.limits.maxSteps} / ${Number(data.limits.maxTotalTokens).toLocaleString('pt-BR')}`:'—';$('active').textContent=data.activeTaskId?data.activeTaskId.slice(0,8):'NENHUMA';return data.enabled;}catch(error){$('state').textContent='INDISPONÍVEL';$('state-detail').textContent='executor não respondeu';showError(error.message);return false;}
   }
   async function loadTasks(){
     try{const data=await api('/tasks'),items=data.items||[];$('task-count').textContent=String(items.length);const target=$('tasks');target.replaceChildren();if(!items.length){const p=document.createElement('p');p.className='muted';p.textContent='Nenhuma tarefa executada.';target.append(p);}else for(const item of items)target.append(renderTask(item));
@@ -32,7 +32,15 @@
     }catch(error){showError(error.message);}
   }
   async function loadAll(){clearError();const enabled=await loadStatus();if(enabled)await loadTasks();else{$('tasks').innerHTML='<p class="muted">Habilite a LIA na VPS para iniciar tarefas.</p>';}}
-  async function submitTask(event){event.preventDefault();if(submitting)return;const instruction=$('instruction').value.trim();if(instruction.length<3)return;submitting=true;$('submit').disabled=true;clearError();try{const data=await api('/tasks','POST',{instruction});$('instruction').value='';$('announce').textContent=`Tarefa ${data.item?.id||''} enviada para a LIA.`;await loadAll();}catch(error){showError(error.message);}finally{submitting=false;$('submit').disabled=false;}}
+  async function uploadMedia(file){
+    const response=await fetch(base+'/upload',{method:'POST',credentials:'same-origin',cache:'no-store',
+      headers:{'content-type':file.type,'x-lia-request':'1'},body:file});
+    if(response.status===401){location.assign('/admin-login.html');throw Error('Sessão administrativa expirada.');}
+    let data={};try{data=await response.json();}catch{}
+    if(!response.ok)throw Error(data.error||`Falha HTTP ${response.status}`);
+    return data.artifactPath||data.upload?.artifactPath||'';
+  }
+  async function submitTask(event){event.preventDefault();if(submitting)return;const instruction=$('instruction').value.trim();if(instruction.length<3)return;submitting=true;$('submit').disabled=true;clearError();try{const file=$('media-file').files?.[0];let artifactPath='';if(file){$('announce').textContent='Enviando arquivo para a LIA…';artifactPath=await uploadMedia(file);if(!artifactPath)throw Error('A LIA não confirmou o arquivo enviado.');}const data=await api('/tasks','POST',{instruction,...(artifactPath?{artifactPath}:{})});$('instruction').value='';$('media-file').value='';$('announce').textContent=`Tarefa ${data.item?.id||''} enviada para a LIA.`;await loadAll();}catch(error){showError(error.message);}finally{submitting=false;$('submit').disabled=false;}}
   async function cancelTask(id,button){button.disabled=true;clearError();try{await api('/tasks/'+encodeURIComponent(id)+'/cancel','POST',{});await loadAll();}catch(error){showError(error.message);button.disabled=false;}}
   $('task-form').addEventListener('submit',submitTask);$('refresh').addEventListener('click',loadAll);loadAll();
 })();
