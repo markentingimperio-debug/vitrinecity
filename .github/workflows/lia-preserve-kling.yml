@@ -2,9 +2,9 @@ name: LIA Preserve Kling Validation
 on:
   push:
     branches: ['fix/lia-preserve-kling-vps-20260916']
-    paths: ['ops/lia-preserve-kling/**', 'app/vitriny-neural/chat-engine.js', '.github/workflows/lia-preserve-kling.yml']
+    paths: ['ops/lia-preserve-kling/**', 'app/vitriny-neural/chat-engine.js', 'app/vitriny-neural/lia-chat-operations.js', 'app/scripts/test-vitriny-neural-lia-chat-operations.mjs', '.github/workflows/lia-preserve-kling.yml']
   pull_request:
-    paths: ['ops/lia-preserve-kling/**', 'app/vitriny-neural/chat-engine.js', 'app/vitriny-neural/lia-chat-operations.js', '.github/workflows/lia-preserve-kling.yml']
+    paths: ['ops/lia-preserve-kling/**', 'app/vitriny-neural/chat-engine.js', 'app/vitriny-neural/lia-chat-operations.js', 'app/scripts/test-vitriny-neural-lia-chat-operations.mjs', '.github/workflows/lia-preserve-kling.yml']
 permissions:
   contents: read
 jobs:
@@ -35,6 +35,9 @@ jobs:
           cp ops/lia-preserve-kling/test.mjs app/scripts/test-lia-preserve-kling.mjs
           node --check app/vitriny-neural/chat-engine.js
           node --check app/vitriny-neural/lia-chat-operations.js
+      - name: Canonical operations billing and uncertain transport regression tests
+        working-directory: app
+        run: node --test scripts/test-vitriny-neural-lia-chat-operations.mjs
       - name: New routing tests and existing chat regression tests
         working-directory: app
         run: |
