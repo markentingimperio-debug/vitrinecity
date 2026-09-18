@@ -90,6 +90,16 @@ for p in "${ALLOWED_FILES[@]}"; do
   [[ "$p" =~ ^app/[A-Za-z0-9._/-]+$ ]] || { echo "PARADO: arquivo fora do escopo app/: $p" >&2; exit 1; }
   [[ "$p" != *'..'* ]] || { echo "PARADO: caminho inseguro: $p" >&2; exit 1; }
   [[ "$p" != app/.git/* ]] || { echo "PARADO: caminho .git proibido: $p" >&2; exit 1; }
+  TARGET="$WORKSPACE/$p"
+  [ ! -L "$TARGET" ] || { echo "PARADO: symlink nao permitido em allowedFiles: $p" >&2; exit 1; }
+  [ ! -d "$TARGET" ] || { echo "PARADO: diretorio nao permitido em allowedFiles: $p" >&2; exit 1; }
+  PARENT="$(dirname "$TARGET")"
+  [ -d "$PARENT" ] || { echo "PARADO: diretorio pai precisa existir: $p" >&2; exit 1; }
+  REAL_PARENT="$(readlink -f "$PARENT")"
+  case "$REAL_PARENT/" in
+    "$WORKSPACE"/*/) ;;
+    *) echo "PARADO: diretorio pai escapa do workspace: $p" >&2; exit 1 ;;
+  esac
 done
 [ "$(printf '%s\n' "${ALLOWED_FILES[@]}" | sort -u | wc -l)" -eq "${#ALLOWED_FILES[@]}" ] || { echo 'PARADO: allowedFiles contem duplicatas.' >&2; exit 1; }
 
@@ -99,7 +109,7 @@ for ((i=0;i<TEST_COUNT;i++)); do
   jq -e --argjson i "$i" '
     ((.tests[$i].name|type)=="string")
     and ((.tests[$i].command|type)=="array" and (.tests[$i].command|length)>=2 and (.tests[$i].command|length)<=20)
-    and all(.tests[$i].command[]; (type=="string") and (length>0) and (length<=300) and (test("[\\u0000-\\u001F\\u007F]")|not))
+    and all(.tests[$i].command[]; (type=="string") and (length>0) and (length<=300) and (test("[[:cntrl:]]")|not))
   ' "$MANIFEST" >/dev/null || { echo "PARADO: teste #$i invalido." >&2; exit 1; }
   EXE="$(jq -r --argjson i "$i" '.tests[$i].command[0]' "$MANIFEST")"
   case "$EXE" in node|npm) ;; *) echo "PARADO: executavel de teste nao permitido: $EXE" >&2; exit 1 ;; esac
@@ -308,6 +318,13 @@ echo '=== TESTES INDEPENDENTES ==='
 for ((i=0;i<TEST_COUNT;i++)); do
   TEST_NAME="$(jq -r --argjson i "$i" '.tests[$i].name' "$MANIFEST")"
   mapfile -t ARGS < <(jq -r --argjson i "$i" '.tests[$i].command[]' "$MANIFEST")
+  case "${ARGS[0]}" in
+    node) ARGS[0]="$NODE_DIR/node" ;;
+    npm)
+      [ -x "$NODE_DIR/npm" ] || { echo 'PARADO: npm do Node 24 nao encontrado.' >&2; exit 1; }
+      ARGS[0]="$NODE_DIR/npm"
+      ;;
+  esac
   echo "--- $TEST_NAME ---" | tee -a "$RUN_DIR/test-output.txt"
   set +e
   systemd-run --quiet --wait --collect --pipe \
