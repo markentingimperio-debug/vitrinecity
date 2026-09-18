@@ -32,6 +32,7 @@ jobs:
           bash -n ops/lia-execution-v2/run-second-task.sh
           bash -n ops/lia-execution-v2/install-broker-observe.sh
           bash -n ops/lia-execution-v2/diagnose-openai-upstream.sh
+          bash -n ops/lia-execution-v2/install-budget-v3.sh
       - name: Policy checks
         run: |
           node --input-type=module <<'NODE'
@@ -97,3 +98,17 @@ jobs:
           grep -q 'LIA_CODEX_EXECUTION_ENABLED=0' ops/lia-execution-v2/diagnose-openai-upstream.sh
           ! grep -q 'LIA_GATEWAY_EXECUTION_ENABLED=1' ops/lia-execution-v2/diagnose-openai-upstream.sh
           ! grep -q 'LIA_CODEX_EXECUTION_ENABLED=1' ops/lia-execution-v2/diagnose-openai-upstream.sh
+      - name: Budget v3 guard checks
+        run: |
+          grep -q '2026-09-18-v3-budget' ops/lia-execution-v2/broker-v2.mjs
+          grep -q 'actualUsageAccounting:true' ops/lia-execution-v2/broker-v2.mjs
+          grep -q 'inFlightMicroUsd' ops/lia-execution-v2/broker-v2.mjs
+          grep -q 'uncertainMicroUsd' ops/lia-execution-v2/broker-v2.mjs
+          grep -q 'extractUsage' ops/lia-execution-v2/broker-v2.mjs
+          grep -q 'response.completed' ops/lia-execution-v2/broker-v2.mjs
+          grep -q 'brokerSpentMicro' ops/lia-execution-v2/gateway-v2.mjs
+          grep -q 'custo/reserva reconciliados com o broker' ops/lia-execution-v2/gateway-v2.mjs
+          grep -q 'Chamadas OpenAI realizadas nesta instalacao: ZERO' ops/lia-execution-v2/install-budget-v3.sh
+          grep -q 'LIA_GATEWAY_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-budget-v3.sh
+          grep -q 'LIA_CODEX_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-budget-v3.sh
+          grep -q 'LIA_BROKER_EXECUTION_ENABLED=0' ops/lia-execution-v2/install-budget-v3.sh
