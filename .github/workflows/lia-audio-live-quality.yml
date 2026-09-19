@@ -1,0 +1,35 @@
+name: LIA audio live quality report
+on:
+  push:
+    branches: ['diagnostics/lia-signal-probe-20260919']
+    paths: ['.github/workflows/lia-audio-live-quality.yml']
+permissions:
+  contents: read
+jobs:
+  read-only-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Read public PR211 analysis, never approve or modify deployment
+        shell: python
+        run: |
+          import json,urllib.request,urllib.parse,datetime
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,*args):raise ValueError('redirect_refused')
+          opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+          def read(path,params):
+              url='https://sonarcloud.io/api/'+path+'?'+urllib.parse.urlencode(params)
+              with opener.open(url,timeout=20) as response:
+                  raw=response.read(2000001)
+              if len(raw)>2000000:raise ValueError('response_limit')
+              return json.loads(raw)
+          project='markentingimperio-debug_vitrinecity'
+          try:
+              prs=read('project_pull_requests/list',{'project':project})
+              gate=read('qualitygates/project_status',{'projectKey':project,'pullRequest':211})
+              rows=[p for p in prs.get('pullRequests',[]) if str(p.get('key'))=='211']
+              print(json.dumps({'readAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                   'pullRequests':rows,'gate':gate.get('projectStatus'),
+                   'productionChanged':False,'deploymentApproval':False},indent=2))
+          except Exception:
+              print(json.dumps({'publicReadUnavailable':True,'productionChanged':False,'deploymentApproval':False}))
