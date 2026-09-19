@@ -1,0 +1,47 @@
+name: LIA audio validation dependencies
+on:
+  push:
+    branches: ['feat/lia-native-audio-20260919']
+    paths: ['.github/workflows/lia-audio-validation-deps.yml']
+permissions:
+  contents: read
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Install locked dependencies in the disposable runner
+        working-directory: app
+        run: |
+          npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+          npm rebuild better-sqlite3
+          node -e "console.log('express='+require('express/package.json').version);console.log('better-sqlite3='+require('better-sqlite3/package.json').version); const db=new(require('better-sqlite3'))(':memory:');console.log(db.prepare('SELECT 1 x').get());db.close()"
+          tar -czf /tmp/lia-locked-deps.tgz node_modules
+      - name: Read exact official public request schemas
+        shell: python
+        run: |
+          import pathlib, urllib.request, hashlib, json
+          root=pathlib.Path('/tmp/lia-audio-schemas');root.mkdir()
+          base='https://s15-kling.klingai.com/kos/s101/nlav112918/api-doc/assets/'
+          names=['api-linG3LDA.js','api-QTo9iFK9.js','query-task-endpoints-DM5Id65U.js']
+          report=[]
+          for name in names:
+              with urllib.request.urlopen(base+name,timeout=20) as r:
+                  data=r.read(2000001)
+              if len(data)>2000000:raise ValueError('schema_too_large')
+              (root/name).write_bytes(data)
+              report.append({'url':base+name,'sha256':hashlib.sha256(data).hexdigest()})
+          (root/'report.json').write_text(json.dumps(report,indent=2))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lia-locked-deps-and-schemas
+          path: |
+            /tmp/lia-locked-deps.tgz
+            /tmp/lia-audio-schemas
+          retention-days: 2
