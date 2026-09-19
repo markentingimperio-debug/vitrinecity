@@ -19,6 +19,6 @@ jobs:
           python3 ops/lia-preserve-kling/fix-deploy-selector-v91.py
           python3 ops/lia-preserve-kling/fix-deploy-init-v92.py
           python3 -m py_compile ops/lia-preserve-kling/deploy-lia-v92.py
-          python3 ops/lia-preserve-kling/test_deploy_init_v92.py
+          sudo python3 ops/lia-preserve-kling/test_deploy_init_v92.py
       - name: Real Docker initial transition and rollback with synthetic data
         run: sudo env GITHUB_ACTIONS=true python3 ops/lia-preserve-kling/integration_init_v92.py
