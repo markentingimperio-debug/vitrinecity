@@ -19,7 +19,7 @@ PR=211
 WORKFLOW='LIA native audio validation'
 TARIFF={'enabled':True,'model':'kling-3.0','resolution':'720p','usdPerSecond':'0.126',
         'tariffVersion':'kling-3.0-native-audio-720p-20260919','effectiveAt':'2026-09-19T00:00:00.000Z'}
-BUNDLE_HASHES = {'build-native-audio-v94.py': '67dbc90dea123481244a798f714a0cea587401a6e30acadb00f41cc05ad4796e', 'test-native-audio.mjs': '9ef8320a0687e0a16048a82c8643a396bc442946deb8171fe6f77fc74d942d69', 'test-native-audio-flow.mjs': 'ab29bd8b954b455f8fb51c40c8cd57498ecd76d3268d31167e2590b471938d3a'}
+BUNDLE_HASHES = {'build-native-audio-v94.py': '67dbc90dea123481244a798f714a0cea587401a6e30acadb00f41cc05ad4796e', 'test-native-audio.mjs': '0e50a25052bdb6dfc49232a29f4ff0468e00f9abd56c8793d90c8fd8ede522fb', 'test-native-audio-flow.mjs': 'ec330c2fa0dbabf039ee09df9cd4503835dae3c97fe9d695bdf3d7c06237c287'}
 
 class Refused(RuntimeError):pass
 def need(value, code):

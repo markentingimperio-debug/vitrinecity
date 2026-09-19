@@ -18,7 +18,7 @@ async function fixture({audio=true,enabled=true,lost=false}={}){
  const file=path.join(root,'test.mp4'),args=['-v','error','-f','lavfi','-i','color=c=black:s=320x320:r=5'];
  if(audio)args.push('-f','lavfi','-i','sine=frequency=440:sample_rate=16000');
  args.push('-t','5','-c:v','libx264','-threads','1','-pix_fmt','yuv420p',...(audio?['-c:a','aac']:['-an']),'-movflags','+faststart',file);
- assert.equal(spawnSync('ffmpeg',args,{timeout:15000}).status,0);
+ assert.equal(spawnSync('/usr/bin/ffmpeg',args,{timeout:15000,env:{PATH:'/usr/bin:/bin'}}).status,0);
  const data=fs.readFileSync(file),db=new Database(':memory:');
  db.exec("CREATE TABLE users(id INTEGER PRIMARY KEY,is_admin INTEGER,email TEXT,account_status TEXT);INSERT INTO users VALUES(1,1,'test@example.test','active'),(2,0,'other@example.test','active')");
  const coins=createCoinWallet({db,enabled:true,now:()=>now}),wallet=createCoinAiWalletAdapter({db,coinWallet:coins,now:()=>now});

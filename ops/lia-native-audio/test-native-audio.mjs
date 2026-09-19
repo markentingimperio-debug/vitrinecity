@@ -52,7 +52,7 @@ function sample(kind){
  args.push('-t','3','-c:v','libx264','-threads','1','-pix_fmt','yuv420p');
  if(kind!=='none')args.push('-c:a','aac');else args.push('-an');
  args.push('-movflags','+faststart',p);
- const r=spawnSync('ffmpeg',args,{timeout:15000});assert.equal(r.status,0,'synthetic video encoder failed');
+ const r=spawnSync('/usr/bin/ffmpeg',args,{timeout:15000,env:{PATH:'/usr/bin:/bin'}});assert.equal(r.status,0,'synthetic video encoder failed');
  return {p,bytes:fs.readFileSync(p),close(){fs.rmSync(root,{recursive:true,force:true});}};
 }
 test('real FFmpeg/ffprobe accept a nonzero audio stream',()=>{const f=sample('tone');try{assert.equal(inspectChatVideo(f.p,f.bytes,{requireAudio:true}).audioVerified,true);}finally{f.close();}});
