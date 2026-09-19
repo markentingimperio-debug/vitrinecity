@@ -1,0 +1,1 @@
+{"release":"LIA_REFERENCE_MEDIA_V95","purpose":"Require existing lifecycle, canonical wallet and image-route regression workflows for PR212","helperSha256":"27fbe7defefd38b77263f82317171aa5acb3bd6cd6bbc59dc3c2017e28853c44","replacesLegacyProduction":false,"databaseRestore":false}
