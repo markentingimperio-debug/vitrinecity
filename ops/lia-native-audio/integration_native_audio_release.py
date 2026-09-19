@@ -52,6 +52,11 @@ def main():
  try:
   m.command(m.compose([cfg])+['up','-d','--no-build','--pull','never','--wait','--wait-timeout','60','app'],timeout=90,log=root/'base-up.log')
   old=m.app();m.EXPECTED_MOUNTS={x['Destination']:(x.get('Type'),x.get('Name'),x.get('Source'),x.get('RW')) for x in old['Mounts']}
+  # The existing Docker build injects the public banner into HTML. Pin that built fixture,
+  # permitting no change to application JS, the image route, or the audio source inputs.
+  observed=m.runtime_hashes(old['Id'],m.PAYLOAD)
+  assert {p for p in observed if observed[p]!=m.PAYLOAD[p]} <= {'app/public/neural-workspace.html'}
+  m.PAYLOAD=observed
   volume=next(x for x in old['Mounts'] if x['Destination']=='/data');assert volume['Name']==project+'_data';m.DATA=Path(volume['Source'])
   m.consumers=lambda:m.command(['docker','ps','--no-trunc','--filter','volume='+project+'_data','--format','{{.ID}}']).stdout.decode().splitlines()
   # Freeze ALL effective variables, including the defaults from the Node base image.
