@@ -1,0 +1,34 @@
+name: LIA reference live quality report
+on:
+  push:
+    branches: ['diagnostics/lia-signal-probe-20260919']
+    paths: ['.github/workflows/lia-reference-live-quality.yml']
+permissions:
+  contents: read
+jobs:
+  read-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Read public PR212 findings without credentials or production access
+        shell: python
+        run: |
+          import json,urllib.request,urllib.parse,datetime
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,*args):raise ValueError('redirect_refused')
+          opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+          def read(path,params):
+              url='https://sonarcloud.io/api/'+path+'?'+urllib.parse.urlencode(params)
+              with opener.open(url,timeout=20) as r:raw=r.read(2000001)
+              if len(raw)>2000000:raise ValueError('too_large')
+              return json.loads(raw)
+          project='markentingimperio-debug_vitrinecity'
+          try:
+              prs=read('project_pull_requests/list',{'project':project})
+              gate=read('qualitygates/project_status',{'projectKey':project,'pullRequest':212})
+              issues=read('issues/search',{'componentKeys':project,'pullRequest':212,'resolved':'false','ps':100})
+              print(json.dumps({'readAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                  'pullRequests':[p for p in prs.get('pullRequests',[]) if str(p.get('key'))=='212'],
+                  'gate':gate.get('projectStatus'),'issues':[{k:i.get(k) for k in ('key','rule','type','component','line','message')} for i in issues.get('issues',[])],
+                  'paging':issues.get('paging'),'productionChanged':False,'deployApproved':False},indent=2))
+          except Exception:print(json.dumps({'publicReadUnavailable':True,'productionChanged':False,'deployApproved':False}))
