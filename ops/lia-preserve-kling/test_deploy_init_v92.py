@@ -52,6 +52,44 @@ class InitMigrationTests(unittest.TestCase):
         a=source.decode().split('def validate_gate(',1)[1].split('def quality(',1)[0]
         b=result.decode().split('def validate_gate(',1)[1].split('def quality(',1)[0]
         self.assertEqual(a,b);self.assertIn('LIA init migration tests',m.REQUIRED_CI)
+    def test_stale_sonar_pass_cannot_authorize_init_migration(self):
+        revision = 'a' * 40
+        runs = {'workflow_runs': [
+            {'id': index, 'name': name, 'head_sha': revision,
+             'event': 'pull_request', 'status': 'completed', 'conclusion': 'success'}
+            for index, name in enumerate(m.REQUIRED_CI, 1)
+        ]}
+        sonar = {'pullRequests': [
+            {'key': str(m.PR), 'commit': {'sha': 'b' * 40},
+             'status': {'qualityGateStatus': 'OK'}}
+        ]}
+        with self.assertRaisesRegex(m.Blocked, '^SONAR_AINDA_NAO_ANALISOU_ESTA_REVISAO$'):
+            m.validate_gate(revision, {'head': {'sha': revision}}, runs, sonar,
+                            {'projectStatus': {'status': 'OK'}})
+
+    def test_plan_with_stale_sonar_never_requests_token_or_stops_app(self):
+        revision = 'a' * 40
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(m.sys, 'argv',
+                                ['deploy-lia-v92.py', 'plano', '--revision', revision]))
+            stack.enter_context(patch.object(m.os, 'geteuid', return_value=0))
+            stack.enter_context(patch.object(m.socket, 'gethostname', return_value=m.HOST))
+            stack.enter_context(patch.object(m, 'app', return_value=sample()))
+            stack.enter_context(patch.object(m, 'topology'))
+            stack.enter_context(patch.object(m, 'verify_retest'))
+            stack.enter_context(patch.object(m, 'find_backup',
+                                return_value=(Path('/unused-backup'), {})))
+            review = stack.enter_context(patch.object(m, 'quality',
+                         side_effect=m.Blocked('SONAR_AINDA_NAO_ANALISOU_ESTA_REVISAO')))
+            guarded = [stack.enter_context(patch.object(m, name)) for name in
+                       ('command', 'obtain_token', 'sqlite_snapshot',
+                        'stop_for_rollout', 'compose_up', 'write_new', 'atomic_json')]
+            with self.assertRaisesRegex(m.Blocked, '^SONAR_AINDA_NAO_ANALISOU_ESTA_REVISAO$'):
+                m.main()
+            review.assert_called_once_with(revision)
+            for action in guarded:
+                action.assert_not_called()
+
     def test_backup_requires_full_integrity_check(self):
         self.assertIn("dest.execute('PRAGMA integrity_check')",result.decode())
     def test_force_only_exact_legacy(self):
