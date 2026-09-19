@@ -3,6 +3,7 @@ name: Vitriny Neural
 on:
   pull_request:
     paths:
+      - 'ops/lia-native-audio/**'
       - 'app/vitriny-neural/**'
       - 'app/scripts/test-vitriny-neural*.mjs'
       - 'app/scripts/test-neural-*.mjs'
@@ -21,6 +22,7 @@ on:
       - main
       - feat/jarvis-auto-learning-skills
     paths:
+      - 'ops/lia-native-audio/**'
       - 'app/vitriny-neural/**'
       - 'app/scripts/test-vitriny-neural*.mjs'
       - 'app/scripts/test-neural-*.mjs'
