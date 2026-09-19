@@ -27,9 +27,11 @@ jobs:
           try:
               prs=read('project_pull_requests/list',{'project':project})
               gate=read('qualitygates/project_status',{'projectKey':project,'pullRequest':211})
+              data=read('issues/search',{'componentKeys':project,'pullRequest':211,'resolved':'false','ps':100})
+              issues=[{k:i.get(k) for k in ('key','rule','severity','type','component','line','message','textRange','flows')} for i in data.get('issues',[])]
               rows=[p for p in prs.get('pullRequests',[]) if str(p.get('key'))=='211']
               print(json.dumps({'readAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                   'pullRequests':rows,'gate':gate.get('projectStatus'),
+                   'pullRequests':rows,'gate':gate.get('projectStatus'),'issues':issues,'issuesPaging':data.get('paging'),
                    'productionChanged':False,'deploymentApproval':False},indent=2))
           except Exception:
               print(json.dumps({'publicReadUnavailable':True,'productionChanged':False,'deploymentApproval':False}))
