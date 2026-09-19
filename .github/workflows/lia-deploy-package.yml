@@ -16,8 +16,9 @@ jobs:
           persist-credentials: false
       - name: Syntax and offline deployment contracts
         run: |
-          python3 -m py_compile ops/lia-preserve-kling/deploy-lia-v9.py
+          python3 -m py_compile ops/lia-preserve-kling/deploy-lia-v9.py ops/lia-preserve-kling/fix-deploy-selector-v91.py
           python3 ops/lia-preserve-kling/test_deploy_lia_v9.py
           python3 ops/lia-preserve-kling/test_compose_serialization_v9.py
-      - name: Isolated real Docker Compose activation and rollback
-        run: sudo env GITHUB_ACTIONS=true python3 ops/lia-preserve-kling/integration_compose_v9.py
+          python3 ops/lia-preserve-kling/test_deploy_selector_v91.py
+      - name: Isolated real Docker Compose activation and rollback with historical checks
+        run: sudo env GITHUB_ACTIONS=true python3 ops/lia-preserve-kling/test_deploy_selector_v91.py --integration
