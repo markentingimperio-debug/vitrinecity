@@ -1,0 +1,52 @@
+name: LIA reference media validation
+on:
+  pull_request:
+    paths:
+      - 'app/public/neural-reference-media.js'
+      - 'ops/lia-reference-media/**'
+      - '.github/workflows/lia-reference-media.yml'
+permissions:
+  contents: read
+jobs:
+  reference-media:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare pinned helper and validate package contracts
+        run: |
+          set -euo pipefail
+          python3 ops/lia-preserve-kling/fix-deploy-selector-v91.py
+          python3 ops/lia-preserve-kling/fix-deploy-init-v92.py
+          cp app/public/neural-reference-media.js ops/lia-reference-media/neural-reference-media.js
+          cp ops/lia-native-audio/build-native-audio-v94.py ops/lia-reference-media/build-native-audio-v94.py
+          python3 -m py_compile ops/lia-reference-media/*.py
+          python3 ops/lia-reference-media/test-reference-release.py 2>&1 | tee reference-contracts.log
+      - name: Real locked-dependency product reference generation and rollback
+        run: |
+          set -euo pipefail
+          sudo env GITHUB_ACTIONS=true python3 -u ops/lia-reference-media/integration-reference-media.py 2>&1 | tee reference-validation.log
+      - name: Collect synthetic test logs
+        if: always()
+        run: |
+          sudo python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          out=Path('reference-ci-logs');out.mkdir(exist_ok=True)
+          for root in Path('/root').glob('lia-reference-ci-*'):
+              for p in root.rglob('*.log'):
+                  dest=out/root.name/p.relative_to(root);dest.parent.mkdir(parents=True,exist_ok=True)
+                  shutil.copyfile(p,dest)
+          for p in out.rglob('*'):p.chmod(0o755 if p.is_dir() else 0o644)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lia-reference-media-validation
+          path: |
+            reference-contracts.log
+            reference-validation.log
+            reference-ci-logs
+          retention-days: 3
