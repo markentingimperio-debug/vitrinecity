@@ -51,6 +51,10 @@ def main():
         m.write_new(cfg,json.dumps(definition).encode())
         m.command(m.compose([cfg])+['up','-d','--wait','--wait-timeout','60','app'],timeout=90,log=basepath/'up.log')
         old=m.app()
+        # Model the full runtime environment frozen by the successful VPS deployment,
+        # including the base image defaults (PATH, NODE_VERSION and YARN_VERSION).
+        definition['services']['app']['environment']=m.escape_values(m.environment(old))
+        cfg.write_text(json.dumps(definition))
         m.EXPECTED_MOUNTS={x['Destination']:(x.get('Type'),x.get('Name'),x.get('Source'),x.get('RW')) for x in old['Mounts']}
         volume=next(x for x in old['Mounts'] if x['Destination']=='/data')
         assert volume.get('Name')==project+'_data';m.DATA=Path(volume['Source'])
