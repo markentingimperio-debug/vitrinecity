@@ -1,0 +1,53 @@
+name: LIA native audio validation
+on:
+  pull_request:
+    paths:
+      - 'ops/lia-native-audio/**'
+      - 'ops/lia-preserve-kling/**'
+      - 'app/**'
+      - '.github/workflows/lia-native-audio-validation.yml'
+permissions:
+  contents: read
+jobs:
+  native-audio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build exact recovery helper and verify release contracts
+        run: |
+          set -euo pipefail
+          python3 ops/lia-preserve-kling/fix-deploy-selector-v91.py
+          python3 ops/lia-preserve-kling/fix-deploy-init-v92.py
+          python3 -m py_compile ops/lia-native-audio/*.py
+          python3 ops/lia-native-audio/test_native_audio_release.py 2>&1 | tee native-contracts.log
+      - name: Test real locked-dependency audio update and rollback in isolated Docker
+        run: |
+          set -euo pipefail
+          sudo env GITHUB_ACTIONS=true python3 -u ops/lia-native-audio/integration_native_audio_release.py 2>&1 | tee native-validation.log
+      - name: Collect synthetic test logs
+        if: always()
+        run: |
+          sudo python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          out=Path('native-ci-logs');out.mkdir(exist_ok=True)
+          for root in Path('/root').glob('lia-audio-ci-*'):
+              for p in root.rglob('*.log'):
+                  target=out/root.name/p.relative_to(root)
+                  target.parent.mkdir(parents=True,exist_ok=True)
+                  shutil.copyfile(p,target)
+          for p in out.rglob('*'):
+              p.chmod(0o755 if p.is_dir() else 0o644)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lia-native-audio-validation
+          path: |
+            native-contracts.log
+            native-validation.log
+            native-ci-logs
+          retention-days: 3

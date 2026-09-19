@@ -1,0 +1,45 @@
+name: LIA native audio schema
+on:
+  push:
+    branches: ['feat/lia-native-audio-20260919']
+    paths: ['.github/workflows/lia-native-audio-schema.yml']
+permissions:
+  contents: read
+jobs:
+  official-schema:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Read official schema assets only
+        shell: python
+        run: |
+          import json,hashlib,re,pathlib,urllib.request,urllib.parse,collections
+          root=pathlib.Path('schemas');root.mkdir()
+          base='https://s15-kling.klingai.com/kos/s101/nlav112918/api-doc/assets/'
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,*args):raise ValueError('redirect')
+          op=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+          queue=collections.deque(['api-module-loader-FX7qrQOE.js']);seen=set();report=[]
+          while queue and len(seen)<40:
+              name=queue.popleft()
+              if name in seen or not re.fullmatch(r'[A-Za-z0-9_\-]+\.js',name):continue
+              seen.add(name)
+              try:
+                  with op.open(base+name,timeout=15) as r:raw=r.read(6000001)
+                  if len(raw)>6000000:raise ValueError('too_large')
+                  text=raw.decode();(root/name).write_text(text)
+                  print('ASSET',name,'SHA256',hashlib.sha256(raw).hexdigest())
+                  report.append({'url':base+name,'sha256':hashlib.sha256(raw).hexdigest()})
+                  for term in ['audio','native','3-0','kling-3.0','text-to-video']:
+                      for m in list(re.finditer(re.escape(term),text))[:8]:print(text[max(0,m.start()-180):m.end()+420])
+                  refs=re.findall(r'[\"\'](?:\./)?([A-Za-z0-9_\-]+\.js)[\"\']',text)
+                  refs.sort(key=lambda n:(not any(w in n.lower() for w in ['3-0','video','query','endpoint','billing']),n))
+                  for n in refs:
+                      if 'loader' in name or any(w in n.lower() for w in ['video','query','endpoint','billing']):queue.append(n)
+              except Exception as e:print('UNAVAILABLE',name,type(e).__name__)
+          (root/'report.json').write_text(json.dumps(report,indent=2))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lia-native-audio-schema
+          path: schemas/
+          retention-days: 2
