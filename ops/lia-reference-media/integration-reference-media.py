@@ -27,6 +27,9 @@ def main():
  assert m.sha(source.encode())==b.MANIFEST[b.ENGINE][0];e.write_text(source)
  m.PAYLOAD={p:m.sha((ctx/p.removeprefix('app/')).read_bytes()) for p in m.PAYLOAD}
  for p in m.GUARDS:m.write_new(m.STAGED/'candidate'/p,(ctx/p.removeprefix('app/')).read_bytes())
+ # Only this disposable fixture uses the later stronger HTTP-header regression.
+ # Production's immutable helper and its attested staged tests are not changed.
+ m.TEST_HASHES={**m.TEST_HASHES,'app/scripts/test-vitriny-neural-lia-chat-operations.mjs':'c2d4053c3949c7f818c495aef0e4b0d9018a18c474a6e87e714618fdf02d86bd'}
  for p,expected in m.TEST_HASHES.items():
   original=REPO/p
   data=(REPO/'ops/lia-preserve-kling/test.mjs').read_bytes() if p.endswith('/test-lia-preserve-kling.mjs') else original.read_bytes()
