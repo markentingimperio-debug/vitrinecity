@@ -1,0 +1,54 @@
+name: LIA native audio public contract
+on:
+  push:
+    branches: ['feat/lia-native-audio-20260919']
+    paths: ['.github/workflows/lia-native-audio-docs.yml']
+permissions:
+  contents: read
+jobs:
+  public-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Read official public schemas without credentials
+        shell: python
+        run: |
+          import collections, hashlib, json, pathlib, re, urllib.parse, urllib.request
+          from datetime import datetime, timezone
+          allowed={'kling.ai','s15-kling.klingai.com'}
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,*args): raise ValueError('redirect_refused')
+          op=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+          root=pathlib.Path('official-contract');root.mkdir()
+          queue=collections.deque([(u,0) for u in (
+              'https://kling.ai/document-api/api/video/3-0-omni/text-to-video',
+              'https://kling.ai/document-api/api/video/3-0-omni/image-to-video',
+              'https://kling.ai/dev/pricing')])
+          seen=set(); evidence=[]
+          while queue and len(seen)<60:
+              url,depth=queue.popleft();p=urllib.parse.urlsplit(url)
+              if p.scheme!='https' or p.hostname not in allowed or p.username or p.password or p.port or url in seen: continue
+              seen.add(url)
+              try:
+                  with op.open(urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0'}),timeout=12) as r: raw=r.read(6000001)
+                  if len(raw)>6000000: raise ValueError('too_large')
+                  text=raw.decode('utf8'); digest=hashlib.sha256(raw).hexdigest()
+                  (root/(digest+'.txt')).write_text(text)
+                  clips=[]
+                  for term in ('audio:','audio','native','text-to-video','kling-3.0','0.126'):
+                      for m in list(re.finditer(re.escape(term),text))[:12]: clips.append(text[max(0,m.start()-160):m.end()+300])
+                  evidence.append({'url':url,'sha256':digest,'bytes':len(raw),'snippets':clips[:45]})
+                  if depth<3:
+                      candidates=re.findall(r'[\"\']([^\"\'\s<>]+\.js(?:\?[^\"\'\s<>]*)?)[\"\']',text)
+                      for candidate in candidates:
+                          if candidate.startswith(('data:','javascript:')): continue
+                          queue.append((urllib.parse.urljoin(url,candidate),depth+1))
+              except Exception as e: evidence.append({'url':url,'error':type(e).__name__})
+          report={'readAt':datetime.now(timezone.utc).isoformat(),'paidTasksExecuted':False,'productionAccess':False,'resources':evidence}
+          (root/'report.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lia-official-audio-contract
+          path: official-contract/
+          retention-days: 2
