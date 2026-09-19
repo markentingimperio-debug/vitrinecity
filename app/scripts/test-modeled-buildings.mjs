@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 
 const threeUrl=import.meta.resolve('three'),coreUrl=new URL('../public/vitriny-store-building-core.js',import.meta.url).href;
 const code=readFileSync(new URL('../public/vitriny-modeled-buildings.js',import.meta.url),'utf8').replaceAll("'/vendor/three/three.module.js'",JSON.stringify(threeUrl)).replaceAll("'./vitriny-store-building-core.js'",JSON.stringify(coreUrl));
@@ -120,4 +121,80 @@ test('Agrotecnica keeps its original name and disposes both signs with the model
     group.traverse(object=>{if(!object.isMesh)return;meshes++;for(const resource of [object.geometry,object.material,object.material.map]){counts.set(resource,0);resource.addEventListener('dispose',()=>counts.set(resource,counts.get(resource)+1));}});
     assert.equal(meshes,2);manager.dispose();manager.dispose();for(const count of counts.values())assert.equal(count,1);assert.equal(result.group.parent,null);
   }finally{manager.dispose();globalThis.document=priorDocument;}
+});
+
+test('named architectural finishes preserve source assets, geometry, identity and transparent interior visibility',async()=>{
+  const priorDocument=globalThis.document,{document}=signDocument();globalThis.document=document;
+  const roles=['Stone','Stone_Light','Glass','Interior','Light','Linen','Brass','Graphite','Unrelated'];
+  const asset=model(),sourceGeometry=asset.body.geometry;
+  for(const [index,role] of roles.entries()){
+    const material=new THREE.MeshStandardMaterial({color:'#7d6743',roughness:.57});material.name=`VC_${role}.011`;
+    if(role==='Glass'){material.transparent=true;material.opacity=.18;}
+    const mesh=new THREE.Mesh(sourceGeometry,material);mesh.position.copy(asset.body.position);mesh.name=role;asset.scene.add(mesh);
+  }
+  const original=asset.scene.children.map(mesh=>({material:mesh.material,color:mesh.material.color.getHexString(),opacity:mesh.material.opacity,depthWrite:mesh.material.depthWrite}));
+  const a=store('Loja Azul','one'),b=store('Centro Educacional','two');
+  const manager=mountModeledBuildings({createSign:noSign,loadModel:async()=>asset,shadows:true});
+  try{
+    const results=await Promise.all([a,b].map(f=>manager.mountStore(f.parent,f.entity,f.fallback)));
+    const first=results[0].group.children[0],second=results[1].group.children[0];
+    assert.equal(first.children.length,asset.scene.children.length);assert.equal(first.children[0].geometry,sourceGeometry);
+    assert.deepEqual(validateModeledRetail(first),validateModeledRetail(asset.scene));
+    for(const role of roles){
+      const source=asset.scene.getObjectByName(role),one=first.getObjectByName(role),two=second.getObjectByName(role);
+      assert.equal(one.geometry,source.geometry);assert.equal(one.material,two.material,'Finishes must be shared across store accents: '+role);
+      assert.equal(one.material===source.material,role==='Unrelated');
+    }
+    assert.equal(first.getObjectByName('Stone').material.color.getHexString(),'d8d7cd');
+    assert.equal(first.getObjectByName('Stone_Light').material.color.getHexString(),'e6e3da');
+    const glass=first.getObjectByName('Glass');assert.equal(glass.material.opacity,.18);assert.equal(glass.material.transparent,true);assert.equal(glass.material.depthWrite,false);
+    assert.equal(glass.castShadow,false);assert.equal(glass.receiveShadow,true);
+    assert.ok(first.getObjectByName('Interior').material.emissiveIntensity<.1);assert.ok(first.getObjectByName('Light').material.emissiveIntensity<=1);
+    const stone=first.getObjectByName('Stone').material,grain=stone.map;
+    assert.equal(grain,first.getObjectByName('Stone_Light').material.map);assert.deepEqual([grain.image.width,grain.image.height],[128,128]);
+    assert.equal(grain.colorSpace,THREE.SRGBColorSpace);assert.equal(grain.wrapS,THREE.RepeatWrapping);
+    const shader={vertexShader:'before\n#include <uv_vertex>\nafter'};stone.onBeforeCompile(shader);
+    assert.match(shader.vertexShader,/vMapUv = .*limestoneAxis/);assert.match(shader.vertexShader,/position\.xz/);assert.equal(stone.customProgramCacheKey(),'retail-limestone-projection-v1');
+    for(const [index,mesh] of asset.scene.children.entries()){
+      assert.equal(mesh.material,original[index].material);assert.equal(mesh.material.color.getHexString(),original[index].color);
+      assert.equal(mesh.material.opacity,original[index].opacity);assert.equal(mesh.material.depthWrite,original[index].depthWrite);
+    }
+    assert.equal(a.display.parent,a.parent);assert.equal(b.display.parent,b.parent);assert.equal(a.parent.userData.href,'/loja/one');
+    const disposals=new Map();for(const mesh of first.children)disposals.set(mesh.material,0);disposals.set(grain,0);
+    for(const resource of disposals.keys())resource.addEventListener('dispose',()=>disposals.set(resource,disposals.get(resource)+1));
+    manager.dispose();manager.dispose();for(const count of disposals.values())assert.equal(count,1);
+  }finally{manager.dispose();globalThis.document=priorDocument;}
+});
+
+test('stone treatment preserves existing textures and gracefully omits grain without canvas support',async()=>{
+  const asset=model(),stone=new THREE.MeshStandardMaterial({color:'#8b7957'});stone.name='VC_Stone';
+  const texture=new THREE.Texture();stone.map=texture;asset.body.material=stone;
+  const manager=mountModeledBuildings({createSign:noSign,loadModel:async()=>asset}),f=store();
+  const ready=await manager.mountStore(f.parent,f.entity,f.fallback);
+  assert.equal(ready.status,'ready');assert.equal(ready.group.children[0].children[0].material.map,texture);assert.equal(stone.color.getHexString(),'8b7957');manager.dispose();
+  const plain=model();plain.body.material.name='VC_Stone';
+  const priorDocument=globalThis.document;globalThis.document=undefined;
+  const fallback=mountModeledBuildings({createSign:noSign,loadModel:async()=>plain}),g=store();
+  try{const result=await fallback.mountStore(g.parent,g.entity,g.fallback);assert.equal(result.status,'ready');assert.equal(result.group.children[0].children[0].material.map,null);}
+  finally{fallback.dispose();globalThis.document=priorDocument;}
+});
+
+test('all three real GLBs keep their exact mesh budgets and UV-free geometry with the new finishes',async()=>{
+  const priorDocument=globalThis.document,{document}=signDocument();globalThis.document=document;
+  try{
+    for(const [kind,name] of [['botanical','Agrotécnica'],['country','Sertaneja'],['gallery','Loja Azul']]){
+      const bytes=readFileSync(new URL(`../public/assets/architecture/vc-retail-${kind}-v1.glb`,import.meta.url));
+      const buffer=bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength);
+      const asset=await new Promise((resolve,reject)=>new GLTFLoader().parse(buffer,'',resolve,reject));
+      const before=validateModeledRetail(asset.scene),sources=new Map();asset.scene.traverse(mesh=>{if(mesh.isMesh)sources.set(mesh.name,{geometry:mesh.geometry,material:mesh.material});});
+      const manager=mountModeledBuildings({createSign:noSign,loadModel:async()=>asset}),f=store(name,kind);
+      try{
+        const result=await manager.mountStore(f.parent,f.entity,f.fallback);assert.equal(result.status,'ready');const model=result.group.children[0];
+        assert.deepEqual(validateModeledRetail(model),before);assert.ok(before.drawCalls<=20);assert.ok(before.triangles<=60000);
+        model.traverse(mesh=>{if(!mesh.isMesh)return;assert.equal(mesh.geometry,sources.get(mesh.name).geometry);assert.equal(mesh.geometry.getAttribute('uv'),undefined);
+          if(/^VC_Stone(?:_Light)?\./.test(mesh.material.name)){assert.ok(mesh.material.map);assert.equal(mesh.material.customProgramCacheKey(),'retail-limestone-projection-v1');}
+        });
+      }finally{manager.dispose();}
+    }
+  }finally{globalThis.document=priorDocument;}
 });

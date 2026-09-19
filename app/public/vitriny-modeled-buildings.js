@@ -84,7 +84,7 @@ export function createAgrotecnicaStoreSign(parent,entity,{document=globalThis.do
 
 export function mountModeledBuildings({loadModel=loadRetailModel,shadows=false,createSign=createStoreName,disposeFallback=()=>{}}={}){
   const assets=new Map(),variants=new Map(),resources=new Set(),instances=new Set();
-  let disposed=false;
+  let disposed=false,stoneGrain=null;
   function asset(url){
     if(!assets.has(url))assets.set(url,Promise.resolve().then(()=>loadModel(url)).then(result=>{
       const model=result?.scene||result;
@@ -99,11 +99,66 @@ export function mountModeledBuildings({loadModel=loadRetailModel,shadows=false,c
     }));
     return assets.get(url);
   }
-  function accentMaterial(material,color){
-    if(!/^VC_Accent(?:\.\d+)?$/.test(material.name))return material;
-    const key=material.uuid+':'+color;
+  function stoneTexture(){
+    if(stoneGrain)return stoneGrain;
+    // One small, deterministic finish shared by all loaded stone variants. No
+    // additional image download, architecture or high-frequency displacement.
+    if(!globalThis.document?.createElement)return null;
+    const canvas=document.createElement('canvas');canvas.width=canvas.height=128;
+    const ctx=canvas.getContext('2d');if(!ctx)return null;
+    ctx.fillStyle='#fbfaf7';ctx.fillRect(0,0,128,128);
+    for(let i=0;i<512;i++){
+      const x=(i*37)%128,y=(i*61+Math.floor(i/128)*19)%128;
+      ctx.fillStyle=i%3?'rgba(76,68,54,.025)':'rgba(255,255,255,.11)';
+      ctx.fillRect(x,y,i%7===0?2:1,1);
+    }
+    stoneGrain=new THREE.CanvasTexture(canvas);stoneGrain.name='retail-limestone-grain';stoneGrain.colorSpace=THREE.SRGBColorSpace;
+    stoneGrain.wrapS=stoneGrain.wrapT=THREE.RepeatWrapping;stoneGrain.anisotropy=2;resources.add(stoneGrain);return stoneGrain;
+  }
+  function architecturalMaterial(material,color){
+    const role=/^VC_(Accent|Stone|Stone_Light|Glass|Interior|Light|Linen|Brass|Graphite)(?:\.\d+)?$/.exec(material.name)?.[1];
+    if(!role||!material.isMeshStandardMaterial)return material;
+    // Accent identity stays per store. Shared finishes are cloned once per
+    // source material, not once per mesh/store; the GLB source remains intact.
+    const key=material.uuid+':'+(role==='Accent'?color:'architectural-finish-v1');
     if(!variants.has(key)){
-      const variant=material.clone();variant.color.set(color);
+      const variant=material.clone();
+      if(role==='Accent')variant.color.set(color);
+      else if(role==='Stone'||role==='Stone_Light'){
+        variant.color.set(role==='Stone'?'#d8d7cd':'#e6e3da');variant.roughness=role==='Stone'?.74:.66;variant.metalness=.015;
+        if(!variant.map){
+          variant.map=stoneTexture();
+          if(variant.map){
+            // The bundled GLBs intentionally have no UV attribute. Project the
+            // tiny finish from existing position/normal data; no geometry clone
+            // or added vertex attributes are needed, even across store scales.
+            variant.onBeforeCompile=shader=>{
+              shader.vertexShader=shader.vertexShader.replace('#include <uv_vertex>',`#include <uv_vertex>
+              #ifdef USE_MAP
+                vec3 limestoneAxis = abs(normal);
+                vMapUv = (limestoneAxis.y > max(limestoneAxis.x, limestoneAxis.z) ? position.xz :
+                  (limestoneAxis.x > limestoneAxis.z ? position.zy : position.xy)) * .65;
+              #endif`);
+            };
+            variant.customProgramCacheKey=()=>'retail-limestone-projection-v1';
+          }
+        }
+      }else if(role==='Glass'){
+        variant.color.set('#bdcfd4');variant.metalness=.12;variant.roughness=.13;variant.envMapIntensity=1.08;
+        // Preserve the model's transparency and opacity. Its real furnishings
+        // must remain visible; translucent glazing must not occlude later panes.
+        if(variant.transparent)variant.depthWrite=false;
+      }else if(role==='Interior'){
+        variant.color.set('#d8c9b4');variant.roughness=.82;variant.emissive.set('#eab77f');variant.emissiveIntensity=.07;
+      }else if(role==='Light'){
+        variant.color.set('#ffe3b4');variant.emissive.set('#ffd49c');variant.emissiveIntensity=.9;
+      }else if(role==='Linen'){
+        variant.color.set('#c6bbaa');variant.roughness=.94;variant.emissive.set('#d7c6af');variant.emissiveIntensity=.025;
+      }else if(role==='Brass'){
+        variant.color.set('#b7a077');variant.metalness=.72;variant.roughness=.34;
+      }else if(role==='Graphite'){
+        variant.color.set('#30414a');variant.metalness=.4;variant.roughness=.4;
+      }
       variants.set(key,variant);resources.add(variant);
     }
     return variants.get(key);
@@ -126,7 +181,7 @@ export function mountModeledBuildings({loadModel=loadRetailModel,shadows=false,c
         const model=loaded.model.clone(true);modelGroup.add(model);
         model.traverse(object=>{
           if(!object.isMesh)return;
-          object.material=Array.isArray(object.material)?object.material.map(material=>accentMaterial(material,accentColors[style])):accentMaterial(object.material,accentColors[style]);
+          object.material=Array.isArray(object.material)?object.material.map(material=>architecturalMaterial(material,accentColors[style])):architecturalMaterial(object.material,accentColors[style]);
           const materials=Array.isArray(object.material)?object.material:[object.material];
           object.castShadow=shadows&&materials.every(material=>!material.transparent);
           object.receiveShadow=shadows;
@@ -153,7 +208,7 @@ export function mountModeledBuildings({loadModel=loadRetailModel,shadows=false,c
       if(disposed)return;
       disposed=true;
       for(const instance of instances)instance.removeFromParent();
-      instances.clear();releaseResources(resources);variants.clear();assets.clear();
+      instances.clear();releaseResources(resources);variants.clear();assets.clear();stoneGrain=null;
     }
   };
 }

@@ -32,6 +32,7 @@ import {mountCityResidents} from './vitriny-city-residents-scene.js?v=20260915-h
 import {createResidentCatalog,intersectsResidentBuilding} from './vitriny-city-residents-core.js?v=20260915-residents-2';
 import {mountCommerceAvenue,mountMusicArena} from './vitriny-commerce-avenue.js';
 import {intersectsCommerceAvenue} from './vitriny-affiliate-centers-core.js';
+import {cityArrivalPose,cityWalkingPose} from './vitriny-city-arrival.js';
 
 const palette=[0x6ee7ff,0x8f8cff,0xe48cff,0xffb36b,0x85e6a8,0x6f9cff,0xb58cff,0x6edbcf];
 const requested=spatialCityFromLocation(),requestedCityId=TRANSIT_CITY_IDS.includes(requested)?requested:'vitrine-city';
@@ -316,8 +317,9 @@ async function loadLiveStores(){
 }
 
 const phoneArrival=isActiveCity&&innerWidth<=760;
-const position=isActiveCity?new THREE.Vector3(-164,phoneArrival?23:27,235):new THREE.Vector3(0,38,132),velocity=new THREE.Vector3(),keys=new Set();
-let yaw=Math.PI,pitch=isActiveCity?-.16:.14,speed=16,dragging=false,lastX=0,lastY=0,pointerStartX=0,pointerStartY=0,activePortal=null;
+const arrival=cityArrivalPose({active:isActiveCity,mobile:phoneArrival});
+const position=new THREE.Vector3(arrival.x,arrival.y,arrival.z),velocity=new THREE.Vector3(),keys=new Set();
+let yaw=arrival.yaw,pitch=arrival.pitch,speed=16,dragging=false,lastX=0,lastY=0,pointerStartX=0,pointerStartY=0,activePortal=null;
 let chunkSource=cityApiOnline?'api':'fallback',disposed=false,navigating=false,raf=0;
 function restoreSpatialContext(){
   if(new URLSearchParams(location.search).get('return')!=='1')return;
@@ -328,7 +330,7 @@ function restoreSpatialContext(){
 restoreSpatialContext();
 function updateViewButton(){const button=$('toggleView');if(button){button.textContent=position.y>10?'Explorar a pé':'Vista panorâmica';button.setAttribute('aria-pressed',String(position.y>10));}}
 updateViewButton();
-$('toggleView')?.addEventListener('click',()=>{avatarMode=false;if(position.y>10){position.set(23,2.2,53);yaw=Math.PI-.4;pitch=.035;}else{position.set(isActiveCity?-164:0,isActiveCity?27:38,isActiveCity?235:132);yaw=Math.PI;pitch=isActiveCity?-.16:.1;}releaseControls();updateViewButton();});
+$('toggleView')?.addEventListener('click',()=>{avatarMode=false;const view=position.y>10?cityWalkingPose({active:isActiveCity}):cityArrivalPose({active:isActiveCity,panoramic:true});position.set(view.x,view.y,view.z);yaw=view.yaw;pitch=view.pitch;releaseControls();updateViewButton();});
 $('visitStores')?.addEventListener('click',()=>{position.set(-164,avatarMode?1.7:4.2,145);yaw=Math.PI;pitch=.12;releaseControls();updateViewButton();});
 const avatar=mountVisitorAvatar({scene,dialog:$('avatarDirectory'),onEnter(){avatarMode=true;position.set(23,1.7,53);yaw=Math.PI-.4;pitch=.02;releaseControls();updateViewButton();}});
 $('openAvatar').addEventListener('click',()=>{releaseControls();$('avatarDirectory').showModal();});
