@@ -3,15 +3,18 @@ import {assertCoinStatus,atomsFromMicroBRL,quoteCoinTopup,VITRINE_COINS_POLICY} 
 import {formatCoins,formatCoinBRL,coinSummary,formatConsumedCoins} from './vitrine-coins-ui.js';
 
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const OPERATION_MEDIA_MIMES = new Set(['video/mp4','video/webm','video/quicktime','audio/mpeg','audio/mp4','audio/wav','audio/ogg']);
 const TEXT_MIMES = { txt: 'text/plain', md: 'text/markdown', csv: 'text/csv' };
 const MESSAGE_STATES = new Set(CHAT_MESSAGE_STATES);
 export function validateNeuralAttachment(file) {
   const extension = String(file?.name || '').split('.').pop().toLowerCase();
-  const mimeType = IMAGE_MIMES.has(file?.type) ? file.type : TEXT_MIMES[extension];
-  const isImage = IMAGE_MIMES.has(mimeType);
+  const rawType = String(file?.type || '').toLowerCase();
+  const mimeType = IMAGE_MIMES.has(rawType) || OPERATION_MEDIA_MIMES.has(rawType) ? rawType : TEXT_MIMES[extension];
+  const isImage = IMAGE_MIMES.has(mimeType), isOperationMedia = OPERATION_MEDIA_MIMES.has(mimeType);
   if (!mimeType || (isImage && !['png', 'jpg', 'jpeg', 'webp'].includes(extension))) throw new Error('attachment_type');
-  if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > (isImage ? 2097152 : 65536)) throw new Error('attachment_size');
-  return { mimeType, kind: isImage ? 'image' : 'text' };
+  const max = isOperationMedia ? 50 * 1024 * 1024 : isImage ? 2097152 : 65536;
+  if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > max) throw new Error('attachment_size');
+  return { mimeType, kind: isOperationMedia ? 'operation-media' : isImage ? 'image' : 'text' };
 }
 export function mountNeuralWorkspace(environment = globalThis) {
   const { document, window, location, URLSearchParams, URL, Blob, AbortController, crypto, FileReader } = environment;
@@ -29,7 +32,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
   const purchaseReady = () => !!coinWallet && credit.status?.canPurchase === true && credit.status?.terms?.version === VITRINE_COINS_POLICY.version;
   const errorText = {
     attachment_type: 'Formato não aceito. Use PNG, JPEG, WebP, TXT, MD ou CSV. PDF e DOCX ainda não são suportados.',
-    attachment_size: 'Arquivo vazio ou muito grande. Imagens: até 2 MB; documentos de texto: até 64 KB.',
+    attachment_size: 'Arquivo vazio ou muito grande. Imagens: até 2 MB; vídeo/áudio para edição: até 50 MB; documentos de texto: até 64 KB.',
     attachment_count: 'Você pode enviar até três arquivos por mensagem.',
     attachment_read: 'Não foi possível ler este arquivo. Remova-o e selecione novamente.',
     unavailable: 'Não foi possível acessar o chat. Seu texto foi preservado. Tente conferir novamente em instantes.',
@@ -86,6 +89,64 @@ export function mountNeuralWorkspace(environment = globalThis) {
       return data;
     } catch (error) { if (epoch !== state.epoch) throw failure('stale'); if (error?.name === 'AbortError') throw failure('timeout'); throw error; }
     finally { clearTimeout(timeout); requests.delete(controller); }
+  }
+  async function operationJson(path, method = 'POST', body, headers = {}, timeoutMs = 30000) {
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch('/api/neural/chat/operations' + path, {
+        method, credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+        headers: { ...(body instanceof Blob ? {} : {'content-type':'application/json'}), ...headers },
+        ...(body === undefined ? {} : {body: body instanceof Blob ? body : JSON.stringify(body)})
+      });
+      let data = {}; try { data = await response.json(); } catch {}
+      if (!response.ok) throw failure(({400:'invalid',401:'unauthorized',402:'quota',403:'forbidden',404:'notFound',409:'conflict',413:'attachment_size',422:'invalid',429:'quota',503:'disabled'})[response.status] || 'unavailable', response.status);
+      if (!data || data.ok !== true) throw failure('invalidResponse');
+      return data;
+    } catch (error) { if (error?.name === 'AbortError') throw failure('timeout'); throw error; }
+    finally { clearTimeout(timeout); }
+  }
+  async function operationUpload(attachment) {
+    const response = await fetch('/api/neural/chat/operations/upload', {
+      method:'POST', credentials:'same-origin', cache:'no-store',
+      headers:{'content-type':attachment.mimeType}, body:attachment.file
+    });
+    let data={};try{data=await response.json();}catch{}
+    if(!response.ok||!data?.upload?.id)throw failure(response.status===413?'attachment_size':'unavailable',response.status);
+    return data.upload.id;
+  }
+  function operationArtifacts(text) {
+    const artifacts=[];const cleanText=String(text||'').replace(/\n?\[\[LIA_ARTIFACT\|([a-f0-9-]{36})\|([^|\]]+)\|([^|\]]+)\]\]/gi,(_all,operation,pathValue,nameValue)=>{
+      try{artifacts.push({operation,path:decodeURIComponent(pathValue),name:decodeURIComponent(nameValue)});}catch{}
+      return '';
+    }).trim();
+    return {text:cleanText,artifacts};
+  }
+  async function tryOperationalCommand(message) {
+    if (!personal) return false;
+    const media = state.attachments.find(item => item.kind === 'operation-media') || state.attachments.find(item => item.kind === 'image');
+    const quoted = await operationJson('/quote','POST',{instruction:message,mimeType:media?.mimeType||''});
+    const quote = quoted.item;
+    if (!quote?.supported) {
+      if (state.attachments.some(item => item.kind === 'operation-media')) throw failure('invalid');
+      return false;
+    }
+    if (quote.needsUpload && !media) throw failure('invalid');
+    const numericPrice=Number(quote.priceCoins),price=Number.isFinite(numericPrice)?numericPrice.toLocaleString('pt-BR',{maximumFractionDigits:2}):String(quote.priceCoins||'—');
+    if (!window.confirm(`A LIA pode executar esta tarefa por até ${price} Vitrine Coins. Confirmar e executar?`)) return true;
+    let uploadId='';
+    if (quote.needsUpload) uploadId=await operationUpload(media);
+    const result=await operationJson('/run','POST',{
+      instruction:message,
+      ...(state.selected?{conversationId:state.selected}:{}),
+      idempotencyKey:crypto.randomUUID(),
+      confirmCharge:true,
+      ...(uploadId?{uploadId}:{})
+    },{'x-lia-operations-request':'1'},16*60*1000);
+    $('command').value='';clearAttachments();resizeComposer();
+    await selectConversation(result.conversationId);
+    await loadCoinWallet();renderStatus();
+    announce('Tarefa operacional concluída pela LIA.');
+    return true;
   }
   const canSend = () => !!state.status?.enabled && (!storeReference || !!state.token) && !state.loading && !state.busy && !state.historyUnverified && !state.status?.queue?.requiresReview && !state.activeRequest && !state.uncertain;
   function controls() {
@@ -199,12 +260,16 @@ export function mountNeuralWorkspace(environment = globalThis) {
     $('conversation-list').replaceChildren();
     $('history-empty').hidden = state.conversations.length > 0;
     for (const conversation of state.conversations) {
-      const li = node('li'), button = node('button'); button.type = 'button';
+      const li = node('li', null, 'conversation-entry'), button = node('button'), remove = node('button', 'Excluir', 'conversation-delete');
+      button.type = remove.type = 'button'; button.className = 'conversation-open';
       button.setAttribute('aria-current', String(state.selected === conversation.id));
       button.append(node('span', conversation.title || 'Conversa', 'conversation-label'));
-      button.disabled = state.busy;
+      button.disabled = state.busy; remove.disabled = state.busy || state.activeConversation === conversation.id;
       button.addEventListener('click', () => { selectConversation(conversation.id); setHistoryOpen(false); });
-      li.append(button); $('conversation-list').append(li);
+      remove.setAttribute('aria-label', 'Excluir conversa ' + (conversation.title || 'Conversa'));
+      remove.title = state.activeConversation === conversation.id ? 'Conclua ou cancele o pedido antes de excluir.' : 'Excluir esta conversa';
+      remove.addEventListener('click', event => { event.stopPropagation(); deleteConversation(conversation.id); });
+      li.append(button, remove); $('conversation-list').append(li);
     }
   }
   function scrollLatest(force = false) {
@@ -301,7 +366,17 @@ export function mountNeuralWorkspace(environment = globalThis) {
       if (cached?.signature === signature) { if (list.children[index] !== cached.node) list.insertBefore(cached.node, list.children[index] || null); index++; continue; }
       const li = node('li', null, 'message ' + (message.role === 'user' ? 'user-message' : 'assistant-message'));
       li.append(node('p', message.role === 'user' ? 'Você' : 'Lia', 'message-label'));
-      li.append(node('p', message.text || ({ queued: 'Pedido recebido. Aguardando sua vez na fila.', running: 'Preparando sua resposta…' })[message.status] || '', 'message-content'));
+      const operationContent = operationArtifacts(message.text);
+      li.append(node('p', operationContent.text || ({ queued: 'Pedido recebido. Aguardando sua vez na fila.', running: 'Preparando sua resposta…' })[message.status] || '', 'message-content'));
+      if (operationContent.artifacts.length) {
+        const operationFiles=node('div',null,'operation-artifacts');
+        for (const artifact of operationContent.artifacts) {
+          const link=node('a','Baixar '+artifact.name,'operation-artifact-link');
+          link.href='/api/neural/chat/operations/artifact?operation='+encodeURIComponent(artifact.operation)+'&path='+encodeURIComponent(artifact.path);
+          link.setAttribute('download',artifact.name);operationFiles.append(link);
+        }
+        li.append(operationFiles);
+      }
       if (isChatActive(message.status)) li.setAttribute('aria-busy', 'true');
       const queuePosition = message.queue && CHAT_QUEUE_LANES.includes(message.queue.lane) && Number.isSafeInteger(message.queue.position) && message.queue.position >= 1 ? message.queue.position : null;
       const labels = { awaiting_confirmation: 'Aguardando sua confirmação · execução não iniciada', queued: 'Na fila' + (queuePosition === null ? '' : ' · posição ' + queuePosition), running: 'Em andamento', unavailable: 'Recurso ainda indisponível · nenhuma geração realizada', failed: 'Não concluído', cancelled: 'Cancelado', interrupted: 'Interrompido · confira antes de pedir novamente' };
@@ -421,6 +496,28 @@ export function mountNeuralWorkspace(environment = globalThis) {
       state.status = nextStatus; rememberConversation(data.conversation); state.messages = messages; state.historyUnverified = false;
       renderStatus(); renderHistory(); renderMessages(forceScroll); schedulePoll();
     } catch (error) { if (selectionEpoch === state.selectionEpoch) showError(error); }
+  }
+  async function deleteConversation(id) {
+    if (state.busy || state.uncertain || state.historyUnverified || state.activeConversation === id) return;
+    const conversation = state.conversations.find(item => item.id === id);
+    const title = conversation?.title || 'esta conversa';
+    if (!window.confirm(`Excluir "${title}" e suas mensagens? Esta ação não pode ser desfeita. Registros financeiros permanecem no extrato.`)) return;
+    const epoch = state.epoch; state.busy = true; clearError(); controls();
+    try {
+      await api('/conversations/' + encodeURIComponent(id) + '/delete', 'POST', {});
+      if (epoch !== state.epoch) return;
+      const selected = state.selected === id;
+      state.conversations = state.conversations.filter(item => item.id !== id);
+      if (selected) {
+        state.selectionEpoch += 1; state.selected = null; state.messages = []; state.activeConversation = null; state.activeRequest = null; state.activeStatus = null;
+        state.pending = null; state.pendingConfirmation = null; state.historyUnverified = false; clearAttachments();
+        for (const url of previewCache.values()) if (url) URL.revokeObjectURL(url); previewCache.clear();
+        for (const entry of artifactCache.values()) if (entry.url) URL.revokeObjectURL(entry.url); artifactCache.clear(); messageNodes.clear();
+      }
+      renderHistory(); renderMessages(); announce('Conversa excluída do histórico privado.');
+      await loadConversations(false);
+    } catch (error) { if (epoch === state.epoch) showError(error); }
+    finally { if (epoch === state.epoch) { state.busy = false; controls(); } }
   }
   async function loadConversations(initial = false) {
     if (state.loading || (storeReference && !state.token)) return;
@@ -545,6 +642,8 @@ export function mountNeuralWorkspace(environment = globalThis) {
     const epoch = state.epoch; state.busy = true; clearError(); controls(); renderAttachments();
     let submitted = false;
     try {
+      if (await tryOperationalCommand(message)) return;
+      if (state.attachments.some(item => item.kind === 'operation-media')) throw failure('invalid');
       for (const attachment of state.attachments) {
         if (attachment.id) continue;
         const dataBase64 = await base64(attachment.file);

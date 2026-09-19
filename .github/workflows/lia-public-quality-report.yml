@@ -1,0 +1,69 @@
+name: LIA public quality report
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/lia-public-quality-report.yml'
+permissions:
+  contents: read
+jobs:
+  read-public-sonar:
+    if: github.event.pull_request.number == 210
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Read public quality findings without credentials
+        shell: python
+        run: |
+          import json
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          from datetime import datetime, timezone
+
+          # No checkout, secret, write API, provider call, or production access.
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  raise ValueError('redirect_refused')
+
+          opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+          project = 'markentingimperio-debug_vitrinecity'
+          def read(path, params):
+              url = 'https://sonarcloud.io/api/' + path + '?' + urllib.parse.urlencode(params)
+              try:
+                  with opener.open(url, timeout=20) as response:
+                      raw = response.read(2_000_001)
+                  if len(raw) > 2_000_000:
+                      return {'unavailable': 'response_too_large'}
+                  return json.loads(raw)
+              except urllib.error.HTTPError as exc:
+                  return {'unavailable': 'http_' + str(exc.code)}
+              except Exception:
+                  return {'unavailable': 'public_read_failed'}
+
+          gate = read('qualitygates/project_status', {'projectKey': project, 'pullRequest': '210'})
+          prs = read('project_pull_requests/list', {'project': project})
+          issues = []
+          paging = None
+          unavailable = None
+          for page in range(1, 6):
+              data = read('issues/search', {'componentKeys': project, 'pullRequest': '210',
+                          'resolved': 'false', 'ps': 100, 'p': page})
+              if 'unavailable' in data:
+                  unavailable = data['unavailable']
+                  break
+              paging = data.get('paging', {})
+              for issue in data.get('issues', []):
+                  impacts = issue.get('impacts', [])
+                  if issue.get('type') == 'VULNERABILITY' or any(i.get('softwareQuality') == 'SECURITY' for i in impacts):
+                      issues.append({k: issue.get(k) for k in ('key', 'rule', 'severity', 'type', 'component',
+                                   'line', 'message', 'status', 'creationDate', 'updateDate', 'impacts')})
+              if page * 100 >= paging.get('total', 0):
+                  break
+          print('=== PUBLIC SONAR READ-ONLY REPORT: NOT DEPLOY APPROVAL ===')
+          print(json.dumps({'readAt': datetime.now(timezone.utc).isoformat(),
+              'gate': gate.get('projectStatus', gate),
+              'pullRequest': [x for x in prs.get('pullRequests', []) if str(x.get('key')) == '210'],
+              'pullRequestReadUnavailable': prs.get('unavailable'),
+              'securityIssues': issues, 'paging': paging, 'issueReadUnavailable': unavailable,
+              'truncated': bool(paging and paging.get('total', 0) > 500),
+              'productionChanged': False, 'deployApproved': False}, ensure_ascii=True, indent=2))

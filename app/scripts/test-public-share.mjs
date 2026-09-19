@@ -104,6 +104,6 @@ test('city uses only the existing movable controls, preserves richer page share 
 });
 test('CSS remains in document flow with mobile wrapping, touch size and reduced motion; hooks do not change manifests',()=>{
   const css=readFileSync(new URL('../public/public-share.css',import.meta.url),'utf8');assert.doesNotMatch(css,/position\s*:\s*(fixed|absolute|sticky)/);assert.match(css,/min-height:44px/);assert.match(css,/minmax\(0,1fr\)/);assert.match(css,/prefers-reduced-motion:reduce/);
-  const pwa=readFileSync(new URL('../public/pwa-install.js',import.meta.url),'utf8');assert.match(pwa,/hasAttribute\('amp'\)/);assert.ok(pwa.indexOf('public-share.js')<pwa.indexOf('if (isStandalone) return'));
+  const pwa=readFileSync(new URL('../public/pwa-install.js',import.meta.url),'utf8');assert.match(pwa,/hasAttribute\('amp'\)/);assert.ok(pwa.indexOf('public-share.js')<pwa.indexOf('const isStandalone'));
   const app=readFileSync(new URL('../public/games/app.js',import.meta.url),'utf8');assert.match(app,/mountPublicShare/);assert.match(app,/scope:'\/games\/'/);
 });

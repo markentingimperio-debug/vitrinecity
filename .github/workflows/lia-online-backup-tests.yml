@@ -1,0 +1,19 @@
+name: LIA online backup tests
+on:
+  pull_request:
+    paths:
+      - 'ops/lia-preserve-kling/backup-online-data-v8.py'
+      - 'ops/lia-preserve-kling/test_backup_online_data_v8.py'
+      - '.github/workflows/lia-online-backup-tests.yml'
+permissions:
+  contents: read
+jobs:
+  online-backup-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: SQLite WAL, concurrent writer and filesystem tests; Docker is mocked
+        run: sudo python3 ops/lia-preserve-kling/test_backup_online_data_v8.py

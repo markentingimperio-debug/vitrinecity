@@ -26,8 +26,8 @@ test('public store guides have stable identities independent of order and no pri
 
 test('studio contains three distinct units with only the user-provided public profile links',()=>{
   const studio=RESIDENT_DEPARTMENTS.find(d=>d.id==='studio');
-  assert.equal(studio.href,'/social');assert.match(studio.description,/feed da Vitriny Social/);
-  assert.match(CITY_RESIDENTS.find(p=>p.id==='noa').line,/feed da Vitriny Social/);
+  assert.equal(studio.href,'/social');assert.match(studio.description,/feed da Vitrine Social/);
+  assert.match(CITY_RESIDENTS.find(p=>p.id==='noa').line,/feed da Vitrine Social/);
   assert.deepEqual(STUDIO_CHANNELS.map(c=>c.href),['https://www.youtube.com/@agrotecnica362','https://www.instagram.com/agrotecniica/','https://www.tiktok.com/@agrotecnica5']);
   for(const platform of ['YouTube','Instagram','TikTok'])assert.ok(CITY_RESIDENTS.some(p=>p.departmentId==='studio'&&p.profession.includes(platform)));
 });

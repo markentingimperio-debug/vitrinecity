@@ -1,0 +1,33 @@
+name: LIA security remediation review
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/lia-security-review.yml'
+      - 'ops/lia-preserve-kling/**'
+      - 'app/scripts/test-vitriny-neural-lia-chat-operations.mjs'
+permissions:
+  contents: read
+jobs:
+  reviewed-source:
+    if: github.event.pull_request.number == 210
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Package tracked public source only, without Git metadata or credentials
+        run: |
+          git rev-parse HEAD > review-source-commit.txt
+          git archive --format=tar HEAD app ops/lia-preserve-kling .github/workflows > review-source.tar
+          sha256sum review-source.tar > review-source.tar.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lia-reviewed-source
+          path: |
+            review-source.tar
+            review-source.tar.sha256
+            review-source-commit.txt
+          retention-days: 1
+          if-no-files-found: error

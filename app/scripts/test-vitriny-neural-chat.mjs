@@ -53,6 +53,28 @@ test('explicit paid primary quotes before dispatch even with a qualified local m
   }finally{f.chat.close();f.db.close();}
 });
 
+test('local-first admin uses local before paid text and only offers paid quote after explicit local escalation',async()=>{
+  const quotes=new Map();let prepares=0;
+  const paidRuntime={enabled:true,prefersText:true,setScopeAuthorizer(){},status(){return {capabilities:{chat:true}};},
+    prepare(scope,input){prepares++;const payment={quoteId:'quote-'+input.requestId.replace(/-/g,'').slice(0,24),currency:'BRL',amountMicro:7,expiresAt:Date.now()+60000,kind:'chat',summary:'Cotação DeepSeek',state:'quoted',chargedMicro:null};quotes.set(input.requestId,{scope,payment});return payment;},
+    owns:(scope,id)=>quotes.get(id)?.scope===scope,payment:(_scope,id)=>quotes.get(id)?.payment,artifacts:()=>[],close(){}};
+  let responseText='Resposta local concluída.';
+  const f=fixture({paidRuntime,env:{LIA_LOCAL_FIRST_ADMIN:'1'},respond:async()=>({provider:'local-fixture',output:{model:'fixture-v1',text:responseText}})});
+  try{
+    const first=request(f.chat,'Escreva um texto curto.','request-local-first-admin-001');await f.chat.wait(first.requestId);
+    assert.equal(f.chat.request('admin:1',first.requestId).status,'completed');assert.equal(prepares,0);assert.equal(f.calls.length,1);
+
+    responseText='[LIA_PRECISA_API] Preciso de um modelo externo para concluir.';
+    const second=request(f.chat,'Analise este pedido mais difícil.','request-local-first-admin-002');await f.chat.wait(second.requestId);
+    for(let i=0;i<6;i++)await tick();
+    const conversation=f.chat.conversation('admin:1',second.conversationId);
+    assert.equal(prepares,1,'paid provider is only quoted after local escalation');
+    const quoted=conversation.messages.find(message=>message.role==='assistant'&&message.status==='awaiting_confirmation');
+    assert.ok(quoted?.payment);assert.equal(quoted.payment.state,'quoted');
+    assert.match(conversation.messages.find(message=>message.requestId===second.requestId&&message.role==='assistant').text,/modelo local não concluiu/i);
+  }finally{f.chat.close();f.db.close();}
+});
+
 test('unavailable paid primary does not prevent already qualified local text',async()=>{
   let prepares=0;const paidRuntime={enabled:true,prefersText:true,setScopeAuthorizer(){},prepare(){prepares++;return null;},owns:()=>false,close(){}};
   const f=fixture({paidRuntime});try{
@@ -115,6 +137,29 @@ test('conversation persists, continuation uses only scoped server history and re
     assert.throws(()=>request(f.chat,'Outro texto.','request-chat-foreign',{conversationId:crypto.randomUUID()}),{code:'chat_not_found'});
     assert.throws(()=>f.chat.readAttachment('admin:2',a.id),{code:'chat_not_found'});
   }finally{f.db.close();}
+});
+
+test('completed conversation can be deleted while request audit remains and orphan attachment is removed',async()=>{
+  const f=fixture();try{
+    const attachment=upload(f.chat,'delete-me.txt','Conteúdo temporário.');
+    const item=request(f.chat,'Resuma este documento.','request-delete-chat-001',{attachmentIds:[attachment.id]});await f.chat.wait(item.requestId);
+    assert.equal(f.chat.request('admin:1',item.requestId).status,'completed');
+    const deleted=f.chat.deleteConversation('admin:1',item.conversationId);
+    assert.deepEqual(deleted,{id:item.conversationId,deleted:true});
+    assert.deepEqual(f.chat.list('admin:1'),[]);
+    assert.throws(()=>f.chat.conversation('admin:1',item.conversationId),{code:'chat_not_found'});
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM neural_chat_messages WHERE conversation_id=?').get(item.conversationId).n,0);
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM neural_chat_attachments WHERE id=?').get(attachment.id).n,0);
+    assert.equal(f.chat.requestByKey('admin:1','request-delete-chat-001').requestId,item.requestId,'request audit/idempotency remains');
+  }finally{f.chat.close();f.db.close();}
+});
+
+test('conversation with an active request cannot be deleted',async()=>{
+  const f=stagedFixture();try{
+    const item=request(f.chat,'Escreva um texto.','request-delete-chat-active');
+    assert.throws(()=>f.chat.deleteConversation('admin:1',item.conversationId),{code:'chat_delete_blocked'});
+    f.chat.cancel('admin:1',item.requestId);
+  }finally{f.chat.close();f.db.close();}
 });
 
 test('idempotency includes attachment identity and recovers without replay',async()=>{

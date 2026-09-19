@@ -3,15 +3,15 @@
 import argparse
 import hashlib
 from pathlib import Path
-EXPECTED_BLOB='b4a5d4c777bc9fe04ab5ff446c13e98f41ff022c'
+EXPECTED_SHA256='30059f19e18bb8416adae053db11c2054900e42148a5fdf6e54ef879ee5fcac9'
 MARKER='// LIA_PRESERVE_KLING_V1'
 RELATIVE='app/vitriny-neural/chat-engine.js'
-def blob_sha(data):
-    return hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
+def content_sha256(data):
+    return hashlib.sha256(data).hexdigest()
 def patch(data):
     source=data.decode('utf-8')
     if MARKER in source: raise ValueError('Atualizacao ja presente. Nenhum arquivo substituido.')
-    if blob_sha(data)!=EXPECTED_BLOB: raise ValueError('Versao do chat diferente da revisada. Parei sem substituir arquivos.')
+    if content_sha256(data)!=EXPECTED_SHA256: raise ValueError('Versao do chat diferente da revisada. Parei sem substituir arquivos.')
     def once(old,new):
         nonlocal source
         if source.count(old)!=1: raise ValueError('Contrato do chat mudou. Nenhuma alteracao aplicada.')

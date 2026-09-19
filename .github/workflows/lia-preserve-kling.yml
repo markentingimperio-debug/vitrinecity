@@ -2,7 +2,9 @@ name: LIA Preserve Kling Validation
 on:
   push:
     branches: ['fix/lia-preserve-kling-vps-20260916']
-    paths: ['ops/lia-preserve-kling/**', '.github/workflows/lia-preserve-kling.yml']
+    paths: ['ops/lia-preserve-kling/**', 'app/vitriny-neural/chat-engine.js', 'app/vitriny-neural/lia-chat-operations.js', 'app/scripts/test-vitriny-neural-lia-chat-operations.mjs', '.github/workflows/lia-preserve-kling.yml']
+  pull_request:
+    paths: ['ops/lia-preserve-kling/**', 'app/vitriny-neural/chat-engine.js', 'app/vitriny-neural/lia-chat-operations.js', 'app/scripts/test-vitriny-neural-lia-chat-operations.mjs', '.github/workflows/lia-preserve-kling.yml']
 permissions:
   contents: read
 jobs:
@@ -20,14 +22,52 @@ jobs:
         run: |
           python3 -m py_compile ops/lia-preserve-kling/*.py
           python3 ops/lia-preserve-kling/test_install.py
+          python3 ops/lia-preserve-kling/test_prepare_chat_update_v2.py
+          python3 ops/lia-preserve-kling/test_resolve_chat_engine_v3.py
+          python3 ops/lia-preserve-kling/test_inventory_reconciliation_v3.py
+          python3 ops/lia-preserve-kling/test_retry_staged_tests_v4.py
+          python3 ops/lia-preserve-kling/test_backup_image_identity_v6.py
+      - name: Pinned backup helpers and real Docker save identity
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          import runpy
+          import subprocess
+          import tempfile
+          code = runpy.run_path('ops/lia-preserve-kling/backup-image-identity-v6.py')
+          code['load_backup']()
+          print('PASS: both helper SHA-256 pins verified; no backup main executed.', flush=True)
+          with tempfile.TemporaryDirectory() as folder:
+              root = Path(folder)
+              (root / 'marker').write_text('isolated CI fixture; no production data\n')
+              (root / 'Dockerfile').write_text('FROM scratch\nCOPY marker /marker\n')
+              tag = 'lia-image-validator-fixture:ci'
+              subprocess.run(['docker','build','--network=none','--pull=false','-t',tag,str(root)],check=True)
+              image = subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',tag],text=True).strip()
+              archive = root / 'image.tar'
+              subprocess.run(['docker','image','save','-o',str(archive),image],check=True)
+              evidence = code['verify_image_archive'](archive,image)
+              print('PASS: actual Docker save identity and layers verified.')
+              print(json.dumps(evidence,sort_keys=True))
       - name: Install existing locked application dependencies
         working-directory: app
         run: npm ci --omit=dev
-      - name: Apply the guarded patch in CI only
+      - name: Reproduce exact staged engine failure and verify assertion-only repair
+        run: python3 ops/lia-preserve-kling/test_retry_staged_tests_v4.py --integration
+      - name: Validate or apply local-first contract in CI only
         run: |
-          python3 ops/lia-preserve-kling/patch.py --root .
+          if grep -q 'LIA_PRESERVE_KLING_V1' app/vitriny-neural/chat-engine.js; then
+            echo 'Local-first already consolidated in source.'
+          else
+            python3 ops/lia-preserve-kling/patch.py --root .
+          fi
           cp ops/lia-preserve-kling/test.mjs app/scripts/test-lia-preserve-kling.mjs
           node --check app/vitriny-neural/chat-engine.js
+          node --check app/vitriny-neural/lia-chat-operations.js
+      - name: Canonical operations billing and uncertain transport regression tests
+        working-directory: app
+        run: node --test scripts/test-vitriny-neural-lia-chat-operations.mjs
       - name: New routing tests and existing chat regression tests
         working-directory: app
         run: |
@@ -35,6 +75,7 @@ jobs:
       - name: Existing Kling adapter regressions
         working-directory: app
         run: node --test scripts/test-kling-paid-video.mjs scripts/test-kling-readiness.mjs
-      - name: Assert no provider, wallet or knowledge source modifications
+      - name: Assert validation never mutates providers, wallet or knowledge sources
         run: |
-          test "$(git diff --name-only)" = "app/vitriny-neural/chat-engine.js"
+          CHANGED="$(git diff --name-only)"
+          test -z "$CHANGED" || test "$CHANGED" = "app/vitriny-neural/chat-engine.js"

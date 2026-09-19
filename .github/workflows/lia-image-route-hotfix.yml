@@ -1,0 +1,24 @@
+name: LIA image routing hotfix tests
+on:
+  pull_request:
+    paths:
+      - 'ops/lia-preserve-kling/**'
+      - '.github/workflows/lia-image-route-hotfix.yml'
+permissions:
+  contents: read
+jobs:
+  route-update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build pinned helper and run offline routing and safety tests
+        run: |
+          python3 ops/lia-preserve-kling/fix-deploy-selector-v91.py
+          python3 ops/lia-preserve-kling/fix-deploy-init-v92.py
+          python3 -m py_compile ops/lia-preserve-kling/update-image-route-v93.py
+          python3 ops/lia-preserve-kling/test_image_route_v93.py
+      - name: Real isolated Docker image update and code-only rollback
+        run: sudo env GITHUB_ACTIONS=true python3 ops/lia-preserve-kling/integration_image_route_v93.py

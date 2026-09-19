@@ -8,7 +8,7 @@ const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(proces
 const root=path.resolve(fileURLToPath(new URL('../../public/',import.meta.url)));
 const conversation={id:'11111111-1111-4111-8111-111111111111',title:'Minha conversa'};
 const files=new Map(),messages=[],requests=new Map(),external=[],errors=[],results=[];
-let sends=0,uploads=0,uncertain=false,rejectBeforeReceipt=0,deferNext=false,lastQueuedId=null,cancellations=0,historyFault=null,receiptReads=0;
+let sends=0,uploads=0,uncertain=false,rejectBeforeReceipt=0,deferNext=false,lastQueuedId=null,cancellations=0,deletions=0,historyFault=null,receiptReads=0;
 const sendAttempts=[];
 const receipt=(requestId,messageId,state)=>assertChatReceipt({id:requestId,requestId,conversationId:conversation.id,messageId,status:state,createdAt:1,updatedAt:1,...(state==='queued'?{queue:{lane:'chat',position:null}}:{})});
 function updateRequest(requestId,state){
@@ -32,6 +32,9 @@ const server=createServer(async(req,res)=>{
       if(route==='/conversations/'+conversation.id){
         const output=historyFault==='omit'?messages.filter(message=>message.role!=='assistant'||message.requestId!==lastQueuedId):messages.map(message=>historyFault==='unknown'&&message.role==='assistant'&&message.requestId===lastQueuedId?{...message,status:'unrecognized'}:message);
         return send({ok:true,conversation,messages:output});
+      }
+      if(route==='/conversations/'+conversation.id+'/delete'&&req.method==='POST'){
+        deletions++;messages.splice(0,messages.length);requests.clear();lastQueuedId=null;return send({ok:true,id:conversation.id,deleted:true});
       }
       if(route==='/attachments'&&req.method==='POST'){
         const id='22222222-2222-4222-8222-'+String(++uploads).padStart(12,'0'),data=Buffer.from(body.dataBase64,'base64');
@@ -215,6 +218,12 @@ try{
   await page.locator('#command').fill('Guardar meu pedido');assert.equal(await page.locator('#send').isEnabled(),true);
   assert.equal(sends,beforeShadow,'shadow status check cannot submit requests');
   if(process.env.NEURAL_QA_OUTPUT)await page.screenshot({path:path.join(process.env.NEURAL_QA_OUTPUT,'chat-preparing-mobile.png')});
+  await page.getByRole('button',{name:'Mostrar conversas'}).click();
+  page.once('dialog',dialog=>dialog.accept());
+  await page.getByRole('button',{name:/Excluir conversa Minha conversa/}).click();
+  await page.waitForFunction(()=>document.getElementById('history-empty')?.hidden===false);
+  assert.equal(deletions,1,'conversation deletion requires confirmation and reaches server once');
+  assert.equal(await page.locator('#messages>li').count(),0);
   assert.deepEqual(external,[]);assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({ok:true,viewports:results,continuousConversation:true,historyRecoveredWithoutPost:true,attachmentsPreviewRemove:true,attachmentUploads:uploads,unsupportedPdfHonest:true,videoUnavailableHonest:true,shadowReadinessHonest:true,shadowStorageAvailable:true,timeoutRecoveredWithGet:true,explicitSamePayloadRetryAfter404:true,noAttachmentReupload:true,secondLossHeld:true,queuedRunningCompleted:true,queuedReloadGetOnly:true,queuedRecoveryGetOnly:true,queuedCancellation:true,invalidHistoryHeld:true,missingAssistantReceiptChecked:true,reviewStatusVisible:true,reviewReloadGetOnly:true,canonicalReceipts:true,imeSafe:true,externalRequests:0,paidCalls:0}));
+  console.log(JSON.stringify({ok:true,viewports:results,continuousConversation:true,historyRecoveredWithoutPost:true,attachmentsPreviewRemove:true,attachmentUploads:uploads,unsupportedPdfHonest:true,videoUnavailableHonest:true,shadowReadinessHonest:true,shadowStorageAvailable:true,timeoutRecoveredWithGet:true,explicitSamePayloadRetryAfter404:true,noAttachmentReupload:true,secondLossHeld:true,queuedRunningCompleted:true,queuedReloadGetOnly:true,queuedRecoveryGetOnly:true,queuedCancellation:true,invalidHistoryHeld:true,missingAssistantReceiptChecked:true,reviewStatusVisible:true,reviewReloadGetOnly:true,canonicalReceipts:true,imeSafe:true,conversationDelete:true,externalRequests:0,paidCalls:0}));
 }finally{if(browser)await browser.close();await new Promise(resolve=>server.close(resolve));}

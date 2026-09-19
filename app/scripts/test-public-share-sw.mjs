@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 const source=readFileSync(new URL('../public/sw.js',import.meta.url),'utf8');
-const ORIGIN='https://vitrinecity.test',CURRENT='vitrinecity-pwa-v8-share';
+const ORIGIN='https://vitrinecity.test',CURRENT='vitrinecity-pwa-v10-social';
 function fixture(){
   const handlers=new Map(),stores=new Map(),requests=[],removed=[];let offline=false;
   const key=value=>typeof value==='string'?new URL(value,ORIGIN).href:value.url;
