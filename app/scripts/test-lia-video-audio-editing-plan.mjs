@@ -18,6 +18,10 @@ test('speaker scenes only: two Sync steps, same saved voice in all scenes',()=>{
   const p=planLiaAudioEditing(d);
   assert.equal(p.steps.filter(s=>s.provider==='sync').length,2);
   assert.equal(p.billingInputs.syncMilliseconds,20000);
+  const syncAt=p.steps.findIndex(s=>s.provider==='sync');
+  assert.equal(p.steps[syncAt-1].kind,'prepare_sync_inputs');
+  assert.equal(p.steps[syncAt-1].cutSpeech,false);
+  assert.equal(p.steps.filter(s=>s.kind==='prepare_sync_inputs').length,2);
   assert.ok(p.steps.filter(s=>s.provider==='elevenlabs').every(s=>s.voiceProfileId===d.voiceProfileId));
 });
 test('English preference retained without rewriting approved text',()=>{
