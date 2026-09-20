@@ -14,6 +14,8 @@ A `main` contém o pipeline de produção de quizzes verticais:
 8. publicação na Vitrine Social por Cloudflare Stream, com recibo e reconciliação;
 9. registro das filas das demais redes em `viral_distribution_jobs`.
 
+A LIA Vídeo reutiliza essa infraestrutura e acrescenta duração por minutos, cotas por plano, roteiro, descrição, hashtags, narração TTS, sincronização de áudio por FFmpeg e agendamento. O cliente usa `/lia-video.html`; a administração usa `/admin-lia-video.html`.
+
 Instagram, Facebook, TikTok, YouTube, Kwai e Bilibili só devem sair de
 `awaiting_connection` quando existir um publicador oficial com autorização de
 upload daquela conta. Credenciais usadas apenas para métricas não são tratadas
@@ -27,6 +29,8 @@ No `/opt/vitrinecity/.env`:
 SITE_URL=https://vitrinecity.com
 OPENROUTER_API_KEY=...
 OPENROUTER_VIDEO_MODEL=google/veo-3.1-lite
+OPENAI_API_KEY=...
+LIA_VIDEO_TTS_MODEL=gpt-4o-mini-tts
 CLOUDFLARE_ACCOUNT_ID=...
 CLOUDFLARE_STREAM_API_TOKEN=...
 CLOUDFLARE_STREAM_WEBHOOK_SECRET=...
