@@ -24,6 +24,10 @@ on:
       - 'app/public/admin-lia.*'
       - 'app/public/lia.*'
       - 'app/scripts/test-lia-customer-operations.mjs'
+      - 'app/lia-video-studio.js'
+      - 'app/public/lia-video.*'
+      - 'app/public/admin-lia-video.*'
+      - 'app/scripts/test-lia-video-studio.mjs'
 
 permissions:
   contents: read
