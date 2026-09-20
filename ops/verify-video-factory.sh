@@ -17,13 +17,13 @@ dc exec -T app ffmpeg -version >/dev/null 2>&1 || fail "FFmpeg não está dispon
 ok "FFmpeg disponível para montagem 9:16"
 
 dc exec -T app node --input-type=module -e "
-  const required=['OPENROUTER_API_KEY','CLOUDFLARE_ACCOUNT_ID','CLOUDFLARE_STREAM_API_TOKEN'];
+  const required=['OPENROUTER_API_KEY','OPENAI_API_KEY','CLOUDFLARE_ACCOUNT_ID','CLOUDFLARE_STREAM_API_TOKEN'];
   const missing=required.filter(name=>!String(process.env[name]||'').trim());
   if(missing.length){console.error('missing:'+missing.join(','));process.exit(2)}
   const site=String(process.env.SITE_URL||'');
   if(!/^https:\/\//i.test(site)){console.error('site_url_not_https');process.exit(3)}
 " >/dev/null || fail "credenciais/URL do pipeline incompletas"
-ok "OpenRouter + Cloudflare Stream + SITE_URL HTTPS configurados"
+ok "OpenRouter + OpenAI TTS + Cloudflare Stream + SITE_URL HTTPS configurados"
 
 grep -q "setInterval(viralFactoryRun,30\*60\*1000)" app/server.js   || fail "scheduler de pautas não está ligado ao startup"
 grep -q "setInterval(viralVideoRun,60000)" app/server.js   || fail "worker de geração/edição não está ligado ao startup"
@@ -33,7 +33,7 @@ dc exec -T app node --input-type=module -e "
   import Database from 'better-sqlite3';
   const db=new Database('/data/vitrinecity.db',{readonly:true});
   const exists=t=>!!db.prepare(\"SELECT 1 FROM sqlite_master WHERE type='table' AND name=?\").get(t);
-  for(const t of ['viral_factory_settings','admin_viral_quizzes','viral_quiz_scenes','viral_distribution_jobs']){
+  for(const t of ['viral_factory_settings','admin_viral_quizzes','viral_quiz_scenes','viral_distribution_jobs','lia_video_plans','lia_video_subscriptions','lia_video_jobs','lia_video_scenes','lia_video_distribution']){
     if(!exists(t)){console.error('missing_table:'+t);process.exit(4)}
   }
   const settings=db.prepare('SELECT enabled,approval_required,plants_per_day,curiosities_per_day,last_run_day,last_run_at,last_error FROM viral_factory_settings WHERE id=1').get();
