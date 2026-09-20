@@ -8,10 +8,12 @@ const scripts = [
   new URL('../../ops/verify-video-factory.sh', import.meta.url)
 ];
 
+const shell = spawnSync('bash', ['--version'], { encoding: 'utf8' }).status === 0 ? 'bash' : 'sh';
+
 for (const url of scripts) {
   test(`shell syntax: ${url.pathname.split('/').pop()}`, () => {
     const file = fileURLToPath(url);
-    const result = spawnSync('bash', ['-n', file], { encoding: 'utf8' });
-    assert.equal(result.status, 0, result.stderr || result.stdout || 'bash -n failed');
+    const result = spawnSync(shell, ['-n', file], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout || `${shell} -n failed`);
   });
 }
