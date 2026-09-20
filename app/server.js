@@ -39,6 +39,7 @@ import { mountJarvis } from './jarvis-core.js';
 import { mountNeuralTasksApi } from './vitriny-neural/tasks-api.js';
 import { mountNeuralBillingApi } from './vitriny-neural/billing-api.js';
 import { setupLiaCustomerOperations } from './vitriny-neural/lia-customer-operations.js';
+import { setupLiaVideoStudio } from './lia-video-studio.js';
 import { mountJarvisPublic } from './jarvis-public.js';
 import { setupDiscoverySearch } from './discovery-search.js';
 import { setupMetasearch } from './metasearch.js';
@@ -5010,6 +5011,10 @@ async function runViralFactory({force=false,userId=null}={}) {
   finally{viralFactoryRunning=false;}
 }
 function runFfmpeg(args){return new Promise((resolve,reject)=>{const child=spawn('ffmpeg',args,{stdio:['ignore','ignore','pipe']});let error='';child.stderr.on('data',chunk=>error+=chunk);child.once('error',reject);child.once('close',code=>code===0?resolve():reject(new Error(`FFmpeg encerrou com código ${code}: ${error.slice(-500)}`)));});}
+function runFfprobeDuration(file){return new Promise((resolve,reject)=>{const child=spawn('ffprobe',['-v','error','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1',file],{stdio:['ignore','pipe','pipe']});let out='',error='';child.stdout.on('data',chunk=>out+=chunk);child.stderr.on('data',chunk=>error+=chunk);child.once('error',reject);child.once('close',code=>{const seconds=Number(out.trim());code===0&&Number.isFinite(seconds)&&seconds>0?resolve(seconds):reject(new Error(`FFprobe falhou: ${error.slice(-300)}`));});});}
+function liaAtempoFilter(factor){let value=Math.max(0.05,Math.min(20,Number(factor)||1)),parts=[];while(value>2){parts.push('atempo=2');value/=2;}while(value<0.5){parts.push('atempo=0.5');value/=0.5;}parts.push(`atempo=${value.toFixed(6)}`);return parts.join(',');}
+function splitLiaSpeechText(value,max=3400){const text=String(value||'').replace(/\s+/g,' ').trim();if(!text)return[];const sentences=text.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[text],chunks=[];let current='';for(const sentence of sentences){const part=sentence.trim();if(!part)continue;if((current+' '+part).trim().length<=max){current=(current+' '+part).trim();continue;}if(current)chunks.push(current);if(part.length<=max){current=part;continue;}for(let i=0;i<part.length;i+=max)chunks.push(part.slice(i,i+max));current='';}if(current)chunks.push(current);return chunks;}
+
 async function finishViralQuizVideo(quizId){
   if(!ecosystemCanRun())return false;
   const capture=captureQuizMontage(db,quizId);
@@ -5169,6 +5174,7 @@ const OPENAI_MODEL = String(process.env.OPENROUTER_MODEL || process.env.OPENAI_M
 const OPENROUTER_FALLBACK_MODEL = String(process.env.OPENROUTER_FALLBACK_MODEL || 'openrouter/free').trim();
 const OPENROUTER_IMAGE_MODEL = String(process.env.OPENROUTER_IMAGE_MODEL || 'qwen/qwen-image-3').trim();
 const OPENROUTER_VIDEO_MODEL = String(process.env.OPENROUTER_VIDEO_MODEL || 'google/veo-3.1-lite').trim();
+const LIA_VIDEO_TTS_MODEL = String(process.env.LIA_VIDEO_TTS_MODEL || 'gpt-4o-mini-tts').trim();
 const MEDIA_IMAGE_MODELS = Object.freeze(['qwen/qwen-image-3','meta/muse-image','bytedance-seed/seedream-5-0-lite']);
 const MEDIA_VIDEO_MODELS = Object.freeze(['google/veo-3.1-lite','alibaba/wan-3.0','bytedance/seedance-2.0-mini']);
 const OPENAI_RESPONSES_URL = AI_PROVIDER === 'openrouter'
@@ -5438,6 +5444,82 @@ async function requestEditorialText(system,user,maxTokens=2200){
   const text=responseOutputText(result);if(!text)throw new Error('O modelo não devolveu conteúdo editorial.');return text;
 }
 
+
+async function planLiaVideoContent(job,durations){
+  const targetWords=Math.max(30,Math.round(Number(job.durationSeconds||60)*2.25));
+  const raw=await requestEditorialText(
+    'Você é o diretor audiovisual da LIA. Planeje um vídeo original em português do Brasil. Retorne somente JSON válido com narration, description, hashtags e scenePrompts. narration deve ter ritmo natural e aproximadamente a quantidade de palavras solicitada; description deve ser pronta para publicação; hashtags deve ser lista sem #; scenePrompts deve ter exatamente a quantidade de cenas solicitada, uma descrição visual autônoma por cena. Não invente fatos atuais nem copie terceiros. Não inclua logotipos ou marcas de terceiros.',
+    `Pedido: ${job.prompt}\nTítulo: ${job.title}\nDuração final: ${job.durationSeconds}s\nProporção: ${job.aspectRatio}\nMeta aproximada de narração: ${targetWords} palavras\nDurações das cenas: ${JSON.stringify(durations)}\nQuantidade de cenas: ${durations.length}`,
+    Math.min(7000,Math.max(1800,durations.length*90+targetWords*3))
+  );
+  const parsed=parseEditorialJson(raw),scenePrompts=Array.isArray(parsed.scenePrompts)?parsed.scenePrompts.map(x=>String(x||'').trim()):[];
+  if(scenePrompts.length!==durations.length)throw new Error('A direção audiovisual não devolveu o número correto de cenas.');
+  const narration=String(parsed.narration||'').trim(),description=String(parsed.description||'').trim();
+  if(narration.length<40||description.length<10)throw new Error('O roteiro audiovisual ficou incompleto.');
+  return {narration,description,hashtags:Array.isArray(parsed.hashtags)?parsed.hashtags:[],scenePrompts};
+}
+async function startLiaVideoScene(scene){
+  if(AI_PROVIDER!=='openrouter'||!AI_API_KEY)throw new Error('Configure OPENROUTER_API_KEY para gerar as cenas.');
+  const model=OPENROUTER_VIDEO_MODEL;
+  const result=await openRouterRequest('https://openrouter.ai/api/v1/videos',{method:'POST',redirect:'error',body:JSON.stringify({model,prompt:scene.prompt,duration:scene.duration_seconds,aspect_ratio:scene.aspectRatio,resolution:'720p',generate_audio:false})},60000);
+  const {jobId,pollingUrl}=videoReceipt(result.data);if(!jobId||!pollingUrl)throw new Error('O provedor não devolveu um recibo de vídeo válido.');
+  return {jobId,pollingUrl,model};
+}
+async function pollLiaVideoScene(scene){
+  try{
+    const pollingUrl=videoPollingUrl(scene.polling_url,scene.remote_job_id);if(!pollingUrl)throw new Error('video_receipt_invalid');
+    const result=await openRouterRequest(pollingUrl,{method:'GET',redirect:'error'},30000);
+    if(videoPollState(result.data,scene.remote_job_id)!=='completed')return {state:'processing'};
+    const buffer=await downloadVideo(result.data,scene.remote_job_id,{apiKey:AI_API_KEY});
+    const name=`lia-video-${scene.job_id}-scene-${scene.scene_number}.mp4`,localPath=path.join(generatedMediaDir,name);
+    fs.writeFileSync(localPath,buffer,{flag:'wx'});
+    return {state:'completed',localPath,outputUrl:`/uploads/generated-videos/${name}`};
+  }catch(error){error.retryable=videoRetryableFailure(error);throw error;}
+}
+async function synthesizeLiaNarration(job){
+  const key=String(process.env.OPENAI_API_KEY||'').trim();if(!key)throw new Error('Configure OPENAI_API_KEY para gerar a narração sincronizada.');
+  const chunks=splitLiaSpeechText(job.script);if(!chunks.length)throw new Error('Roteiro de narração vazio.');
+  const paths=[];
+  try{
+    for(let i=0;i<chunks.length;i++){
+      const response=await fetch('https://api.openai.com/v1/audio/speech',{method:'POST',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json'},body:JSON.stringify({model:LIA_VIDEO_TTS_MODEL,voice:job.voice,input:chunks[i],instructions:'Narre em português do Brasil, tom natural e claro, sem música de fundo.',response_format:'mp3'}),signal:AbortSignal.timeout(120000)});
+      if(!response.ok){const data=await response.json().catch(()=>({}));throw new Error(String(data?.error?.message||`OpenAI TTS ${response.status}`).slice(0,300));}
+      const buffer=Buffer.from(await response.arrayBuffer());if(buffer.length<512||buffer.length>30*1024*1024)throw new Error('Áudio de narração inválido.');
+      const file=path.join(generatedMediaDir,`lia-video-${job.id}-voice-${i+1}.mp3`);fs.writeFileSync(file,buffer,{flag:'wx'});paths.push(file);
+    }
+    if(paths.length===1)return {localPath:paths[0]};
+    const list=path.join(generatedMediaDir,`lia-video-${job.id}-voice-concat.txt`),merged=path.join(generatedMediaDir,`lia-video-${job.id}-voice.mp3`);
+    fs.writeFileSync(list,paths.map(file=>`file '${file.replaceAll("'","'\\''")}'`).join('\n'));
+    await runFfmpeg(['-y','-f','concat','-safe','0','-i',list,'-c:a','libmp3lame','-q:a','3',merged]);
+    try{fs.unlinkSync(list)}catch{}for(const file of paths)try{fs.unlinkSync(file)}catch{}
+    return {localPath:merged};
+  }catch(error){for(const file of paths)try{fs.unlinkSync(file)}catch{}throw error;}
+}
+async function composeLiaVideo(job,parts,audioPath){
+  if(!parts.length||parts.some(item=>!item.local_path||item.status!=='downloaded'))throw new Error('As cenas ainda não estão prontas para edição.');
+  if(!audioPath||!fs.existsSync(audioPath))throw new Error('A narração ainda não está disponível.');
+  const dimensions={ '9:16':[720,1280], '16:9':[1280,720], '1:1':[1080,1080] }[job.aspectRatio]||[720,1280];
+  const list=path.join(generatedMediaDir,`lia-video-${job.id}-concat.txt`),silent=path.join(generatedMediaDir,`lia-video-${job.id}-silent.mp4`),name=`lia-video-${job.id}-final.mp4`,output=path.join(generatedMediaDir,name);
+  fs.writeFileSync(list,parts.map(item=>`file '${item.local_path.replaceAll("'","'\\''")}'`).join('\n'));
+  try{
+    await runFfmpeg(['-y','-f','concat','-safe','0','-i',list,'-t',String(job.durationSeconds),'-vf',`scale=${dimensions[0]}:${dimensions[1]}:force_original_aspect_ratio=decrease,pad=${dimensions[0]}:${dimensions[1]}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,'-an','-c:v','libx264','-preset','veryfast','-movflags','+faststart',silent]);
+    const audioSeconds=await runFfprobeDuration(audioPath),factor=audioSeconds/Number(job.durationSeconds),tempo=liaAtempoFilter(factor);
+    await runFfmpeg(['-y','-i',silent,'-i',audioPath,'-filter_complex',`[1:a]${tempo},loudnorm=I=-16:TP=-1.5:LRA=11,apad[a]`,'-map','0:v:0','-map','[a]','-t',String(job.durationSeconds),'-c:v','copy','-c:a','aac','-b:a','160k','-movflags','+faststart',output]);
+    return {outputUrl:`/uploads/generated-videos/${name}`};
+  }finally{try{fs.unlinkSync(list)}catch{}try{fs.unlinkSync(silent)}catch{}}
+}
+async function finalizeLiaVideoMedia(job,outputUrl){
+  const agent=db.prepare("SELECT id,status FROM admin_specialist_agents WHERE code='midia'").get();if(!agent||agent.status!=='active')throw new Error('Agente Audiovisual indisponível.');
+  const caption=[job.description,...(job.hashtags||[]).map(tag=>'#'+String(tag).replace(/^#/,'').replace(/\s+/g,''))].filter(Boolean).join('\n\n').slice(0,1500);
+  const task=db.prepare(`INSERT INTO admin_agent_tasks(agent_id,created_by_user_id,title,instructions,priority,status,result_summary,completed_at) VALUES (?,?,?,?,?,'completed',?,CURRENT_TIMESTAMP)`).run(agent.id,job.userId,job.title,job.prompt,'normal','Vídeo LIA gerado, narrado e editado.');
+  const project=db.prepare(`INSERT INTO admin_media_projects(task_id,format,channels,source_notes,prompt,aspect_ratio,duration_seconds,caption,model,production_status,progress,script,output_url) VALUES (?,'short_video',?,?,?,?,?,?,?,'approved',100,?,?)`).run(Number(task.lastInsertRowid),job.channels.join(', '),job.prompt,job.prompt,job.aspectRatio,job.durationSeconds,caption,OPENROUTER_VIDEO_MODEL,job.script,outputUrl);
+  return {id:Number(project.lastInsertRowid)};
+}
+async function publishLiaVideoToVitrine(job){
+  if(!job.mediaProjectId)throw new Error('Projeto final ainda não foi registrado.');
+  return mediaPublications.publish(Number(job.mediaProjectId),Number(job.userId),'lia-video');
+}
+
 async function generateEditorialDraft({ title, portal, traffic, sourceUrl }) {
   if (!aiConfigured()) { const error = new Error('Configure a chave da IA no painel antes de gerar o artigo.'); error.status = 503; throw error; }
   const raw = await requestEditorialText('Você é o agente editorial da VitrineCity. Crie um rascunho em português do Brasil, claro e útil, com 900 a 1.500 caracteres no corpo. Não invente acontecimentos, números, declarações ou fontes. Quando houver apenas uma tendência de busca, explique o assunto e sinalize o que precisa de confirmação editorial. Em entretenimento, não publique boatos, acusações, diagnóstico, localização ou informação privada. Em tecnologia e IA, priorize fontes oficiais. Retorne somente JSON válido com title, summary e body. O corpo deve ter no mínimo 600 caracteres.',`Tema: ${title}\nEditoria: ${portal}\nVolume: ${traffic||'não informado'}\nFonte: ${sourceUrl||'Google Trends Brasil'}`,2200);
@@ -5532,6 +5614,13 @@ const consumeMessageCredits = db.transaction((userId, units, description, kind =
 const liaCustomerOperations = setupLiaCustomerOperations({
   app, db, requireUser, sameOriginOnly, expireCreditBatches,
   env: process.env, fetchImpl: globalThis.fetch
+});
+
+const liaVideoStudio=setupLiaVideoStudio({
+  app,db,requireUser,requireAdmin,sameOriginOnly,canRun:ecosystemCanRun,
+  planContent:planLiaVideoContent,startScene:startLiaVideoScene,pollScene:pollLiaVideoScene,
+  synthesizeNarration:synthesizeLiaNarration,composeVideo:composeLiaVideo,
+  finalizeMedia:finalizeLiaVideoMedia,publishVitrine:publishLiaVideoToVitrine
 });
 
 async function metaJson(url, options = {}) {
@@ -9888,4 +9977,9 @@ app.listen(process.env.PORT || 3000, () => {
   const viralVideoInitial=setTimeout(viralVideoRun,60000);viralVideoInitial.unref();
   const viralVideoTimer=setInterval(viralVideoRun,60000);viralVideoTimer.unref();
   console.log('Fábrica Viral agendada: pautas a cada 30 min; geração/edição a cada 60 s.');
+
+  const liaVideoRun=()=>liaVideoStudio.process().catch(error=>console.error('LIA Video Studio:',String(error?.message||'video_studio_failed').slice(0,200)));
+  const liaVideoInitial=setTimeout(liaVideoRun,25000);liaVideoInitial.unref();
+  const liaVideoTimer=setInterval(liaVideoRun,10000);liaVideoTimer.unref();
+  console.log('LIA Video Studio agendado: fila de produção a cada 10 s.');
 });
