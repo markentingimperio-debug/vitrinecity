@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:vitrinecity:lia-video-chat-draft:v1-proposed",
+  "title": "Rascunho LIA Vídeo no chat — contrato proposto, sem execução",
+  "description": "Não enviar ao endpoint /api/lia/video/jobs atual. Validação estrutural não prova propriedade dos IDs nem autoriza consumo/publicação. Conta, preço e plano são resolvidos no servidor.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "conversationId", "idempotencyKey", "brief", "durationSeconds", "aspectRatio", "language", "audioMode", "destinationHints"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "conversationId": {"type": "string", "format": "uuid"},
+    "messageId": {"type": "string", "format": "uuid"},
+    "idempotencyKey": {"type": "string", "pattern": "^[A-Za-z0-9_-]{12,100}$"},
+    "brief": {"type": "string", "minLength": 10, "maxLength": 6000, "pattern": "\\S"},
+    "durationSeconds": {"type": "integer", "minimum": 10, "maximum": 3600},
+    "aspectRatio": {"enum": ["9:16", "16:9", "1:1"]},
+    "language": {"enum": ["pt-BR", "en"]},
+    "audioMode": {"enum": ["none", "ambience", "narration", "character_speech"]},
+    "voiceProfileId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"},
+    "characterProfileId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"},
+    "referenceAttachmentIds": {"type": "array", "items": {"type": "string", "format": "uuid"}, "maxItems": 1, "uniqueItems": true},
+    "captionsRequested": {"type": "boolean"},
+    "destinationHints": {"type": "array", "items": {"enum": ["vitrine_social", "tiktok", "youtube", "instagram", "facebook", "kwai"]}, "minItems": 0, "maxItems": 6, "uniqueItems": true},
+    "scheduleSuggestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["localDateTime", "timeZone"],
+      "description": "Sugestão, não aprovação. Backend deve validar fuso IANA, DST/ambiguidade, futuro, plano e OAuth.",
+      "properties": {
+        "localDateTime": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}$"},
+        "timeZone": {"type": "string", "minLength": 1, "maxLength": 100}
+      }
+    }
+  },
+  "allOf": [{"if": {"properties": {"audioMode": {"enum": ["narration", "character_speech"]}}}, "then": {"required": ["voiceProfileId"]}}]
+}
