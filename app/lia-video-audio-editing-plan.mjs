@@ -79,6 +79,8 @@ export function planLiaAudioEditing(input) {
       onTooLong:'script_revision_required',cutSpeech:false});
     steps.push({id:key+':visual',kind:scene.source==='existing_video'?'load_owned_video':'generate_scene',
       ...(scene.source==='existing_video'?{assetId:scene.sourceAssetId}:{}),nativeSpeech:false,targetMs:scene.durationMs});
+    if (scene.speakerVisible) steps.push({id:key+':prepare-sync',kind:'prepare_sync_inputs',provider:'ffmpeg',
+      targetMs:scene.durationMs,measureWith:'ffprobe',padSilence:true,cutSpeech:false,requireCompatibleSpeaker:true});
     if (scene.speakerVisible) steps.push({id:key+':lipsync',kind:'synchronize_lips',provider:'sync',
       precondition:'single_visible_speaker_and_equal_measured_durations',automaticPaidRetry:false});
     steps.push({id:key+':edit',kind:'edit_scene',provider:'ffmpeg',targetMs:scene.durationMs,
