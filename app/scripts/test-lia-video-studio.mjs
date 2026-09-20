@@ -27,7 +27,7 @@ function fixture(){
     synthesizeNarration:async job=>({localPath:`/tmp/${job.id}.mp3`}),
     composeVideo:async job=>({outputUrl:`/uploads/generated-videos/${job.id}.mp4`}),
     finalizeMedia:async()=>({id:321}),
-    publishVitrine:async()=>{published+=1;return {postId:'post-1',publicUrl:'/social/post/post-1'};}
+    publishVitrine:async()=>{published+=1;return {status:'published',postId:'post-1',publicUrl:'/social/post/post-1'};}
   });
   const server=app.listen(0);
   const base=`http://127.0.0.1:${server.address().port}`;
