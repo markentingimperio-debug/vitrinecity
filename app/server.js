@@ -5517,7 +5517,9 @@ async function finalizeLiaVideoMedia(job,outputUrl){
 }
 async function publishLiaVideoToVitrine(job){
   if(!job.mediaProjectId)throw new Error('Projeto final ainda não foi registrado.');
-  return mediaPublications.publish(Number(job.mediaProjectId),Number(job.userId),'lia-video');
+  let publication=await mediaPublications.publish(Number(job.mediaProjectId),Number(job.userId),'lia-video');
+  if(publication?.status!=='published'&&publication?.canReconcile===true)publication=await mediaPublications.reconcile(Number(job.mediaProjectId));
+  return publication;
 }
 
 async function generateEditorialDraft({ title, portal, traffic, sourceUrl }) {
