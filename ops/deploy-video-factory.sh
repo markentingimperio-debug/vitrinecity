@@ -38,7 +38,7 @@ env_has_value(){
   ' .env
 }
 
-for key in SITE_URL OPENROUTER_API_KEY CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_STREAM_API_TOKEN; do
+for key in SITE_URL OPENROUTER_API_KEY OPENAI_API_KEY CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_STREAM_API_TOKEN; do
   env_has_value "$key" || die "$key precisa estar preenchido no .env para geração + publicação completa"
 done
 
