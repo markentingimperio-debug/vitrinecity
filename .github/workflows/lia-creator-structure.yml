@@ -1,0 +1,23 @@
+name: LIA creator structure
+on:
+  pull_request:
+    paths:
+      - 'app/lia-creator/**'
+      - 'app/scripts/test-lia-creator-structure.mjs'
+      - 'docs/lia-creator/**'
+      - '.github/workflows/lia-creator-structure.yml'
+permissions:
+  contents: read
+jobs:
+  planning-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test offline contracts (no secrets, APIs or deployment)
+        run: node --test app/scripts/test-lia-creator-structure.mjs
