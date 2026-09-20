@@ -111,7 +111,10 @@ for _ in $(seq 1 "$HEALTH_ATTEMPTS"); do
   fi
   sleep "$HEALTH_SLEEP"
 done
-[[ "$healthy" -eq 1 ]] || die "app não ficou saudável dentro da janela de verificação"
+if [[ "$healthy" -ne 1 ]]; then
+  log "ERRO: app não ficou saudável dentro da janela de verificação"
+  false
+fi
 
 log "executando verificação específica da Fábrica Viral"
 VITRINE_APP_DIR="$APP_DIR" bash ops/verify-video-factory.sh
