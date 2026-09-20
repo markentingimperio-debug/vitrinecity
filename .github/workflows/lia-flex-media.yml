@@ -1,0 +1,52 @@
+name: LIA flexible routing validation
+on:
+  pull_request:
+    paths:
+      - 'ops/lia-flex-media/**'
+      - '.github/workflows/lia-flex-media.yml'
+permissions:
+  contents: read
+jobs:
+  flex-media:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare pinned helpers and validate release contracts
+        run: |
+          set -euo pipefail
+          python3 ops/lia-preserve-kling/fix-deploy-selector-v91.py
+          python3 ops/lia-preserve-kling/fix-deploy-init-v92.py
+          cp ops/lia-reference-media/build-reference-media-v95.py ops/lia-flex-media/
+          cp ops/lia-reference-media/test-reference-media.mjs ops/lia-flex-media/
+          cp ops/lia-native-audio/build-native-audio-v94.py ops/lia-flex-media/
+          python3 -m py_compile ops/lia-flex-media/*.py
+          python3 ops/lia-flex-media/test-flex-release.py 2>&1 | tee flex-contracts.log
+      - name: Real locked-dependency upgrade and rollback with reference and audio preservation
+        run: |
+          set -euo pipefail
+          sudo env GITHUB_ACTIONS=true python3 -u ops/lia-flex-media/integration-flex-media.py 2>&1 | tee flex-validation.log
+      - name: Collect synthetic test logs
+        if: always()
+        run: |
+          sudo python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          out=Path('flex-ci-logs');out.mkdir(exist_ok=True)
+          for root in Path('/root').glob('lia-reference-ci-*'):
+              for p in root.rglob('*.log'):
+                  dest=out/root.name/p.relative_to(root);dest.parent.mkdir(parents=True,exist_ok=True)
+                  shutil.copyfile(p,dest)
+          for p in out.rglob('*'):p.chmod(0o755 if p.is_dir() else 0o644)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lia-flexible-routing-validation
+          path: |
+            flex-contracts.log
+            flex-validation.log
+            flex-ci-logs
+          retention-days: 3
