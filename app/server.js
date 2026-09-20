@@ -8832,11 +8832,6 @@ app.post('/api/social/posts/:id/intelligence', sameOriginOnly, (req,res) => {
     .run(post.id,actorKey,day,...values);
   return res.json({ok:true});
 });
-  const viralInitial=setTimeout(()=>runViralFactory().catch(error=>console.error('Fábrica Viral:',String(error?.message||'automation_failed').slice(0,200))),45000);viralInitial.unref();
-  const viralTimer=setInterval(()=>runViralFactory().catch(error=>console.error('Fábrica Viral:',String(error?.message||'automation_failed').slice(0,200))),30*60*1000);viralTimer.unref();
-  const viralVideoInitial=setTimeout(()=>processViralVideoFactory().catch(()=>{}),60000);viralVideoInitial.unref();
-  const viralVideoTimer=setInterval(()=>processViralVideoFactory().catch(()=>{}),60000);viralVideoTimer.unref();
-
 const EXTERNAL_METRIC_PROVIDERS = new Set(['instagram','facebook','tiktok','youtube','google','kwai']);
 const externalMetricsStore=createExternalMetricsStore({db,getYouTubeChannelId:()=>youtubeMetricsConfig(socialMetricsEnv()).channelId,categories:SOCIAL_CATEGORIES});
 
@@ -9881,4 +9876,16 @@ app.listen(process.env.PORT || 3000, () => {
     console.error('Social comment campaign processing failed.'));
   const socialCommentInitial=setTimeout(runSocialCommentCampaigns,20000);socialCommentInitial.unref();
   const socialCommentTimer=setInterval(runSocialCommentCampaigns,60000);socialCommentTimer.unref();
+
+  // Keep the viral factory lifecycle attached to the application lifecycle.
+  // The workers are idempotent/receipt-aware and respect the global ecosystem pause.
+  const viralFactoryRun=()=>runViralFactory().catch(error=>
+    console.error('Fábrica Viral:',String(error?.message||'automation_failed').slice(0,200)));
+  const viralVideoRun=()=>processViralVideoFactory().catch(error=>
+    console.error('Fábrica Viral · vídeo:',String(error?.message||'video_factory_failed').slice(0,200)));
+  const viralInitial=setTimeout(viralFactoryRun,45000);viralInitial.unref();
+  const viralTimer=setInterval(viralFactoryRun,30*60*1000);viralTimer.unref();
+  const viralVideoInitial=setTimeout(viralVideoRun,60000);viralVideoInitial.unref();
+  const viralVideoTimer=setInterval(viralVideoRun,60000);viralVideoTimer.unref();
+  console.log('Fábrica Viral agendada: pautas a cada 30 min; geração/edição a cada 60 s.');
 });
