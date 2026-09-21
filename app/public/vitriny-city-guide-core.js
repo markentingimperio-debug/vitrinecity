@@ -10,6 +10,7 @@ export const CITY_GUIDE_GROUPS = Object.freeze([
 ].map(Object.freeze));
 
 export const CITY_GUIDE_ITEMS = Object.freeze([
+  { id: 'avenida', title: 'Passear pela avenida', description: 'Veja as fachadas das lojas publicadas e entre nas vitrines.', group: 'comprar', keywords: ['avenida', 'rua', 'passeio', 'fachadas', 'lojas'], href: '/avenida', landmark: 'Avenida VitrineCity', place: 'commerce' },
   { id: 'pesquisar', title: 'Buscar na VitrineCity', description: 'Encontre produtos, lojas, assuntos, sites e vídeos.', group: 'comprar', keywords: ['pesquisa', 'busca', 'encontrar', 'preço', 'serviço'], href: '/pesquisar.html', landmark: 'Avenida de Compras', place: 'commerce' },
   { id: 'vitrines', title: 'Lojas e vitrines da cidade', description: 'Conheça as lojas, suas fachadas e os produtos em destaque.', group: 'comprar', keywords: ['lojas', 'Sertaneja', 'Agrotécnica', 'Beemi', 'moda', 'catálogo'], href: '/loja', action: 'openStorefronts', landmark: 'Avenida de Compras', place: 'commerce' },
   { id: 'loja-oficial', title: 'Loja Oficial VitrineCity', description: 'Veja o catálogo de produtos e as opções de entrega de cada loja.', group: 'comprar', keywords: ['comprar', 'marketplace', 'carrinho', 'transportadora', 'produtos'], href: '/loja', landmark: 'Avenida de Compras', place: 'commerce' },
