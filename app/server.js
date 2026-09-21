@@ -2792,6 +2792,7 @@ app.get('/admin-servicos.html',requireAdmin,(_req,res)=>{const page=fs.readFileS
 app.get('/admin-conteudos.html',requireAdmin,publicPage('admin-conteudos.html'));
 app.get('/recursos-social.html', enhancedPublicPage('recursos-social.html'));
 app.get('/cidade', publicPage('cidade-exploravel.html'));
+app.get('/avenida', publicPage('avenida.html'));
 app.get('/mapa-real', (_req,res)=>res.redirect(301,'/cidade-premium'));
 app.get('/cidade-premium', publicPage('mapa-real.html'));
 app.get('/cidade/bairro-premium', publicPage('cidade-25d-demo.html'));
