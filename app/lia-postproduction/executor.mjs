@@ -23,6 +23,9 @@ export function createLiaPostProduction({db,root,sourceRoots,enabled=false,provi
   root=privateRoot(root);sourceRoots=sourceRoots.map(value=>path.resolve(value));
   requireValue(Number.isSafeInteger(maxScenes)&&maxScenes>=1&&maxScenes<=60,'executor_scene_limit_invalid');
   let closed=false;
+  const synchronizationBinding=providers.synchronizationBinding||'sync:lipsync-2';
+  requireValue(synchronizationBinding==='sync:lipsync-2'||/^heygen:(?:speed|precision):[a-f0-9]{64}$/.test(synchronizationBinding),'postproduction_provider_invalid');
+  const synchronizationLabel=synchronizationBinding.startsWith('heygen:')?{provider:'heygen',mode:synchronizationBinding.split(':')[1]}:{provider:'sync',mode:'lipsync-2'};
   const controllers=new Map();
   db.exec(`CREATE TABLE IF NOT EXISTS lia_postproduction_jobs(
     id TEXT PRIMARY KEY,scope TEXT NOT NULL,conversation_id TEXT NOT NULL,source_job_id TEXT NOT NULL,
@@ -35,13 +38,15 @@ export function createLiaPostProduction({db,root,sourceRoots,enabled=false,provi
     job_id TEXT NOT NULL REFERENCES lia_postproduction_jobs(id),stage_key TEXT NOT NULL,paid INTEGER NOT NULL,
     state TEXT NOT NULL,data_json TEXT,started_at INTEGER NOT NULL,finished_at INTEGER,
     PRIMARY KEY(job_id,stage_key));`);
+  // Additive migration: existing jobs stay bound to Sync. Never replay them on HeyGen.
+  if(!db.prepare('PRAGMA table_info(lia_postproduction_jobs)').all().some(c=>c.name==='provider_binding'))db.exec("ALTER TABLE lia_postproduction_jobs ADD COLUMN provider_binding TEXT NOT NULL DEFAULT 'sync:lipsync-2'");
   const find=id=>db.prepare('SELECT * FROM lia_postproduction_jobs WHERE id=?').get(id);
   function allowed(scope,conversationId){requireValue(scopeValid(scope)&&UUID.test(conversationId)&&authorize(scope,conversationId)===true,'postproduction_access_denied');}
   function owned(scope,id){requireValue(UUID.test(id),'postproduction_not_found');const row=find(id);requireValue(row?.scope===scope,'postproduction_not_found');allowed(scope,row.conversation_id);return row;}
   const dir=id=>privateRoot(path.join(root,id));
   function dto(row){const specification=JSON.parse(row.spec_json),quote=JSON.parse(row.quote_json),output=row.output_json&&JSON.parse(row.output_json);
     return {id:row.id,conversationId:row.conversation_id,sourceJobId:row.source_job_id,status:row.status,errorCode:row.error_code,
-      approvalFingerprint:row.fingerprint,quote,specification,output:output?{bytes:output.bytes,durationMs:output.durationMs,width:output.width,height:output.height,
+      approvalFingerprint:row.fingerprint,quote,specification,synchronization:row.provider_binding.startsWith('heygen:')?{provider:'heygen',mode:row.provider_binding.split(':')[1]}:{provider:'sync',mode:'lipsync-2'},output:output?{bytes:output.bytes,durationMs:output.durationMs,width:output.width,height:output.height,
         audioVerified:output.audioVerified,languageVerified:false,lipSyncQualityVerified:false,
         previewPath:`/api/neural/chat/postproduction/${row.id}/video`,captionsPath:output.captions?`/api/neural/chat/postproduction/${row.id}/captions`:null}:null,
       userReview:row.review_json?JSON.parse(row.review_json):null,publicationAuthorized:false,automaticPaidRetry:false};}
@@ -65,16 +70,16 @@ export function createLiaPostProduction({db,root,sourceRoots,enabled=false,provi
         const meta=await editor.probe(work,file.name,'mov');requireValue(meta.video.length===1&&meta.durationMs>=scene.durationMs-40,'scene_too_short');
         inputs.push({...file,singleSpeakerApproved:asset.singleSpeakerApproved===true});
       }
-      const spec=clone(plan.specification),approvalFingerprint=fingerprint({spec,voice,inputs,sourceJobId,conversationId});
-      const raw=await billing.quote({scope,requestId:id,fingerprint:approvalFingerprint,billingInputs:plan.billingInputs});
+      const spec=clone(plan.specification),approvalFingerprint=fingerprint({spec,voice,inputs,sourceJobId,conversationId,synchronizationBinding});
+      const raw=await billing.quote({scope,requestId:id,fingerprint:approvalFingerprint,billingInputs:{...plan.billingInputs,synchronization:synchronizationLabel}});
       requireValue(raw&&typeof raw.quoteId==='string'&&ID.test(raw.quoteId)&&Number.isSafeInteger(raw.maximumMicroBrl)&&raw.maximumMicroBrl>0&&raw.maximumMicroBrl<=1e11&&Number.isSafeInteger(raw.expiresAt)&&raw.expiresAt>now()&&raw.expiresAt<=now()+86400000,'postproduction_quote_invalid');
-      const quote={quoteId:raw.quoteId,maximumMicroBrl:raw.maximumMicroBrl,expiresAt:raw.expiresAt,currency:'BRL'};
+      const quote={quoteId:raw.quoteId,maximumMicroBrl:raw.maximumMicroBrl,expiresAt:raw.expiresAt,currency:'BRL',synchronization:synchronizationLabel};
       // Recheck access and capacity after asynchronous preparation.
       allowed(scope,conversationId);
       db.transaction(()=>{
         requireValue(db.prepare("SELECT COUNT(*) n FROM lia_postproduction_jobs WHERE scope=? AND status NOT IN ('cancelled','failed','completed')").get(scope).n<3,'postproduction_active_limit');
-        db.prepare("INSERT INTO lia_postproduction_jobs(id,scope,conversation_id,source_job_id,fingerprint,spec_json,quote_json,voice_json,inputs_json,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'draft',?,?)")
-          .run(id,scope,conversationId,sourceJobId,approvalFingerprint,JSON.stringify(spec),JSON.stringify(quote),JSON.stringify(voice),JSON.stringify(inputs),now(),now());
+        db.prepare("INSERT INTO lia_postproduction_jobs(id,scope,conversation_id,source_job_id,fingerprint,spec_json,quote_json,voice_json,inputs_json,status,created_at,updated_at,provider_binding) VALUES(?,?,?,?,?,?,?,?,?,'draft',?,?,?)")
+          .run(id,scope,conversationId,sourceJobId,approvalFingerprint,JSON.stringify(spec),JSON.stringify(quote),JSON.stringify(voice),JSON.stringify(inputs),now(),now(),synchronizationBinding);
       }).immediate();
       return dto(find(id));
     } catch(error){fs.rmSync(work,{recursive:true,force:true});throw error;}
@@ -82,6 +87,7 @@ export function createLiaPostProduction({db,root,sourceRoots,enabled=false,provi
   const approveTx=db.transaction((scope,id,input)=>{
     requireValue(enabled&&!closed,'postproduction_disabled');const row=owned(scope,id),quote=JSON.parse(row.quote_json);
     requireValue(input&&Object.keys(input).sort().join(',')==='approvalFingerprint,idempotencyKey,quoteId'&&ID.test(input.idempotencyKey)&&input.idempotencyKey.length>=12,'postproduction_approval_invalid');
+    requireValue(row.provider_binding===synchronizationBinding,'postproduction_provider_changed');
     requireValue(input.approvalFingerprint===row.fingerprint&&input.quoteId===quote.quoteId,'postproduction_approval_mismatch');
     if(row.confirmation_key){requireValue(row.confirmation_key===input.idempotencyKey,'postproduction_confirmation_conflict');return dto(row);}
     requireValue(row.status==='draft'&&quote.expiresAt>now(),'postproduction_quote_expired');
@@ -99,6 +105,7 @@ export function createLiaPostProduction({db,root,sourceRoots,enabled=false,provi
     }).immediate();
   }
   function live(id,token){requireValue(enabled&&!closed,'postproduction_disabled');const row=find(id);requireValue(row&&row.lease_token===token&&row.lease_until>now()&&!['cancelled','review_required','completed','ready_for_review'].includes(row.status),'postproduction_lease_lost');
+    requireValue(row.provider_binding===synchronizationBinding,'postproduction_provider_changed');
     allowed(row.scope,row.conversation_id);requireValue(syncResult(billing.isReserved({scope:row.scope,requestId:id,fingerprint:row.fingerprint,quote:JSON.parse(row.quote_json)}))===true,'postproduction_reservation_missing');return row;}
   const lookupStage=(id,key)=>db.prepare('SELECT * FROM lia_postproduction_stages WHERE job_id=? AND stage_key=?').get(id,key);
   async function stage(id,token,key,paid,operation){
@@ -136,7 +143,7 @@ export function createLiaPostProduction({db,root,sourceRoots,enabled=false,provi
       let video=prepared.silent;
       if(scene.speakerVisible){
         if(!lookupStage(row.id,prefix+':sync')){
-          await stage(row.id,token,prefix+':sync',true,()=>providers.startSync({video:readPrivate(work,prepared.silent),audio:readPrivate(work,prepared.padded)},signal));return;
+          await stage(row.id,token,prefix+':sync',true,()=>providers.startSync({video:readPrivate(work,prepared.silent),audio:readPrivate(work,prepared.padded),idempotencyKey:row.id+':'+prefix,assertAuthorized:()=>{live(row.id,token);return true;}},signal));return;
         }
         const submitted=await stage(row.id,token,prefix+':sync',true,()=>{throw problem('paid_retry_denied');});
         if(!lookupStage(row.id,prefix+':sync-result')?.data_json){
@@ -166,7 +173,7 @@ export function createLiaPostProduction({db,root,sourceRoots,enabled=false,provi
   async function tick(){
     if(!enabled||closed)return false;
     const token=randomUUID();
-    const row=db.transaction(()=>{const row=db.prepare("SELECT * FROM lia_postproduction_jobs WHERE status IN ('queued','working','waiting_sync') AND lease_until<=? AND next_at<=? ORDER BY created_at LIMIT 1").get(now(),now());if(!row)return null;
+    const row=db.transaction(()=>{const row=db.prepare("SELECT * FROM lia_postproduction_jobs WHERE status IN ('queued','working','waiting_sync') AND lease_until<=? AND next_at<=? AND provider_binding=? ORDER BY created_at LIMIT 1").get(now(),now(),synchronizationBinding);if(!row)return null;
       db.prepare("UPDATE lia_postproduction_jobs SET lease_token=?,lease_until=?,status='working' WHERE id=?").run(token,now()+90000,row.id);return row;
     }).immediate();if(!row)return false;
     const controller=new AbortController();controllers.set(row.id,controller);

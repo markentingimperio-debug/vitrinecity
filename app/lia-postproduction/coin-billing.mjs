@@ -15,6 +15,7 @@ export function createPostProductionCoinBilling({wallet,tariff,now=Date.now}={})
   return Object.freeze({
     quote({scope,billingInputs}){
       requireValue(wallet.allowsScope(scope)===true,'postproduction_access_denied');const t=checkedTariff();
+      if(billingInputs.synchronization?.provider==='heygen')requireValue(t.synchronizationProvider==='heygen'&&t.synchronizationMode===billingInputs.synchronization.mode,'heygen_tariff_not_reviewed');
       const chars=billingInputs.speechCharacters,ms=billingInputs.syncMilliseconds;
       requireValue(Number.isSafeInteger(chars)&&chars>0&&Number.isSafeInteger(ms)&&ms>=0,'postproduction_tariff_invalid');
       requireValue(t.speechMicroBrlPer1000Chars>0&&(!ms||t.syncMicroBrlPerSecond>0),'postproduction_tariff_invalid');
