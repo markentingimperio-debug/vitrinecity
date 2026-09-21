@@ -24,7 +24,7 @@ export function setupLiaVideoPostProduction({enabled=false,app,db,root,generated
       const userId=Number(scope.slice(5));return accountAllowed(userId)===true&&(!heygenConnection||heygenConnection.allowsUser(userId))&&
         !!db.prepare('SELECT 1 FROM neural_chat_conversations WHERE id=? AND scope=?').get(conversationId,scope);
     },
-    resolveSource:(...args)=>createLiaStudioSceneResolver({db,generatedMediaRoot,reviewSpeaker})(...args),
+    resolveSource:createLiaStudioSceneResolver({db,generatedMediaRoot,reviewSpeaker}),
     resolveVoice:(scope,profileId,language)=>{
       const profile=Object.hasOwn(voiceProfiles,profileId)?voiceProfiles[profileId]:null;
       requireValue(profile&&profile.licensed===true&&profile.allowedUserIds?.includes(Number(scope.slice(5)))&&profile.languages?.includes(language),'voice_not_authorized');

@@ -27,3 +27,5 @@ jobs:
         working-directory: app
         run: |
           env -i PATH="$PATH" HOME="$HOME" LANG=C.UTF-8 node --test --test-concurrency=1 scripts/test-lia-heygen.mjs scripts/test-lia-heygen-flow.mjs scripts/test-lia-postproduction.mjs scripts/test-lia-video-audio-editing-plan.mjs
+      - name: Private credential registration without real keys or network
+        run: sudo -H python3 ops/lia-heygen/test-configure-heygen.py
