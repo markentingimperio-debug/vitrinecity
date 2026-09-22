@@ -14,6 +14,10 @@ scripts/*
 !scripts/run-vitriny-neural-task-acceptance.mjs
 !scripts/run-admin-teaching-pilot.mjs
 !scripts/diagnose-admin-teaching-openai.mjs
+!scripts/seed-lia-language-training-candidates.mjs
+!scripts/approve-lia-language-training.mjs
+!scripts/fixtures/
+!scripts/fixtures/lia-language-training-cases.mjs
 !scripts/smoke-vitriny-multiversal.mjs
 *.bak*
 backups
