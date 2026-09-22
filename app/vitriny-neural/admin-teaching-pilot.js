@@ -22,12 +22,14 @@ const microCeil=fraction=>{const n=BigInt(fraction.numerator)*1000000n,d=BigInt(
  */
 export function createAdminTeachingPilot({db,config,providerKeys={},fetchImpl=globalThis.fetch,now=Date.now}={}){
   if(!db?.prepare||!db?.transaction||!db?.exec||typeof fetchImpl!=='function'||typeof now!=='function')fail('teaching_config_invalid');
-  fields(config,['budgetMicroBrl','maxOutputTokens','fx','tariffs','openAiRequestProfile']);fields(providerKeys,['deepseek','openai']);
+  fields(config,['budgetMicroBrl','dailyBudgetMicroBrl','maxOutputTokens','fx','tariffs','openAiRequestProfile']);fields(providerKeys,['deepseek','openai']);
   const cfg=copy(config),keys={...providerKeys};
   if(cfg.openAiRequestProfile!==undefined&&cfg.openAiRequestProfile!=='plain-text-v1')fail('teaching_config_invalid');
   const openAiProfile=cfg.openAiRequestProfile?{requestProfile:cfg.openAiRequestProfile}:{};
   if(typeof cfg.budgetMicroBrl!=='string'||!/^(?:0|[1-9]\d{0,7})$/.test(cfg.budgetMicroBrl))fail('teaching_config_invalid');
   const budget=integer(Number(cfg.budgetMicroBrl),0,MAX_BUDGET),maxOutputTokens=integer(cfg.maxOutputTokens,1,8192);
+  const dailyBudget=cfg.dailyBudgetMicroBrl===undefined?budget:integer(Number(cfg.dailyBudgetMicroBrl),0,100000000);
+  const localDay=time=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(time));
   const clock=()=>integer(now(),1,Number.MAX_SAFE_INTEGER-120000);
   fields(cfg.tariffs,['deepseek','openai']);fields(cfg.tariffs.deepseek,['peak','offPeak']);fields(cfg.tariffs.openai,['actual','ceiling']);
   const all=[...Object.values(cfg.tariffs.deepseek),...Object.values(cfg.tariffs.openai)];
@@ -59,8 +61,11 @@ export function createAdminTeachingPilot({db,config,providerKeys={},fetchImpl=gl
     result:r.result_json?JSON.parse(r.result_json):null,createdAt:new Date(r.created_at).toISOString(),finishedAt:r.finished_at?new Date(r.finished_at).toISOString():null,retryAllowed:false}:null;
   function status(){
     const s=db.prepare("SELECT COUNT(*) count,COALESCE(SUM(charged_micro),0) used,COALESCE(SUM(CASE WHEN state='completed' THEN charged_micro ELSE 0 END),0) spent,COALESCE(SUM(CASE WHEN state='completed' THEN actual_usd_micro ELSE 0 END),0) usd FROM admin_teaching_pilot_runs").get();
-    const held=s.used-s.spent;
-    return{budgetMicroBrl:String(limit),usedMicroBrl:String(s.used),spentMicroBrl:String(s.spent),knownSpentMicroUsd:String(s.usd),actualMicroBrl:held?null:String(s.spent),heldMicroBrl:String(held),remainingMicroBrl:String(Math.max(0,limit-s.used)),actualMicroUsd:held?null:String(s.usd),count:s.count};
+    const held=s.used-s.spent,day=localDay(clock());
+    const today=db.prepare('SELECT charged_micro,created_at FROM admin_teaching_pilot_runs WHERE created_at>=?').all(clock()-26*3600000)
+      .filter(row=>localDay(row.created_at)===day).reduce((sum,row)=>sum+row.charged_micro,0);
+    return{budgetMicroBrl:String(limit),usedMicroBrl:String(s.used),spentMicroBrl:String(s.spent),knownSpentMicroUsd:String(s.usd),actualMicroBrl:held?null:String(s.spent),heldMicroBrl:String(held),remainingMicroBrl:String(Math.max(0,limit-s.used)),
+      dailyBudgetMicroBrl:String(dailyBudget),day,usedTodayMicroBrl:String(today),remainingTodayMicroBrl:String(Math.max(0,dailyBudget-today)),actualMicroUsd:held?null:String(s.usd),count:s.count};
   }
   function price(tariff,usage,at){
     const p=pricing.priceChat({providerId:tariff.providerId,modelId:tariff.modelId,tariffVersion:tariff.version,fxVersion:cfg.fx.version,pricedAt:new Date(at).toISOString(),usage:{inputTokens:usage.inputTokens,cachedInputTokens:usage.cachedInputTokens,outputTokens:usage.outputTokens}});
@@ -85,7 +90,8 @@ export function createAdminTeachingPilot({db,config,providerKeys={},fetchImpl=gl
     for(const tariff of Object.values(cfg.tariffs[providerId]))price(tariff,{inputTokens:1,cachedInputTokens:0,outputTokens:1},at);
     const won=db.transaction(()=>{
       const existing=row(id);if(existing){if(existing.operation_hash!==operationHash)fail('teaching_id_conflict');return false;}
-      if(Number(status().usedMicroBrl)+maximum>limit)fail('teaching_budget_exhausted');
+      const current=status();
+      if(Number(current.usedMicroBrl)+maximum>limit||Number(current.usedTodayMicroBrl)+maximum>dailyBudget)fail('teaching_budget_exhausted');
       db.prepare("INSERT INTO admin_teaching_pilot_runs(id,operation_hash,request_hash,provider,model,role,state,claim_token,maximum_micro,charged_micro,input_json,pricing_json,created_at) VALUES(?,?,?,?,?,?,'reserved',?,?,?,?,?,?)")
         .run(id,operationHash,requestHash,providerId,model,role,owner,maximum,maximum,JSON.stringify({messages,maxOutputTokens,inputBound,...(providerId==='openai'?openAiProfile:{})}),JSON.stringify({fx:cfg.fx,tariffs:cfg.tariffs[providerId],tariffSchedule:providerId==='deepseek'?DEEPSEEK_TARIFF_SCHEDULE:null}),at);
       return true;
@@ -93,7 +99,7 @@ export function createAdminTeachingPilot({db,config,providerKeys={},fetchImpl=gl
     if(!won)return dto(row(id));
     const permit={authorized:true,scope:SCOPE,requestId:id,requestHash,model,maxOutputTokens,reservationId:'teaching-'+id,maximumMicroBrl:String(maximum),expiresAt:clock()+120000,...(providerId==='deepseek'?{providerId}: {})};
     const assertAuthorized=p=>db.transaction(()=>{
-      if(JSON.stringify(p)!==JSON.stringify(permit)||p.expiresAt<=clock()||Number(status().usedMicroBrl)>limit)return false;
+      if(JSON.stringify(p)!==JSON.stringify(permit)||p.expiresAt<=clock()||Number(status().usedMicroBrl)>limit||Number(status().usedTodayMicroBrl)>dailyBudget)return false;
       return db.prepare("UPDATE admin_teaching_pilot_runs SET state='dispatching' WHERE id=? AND operation_hash=? AND request_hash=? AND state='reserved' AND claim_token=? AND maximum_micro=? AND charged_micro=?")
         .run(id,operationHash,requestHash,owner,maximum,maximum).changes===1;
     }).immediate();

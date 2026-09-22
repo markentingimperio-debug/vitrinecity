@@ -88,6 +88,19 @@ test('budget includes unknown reservations and prevents another id overspending'
   await assert.rejects(f.run({id:'lesson-fixture-002'}),{code:'teaching_budget_exhausted'});assert.equal(f.calls.length,1);assert.ok(Number(f.pilot.status().usedMicroBrl)<=100000);
 });
 
+test('daily Sao Paulo cap includes uncertain reservations and reopens only on the next local day',async t=>{
+  const f=fixture(t,{config:config({dailyBudgetMicroBrl:100000}),receive:()=>{throw Error('uncertain');}});
+  const held=await f.run();
+  assert.equal(held.state,'held');
+  assert.equal(f.pilot.status().day,'2026-09-15');
+  await assert.rejects(f.run({id:'lesson-next-001'}),{code:'teaching_budget_exhausted'});
+  assert.equal(f.calls.length,1);
+  f.clock.time=Date.parse('2026-09-16T03:00:00.000Z');
+  assert.equal(f.pilot.status().day,'2026-09-16');
+  assert.equal((await f.run({id:'lesson-next-001'})).state,'held');
+  assert.equal(f.calls.length,2);
+});
+
 test('errors after dispatch retain ceiling even with usage; reused receipts and excessive usage never settle',async t=>{
   const f=fixture(t,{receive:({body})=>response({...completion(body.model),choices:[{index:0,finish_reason:'length',message:{role:'assistant',content:'partial'}}]})});
   const r=await f.run();assert.equal(r.state,'held');assert.equal(r.chargedMicroBrl,r.maximumMicroBrl);assert.equal(r.result.text,null);
