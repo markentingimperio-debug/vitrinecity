@@ -244,7 +244,16 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
   });
   app.post(BASE+'/quote',...mutation,(req,res)=>{
     try{
-      const instruction=clean(req.body?.instruction),mime=String(req.body?.mimeType||'').toLowerCase(),plan=classifier(instruction,mime);
+      const instruction=clean(req.body?.instruction),mime=String(req.body?.mimeType||'').toLowerCase();
+      const requestedConversation=String(req.body?.conversationId||'');
+      let executionInstruction=instruction;
+      if(requestedConversation){
+        conversation(req.user.id,requestedConversation);
+        const previous=db.prepare("SELECT text FROM neural_chat_messages WHERE conversation_id=? AND role='user' ORDER BY sequence DESC LIMIT 8")
+          .all(requestedConversation).map(row=>row.text);
+        executionInstruction=contextualBrowserInstruction(instruction,previous);
+      }
+      const plan=classifier(executionInstruction,mime);
       const localBrowser=req.body?.localConnector===true&&plan.kind==='browser';
       if(!plan.supported||(['code','research'].includes(plan.kind)?!(configured&&codeConfigured&&codeFx()):!configured&&!localBrowser))return res.json({ok:true,item:{...plan,supported:false}});
       if(['code','research'].includes(plan.kind))return res.json({ok:true,item:plan});

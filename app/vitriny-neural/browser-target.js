@@ -91,5 +91,10 @@ export function contextualBrowserInstruction(instruction,previousInstructions=[]
   const continuation=isPlaybackRequest(current)||/\b(?:a|essa|esta)\s+musica\b|\b(?:o|esse|este|primeiro|proximo)\s+video\b|\b(?:continue|continuar|mesmo site|nisso|nele)\b/.test(n);
   if(resolveRequestedBrowserUrl(current)||!continuation)return current;
   const prior=previousInstructions.map(value=>String(value||'').trim()).find(value=>isRequestedBrowserInstruction(value));
+  if(prior&&new URL(resolveRequestedBrowserUrl(prior)).hostname==='www.youtube.com'&&isPlaybackRequest(current)){
+    const nextQuery=youtubeQuery(current);
+    if(nextQuery&&nextQuery.split(' ').some(token=>!['musica','audio','som','faixa','video','outra','nova'].includes(token)))
+      return `Abra o YouTube e coloque ${nextQuery} para tocar`;
+  }
   return prior?`${prior}\nContinue a tarefa no mesmo site: ${current}`.slice(0,6000):current;
 }

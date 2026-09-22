@@ -74,11 +74,19 @@ test('servidor reserva, recebe prova local e conclui uma única vez sem chamar a
   const base=`http://127.0.0.1:${server.address().port}/api/neural/chat/operations`;
   const post=async(path,body)=>{const response=await fetch(base+path,{method:'POST',headers:{'content-type':'application/json','x-lia-operations-request':'1'},body:JSON.stringify(body)});return{status:response.status,body:await response.json()};};
   const consent=await post('/consent',{version:'lia-auto-credits-20260922-v1',enabled:true});assert.equal(consent.status,200);
-  const quote=await post('/quote',{instruction:'acesa o youtub e colca jazz pra toca',mimeType:'',localConnector:true});assert.equal(quote.body.item.supported,true);
+  const conversationId='browser-context-test';
+  db.prepare('INSERT INTO neural_chat_conversations(id,scope,title,created_at,updated_at) VALUES(?,?,?,?,?)')
+    .run(conversationId,'user:1','Teste de troca de música',Date.now(),Date.now());
+  db.prepare('INSERT INTO neural_chat_messages(id,conversation_id,request_id,role,text,status,sequence,created_at) VALUES(?,?,?,?,?,?,?,?)')
+    .run('prior-browser-command',conversationId,'prior','user','abra o youtube e coloca uma musica eletronica para tocar','completed',1,Date.now());
+  const instruction='vc pode mudar de musica lia colocar sertaneja';
+  const quote=await post('/quote',{instruction,conversationId,mimeType:'',localConnector:true});assert.equal(quote.body.item.supported,true);
+  assert.equal(quote.body.item.kind,'browser');
   const key='local-browser-test-0001';
-  const started=await post('/local/start',{instruction:'acesa o youtub e colca jazz pra toca',idempotencyKey:key,autoDebit:true});
+  const started=await post('/local/start',{instruction,conversationId,idempotencyKey:key,autoDebit:true});
   assert.equal(started.status,201);assert.equal(started.body.target.playback,true);assert.equal(remoteCalls,0);
-  const completed=await post('/local/complete',{operationId:started.body.operationId,idempotencyKey:key,result:{connector:'lia-chrome-connector-v1',finalUrl:'https://www.youtube.com/watch?v=abc123',title:'Jazz instrumental',playing:true,audible:true,adShowing:false,currentTime:3.2}});
+  assert.equal(new URL(started.body.target.url).searchParams.get('search_query'),'sertaneja');
+  const completed=await post('/local/complete',{operationId:started.body.operationId,idempotencyKey:key,result:{connector:'lia-chrome-connector-v1',finalUrl:'https://www.youtube.com/watch?v=abc123',title:'Música sertaneja',playing:true,audible:true,adShowing:false,currentTime:3.2}});
   assert.equal(completed.status,201);assert.equal(remoteCalls,0);assert.equal(settled.size,1);
   const row=db.prepare('SELECT status,error,result_json FROM lia_chat_operations WHERE id=?').get(started.body.operationId);
   assert.equal(row.status,'completed');assert.equal(row.error,'');assert.equal(JSON.parse(row.result_json).executor,'lia-chrome-connector-v1');

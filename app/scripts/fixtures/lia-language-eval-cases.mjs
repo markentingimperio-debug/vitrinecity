@@ -27,6 +27,8 @@ export const liaLanguageEval=Object.freeze({
     {id:'x01',previous:['abra o youtube e coloca uma musica eletronica para tocar'],input:'buscar a música e abrir o primeiro vídeo reproduzível',host:'www.youtube.com',query:'musica eletronica',playback:true},
     {id:'x02',previous:['acesa o youtub e colca jazz instrumental pra toca'],input:'continue no mesmo site e abra o primeiro vídeo',host:'www.youtube.com',query:'jazz instrumental',playback:true},
     {id:'x03',previous:['acesse https://www.embrapa.br e leia a página'],input:'continue no mesmo site',host:'www.embrapa.br',playback:false},
-    {id:'x04',previous:['abra o youtube e procure notícias'],input:'pesquise agricultura urbana em três fontes',kind:'unsupported',unchanged:true}
+    {id:'x04',previous:['abra o youtube e procure notícias'],input:'pesquise agricultura urbana em três fontes',kind:'unsupported',unchanged:true},
+    {id:'x05',previous:['abra o youtube e coloca uma musica eletronica para tocar'],input:'vc pode mudar de musica lia colocar sertaneja',host:'www.youtube.com',query:'sertaneja',playback:true},
+    {id:'x06',previous:['abra o youtube e coloque jazz instrumental para tocar'],input:'coloque outra música para tocar',host:'www.youtube.com',query:'jazz instrumental',playback:true}
   ])
 });

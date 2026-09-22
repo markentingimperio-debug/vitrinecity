@@ -229,7 +229,8 @@ export function mountNeuralWorkspace(environment = globalThis) {
     if (!personal) return false;
     const media = state.attachments.find(item => item.kind === 'operation-media') || state.attachments.find(item => item.kind === 'image');
     const localChrome=!media&&await liaConnectorAvailable(true);
-    const quoted = await operationJson('/quote','POST',{instruction:message,mimeType:media?.mimeType||'',localConnector:localChrome});
+    const quoted = await operationJson('/quote','POST',{instruction:message,mimeType:media?.mimeType||'',localConnector:localChrome,
+      ...(state.selected?{conversationId:state.selected}:{})});
     const quote = quoted.item;
     if (!quote?.supported) {
       if (state.attachments.some(item => item.kind === 'operation-media')) throw failure('invalid');
