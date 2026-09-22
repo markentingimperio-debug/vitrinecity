@@ -2,6 +2,7 @@ import http from 'node:http';
 import { promises as fs, createReadStream } from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import {resolveRequestedBrowserUrl} from './browser-target.mjs';
 
 const MAX_JSON_BYTES=64*1024;
 const MAX_UPLOAD_BYTES=50*1024*1024;
@@ -29,12 +30,11 @@ function has(re,text){return re.test(normalize(text));}
 
 export function classifyOperationInstruction(instruction){
   const text=cleanInstruction(instruction),n=normalize(text);
-  const url=(text.match(URL_RE)||[])[0]||'';
-  const browser=Boolean(url)||/\b(abra|abrir|acesse|acessar|navegue|navegar|pagina|site|clique|clicar|preencha|captura|screenshot)\b/.test(n);
+  const url=resolveRequestedBrowserUrl(text);
+  const browser=Boolean(url)&&/\b(abra|abrir|acesse|acessar|entre|entrar|navegue|navegar|visite|va|ir|toque|tocar|coloque|colocar|pagina|site|clique|clicar|preencha|captura|screenshot)\b/.test(n);
   const media=/\b(video|foto|imagem|thumbnail|capa|cortar|corte|recortar|redimensionar|redimensione|vertical|horizontal|audio|som|normalizar)\b/.test(n);
   let kind='unsupported';
-  if(browser&&media)kind='combined';
-  else if(browser)kind='browser';
+  if(browser)kind='browser';
   else if(media)kind='media';
   return {kind,url,supported:['browser','media'].includes(kind),needsUpload:kind==='media',chargeClass:kind};
 }
@@ -207,8 +207,12 @@ export async function createOperationsRouter({env=process.env,dataDir='/opt/lia/
     const candidates=sourceCandidates(links);
     if(/unusual traffic|complete the following challenge|verify you are human/i.test(textOutput)&&!candidates.length)
       throw Object.assign(new Error('search_verification_required'),{status:502});
+    const finalUrl=String(data.finalUrl||url);
     const found=candidates.length?'\n\nLinks encontrados:\n'+candidates.map(x=>`- ${x.text}: ${x.url}`).join('\n'):'';
-    return {summary:`${plan.search?'Busca por nome; confirme o endereço antes de abrir':'Página acessada'}: ${data.title||url}\n\n${textOutput.slice(0,6000)}${found}`,raw:data,candidates};
+    const playback=/\b(?:toque|tocar|coloque|colocar|reproduza|reproduzir)\b/.test(normalize(task.instruction))
+      ?'\n\nA página e os resultados foram abertos pelo navegador da Lia. Para ouvir no seu dispositivo, abra o link; o Chrome ou o site pode exigir um clique para iniciar o áudio.'
+      :'';
+    return {summary:`${plan.search?'Busca por nome; confirme o endereço antes de abrir':'Página acessada'}: ${data.title||url}\n${finalUrl}\n\n${textOutput.slice(0,6000)}${found}${playback}`,raw:data,candidates};
   }
   async function mediaRun(task,input){
     if(!input)throw Object.assign(new Error('media_upload_required'),{status:400});
