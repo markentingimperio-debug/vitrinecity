@@ -6,6 +6,9 @@ import {containsChatSecret} from './chat-attachments.js';
 import {createLiveEcosystemContext} from './live-ecosystem-context.js';
 import {enrichLiaWorkInstruction} from './lia-work-context.js';
 import {contextualBrowserInstruction,isRequestedBrowserInstruction,isSearchRequest} from './browser-target.js';
+import {createLocalBrowserPlan,validateLocalBrowserResult} from './local-browser-connector.js';
+
+export {createLocalBrowserPlan,validateLocalBrowserResult} from './local-browser-connector.js';
 
 const BASE='/api/neural/chat/operations';
 const IDEMPOTENCY=/^[A-Za-z0-9_-]{12,100}$/;
@@ -161,7 +164,7 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
     if(changed!==1)fail('lia_message_state_conflict',409);
     db.prepare('UPDATE neural_chat_conversations SET updated_at=? WHERE id=?').run(Date.now(),cid);
   }
-  const claim=db.transaction((userId,{instruction,executionInstruction=instruction,key,uploadId,requestedConversation,codePlan=null})=>{
+  const claim=db.transaction((userId,{instruction,executionInstruction=instruction,key,uploadId,requestedConversation,codePlan=null,localBrowser=false})=>{
     const hash=createHash('sha256').update(JSON.stringify({instruction,conversationId:requestedConversation||null,uploadId:uploadId||null})).digest('hex');
     const prior=db.prepare('SELECT * FROM lia_chat_operations WHERE user_id=? AND idempotency_key=?').get(userId,key);
     if(prior){if(prior.instruction_hash!==hash)fail('lia_idempotency_conflict',409);return {duplicate:true,op:prior};}
@@ -170,7 +173,7 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
     if(uploadId){upload=db.prepare('SELECT * FROM lia_chat_operation_uploads WHERE id=? AND user_id=?').get(uploadId,userId);if(!upload)fail('lia_upload_not_found',404);}
     const plan=classifier(executionInstruction,upload?.mime_type||'');
     if(!plan.supported)fail('lia_operation_unsupported',422);
-    if(['code','research'].includes(plan.kind)?!codeConfigured||!codePlan:!configured)fail('lia_operations_unavailable',503);
+    if(['code','research'].includes(plan.kind)?!codeConfigured||!codePlan:plan.kind==='browser'?!configured&&!localBrowser:!configured)fail('lia_operations_unavailable',503);
     if(plan.needsUpload&&!upload)fail('lia_upload_required');
     if(requestedConversation){
       conversation(userId,requestedConversation);
@@ -232,8 +235,8 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
         ...paid.map(row=>({kind:row.kind,status:row.state,amountMicroBrl:row.state==='settled'?row.charged_micro:0,createdAt:row.created_at}))]
         .sort((a,b)=>b.createdAt-a.createdAt).slice(0,50)});
   });
-  app.get(BASE+'/progress',requireUser,(req,res)=>{
-    const key=String(req.query.key||'');
+  app.get(BASE+'/progress/:key',requireUser,(req,res)=>{
+    const key=String(req.params.key||'');
     if(!IDEMPOTENCY.test(key))return res.status(400).json({ok:false,error:'Pedido inválido.'});
     const row=db.prepare('SELECT status,kind,progress_text,updated_at FROM lia_chat_operations WHERE user_id=? AND idempotency_key=?').get(req.user.id,key);
     return res.set('Cache-Control','private,no-store').json({ok:true,found:!!row,status:row?.status||null,kind:row?.kind||null,
@@ -242,7 +245,8 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
   app.post(BASE+'/quote',...mutation,(req,res)=>{
     try{
       const instruction=clean(req.body?.instruction),mime=String(req.body?.mimeType||'').toLowerCase(),plan=classifier(instruction,mime);
-      if(!plan.supported||(['code','research'].includes(plan.kind)?!(configured&&codeConfigured&&codeFx()):!configured))return res.json({ok:true,item:{...plan,supported:false}});
+      const localBrowser=req.body?.localConnector===true&&plan.kind==='browser';
+      if(!plan.supported||(['code','research'].includes(plan.kind)?!(configured&&codeConfigured&&codeFx()):!configured&&!localBrowser))return res.json({ok:true,item:{...plan,supported:false}});
       if(['code','research'].includes(plan.kind))return res.json({ok:true,item:plan});
       return res.json({ok:true,item:{...plan,...publicQuote(plan.kind,plan.kind==='media'?mediaMicro:browserMicro)}});
     }catch(error){return res.status(error?.status||400).json({ok:false,error:'Pedido operacional inválido.'});}
@@ -258,6 +262,98 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
       const id=randomUUID();db.prepare('INSERT INTO lia_chat_operation_uploads(id,user_id,artifact_path,mime_type,size_bytes,created_at) VALUES(?,?,?,?,?,?)').run(id,req.user.id,data.artifactPath,mime,req.body.length,Date.now());
       return res.status(201).json({ok:true,upload:{id,mimeType:mime,sizeBytes:req.body.length}});
     }catch(error){return res.status(error?.status||502).json({ok:false,error:'Não foi possível enviar o arquivo para a LIA.'});}
+  });
+  app.post(BASE+'/local/start',...mutation,(req,res)=>{
+    let op=null;
+    try{
+      if(req.get('x-lia-operations-request')!=='1'||!req.is('application/json'))return res.status(403).json({ok:false,error:'Confirmação operacional ausente.'});
+      const instruction=clean(req.body?.instruction),key=String(req.body?.idempotencyKey||''),requestedConversation=String(req.body?.conversationId||'');
+      if(!IDEMPOTENCY.test(key)||!(req.body?.autoDebit===true&&autoDebitEnabled(req.user.id)))return res.status(403).json({ok:false,error:'Autorize o uso automático dos créditos de IA antes de executar.'});
+      const prior=db.prepare('SELECT * FROM lia_chat_operations WHERE user_id=? AND idempotency_key=?').get(req.user.id,key);
+      if(prior){
+        const hash=createHash('sha256').update(JSON.stringify({instruction,conversationId:requestedConversation||null,uploadId:null})).digest('hex');
+        if(prior.instruction_hash!==hash)fail('lia_idempotency_conflict',409);
+        let stored={};try{stored=JSON.parse(prior.result_json||'{}');}catch{}
+        if(prior.status!=='reserved'||!stored.localPlan)fail('lia_local_browser_state_conflict',409);
+        return res.json({ok:true,conversationId:prior.conversation_id,operationId:prior.id,status:prior.status,target:stored.localPlan,duplicate:true});
+      }
+      let executionInstruction=instruction;
+      if(requestedConversation){
+        conversation(req.user.id,requestedConversation);
+        const previous=db.prepare("SELECT text FROM neural_chat_messages WHERE conversation_id=? AND role='user' ORDER BY sequence DESC LIMIT 8")
+          .all(requestedConversation).map(row=>row.text);
+        executionInstruction=contextualBrowserInstruction(instruction,previous);
+      }
+      const localPlan=createLocalBrowserPlan(executionInstruction);
+      const claimed=claim.immediate(req.user.id,{instruction,executionInstruction,key,requestedConversation,localBrowser:true});
+      op=claimed.op;
+      if(op.kind!=='browser')fail('lia_local_browser_operation_invalid',422);
+      const taskId='local_'+randomUUID().replaceAll('-','');
+      db.prepare("UPDATE lia_chat_operations SET remote_task_id=?,result_json=?,progress_text='Conectando ao Chrome deste computador…',updated_at=? WHERE id=? AND user_id=? AND status='reserved'")
+        .run(taskId,JSON.stringify({localPlan}),Date.now(),op.id,req.user.id);
+      return res.status(201).json({ok:true,conversationId:op.conversation_id,operationId:op.id,status:'reserved',target:localPlan});
+    }catch(error){
+      if(op)db.transaction(()=>{
+        const current=db.prepare('SELECT status FROM lia_chat_operations WHERE id=? AND user_id=?').get(op.id,req.user.id);
+        if(current?.status!=='reserved')return;
+        updateAssistant(op.conversation_id,op.id,'A preparação do Chrome não pôde ser confirmada. A reserva permanece para conferência e o pedido não será repetido automaticamente.','interrupted');
+        db.prepare("UPDATE lia_chat_operations SET error='operation_requires_review',progress_text='',updated_at=? WHERE id=? AND user_id=?").run(Date.now(),op.id,req.user.id);
+      }).immediate();
+      const status=error?.status||502;
+      return res.status(status).json({ok:false,error:status===409?'Há um pedido em andamento ou pendente de conferência.':'A LIA não conseguiu preparar o Chrome conectado.'});
+    }
+  });
+  app.post(BASE+'/local/complete',...mutation,(req,res)=>{
+    let op=null;
+    try{
+      if(req.get('x-lia-operations-request')!=='1'||!req.is('application/json'))return res.status(403).json({ok:false,error:'Confirmação operacional ausente.'});
+      const operationId=String(req.body?.operationId||''),key=String(req.body?.idempotencyKey||'');
+      if(!/^[0-9a-f-]{36}$/.test(operationId)||!IDEMPOTENCY.test(key))fail('lia_local_browser_completion_invalid');
+      op=db.prepare("SELECT * FROM lia_chat_operations WHERE id=? AND user_id=? AND idempotency_key=? AND kind='browser'").get(operationId,req.user.id,key);
+      if(!op)fail('lia_local_browser_operation_not_found',404);
+      if(op.status==='completed')return res.json({ok:true,conversationId:op.conversation_id,operationId:op.id,status:'completed',duplicate:true,balance:coinWallet.status(req.user.id)});
+      if(op.status!=='reserved'||op.error||Date.now()-op.created_at>15*60*1000)fail('lia_local_browser_state_conflict',409);
+      let stored={};try{stored=JSON.parse(op.result_json||'{}');}catch{}
+      const result=validateLocalBrowserResult(stored.localPlan,req.body?.result);
+      const text=result.playing
+        ?`Reprodução confirmada no Chrome conectado.\n\n${result.title}\n${result.finalUrl}\n\nO vídeo avançou para ${result.currentTime.toFixed(1)} segundos durante a conferência.`
+        :`Página aberta e confirmada no Chrome conectado.\n\n${result.title}\n${result.finalUrl}`;
+      const item={id:`op_${op.remote_task_id}`,status:'completed',result,executor:'lia-chrome-connector-v1'};
+      db.prepare('UPDATE lia_chat_operations SET result_json=?,progress_text=?,updated_at=? WHERE id=? AND user_id=? AND status=?')
+        .run(JSON.stringify(item),'Registrando a confirmação do Chrome…',Date.now(),op.id,req.user.id,'reserved');
+      db.transaction(()=>{
+        const settled=coinWallet.settle(req.user.id,op.id,{actualAtoms:atomsFromMicroBRL(String(op.amount_micro)),receiptId:'lia-local:'+op.id});
+        if(settled?.state!=='settled')fail('lia_settlement_requires_review',409);
+        updateAssistant(op.conversation_id,op.id,text,'completed');
+        db.prepare("UPDATE lia_chat_operations SET status='completed',charged_micro=?,error='',progress_text='',updated_at=? WHERE id=? AND user_id=? AND status='reserved'")
+          .run(op.amount_micro,Date.now(),op.id,req.user.id);
+      }).immediate();
+      return res.status(201).json({ok:true,conversationId:op.conversation_id,operationId:op.id,status:'completed',balance:coinWallet.status(req.user.id)});
+    }catch(error){
+      if(op)db.transaction(()=>{
+        const current=db.prepare('SELECT status,error FROM lia_chat_operations WHERE id=? AND user_id=?').get(op.id,req.user.id);
+        if(current?.status!=='reserved'||current.error)return;
+        updateAssistant(op.conversation_id,op.id,'O Chrome recebeu a tarefa, mas a conclusão não pôde ser comprovada. A reserva permanece para conferência e o pedido não será repetido automaticamente.','interrupted');
+        db.prepare("UPDATE lia_chat_operations SET error='operation_requires_review',progress_text='',updated_at=? WHERE id=? AND user_id=?").run(Date.now(),op.id,req.user.id);
+      }).immediate();
+      const status=error?.status||502;
+      return res.status(status).json({ok:false,error:status===409?'A confirmação do Chrome precisa ser conferida.':'A ação no Chrome não foi confirmada.'});
+    }
+  });
+  app.post(BASE+'/local/uncertain',...mutation,(req,res)=>{
+    try{
+      if(req.get('x-lia-operations-request')!=='1'||!req.is('application/json'))return res.status(403).json({ok:false,error:'Confirmação operacional ausente.'});
+      const operationId=String(req.body?.operationId||''),key=String(req.body?.idempotencyKey||'');
+      if(!/^[0-9a-f-]{36}$/.test(operationId)||!IDEMPOTENCY.test(key))fail('lia_local_browser_completion_invalid');
+      const op=db.prepare("SELECT * FROM lia_chat_operations WHERE id=? AND user_id=? AND idempotency_key=? AND kind='browser'").get(operationId,req.user.id,key);
+      if(!op)fail('lia_local_browser_operation_not_found',404);
+      if(op.status!=='reserved')return res.json({ok:true,conversationId:op.conversation_id,operationId:op.id,status:op.status,duplicate:true});
+      db.transaction(()=>{
+        updateAssistant(op.conversation_id,op.id,'O Chrome recebeu a tarefa, mas a conclusão não pôde ser comprovada. A reserva permanece para conferência e o pedido não será repetido automaticamente.','interrupted');
+        db.prepare("UPDATE lia_chat_operations SET error='operation_requires_review',progress_text='',updated_at=? WHERE id=? AND user_id=? AND status='reserved'").run(Date.now(),op.id,req.user.id);
+      }).immediate();
+      return res.status(202).json({ok:true,conversationId:op.conversation_id,operationId:op.id,status:'review_required'});
+    }catch(error){return res.status(error?.status||502).json({ok:false,error:'Não foi possível registrar a conferência da tarefa.'});}
   });
   app.post(BASE+'/run',...mutation,async(req,res)=>{
     let op=null;

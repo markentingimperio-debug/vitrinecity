@@ -105,6 +105,32 @@ export function mountNeuralWorkspace(environment = globalThis) {
     } catch (error) { if (error?.name === 'AbortError') throw failure('timeout'); throw error; }
     finally { clearTimeout(timeout); }
   }
+  const LIA_CONNECTOR_CHANNEL='vitrinecity-lia-connector';
+  const connectorPending=new Map();
+  let connectorAvailability={checkedAt:0,available:false};
+  window.addEventListener('message',event=>{
+    const message=event.data;
+    if(event.source!==window||event.origin!==location.origin||!message||message.channel!==LIA_CONNECTOR_CHANNEL||message.version!==1||message.direction!=='response')return;
+    const pending=connectorPending.get(message.id);if(!pending)return;
+    connectorPending.delete(message.id);clearTimeout(pending.timer);
+    if(message.ok===true)pending.resolve(message.result);else pending.reject(failure('unavailable'));
+  });
+  function connectorCall(type,payload={},timeoutMs=30000){
+    const id=crypto.randomUUID();
+    return new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{connectorPending.delete(id);reject(failure('timeout'));},timeoutMs);
+      connectorPending.set(id,{resolve,reject,timer});
+      window.postMessage({channel:LIA_CONNECTOR_CHANNEL,version:1,direction:'request',id,type,payload},location.origin);
+    });
+  }
+  async function liaConnectorAvailable(force=false){
+    if(!force&&Date.now()-connectorAvailability.checkedAt<5000)return connectorAvailability.available;
+    try{
+      const result=await connectorCall('ping',{},700);
+      connectorAvailability={checkedAt:Date.now(),available:result?.connector==='lia-chrome-connector-v1'};
+    }catch{connectorAvailability={checkedAt:Date.now(),available:false};}
+    return connectorAvailability.available;
+  }
   async function operationUpload(attachment) {
     const response = await fetch('/api/neural/chat/operations/upload', {
       method:'POST', credentials:'same-origin', cache:'no-store',
@@ -165,11 +191,12 @@ export function mountNeuralWorkspace(environment = globalThis) {
   async function loadLiaTools(){
     if(!personal)return;
     try{
-      const [status,usage,chatStatus]=await Promise.all([operationJson('/status','GET'),operationJson('/usage','GET'),api('/status')]);
+      const [status,usage,chatStatus,localChrome]=await Promise.all([operationJson('/status','GET'),operationJson('/usage','GET'),api('/status'),liaConnectorAvailable(true)]);
       const before=operationConsent;
       operationConsent=status.autoDebitEnabled===true;
       $('lia-tools-status').textContent=operationConsent?'Uso automático dos créditos de IA autorizado.':'Uso automático dos créditos de IA desativado.';
       const tools=[...(usage.tools||[]),
+        {name:'Chrome deste computador',available:localChrome},
         {name:'Geração de imagens',available:chatStatus.capabilities?.image===true},
         {name:'Geração de vídeos',available:chatStatus.capabilities?.video===true},
         {name:'Hostinger (MCP)',available:false},
@@ -178,6 +205,8 @@ export function mountNeuralWorkspace(environment = globalThis) {
       const toolText=tool=>`${tool.name}: ${tool.available?'disponível':tool.name.includes('(MCP)')?'conexão pendente':'indisponível'}`;
       $('lia-tools-list').replaceChildren(...tools.map(tool=>node('li',toolText(tool))));
       $('result-tools').replaceChildren(...tools.map(tool=>node('li',toolText(tool))));
+      $('lia-chrome-status').textContent=localChrome?'Chrome conectado. A Lia pode abrir páginas e confirmar ações neste computador.':'Instale o conector para a Lia executar ações no Chrome deste computador. A leitura remota continua disponível.';
+      $('lia-chrome-download').hidden=localChrome;
       $('lia-usage-summary').textContent=`Últimas ${usage.summary?.tasks||0} tarefas: ${usage.summary?.completed||0} concluídas · consumo ${usagePrice(usage.summary?.consumedMicroBrl||0)} · reservado ${usagePrice(usage.summary?.reservedMicroBrl||0)}.`;
       $('lia-auto-toggle').textContent=operationConsent?'Desativar uso automático':'Ativar uso automático';
       $('lia-auto-toggle').hidden=false;
@@ -199,7 +228,8 @@ export function mountNeuralWorkspace(environment = globalThis) {
   async function tryOperationalCommand(message) {
     if (!personal) return false;
     const media = state.attachments.find(item => item.kind === 'operation-media') || state.attachments.find(item => item.kind === 'image');
-    const quoted = await operationJson('/quote','POST',{instruction:message,mimeType:media?.mimeType||''});
+    const localChrome=!media&&await liaConnectorAvailable(true);
+    const quoted = await operationJson('/quote','POST',{instruction:message,mimeType:media?.mimeType||'',localConnector:localChrome});
     const quote = quoted.item;
     if (!quote?.supported) {
       if (state.attachments.some(item => item.kind === 'operation-media')) throw failure('invalid');
@@ -210,20 +240,43 @@ export function mountNeuralWorkspace(environment = globalThis) {
     const key=crypto.randomUUID();let timer=null,watching=true;
     operationalProgress=true;showWork(quote.kind==='research'?'Preparando pesquisa…':quote.kind==='code'?'Preparando o rascunho privado…':quote.kind==='media'?'Preparando edição do arquivo…':'Preparando navegação…');
     const watch=async()=>{
-      try{const progress=await operationJson('/progress?key='+encodeURIComponent(key),'GET');if(watching&&progress.found&&progress.text)showWork(progress.text);}catch{}
+      try{const progress=await operationJson('/progress/'+encodeURIComponent(key),'GET');if(watching&&progress.found&&progress.text)showWork(progress.text);}catch{}
       if(watching)timer=setTimeout(watch,1300);
     };
     try{
       let uploadId='';
       if(quote.needsUpload){showWork('Enviando o arquivo para edição…');uploadId=await operationUpload(media);}
       void watch();
-      const result=await operationJson('/run','POST',{
-        instruction:message,
-        ...(state.selected?{conversationId:state.selected}:{}),
-        idempotencyKey:key,
-        autoDebit:true,
-        ...(uploadId?{uploadId}:{})
-      },{'x-lia-operations-request':'1'},16*60*1000);
+      let result;
+      if(quote.kind==='browser'&&localChrome){
+        let started=null;
+        try{
+          started=await operationJson('/local/start','POST',{
+            instruction:message,
+            ...(state.selected?{conversationId:state.selected}:{}),
+            idempotencyKey:key,
+            autoDebit:true
+          },{'x-lia-operations-request':'1'},30000);
+          showWork(started.target?.playback?'Abrindo o vídeo e confirmando a reprodução no Chrome…':'Abrindo a página no Chrome conectado…');
+          const browserResult=await connectorCall('execute',{target:started.target},120000);
+          showWork('Conferindo a ação realizada no Chrome…');
+          result=await operationJson('/local/complete','POST',{operationId:started.operationId,idempotencyKey:key,result:browserResult},{'x-lia-operations-request':'1'},30000);
+        }catch(error){
+          if(started?.operationId){
+            await operationJson('/local/uncertain','POST',{operationId:started.operationId,idempotencyKey:key},{'x-lia-operations-request':'1'},15000).catch(()=>{});
+            await selectConversation(started.conversationId).catch(()=>{});
+          }
+          throw error;
+        }
+      }else{
+        result=await operationJson('/run','POST',{
+          instruction:message,
+          ...(state.selected?{conversationId:state.selected}:{}),
+          idempotencyKey:key,
+          autoDebit:true,
+          ...(uploadId?{uploadId}:{})
+        },{'x-lia-operations-request':'1'},16*60*1000);
+      }
       $('command').value='';clearAttachments();resizeComposer();
       await selectConversation(result.conversationId);
       await loadCoinWallet();renderStatus();
