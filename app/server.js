@@ -64,6 +64,7 @@ import { createCryptoObservability, mountCryptoObservability } from './crypto-ob
 import { mountJarvis } from './jarvis-core.js';
 import { mountNeuralTasksApi } from './vitriny-neural/tasks-api.js';
 import { mountNeuralChatApi } from './vitriny-neural/chat-api.js';
+import { setupLiaChatOperations } from './vitriny-neural/lia-chat-operations.js';
 import { createAiCreditPurchases,mountAiCreditPurchases } from './vitriny-neural/ai-credit-purchases.js';
 import { createKlingReadiness, mountKlingReadinessApi } from './vitriny-neural/kling-readiness.js';
 import { mountNeuralBillingApi } from './vitriny-neural/billing-api.js';
@@ -2770,6 +2771,7 @@ function neuralAuthorizedStore(req,res){
 }
 mountNeuralTasksApi({app,tasks:jarvisCore.neural?.service?.tasks,requireAdmin,sameOriginOnly,getAuthorizedStore:neuralAuthorizedStore});
 mountNeuralChatApi({app,chat:jarvisCore.neural?.service?.chat,artifacts:jarvisCore.neural?.service?.paidArtifacts,requireAdmin,requireUser,sameOriginOnly,getAuthorizedStore:neuralAuthorizedStore});
+setupLiaChatOperations({app,db,coinWallet,requireUser,sameOriginOnly,env:process.env,fetchImpl:globalThis.fetch});
 const neuralAiPurchases=jarvisCore.neural?.service?.paidWallet?createAiCreditPurchases({db,wallet:jarvisCore.neural.service.paidWallet,
   enabled:process.env.VITRINY_NEURAL_AI_PURCHASES_ENABLED==='true',expectedCollectorId:process.env.VITRINY_NEURAL_AI_MP_COLLECTOR_ID,
   paymentReady:()=>Boolean(process.env.MERCADOPAGO_ACCESS_TOKEN&&process.env.MERCADOPAGO_WEBHOOK_SECRET),

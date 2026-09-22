@@ -218,7 +218,7 @@ export function createPaidChatRuntime({db,env=process.env,config:inputConfig,wal
     if(result.ok&&r.kind!=='chat'&&result.output?.url){try{await artifacts.ingest(r.scope,{requestId:r.request_id,kind:r.kind,url:result.output.url});delivery=true;}catch{}}
     if(closed||!db.open)return;
     const successful=result.ok&&(r.kind==='chat'?Boolean(answer):delivery);
-    let text=successful?(answer||`${r.kind==='image'?'Imagem':'Vídeo'} concluído. O arquivo está disponível nesta conversa para baixar.`):'Não foi possível concluir a entrega com segurança. O comprovante do provedor foi preservado; o pedido não será reenviado.';
+    let text=successful?(answer||(r.kind==='image'?'Imagem concluída. O arquivo está disponível nesta conversa para baixar.':'Vídeo concluído. O arquivo está disponível nesta conversa para baixar.')):'Não foi possível concluir a entrega com segurança. O comprovante do provedor foi preservado; o pedido não será reenviado.';
     if(financialState==='held')text+=' A cobrança aguarda conciliação do consumo; o valor continua reservado, sem débito definitivo.';
     db.transaction(()=>{
       updateChat(r,successful?'completed':'failed',text);queue.settle(job.id,job.lease_token,{status:successful?'completed':'failed',proof:'response_received'});

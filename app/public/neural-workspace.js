@@ -3,15 +3,18 @@ import {assertCoinStatus,atomsFromMicroBRL,quoteCoinTopup,VITRINE_COINS_POLICY} 
 import {formatCoins,formatCoinBRL,coinSummary,formatConsumedCoins} from './vitrine-coins-ui.js';
 
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const OPERATION_MEDIA_MIMES = new Set(['video/mp4','video/webm','video/quicktime','audio/mpeg','audio/mp4','audio/wav','audio/ogg']);
 const TEXT_MIMES = { txt: 'text/plain', md: 'text/markdown', csv: 'text/csv' };
 const MESSAGE_STATES = new Set(CHAT_MESSAGE_STATES);
 export function validateNeuralAttachment(file) {
   const extension = String(file?.name || '').split('.').pop().toLowerCase();
-  const mimeType = IMAGE_MIMES.has(file?.type) ? file.type : TEXT_MIMES[extension];
-  const isImage = IMAGE_MIMES.has(mimeType);
+  const rawType = String(file?.type || '').toLowerCase();
+  const mimeType = IMAGE_MIMES.has(rawType) || OPERATION_MEDIA_MIMES.has(rawType) ? rawType : TEXT_MIMES[extension];
+  const isImage = IMAGE_MIMES.has(mimeType), isOperationMedia = OPERATION_MEDIA_MIMES.has(mimeType);
   if (!mimeType || (isImage && !['png', 'jpg', 'jpeg', 'webp'].includes(extension))) throw new Error('attachment_type');
-  if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > (isImage ? 2097152 : 65536)) throw new Error('attachment_size');
-  return { mimeType, kind: isImage ? 'image' : 'text' };
+  const max = isOperationMedia ? 50 * 1024 * 1024 : isImage ? 2097152 : 65536;
+  if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > max) throw new Error('attachment_size');
+  return { mimeType, kind: isOperationMedia ? 'operation-media' : isImage ? 'image' : 'text' };
 }
 export function mountNeuralWorkspace(environment = globalThis) {
   const { document, window, location, URLSearchParams, URL, Blob, AbortController, crypto, FileReader } = environment;
@@ -29,7 +32,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
   const purchaseReady = () => !!coinWallet && credit.status?.canPurchase === true && credit.status?.terms?.version === VITRINE_COINS_POLICY.version;
   const errorText = {
     attachment_type: 'Formato não aceito. Use PNG, JPEG, WebP, TXT, MD ou CSV. PDF e DOCX ainda não são suportados.',
-    attachment_size: 'Arquivo vazio ou muito grande. Imagens: até 2 MB; documentos de texto: até 64 KB.',
+    attachment_size: 'Arquivo vazio ou muito grande. Imagens: até 2 MB; vídeo/áudio para edição: até 50 MB; documentos de texto: até 64 KB.',
     attachment_count: 'Você pode enviar até três arquivos por mensagem.',
     attachment_read: 'Não foi possível ler este arquivo. Remova-o e selecione novamente.',
     unavailable: 'Não foi possível acessar o chat. Seu texto foi preservado. Tente conferir novamente em instantes.',
@@ -87,6 +90,148 @@ export function mountNeuralWorkspace(environment = globalThis) {
     } catch (error) { if (epoch !== state.epoch) throw failure('stale'); if (error?.name === 'AbortError') throw failure('timeout'); throw error; }
     finally { clearTimeout(timeout); requests.delete(controller); }
   }
+  async function operationJson(path, method = 'POST', body, headers = {}, timeoutMs = 30000) {
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch('/api/neural/chat/operations' + path, {
+        method, credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+        headers: { ...(body instanceof Blob ? {} : {'content-type':'application/json'}), ...headers },
+        ...(body === undefined ? {} : {body: body instanceof Blob ? body : JSON.stringify(body)})
+      });
+      let data = {}; try { data = await response.json(); } catch {}
+      if (!response.ok) throw failure(({400:'invalid',401:'unauthorized',402:'quota',403:'forbidden',404:'notFound',409:'conflict',413:'attachment_size',422:'invalid',429:'quota',503:'disabled'})[response.status] || 'unavailable', response.status);
+      if (!data || data.ok !== true) throw failure('invalidResponse');
+      return data;
+    } catch (error) { if (error?.name === 'AbortError') throw failure('timeout'); throw error; }
+    finally { clearTimeout(timeout); }
+  }
+  async function operationUpload(attachment) {
+    const response = await fetch('/api/neural/chat/operations/upload', {
+      method:'POST', credentials:'same-origin', cache:'no-store',
+      headers:{'content-type':attachment.mimeType}, body:attachment.file
+    });
+    let data={};try{data=await response.json();}catch{}
+    if(!response.ok||!data?.upload?.id)throw failure(response.status===413?'attachment_size':'unavailable',response.status);
+    return data.upload.id;
+  }
+  function operationArtifacts(text) {
+    const artifacts=[];const cleanText=String(text||'').replace(/\n?\[\[LIA_ARTIFACT\|([a-f0-9-]{36})\|([^|\]]+)\|([^|\]]+)\]\]/gi,(_all,operation,pathValue,nameValue)=>{
+      try{artifacts.push({operation,path:decodeURIComponent(pathValue),name:decodeURIComponent(nameValue)});}catch{}
+      return '';
+    }).trim();
+    return {text:cleanText,artifacts};
+  }
+  let operationalProgress=false;
+  function showWork(text){$('work-progress-text').textContent=text;$('work-progress').hidden=false;}
+  function syncChatWork(){
+    if(operationalProgress)return;
+    const active=state.messages.find(message=>message.role==='assistant'&&isChatPending(message.status));
+    if(!active||active.status==='awaiting_confirmation'){$('work-progress').hidden=true;return;}
+    const kind=active.payment?.kind;
+    if(active.payment?.state==='held'){showWork(kind==='image'?'Conferindo resultado da imagem…':kind==='video'?'Conferindo resultado do vídeo…':'Conferindo resultado do pedido…');return;}
+    const action=kind==='image'?'Gerando imagem':kind==='video'?'Gerando vídeo':'Preparando resposta';
+    showWork(active.status==='queued'?`${action} · aguardando na fila…`:`${action}…`);
+  }
+  function renderResultsPanel(){
+    const files=$('result-files'),sources=$('result-sources');files.replaceChildren();sources.replaceChildren();
+    const seenFiles=new Set(),seenSources=new Set();
+    for(const message of state.messages){
+      if(message.role!=='assistant'||message.status!=='completed')continue;
+      for(const artifact of operationArtifacts(message.text).artifacts){
+        if(artifact.path.startsWith('browser/'))continue;
+        const key=artifact.operation+'|'+artifact.path;if(seenFiles.has(key)||seenFiles.size>=12)continue;seenFiles.add(key);
+        const item=node('li'),link=node('a','↓ '+artifact.name);
+        link.href='/api/neural/chat/operations/artifact?operation='+encodeURIComponent(artifact.operation)+'&path='+encodeURIComponent(artifact.path);
+        link.download=artifact.name;item.append(link);files.append(item);
+      }
+      for(const artifact of message.artifacts||[]){
+        if(artifact.availability!=='ready'||seenFiles.has(artifact.id)||seenFiles.size>=12)continue;seenFiles.add(artifact.id);
+        const item=node('li'),button=node('button','↓ '+(artifact.name|| (artifact.kind==='video'?'Vídeo':'Imagem')));
+        button.type='button';button.addEventListener('click',()=>downloadArtifact(artifact,button));item.append(button);files.append(item);
+      }
+      if(!String(message.text||'').includes('Fontes consultadas:'))continue;
+      for(const raw of String(message.text||'').match(/https:\/\/[^\s<>"'\]\)]+/g)||[]){
+        let url;try{url=new URL(raw.replace(/[.,;]+$/,''));}catch{continue;}
+        if(url.protocol!=='https:'||seenSources.has(url.href)||seenSources.size>=12)continue;seenSources.add(url.href);
+        const item=node('li'),link=node('a',url.hostname+url.pathname.slice(0,38));
+        link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';item.append(link);sources.append(item);
+      }
+    }
+    if(!files.childElementCount)files.append(node('li','Os arquivos desta conversa aparecerão aqui.','muted'));
+    if(!sources.childElementCount)sources.append(node('li','Os links usados na pesquisa aparecerão aqui.','muted'));
+  }
+  function setResultsOpen(open){$('results-panel').classList.toggle('is-open',open);$('results-toggle').setAttribute('aria-expanded',String(open));}
+  let operationConsent=false;
+  async function loadLiaTools(){
+    if(!personal)return;
+    try{
+      const [status,usage,chatStatus]=await Promise.all([operationJson('/status','GET'),operationJson('/usage','GET'),api('/status')]);
+      const before=operationConsent;
+      operationConsent=status.autoDebitEnabled===true;
+      $('lia-tools-status').textContent=operationConsent?'Uso automático dos créditos de IA autorizado.':'Uso automático dos créditos de IA desativado.';
+      const tools=[...(usage.tools||[]),
+        {name:'Geração de imagens',available:chatStatus.capabilities?.image===true},
+        {name:'Geração de vídeos',available:chatStatus.capabilities?.video===true},
+        {name:'Hostinger (MCP)',available:false},
+        {name:'Gmail (MCP)',available:false},
+        {name:'Editor de vídeo externo (MCP)',available:false}];
+      const toolText=tool=>`${tool.name}: ${tool.available?'disponível':tool.name.includes('(MCP)')?'conexão pendente':'indisponível'}`;
+      $('lia-tools-list').replaceChildren(...tools.map(tool=>node('li',toolText(tool))));
+      $('result-tools').replaceChildren(...tools.map(tool=>node('li',toolText(tool))));
+      $('lia-usage-summary').textContent=`Últimas ${usage.summary?.tasks||0} tarefas: ${usage.summary?.completed||0} concluídas · consumo ${usagePrice(usage.summary?.consumedMicroBrl||0)} · reservado ${usagePrice(usage.summary?.reservedMicroBrl||0)}.`;
+      $('lia-auto-toggle').textContent=operationConsent?'Desativar uso automático':'Ativar uso automático';
+      $('lia-auto-toggle').hidden=false;
+      if(before!==operationConsent)renderMessages();
+    }catch{
+      $('lia-tools-status').textContent='Não foi possível conferir as ferramentas agora.';
+    }
+  }
+  async function ensureOperationConsent(){
+    if(operationConsent)return true;
+    const status=await operationJson('/status','GET');
+    if(status.autoDebitEnabled===true){operationConsent=true;return true;}
+    if(!window.confirm('Permitir que a LIA responda e execute tarefas usando seus créditos de IA? O saldo e o histórico de consumo ficam disponíveis no painel. Você pode desativar essa autorização depois.'))return false;
+    const saved=await operationJson('/consent','POST',{version:status.consentVersion,enabled:true},{'x-lia-operations-request':'1'});
+    operationConsent=saved.autoDebitEnabled===true;
+    if($('lia-tools-panel').open)loadLiaTools();
+    return operationConsent;
+  }
+  async function tryOperationalCommand(message) {
+    if (!personal) return false;
+    const media = state.attachments.find(item => item.kind === 'operation-media') || state.attachments.find(item => item.kind === 'image');
+    const quoted = await operationJson('/quote','POST',{instruction:message,mimeType:media?.mimeType||''});
+    const quote = quoted.item;
+    if (!quote?.supported) {
+      if (state.attachments.some(item => item.kind === 'operation-media')) throw failure('invalid');
+      return false;
+    }
+    if (quote.needsUpload && !media) throw failure('invalid');
+    if(!(await ensureOperationConsent()))return true;
+    const key=crypto.randomUUID();let timer=null,watching=true;
+    operationalProgress=true;showWork(quote.kind==='research'?'Preparando pesquisa…':quote.kind==='code'?'Preparando o rascunho privado…':quote.kind==='media'?'Preparando edição do arquivo…':'Preparando navegação…');
+    const watch=async()=>{
+      try{const progress=await operationJson('/progress?key='+encodeURIComponent(key),'GET');if(watching&&progress.found&&progress.text)showWork(progress.text);}catch{}
+      if(watching)timer=setTimeout(watch,1300);
+    };
+    try{
+      let uploadId='';
+      if(quote.needsUpload){showWork('Enviando o arquivo para edição…');uploadId=await operationUpload(media);}
+      void watch();
+      const result=await operationJson('/run','POST',{
+        instruction:message,
+        ...(state.selected?{conversationId:state.selected}:{}),
+        idempotencyKey:key,
+        autoDebit:true,
+        ...(uploadId?{uploadId}:{})
+      },{'x-lia-operations-request':'1'},16*60*1000);
+      $('command').value='';clearAttachments();resizeComposer();
+      await selectConversation(result.conversationId);
+      await loadCoinWallet();renderStatus();
+      if($('lia-tools-panel').open)loadLiaTools();
+      announce('Tarefa operacional concluída pela LIA.');
+      return true;
+    }finally{watching=false;clearTimeout(timer);operationalProgress=false;syncChatWork();}
+  }
   const canSend = () => !!state.status?.enabled && (!storeReference || !!state.token) && !state.loading && !state.busy && !state.historyUnverified && !state.status?.queue?.requiresReview && !state.activeRequest && !state.uncertain;
   function controls() {
     $('send').disabled = !canSend() || !$('command').value.trim();
@@ -127,7 +272,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
     $('queue-review-notice').hidden = !state.status?.queue?.requiresReview;
     $('billing-status').textContent = coinWallet ? 'Disponível: ' + coinSummary(coinWallet.availableAtoms) + ' · Reservado: ' + coinSummary(coinWallet.reservedAtoms) + '.' : state.status?.paidGenerationEnabled === true ? (state.status.wallet ? 'Saldo anterior de IA: ' + money(state.status.wallet.availableMicro) + ' disponíveis · ' + money(state.status.wallet.reservedMicro) + ' reservados. Carteira unificada não confirmada.' : 'Saldo ainda não confirmado.') : 'Gerações pagas não estão ativas neste chat.';
     $('coin-wallet-notice').textContent = coinWallet ? (coinWallet.frozen ? 'Sua carteira está em conferência. Novos usos estão pausados.' : 'Vitrine Coins compradas e conquistadas têm os mesmos usos. Taxa de 15% só na recarga; sem repetir a taxa no uso da IA.') : coinsChecked ? 'A carteira unificada ainda não está disponível para este acesso. Nenhum saldo anterior foi convertido por esta página.' : 'Conferindo Vitrine Coins…';
-    $('media-capability-note').textContent = state.status?.capabilities?.image || state.status?.capabilities?.video ? 'Quando um recurso pago estiver disponível, o valor será mostrado antes da confirmação. Imagens e vídeos concluídos aparecem nesta conversa, com opção de baixar. Anexar uma imagem não garante que todos os modelos interpretem seu conteúdo.' : 'Imagens podem ser anexadas, mas a geração de imagens e vídeos ainda não está disponível neste acesso. Para contextualizar uma imagem, descreva-a na mensagem.';
+    $('media-capability-note').textContent = state.status?.capabilities?.image || state.status?.capabilities?.video ? (personal&&operationConsent?'Imagens e vídeos usam os créditos autorizados e aparecem nesta conversa, com opção de baixar. O consumo pode ser consultado no painel.':'Imagens e vídeos concluídos aparecem nesta conversa, com opção de baixar. A autorização de uso dos créditos fica no painel.') : 'Imagens podem ser anexadas, mas a geração de imagens e vídeos ainda não está disponível neste acesso. Para contextualizar uma imagem, descreva-a na mensagem.';
     controls();
   }
   function renderCredits() {
@@ -199,12 +344,16 @@ export function mountNeuralWorkspace(environment = globalThis) {
     $('conversation-list').replaceChildren();
     $('history-empty').hidden = state.conversations.length > 0;
     for (const conversation of state.conversations) {
-      const li = node('li'), button = node('button'); button.type = 'button';
+      const li = node('li', null, 'conversation-entry'), button = node('button'), remove = node('button', 'Excluir', 'conversation-delete');
+      button.type = remove.type = 'button'; button.className = 'conversation-open';
       button.setAttribute('aria-current', String(state.selected === conversation.id));
       button.append(node('span', conversation.title || 'Conversa', 'conversation-label'));
-      button.disabled = state.busy;
+      button.disabled = state.busy; remove.disabled = state.busy || state.activeConversation === conversation.id;
       button.addEventListener('click', () => { selectConversation(conversation.id); setHistoryOpen(false); });
-      li.append(button); $('conversation-list').append(li);
+      remove.setAttribute('aria-label', 'Excluir conversa ' + (conversation.title || 'Conversa'));
+      remove.title = state.activeConversation === conversation.id ? 'Conclua ou cancele o pedido antes de excluir.' : 'Excluir esta conversa';
+      remove.addEventListener('click', event => { event.stopPropagation(); deleteConversation(conversation.id); });
+      li.append(button, remove); $('conversation-list').append(li);
     }
   }
   function scrollLatest(force = false) {
@@ -296,12 +445,22 @@ export function mountNeuralWorkspace(environment = globalThis) {
     for (const [id, entry] of messageNodes) if (!wanted.has(id)) { entry.node.remove(); messageNodes.delete(id); }
     let index = 0;
     for (const message of state.messages) {
-      const signature = JSON.stringify([message, message.payment?.state === 'quoted' ? state.status?.wallet : null, !!coinWallet]);
+      const signature = JSON.stringify([message, message.payment?.state === 'quoted' ? state.status?.wallet : null, !!coinWallet, operationConsent]);
       const cached = messageNodes.get(message.id);
       if (cached?.signature === signature) { if (list.children[index] !== cached.node) list.insertBefore(cached.node, list.children[index] || null); index++; continue; }
       const li = node('li', null, 'message ' + (message.role === 'user' ? 'user-message' : 'assistant-message'));
       li.append(node('p', message.role === 'user' ? 'Você' : 'Lia', 'message-label'));
-      li.append(node('p', message.text || ({ queued: 'Pedido recebido. Aguardando sua vez na fila.', running: 'Preparando sua resposta…' })[message.status] || '', 'message-content'));
+      const operationContent = operationArtifacts(message.text);
+      li.append(node('p', operationContent.text || ({ queued: 'Pedido recebido. Aguardando sua vez na fila.', running: 'Preparando sua resposta…' })[message.status] || '', 'message-content'));
+      if (operationContent.artifacts.length) {
+        const operationFiles=node('div',null,'operation-artifacts');
+        for (const artifact of operationContent.artifacts) {
+          const link=node('a','Baixar '+artifact.name,'operation-artifact-link');
+          link.href='/api/neural/chat/operations/artifact?operation='+encodeURIComponent(artifact.operation)+'&path='+encodeURIComponent(artifact.path);
+          link.setAttribute('download',artifact.name);operationFiles.append(link);
+        }
+        li.append(operationFiles);
+      }
       if (isChatActive(message.status)) li.setAttribute('aria-busy', 'true');
       const queuePosition = message.queue && CHAT_QUEUE_LANES.includes(message.queue.lane) && Number.isSafeInteger(message.queue.position) && message.queue.position >= 1 ? message.queue.position : null;
       const labels = { awaiting_confirmation: 'Aguardando sua confirmação · execução não iniciada', queued: 'Na fila' + (queuePosition === null ? '' : ' · posição ' + queuePosition), running: 'Em andamento', unavailable: 'Recurso ainda indisponível · nenhuma geração realizada', failed: 'Não concluído', cancelled: 'Cancelado', interrupted: 'Interrompido · confira antes de pedir novamente' };
@@ -319,7 +478,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
         }
         li.append(files);
       }
-      if (message.payment) li.append(paymentCard(message));
+      if (message.payment && !(personal&&operationConsent&&['reserved','settled','released'].includes(message.payment.state))) li.append(paymentCard(message));
       if (message.artifacts?.length) {
         const artifacts = node('ul', null, 'generated-artifacts');
         for (const artifact of message.artifacts) {
@@ -339,7 +498,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
       if (cached) cached.node.remove();
       list.insertBefore(li, list.children[index] || null); messageNodes.set(message.id, { signature, node: li }); index++;
     }
-    controls(); scrollLatest(forceScroll);
+    renderResultsPanel();syncChatWork();controls(); scrollLatest(forceScroll);
   }
   function validStatus(data) {
     if (!data || typeof data.enabled !== 'boolean') throw failure('invalidResponse');
@@ -421,6 +580,28 @@ export function mountNeuralWorkspace(environment = globalThis) {
       state.status = nextStatus; rememberConversation(data.conversation); state.messages = messages; state.historyUnverified = false;
       renderStatus(); renderHistory(); renderMessages(forceScroll); schedulePoll();
     } catch (error) { if (selectionEpoch === state.selectionEpoch) showError(error); }
+  }
+  async function deleteConversation(id) {
+    if (state.busy || state.uncertain || state.historyUnverified || state.activeConversation === id) return;
+    const conversation = state.conversations.find(item => item.id === id);
+    const title = conversation?.title || 'esta conversa';
+    if (!window.confirm(`Excluir "${title}" e suas mensagens? Esta ação não pode ser desfeita. Registros financeiros permanecem no extrato.`)) return;
+    const epoch = state.epoch; state.busy = true; clearError(); controls();
+    try {
+      await api('/conversations/' + encodeURIComponent(id) + '/delete', 'POST', {});
+      if (epoch !== state.epoch) return;
+      const selected = state.selected === id;
+      state.conversations = state.conversations.filter(item => item.id !== id);
+      if (selected) {
+        state.selectionEpoch += 1; state.selected = null; state.messages = []; state.activeConversation = null; state.activeRequest = null; state.activeStatus = null;
+        state.pending = null; state.pendingConfirmation = null; state.historyUnverified = false; clearAttachments();
+        for (const url of previewCache.values()) if (url) URL.revokeObjectURL(url); previewCache.clear();
+        for (const entry of artifactCache.values()) if (entry.url) URL.revokeObjectURL(entry.url); artifactCache.clear(); messageNodes.clear();
+      }
+      renderHistory(); renderMessages(); announce('Conversa excluída do histórico privado.');
+      await loadConversations(false);
+    } catch (error) { if (epoch === state.epoch) showError(error); }
+    finally { if (epoch === state.epoch) { state.busy = false; controls(); } }
   }
   async function loadConversations(initial = false) {
     if (state.loading || (storeReference && !state.token)) return;
@@ -545,6 +726,8 @@ export function mountNeuralWorkspace(environment = globalThis) {
     const epoch = state.epoch; state.busy = true; clearError(); controls(); renderAttachments();
     let submitted = false;
     try {
+      if (await tryOperationalCommand(message)) return;
+      if (state.attachments.some(item => item.kind === 'operation-media')) throw failure('invalid');
       for (const attachment of state.attachments) {
         if (attachment.id) continue;
         const dataBase64 = await base64(attachment.file);
@@ -557,10 +740,25 @@ export function mountNeuralWorkspace(environment = globalThis) {
       state.retryAllowed = false;
       submitted = true;
       const data = await api('/messages', 'POST', state.pending);
-      const receipt = acceptReceipt(data, state.pending.conversationId);
+      let receipt = acceptReceipt(data, state.pending.conversationId);
+      let autoConfirmError = null;
       state.pending = null; state.uncertain = false; $('command').value = ''; clearAttachments(); resizeComposer();
+      if(personal&&receipt.status==='awaiting_confirmation'&&receipt.payment?.state==='quoted'&&await ensureOperationConsent()){
+        const pending=Object.freeze({requestId:receipt.requestId,conversationId:receipt.conversationId,quoteId:receipt.payment.quoteId,idempotencyKey:crypto.randomUUID()});
+        state.pendingConfirmation=pending;
+        try{
+          const confirmed=await api('/requests/'+encodeURIComponent(pending.requestId)+'/confirm','POST',{quoteId:pending.quoteId,idempotencyKey:pending.idempotencyKey});
+          receipt=acceptReceipt(confirmed,pending.conversationId,pending.requestId);
+          state.pendingConfirmation=null;
+        }catch(error){
+          if(!error.status||error.status>=500){state.uncertain=true;state.retryAllowed=false;}
+          else state.pendingConfirmation=null;
+          autoConfirmError=error;
+        }
+      }
       await selectConversation(receipt.conversationId);
-      announce(receipt.status === 'queued' ? 'Mensagem recebida. Seu pedido está na fila.' : 'Mensagem recebida. Acompanhe a resposta nesta conversa.');
+      if(autoConfirmError){showError(autoConfirmError);announce('Não foi possível iniciar a geração automaticamente. Confira o motivo e o estado do pedido.');}
+      else announce(receipt.status === 'queued' ? 'Mensagem recebida. Seu pedido está na fila.' : 'Mensagem recebida. Acompanhe a resposta nesta conversa.');
     } catch (error) {
       if (epoch !== state.epoch) return;
       if (submitted && state.pending && (!error.status || error.status >= 500)) { state.uncertain = true; announce('Recebimento não confirmado. Confira o envio sem reenviar.'); }
@@ -596,6 +794,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
     Object.assign(state, { token: '', status: null, conversations: [], messages: [], selected: null, activeRequest: null, activeConversation: null, activeStatus: null, pending: null, pendingConfirmation: null, uncertain: false, retryAllowed: false, busy: false, loading: false, historyUnverified: false });
     Object.assign(credit, { status: null, busy: false, pending: null, uncertain: false, open: false }); $('credits-terms').checked = false; renderCredits();
     coinWallet = null; coinsChecked = false;
+    operationConsent=false;
     $('access-token').value = ''; $('command').value = ''; $('disconnect').hidden = true;
     $('access-status').textContent = 'Acesso esquecido nesta página. Mensagens já enviadas permanecem no histórico privado.';
     clearError(); renderStatus(); renderHistory(); renderMessages(); renderAttachments();
@@ -605,9 +804,25 @@ export function mountNeuralWorkspace(environment = globalThis) {
   $('credits-refresh').addEventListener('click', loadCredits);
   $('credits-terms').addEventListener('change', controls);
   $('credits-retry').addEventListener('click', () => startCheckout(undefined, true));
+  if(personal){
+    $('lia-tools-panel').hidden=false;
+    $('lia-tools-panel').addEventListener('toggle',()=>{if($('lia-tools-panel').open)loadLiaTools();});
+    $('lia-tools-refresh').addEventListener('click',loadLiaTools);
+    $('lia-auto-toggle').addEventListener('click',async()=>{
+      try{
+        const status=await operationJson('/status','GET');
+        const enabled=!status.autoDebitEnabled;
+        if(enabled&&!window.confirm('Permitir que a LIA execute tarefas usando seus créditos de IA? O saldo e o histórico ficam neste painel.'))return;
+        const saved=await operationJson('/consent','POST',{version:status.consentVersion,enabled},{'x-lia-operations-request':'1'});
+        operationConsent=saved.autoDebitEnabled===true;
+        await loadLiaTools();
+      }catch(error){showError(error);}
+    });
+  }
   $('tasks-link').href = '/neural-tasks.html' + (storeReference ? '?store=' + encodeURIComponent(storeReference) : '');
   $('advanced-link').hidden = !!storeReference || personal;
   if (personal) { $('admin-login').href = '/minha-conta.html?returnTo=' + encodeURIComponent('/neural-workspace.html?personal=1'); $('admin-login').textContent = 'Entrar na minha conta'; $('account-label').textContent = 'Chat privado da sua conta'; $('tasks-link').hidden = true; }
+  if(personal)loadLiaTools();
   $('command-form').addEventListener('submit', submit);
   $('command').addEventListener('input', resizeComposer);
   $('command').addEventListener('keydown', event => {
@@ -617,6 +832,8 @@ export function mountNeuralWorkspace(environment = globalThis) {
   $('attachment-input').addEventListener('change', event => addFiles(event.target.files));
   $('new-conversation').addEventListener('click', newConversation);
   $('history-toggle').addEventListener('click', () => setHistoryOpen($('history-toggle').getAttribute('aria-expanded') !== 'true'));
+  $('results-toggle').addEventListener('click',()=>setResultsOpen($('results-toggle').getAttribute('aria-expanded')!=='true'));
+  $('results-close').addEventListener('click',()=>setResultsOpen(false));
   $('refresh').addEventListener('click', () => loadConversations());
   $('recover-request').addEventListener('click', recoverRequest);
   $('retry-request').addEventListener('click', retrySameRequest);
@@ -628,7 +845,7 @@ export function mountNeuralWorkspace(environment = globalThis) {
     forgetAccess(); state.token = token; $('disconnect').hidden = false; loadConversations(true);
   });
   for (const button of document.querySelectorAll('[data-example]')) button.addEventListener('click', () => { if (state.busy || state.uncertain) return; $('command').value = button.dataset.example; resizeComposer(); $('command').focus(); });
-  window.addEventListener('keydown', event => { if (event.key === 'Escape' && $('history-toggle').getAttribute('aria-expanded') === 'true') setHistoryOpen(false, true); });
+  window.addEventListener('keydown', event => { if(event.key==='Escape'&&$('results-toggle').getAttribute('aria-expanded')==='true')setResultsOpen(false); if (event.key === 'Escape' && $('history-toggle').getAttribute('aria-expanded') === 'true') setHistoryOpen(false, true); });
   window.addEventListener('pagehide', forgetAccess);
   window.addEventListener('pageshow', event => { if (event.persisted && !storeReference) loadConversations(true); });
   if (storeReference) { $('store-access').hidden = false; $('account-label').textContent = 'Chat privado da sua loja'; renderStatus(); controls(); }

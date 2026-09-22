@@ -8,7 +8,7 @@ import path from 'node:path';
 import {rasterSize} from '../web-story-assets.js';
 import {chatError,chatId,validateChatScope} from './chat-attachments.js';
 
-export const CHAT_ARTIFACT_LIMITS=Object.freeze({fileBytes:64*1024*1024,scopeBytes:128*1024*1024,globalBytes:1024*1024*1024,scopeCount:40,globalCount:400});
+export const CHAT_ARTIFACT_LIMITS=Object.freeze({fileBytes:64*1024*1024,scopeBytes:512*1024*1024,globalBytes:8*1024*1024*1024,scopeCount:200,globalCount:2000});
 const TYPES=new Set(['image/png','image/jpeg','image/webp','video/mp4']);
 const extensions={'image/png':'png','image/jpeg':'jpg','image/webp':'webp','video/mp4':'mp4'};
 const fail=(code='chat_artifact_invalid',status=400)=>{throw chatError(code,status);};

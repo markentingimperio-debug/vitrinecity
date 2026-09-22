@@ -1,0 +1,42 @@
+:root{--ink:#1d2834;--muted:#667380;--accent:#165b8e;--line:#e2e7ec;--canvas:#fff;--soft:#eef5fa}
+html,body{overflow:hidden;background:#fff}
+#vc-global-market-banner,#vc-outdoor{display:none!important}
+.workspace{grid-template-columns:248px minmax(0,1fr) 300px;max-width:none;overflow:hidden}
+.sidebar{background:#f7f9fb;padding:22px 14px 14px;gap:12px}
+.brand{padding:0 9px;color:#183e5d}.brand-mark{background:#e4f1f8;color:#1c709b}
+.new-conversation{background:#fff;border-color:#dce4ea;min-height:44px}
+.sidebar-shortcuts{display:grid;gap:3px;padding:2px 0 8px;border-bottom:1px solid var(--line)}
+.sidebar-shortcuts a{display:block;text-decoration:none;border-radius:10px;padding:9px 11px;color:#38546d;font-size:.84rem}
+.sidebar-shortcuts a:hover,.sidebar-shortcuts a:focus-visible{background:#e8f1f8}
+.sidebar-heading{margin-top:4px}.conversation-list{flex:1;align-content:start}
+.conversation-list button[aria-current="true"]{background:#e4eef7;color:#134a78}
+.account-controls{margin-top:auto;border-top:1px solid var(--line);padding-top:8px;min-height:0}
+.account-controls>summary{cursor:pointer;color:#42596f;font-size:.82rem;font-weight:600;padding:10px;border-radius:10px}
+.account-controls>summary:hover{background:#e9f1f7}
+.connection{margin:0;padding:7px 4px 2px;border:0;max-height:42dvh;overflow:auto}
+.chat-shell{background:#fff}.topbar{min-height:66px;padding:10px 24px;background:#fff}
+.topbar h1{font-size:.94rem}.topbar p{margin-top:1px}
+.pill{background:#f0f6fb;border-color:#dae9f2;color:#27566f}
+.conversation-scroll{padding-top:25px;padding-bottom:26px;scrollbar-gutter:stable}
+.messages{gap:28px}.assistant-message{max-width:780px;margin-inline:auto}
+.user-message{background:#eaf2fa;color:#1f354a;border-radius:19px;max-width:min(86%,680px)}
+.composer-dock{width:min(100%,820px);padding-bottom:max(12px,env(safe-area-inset-bottom))}
+.composer{border-radius:20px;border-color:#d9e1e8;box-shadow:0 7px 24px #17395112}
+.composer textarea{min-height:54px}.composer-tools .small{color:#83909a}
+.work-progress{width:min(100%,820px);margin:0 auto 10px;padding:9px 25px;display:flex;align-items:center;gap:9px;color:#536473;font-size:.79rem}
+.work-progress[hidden]{display:none}.work-progress-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;background:#2f86bb;box-shadow:0 0 0 4px #e3f1fa}
+.results-panel{min-width:0;min-height:0;overflow:auto;border-left:1px solid var(--line);background:#fbfcfe;padding:24px 20px}
+.results-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:18px}
+.results-heading h2{margin:0;font-size:.95rem;color:#283b4c}.results-heading button{display:none;font-size:1.2rem}
+.results-panel section{border-top:1px solid var(--line);padding:18px 0}
+.results-panel h3{font-size:.78rem;font-weight:650;margin:0 0 11px;color:#405a70}
+.result-list{list-style:none;display:grid;gap:9px;margin:0;padding:0;font-size:.78rem}
+.result-list li{overflow-wrap:anywhere}.result-list a{display:block;padding:8px 9px;border:1px solid #e2eaf0;background:#fff;border-radius:10px;text-decoration:none;line-height:1.35}
+.result-list a:hover,.result-list a:focus-visible{border-color:#9fc3db;background:#f3f9fd}
+.result-list .muted{color:#84919a;line-height:1.4}.results-note{font-size:.69rem;line-height:1.45;color:#82909a;margin-top:18px}
+.results-toggle{display:none;white-space:nowrap;font-size:.76rem}
+.operation-artifacts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.operation-artifact-link{padding:9px 11px;border:1px solid #d7e6ef;border-radius:10px;background:#f7fbfe;font-size:.78rem;text-decoration:none}
+@media(max-width:1180px){.workspace{grid-template-columns:225px minmax(0,1fr)}.results-toggle{display:block}.results-panel{display:none;position:fixed;z-index:20;top:0;right:0;bottom:0;width:min(320px,90vw);box-shadow:-12px 0 40px #193e5a29}.results-panel.is-open{display:block}.results-heading button{display:block}}
+@media(max-width:700px){.workspace{display:block}.sidebar{top:0;bottom:0;width:min(310px,88vw);z-index:30}.chat-shell{height:100dvh}.topbar{padding:9px 12px}.results-toggle{padding:7px 9px}.conversation-scroll{padding:18px 15px}.composer-dock{padding:0 10px max(8px,env(safe-area-inset-bottom))}.work-progress{padding:7px 15px}.account-controls{margin-top:auto}}
+@media(prefers-reduced-motion:no-preference){.work-progress-dot{animation:lia-pulse 1.8s ease-in-out infinite}@keyframes lia-pulse{50%{opacity:.45;box-shadow:0 0 0 8px #e3f1fa}}}

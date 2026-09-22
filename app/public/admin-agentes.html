@@ -1107,6 +1107,7 @@
           ><a href="/admin-operacao.html">Central de Operações</a
           ><a class="active" href="/admin-agentes.html">Edifício neural</a
           ><a href="/admin-jarvis.html">Jarvis · Núcleo de IA</a
+          ><a href="/neural-workspace.html?personal=1">Lia Work · executar tarefas</a
           ><a href="/admin-growth.html">Growth Command</a
           ><a href="/admin-chatbotx.html">ChatbotX Omnichannel</a
           ><a href="/admin#ai-control">IA Gestora</a><small>DEPARTAMENTOS</small
@@ -1199,6 +1200,13 @@
             <small>Concluídas</small><strong id="mDone">—</strong
             ><span>entregas registradas</span>
           </article>
+        </section>
+        <section class="panel" aria-labelledby="lia-work-title" style="margin-bottom:18px">
+          <h2 id="lia-work-title">Lia Work · ferramentas e consumo</h2>
+          <p class="panel-note">Estado das ferramentas e consumo da sua conta administrativa. Os clientes veem os próprios dados no chat da Lia.</p>
+          <p id="lia-work-usage" role="status">Consultando tarefas…</p>
+          <ul id="lia-work-tools" aria-label="Ferramentas da Lia"></ul>
+          <a href="/neural-workspace.html?personal=1">Abrir o chat de tarefas da Lia →</a>
         </section>
         <div class="workspace">
           <section class="tower" aria-label="Departamentos da empresa">
@@ -1366,6 +1374,29 @@
       </main>
     </div>
     <div class="toast" id="toast" role="status"></div>
+    <script>
+      (async()=>{
+        const usage=document.getElementById('lia-work-usage'),list=document.getElementById('lia-work-tools');
+        try{
+          const [response,chatResponse]=await Promise.all([
+            fetch('/api/neural/chat/operations/usage',{credentials:'same-origin',headers:{accept:'application/json'}}),
+            fetch('/api/neural/chat/status',{credentials:'same-origin',headers:{accept:'application/json'}})
+          ]);
+          if(!response.ok||!chatResponse.ok)throw new Error('indisponível');
+          const data=await response.json(),chatStatus=await chatResponse.json(),summary=data.summary||{};
+          const spent=Number(summary.consumedMicroBrl||0)/1e6;
+          usage.textContent=`${Number(summary.completed||0)} tarefas concluídas de ${Number(summary.tasks||0)} recentes · consumo ${spent.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}`;
+          list.replaceChildren();
+          const tools=[...(data.tools||[]),
+            {name:'Geração de imagens',available:chatStatus.capabilities?.image===true},
+            {name:'Geração de vídeos',available:chatStatus.capabilities?.video===true},
+            {name:'Hostinger (MCP)',available:false},
+            {name:'Gmail (MCP)',available:false},
+            {name:'Editor de vídeo externo (MCP)',available:false}];
+          for(const tool of tools){const item=document.createElement('li');item.textContent=`${tool.name}: ${tool.available?'disponível':tool.name.includes('(MCP)')?'conexão pendente':'indisponível'}`;list.append(item);}
+        }catch{usage.textContent='Não foi possível consultar as ferramentas e o consumo agora.';}
+      })();
+    </script>
     <script>
       const $ = (s) => document.querySelector(s);
       let agents = [],

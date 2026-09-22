@@ -7,6 +7,7 @@
   <meta name="referrer" content="same-origin">
   <title>Lia · IA da VitrineCity</title>
   <link rel="stylesheet" href="/neural-workspace.css">
+  <link rel="stylesheet" href="/neural-workspace-work.css">
   <script type="module" src="/neural-workspace.js"></script>
 </head>
 <body>
@@ -15,10 +16,11 @@
     <aside id="history-panel" class="sidebar" aria-labelledby="history-title">
       <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">✦</span><strong>Lia</strong><span> · VitrineCity</span></a>
       <button id="new-conversation" type="button" class="new-conversation">＋ Nova conversa</button>
+      <nav class="sidebar-shortcuts" aria-label="Acesso rápido"><a href="/central-creditos.html">Carteira de IA</a><a href="/pesquisar.html">Pesquisa</a></nav>
       <div class="sidebar-heading"><h2 id="history-title">Suas conversas</h2><button id="refresh" type="button" class="quiet" aria-label="Atualizar conversas">↻</button></div>
       <p id="history-empty" class="small muted">Nenhuma conversa carregada.</p>
       <ul id="conversation-list" class="conversation-list"></ul>
-      <div class="connection">
+      <details class="account-controls"><summary>Conta, ferramentas e consumo</summary><div class="connection">
         <p id="service-status" class="small" role="status">Conferindo disponibilidade…</p>
         <p id="billing-status" class="small muted">Gerações pagas não estão ativas neste chat.</p>
         <p id="coin-wallet-notice" class="small muted" role="status">Conferindo Vitrine Coins…</p>
@@ -33,17 +35,26 @@
           <p class="small muted">O pagamento é feito no Mercado Pago. O saldo líquido só é liberado após confirmação. A taxa de 15% aparece na recarga e não é repetida no consumo de IA da carteira unificada.</p>
           <ul id="credits-orders" class="credits-orders"></ul>
         </section>
+        <details id="lia-tools-panel" hidden>
+          <summary>Ferramentas e consumo da Lia</summary>
+          <p id="lia-tools-status" class="small muted" role="status">Abra para conferir ferramentas e consumo.</p>
+          <ul id="lia-tools-list"></ul>
+          <p id="lia-usage-summary" class="small"></p>
+          <button id="lia-auto-toggle" type="button" hidden></button>
+          <button id="lia-tools-refresh" type="button">Atualizar</button>
+        </details>
         <a id="billing-link" href="/central-creditos.html">Minha carteira Vitrine Coins</a>
         <a id="tasks-link" href="/neural-tasks.html">Tarefas e rascunhos do piloto</a>
         <a id="advanced-link" href="/admin-vitriny-neural.html">Administração avançada</a>
         <a id="admin-login" href="/admin-login.html" hidden>Entrar na administração</a>
-      </div>
+      </div></details>
     </aside>
     <main class="chat-shell">
       <header class="topbar">
         <button id="history-toggle" type="button" class="quiet history-toggle" aria-label="Mostrar conversas" aria-expanded="false" aria-controls="history-panel">☰</button>
         <div class="header-title"><h1 id="conversation-title">Lia</h1><p id="account-label">IA da VitrineCity</p></div>
         <span id="mode-label" class="pill">Chat</span>
+        <button id="results-toggle" type="button" class="quiet results-toggle" aria-label="Mostrar resultados e fontes" aria-expanded="false" aria-controls="results-panel">Resultados</button>
       </header>
       <section id="store-access" class="access-card" aria-labelledby="access-title" hidden>
         <h2 id="access-title">Conectar sua loja</h2>
@@ -64,6 +75,7 @@
         </section>
         <ol id="messages" class="messages" aria-label="Mensagens desta conversa"></ol>
       </div>
+      <div id="work-progress" class="work-progress" role="status" aria-live="polite" hidden><span class="work-progress-dot" aria-hidden="true"></span><span id="work-progress-text">Lia está trabalhando…</span></div>
       <div class="composer-dock">
         <p id="capability-notice" class="capability-notice" hidden>Seu envio será salvo no histórico privado, mas o modelo ainda não está habilitado para responder. Você pode organizar conversas e anexar arquivos. Nenhuma geração paga será realizada.</p>
         <p id="queue-review-notice" class="capability-notice" role="status" aria-live="polite" hidden></p>
@@ -75,13 +87,20 @@
           <label for="command" class="sr-only">Mensagem para a Lia</label>
           <textarea id="command" name="message" rows="2" minlength="1" maxlength="6000" required placeholder="Pergunte, peça uma ideia ou adicione um arquivo…" aria-describedby="command-hint attachment-hint queue-review-notice error"></textarea>
           <div class="composer-footer">
-            <div class="composer-tools"><button id="attach" type="button" class="attach-button" aria-label="Adicionar imagem ou documento" title="Adicionar imagem ou documento" disabled>＋</button><label for="attachment-input" class="sr-only">Escolha até três imagens ou documentos de texto</label><input id="attachment-input" type="file" accept="image/png,image/jpeg,image/webp,.txt,.md,.csv" multiple hidden><span id="command-hint" class="small muted">Enter envia · Shift + Enter quebra a linha</span></div>
+            <div class="composer-tools"><button id="attach" type="button" class="attach-button" aria-label="Adicionar imagem, vídeo, áudio ou documento" title="Adicionar imagem, vídeo, áudio ou documento" disabled>＋</button><label for="attachment-input" class="sr-only">Escolha imagens, vídeos, áudios ou documentos de texto</label><input id="attachment-input" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/mp4,audio/wav,audio/ogg,.txt,.md,.csv" multiple hidden><span id="command-hint" class="small muted">Enter envia · Shift + Enter quebra a linha</span></div>
             <div class="send-controls"><button id="cancel-request" type="button" class="quiet" hidden>Parar</button><button id="send" type="submit" class="primary send-button" aria-label="Enviar mensagem" title="Enviar mensagem" disabled>↑</button></div>
           </div>
         </form>
-        <details class="chat-notice"><summary>Sobre os arquivos e recursos deste chat</summary><p id="attachment-hint">Até 3 arquivos: PNG, JPEG ou WebP até 2 MB cada; TXT, MD ou CSV até 64 KB cada. PDF e DOCX ainda não são aceitos. Ao enviar, mensagens e arquivos ficam no histórico privado deste acesso. Documentos de texto podem servir de contexto.</p><p id="media-capability-note">A disponibilidade de geração de imagens e vídeos será confirmada para este acesso.</p><p>Não envie senhas, chaves de API ou dados pessoais desnecessários. Resultados de IA podem conter erros. O chat não publica, movimenta dinheiro nem executa código automaticamente.</p></details>
+        <details class="chat-notice"><summary>Sobre os arquivos e recursos deste chat</summary><p id="attachment-hint">Até 3 arquivos. Imagens: PNG, JPEG ou WebP até 2 MB. Vídeo/áudio para edição operacional: até 50 MB. TXT, MD ou CSV: até 64 KB. PDF e DOCX ainda não são aceitos. Ao enviar, mensagens e arquivos ficam no histórico privado deste acesso. Documentos de texto podem servir de contexto.</p><p id="media-capability-note">A disponibilidade de geração de imagens e vídeos será confirmada para este acesso.</p><p>Não envie senhas, chaves de API ou dados pessoais desnecessários. Resultados de IA podem conter erros. Rascunhos de código ficam privados; publicar exige uma ação separada. O uso automático dos créditos pode ser desligado em Conta, ferramentas e consumo.</p></details>
       </div>
     </main>
+    <aside id="results-panel" class="results-panel" aria-labelledby="results-title">
+      <div class="results-heading"><h2 id="results-title">Resultados</h2><button id="results-close" type="button" class="quiet" aria-label="Fechar resultados">×</button></div>
+      <section aria-labelledby="result-files-title"><h3 id="result-files-title">Arquivos criados</h3><ul id="result-files" class="result-list"><li class="muted">Os arquivos desta conversa aparecerão aqui.</li></ul></section>
+      <section aria-labelledby="result-sources-title"><h3 id="result-sources-title">Fontes consultadas</h3><ul id="result-sources" class="result-list"><li class="muted">Os links usados na pesquisa aparecerão aqui.</li></ul></section>
+      <section aria-labelledby="result-tools-title"><h3 id="result-tools-title">Ferramentas da Lia</h3><ul id="result-tools" class="result-list"><li class="muted">Conferindo disponibilidade…</li></ul></section>
+      <p class="results-note">Cada conta vê seus próprios resultados e consumo. As conexões externas aparecem apenas quando autorizadas e disponíveis.</p>
+    </aside>
   </div>
 </body>
 </html>
