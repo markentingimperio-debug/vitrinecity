@@ -5,6 +5,7 @@ import {referenceMediaKind} from '../public/neural-reference-media.js';
 import {containsChatSecret} from './chat-attachments.js';
 import {createLiveEcosystemContext} from './live-ecosystem-context.js';
 import {enrichLiaWorkInstruction} from './lia-work-context.js';
+import {createLiaWorkerLearning} from './lia-worker-learning.js';
 import {contextualBrowserInstruction,isRequestedBrowserInstruction,isSearchRequest} from './browser-target.js';
 import {createLocalBrowserPlan,validateLocalBrowserResult} from './local-browser-connector.js';
 
@@ -29,7 +30,7 @@ export function classifyLiaChatOperation(instruction,mime=''){
   const n=norm(instruction);
   const browser=isRequestedBrowserInstruction(instruction)||(/\bvitrine\s*city\b|\bvitrinecity\.com\b/.test(n)&&/\b(abra|abrir|acesse|acessar|entre|entrar|navegue|navegar|visite|va|ir|toque|tocar|coloque|colocar|captura|screenshot|print|leia|verifique|veja)\b/.test(n));
   const research=!mime&&!browser&&isSearchRequest(instruction);
-  const code=!mime&&!research&&/^(?:(?:por favor|agora|quero que voce|preciso que voce)[, ]+)*(?:crie|criar|faca|fazer|construa|construir|implemente|implementar|codifique|codificar|programe|programar|corrija|corrigir|desenvolva|desenvolver)\b/.test(n)
+  const code=!mime&&!research&&/^(?:(?:por favor|agora|quero que (?:vc|voce)|preciso que (?:vc|voce)|(?:vc|voce) (?:pode|consegue)|tem como (?:vc|voce)|da para (?:vc|voce))[, ]+)*(?:crie|criar|faca|fazer|construa|construir|implemente|implementar|codifique|codificar|programe|programar|corrija|corrigir|desenvolva|desenvolver)\b/.test(n)
     &&/\b(site|pagina web|website|html|css|javascript|codigo|programa|aplicativo|app|interface|componente|bug)\b/.test(n);
   const isVideo=/^video\//.test(mime),isAudio=/^audio\//.test(mime),isImage=/^image\//.test(mime);
   const dimensions=/\b\d{2,4}\s*[x×]\s*\d{2,4}\b/.test(n);
@@ -43,6 +44,12 @@ export function classifyLiaChatOperation(instruction,mime=''){
   if(browser&&!media)return {kind:'browser',supported:true,needsUpload:false};
   if(media&&!browser)return {kind:'media',supported:true,needsUpload:true};
   return {kind:'unsupported',supported:false,needsUpload:false};
+}
+export function verifiedCodeFiles(task){
+  const files=task?.result?.git?.after?.changedFiles;
+  if(!Array.isArray(files))return [];
+  return files.filter(file=>typeof file==='string'&&/^[A-Za-z0-9][A-Za-z0-9._/-]{0,174}\.(?:html|css|js|json|md|svg|txt)$/i.test(file)&&
+    file.split('/').every(part=>part&&part!=='.'&&part!=='..'&&!part.startsWith('.'))).slice(0,20);
 }
 const classifier=classifyLiaChatOperation;
 function micro(env,key,fallback){const n=Number(env[key]);return Number.isSafeInteger(n)&&n>0&&n<=100_000_000?n:fallback;}
@@ -67,6 +74,7 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
   const configured=enabled&&coinWallet.enabled===true&&/^https:\/\//.test(origin)&&token.length>=32;
   const codeConfigured=truthy(env.LIA_CODEX_CHAT_ENABLED)&&coinWallet.enabled===true&&/^https:\/\//.test(origin)&&codeToken.length>=32;
   const liveEcosystemProvider=createLiveEcosystemContext({db});
+  const workerLearningProvider=createLiaWorkerLearning({db}).retrieve;
 
   function codeFx(){
     try{
@@ -399,10 +407,11 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
       let item;
       if(op.kind==='code'){
         progress(op,'Iniciando o trabalhador de código…');
-        const taskInstruction=enrichLiaWorkInstruction(instruction,{kind:'code',liveEcosystemProvider});
+        const taskInstruction=enrichLiaWorkInstruction(instruction,{kind:'code',liveEcosystemProvider,workerLearningProvider});
         const draft=await gateway('/v1/tasks',{method:'POST',body:{instruction:taskInstruction,profile:'dev',requestedBudgetUsd:codePlan.budgetUsd},timeout:15000});
         const taskId=String(draft.task?.id||'');
         if(!/^[0-9a-f-]{36}$/.test(taskId)||draft.task?.status!=='draft')fail('lia_code_draft_unconfirmed',502);
+        db.prepare("UPDATE lia_chat_operations SET remote_task_id=?,updated_at=? WHERE id=? AND status='reserved'").run(taskId,Date.now(),op.id);
         const authorized=await gateway(`/v1/tasks/${taskId}/authorize`,{method:'POST',body:{budgetUsd:codePlan.budgetUsd},timeout:15000});
         if(authorized.task?.status!=='authorized')fail('lia_code_authorization_unconfirmed',502);
         progress(op,'Criando o site no workspace privado…');
@@ -410,9 +419,10 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
         progress(op,'Conferindo resultado e arquivos…');
         const task=finished.task,answer=String(task?.result?.finalResponse||'').trim();
         if(task?.id!==taskId||task?.status!=='completed'||!answer||containsChatSecret(answer))fail('lia_code_result_unconfirmed',502);
+        const files=verifiedCodeFiles(task);
+        if(!files.length)fail('lia_code_no_files',502);
         const actualMicro=actualCodeMicro(task.spentUsd,op.code_fx_rate);
         if(actualMicro>op.amount_micro)fail('lia_code_cost_exceeded',502);
-        const files=Array.isArray(task.result?.git?.after?.changedFiles)?task.result.git.after.changedFiles.filter(x=>typeof x==='string').slice(0,20):[];
         const downloadable=files.filter(file=>/^[A-Za-z0-9][A-Za-z0-9._/-]{0,174}\.(?:html|css|js|json|md|svg|txt)$/i.test(file)&&
           file.split('/').every(part=>part&&part!=='.'&&part!=='..'&&!part.startsWith('.'))).slice(0,4);
         const publicAnswer=answer.replace(new RegExp('/opt/lia/workspaces/'+workspace+'/','g'),'');
