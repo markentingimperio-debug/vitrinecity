@@ -12,6 +12,13 @@ account workspaces, browser and media operations, and private artifact access.
 The coding worker edits only its assigned workspace. Browser research reads public
 pages and passes source excerpts to the model for analysis.
 
+The OpenAI broker source and shared model policy are kept here with the gateway
+and worker sources. The broker serializes ledger writes because a streamed model
+reply can end as the SDK starts its next request. The economical Luna profile
+allows up to 4096 output tokens; every lease still enforces its own budget.
+Deploy the same `model-policy.mjs` to all three dedicated services and restart
+them only when no task is running. Uncertain tasks retain their reservations.
+
 Image and short video generation use the existing paid chat runtime in the main
 application. The chat shows live progress and stores generated files privately.
 Hostinger, Gmail, and external video editor MCP connections are listed as pending
