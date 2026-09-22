@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { mountLiveLiaVoice } from './live-lia-voice.js';
 
 export const LIVE_PLATFORMS = ['instagram', 'youtube', 'tiktok', 'facebook'];
 export function validateLiveServer(server, platform = 'instagram') {
@@ -111,6 +112,7 @@ export function createLiveStudioService({root=process.env.LIVE_STUDIO_DIR||'/liv
 }
 
 export function setupLiveStudio({ app, requireAdmin, sameOriginOnly, root = process.env.LIVE_STUDIO_DIR || '/live-studio' }) {
+  mountLiveLiaVoice({app, requireAdmin, sameOriginOnly});
   const files=liveStudioFiles(root),{file,read,write,catalog,snapshot}=files;
   const control=liveStudioControl(files);
   app.get('/api/admin/live-studio', requireAdmin, (_req, res) => {
