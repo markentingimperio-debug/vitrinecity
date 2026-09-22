@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import Database from '/app/node_modules/better-sqlite3/lib/index.js';
+import {createLiveEcosystemContext} from '/app/vitriny-neural/live-ecosystem-context.js';
+import {enrichPaidChatInput} from '/app/vitriny-neural/paid-platform-context.js';
+const db=new Database('/data/vitrinecity.db',{readonly:true,fileMustExist:true});
+const provider=createLiveEcosystemContext({db});
+const snapshot=provider('quero npk');
+assert.ok(snapshot?.products?.length>=1,'NPK must have at least one live public listing');
+assert.ok(snapshot.products.every(item=>/^https:\/\/vitrinecity\.com\/produto\/\d+$/.test(item.url)));
+const input=enrichPaidChatInput({messages:[{role:'user',content:'quero npk'}],maxOutputTokens:1024},{question:'quero npk',liveEcosystemProvider:provider});
+assert.match(input.messages[0].content,/NPK/i);
+assert.equal(input.messages.at(-1).content,'quero npk');
+console.log(JSON.stringify({status:'ok',catalogLinks:snapshot.products.map(p=>p.url),liveContextIncluded:true}));

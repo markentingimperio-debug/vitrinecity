@@ -1,0 +1,5 @@
+FROM vitrinecity-animal-lia:20260922-captions-v5
+COPY app/vitriny-neural/live-ecosystem-context.js /app/vitriny-neural/live-ecosystem-context.js
+COPY app/vitriny-neural/service.js /app/vitriny-neural/service.js
+COPY app/vitriny-neural/paid-chat-runtime.js /app/vitriny-neural/paid-chat-runtime.js
+COPY app/vitriny-neural/paid-platform-context.js /app/vitriny-neural/paid-platform-context.js

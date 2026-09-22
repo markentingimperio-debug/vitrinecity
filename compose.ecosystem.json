@@ -1,0 +1,7 @@
+{
+  "services": {
+    "app": {
+      "image": "vitrinecity-animal-lia:20260922-ecosystem-v6"
+    }
+  }
+}
