@@ -1,0 +1,28 @@
+services:
+  browser:
+    build:
+      context: /opt/lia/browser-worker
+      dockerfile: Dockerfile
+    image: lia-browser-worker:v1
+    env_file:
+      - /etc/lia-browser-worker.env
+    user: "${LIA_BROWSER_UID}:${LIA_BROWSER_GID}"
+    environment:
+      HOME: /tmp/lia-browser
+      XDG_CACHE_HOME: /tmp/lia-browser/cache
+      LIA_BROWSER_PUBLIC_WEB_MODE: "1"
+    ports:
+      - "127.0.0.1:8792:8792"
+    volumes:
+      - /opt/lia/artifacts/browser:/artifacts/browser:rw
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=536870912
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1536m
+    cpus: 1.5
+    restart: "no"

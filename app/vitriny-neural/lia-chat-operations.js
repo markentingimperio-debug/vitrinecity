@@ -5,7 +5,7 @@ import {referenceMediaKind} from '../public/neural-reference-media.js';
 import {containsChatSecret} from './chat-attachments.js';
 import {createLiveEcosystemContext} from './live-ecosystem-context.js';
 import {enrichLiaWorkInstruction} from './lia-work-context.js';
-import {isRequestedBrowserInstruction} from './browser-target.js';
+import {contextualBrowserInstruction,isRequestedBrowserInstruction,isSearchRequest} from './browser-target.js';
 
 const BASE='/api/neural/chat/operations';
 const IDEMPOTENCY=/^[A-Za-z0-9_-]{12,100}$/;
@@ -25,7 +25,7 @@ export function classifyLiaChatOperation(instruction,mime=''){
   if(/^image\//.test(mime)&&referenceMediaKind(instruction))return {kind:'unsupported',supported:false,needsUpload:false};
   const n=norm(instruction);
   const browser=isRequestedBrowserInstruction(instruction)||(/\bvitrine\s*city\b|\bvitrinecity\.com\b/.test(n)&&/\b(abra|abrir|acesse|acessar|entre|entrar|navegue|navegar|visite|va|ir|toque|tocar|coloque|colocar|captura|screenshot|print|leia|verifique|veja)\b/.test(n));
-  const research=!mime&&!browser&&/\b(pesquise|pesquisar|pesquisa|busque|buscar|procure|procurar)\b/.test(n);
+  const research=!mime&&!browser&&isSearchRequest(instruction);
   const code=!mime&&!research&&/^(?:(?:por favor|agora|quero que voce|preciso que voce)[, ]+)*(?:crie|criar|faca|fazer|construa|construir|implemente|implementar|codifique|codificar|programe|programar|corrija|corrigir|desenvolva|desenvolver)\b/.test(n)
     &&/\b(site|pagina web|website|html|css|javascript|codigo|programa|aplicativo|app|interface|componente|bug)\b/.test(n);
   const isVideo=/^video\//.test(mime),isAudio=/^audio\//.test(mime),isImage=/^image\//.test(mime);
@@ -161,14 +161,14 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
     if(changed!==1)fail('lia_message_state_conflict',409);
     db.prepare('UPDATE neural_chat_conversations SET updated_at=? WHERE id=?').run(Date.now(),cid);
   }
-  const claim=db.transaction((userId,{instruction,key,uploadId,requestedConversation,codePlan=null})=>{
+  const claim=db.transaction((userId,{instruction,executionInstruction=instruction,key,uploadId,requestedConversation,codePlan=null})=>{
     const hash=createHash('sha256').update(JSON.stringify({instruction,conversationId:requestedConversation||null,uploadId:uploadId||null})).digest('hex');
     const prior=db.prepare('SELECT * FROM lia_chat_operations WHERE user_id=? AND idempotency_key=?').get(userId,key);
     if(prior){if(prior.instruction_hash!==hash)fail('lia_idempotency_conflict',409);return {duplicate:true,op:prior};}
     if(db.prepare("SELECT 1 FROM lia_chat_operations WHERE user_id=? AND status IN ('created','reserved') LIMIT 1").get(userId))fail('lia_operation_requires_review',409);
     let upload=null;
     if(uploadId){upload=db.prepare('SELECT * FROM lia_chat_operation_uploads WHERE id=? AND user_id=?').get(uploadId,userId);if(!upload)fail('lia_upload_not_found',404);}
-    const plan=classifier(instruction,upload?.mime_type||'');
+    const plan=classifier(executionInstruction,upload?.mime_type||'');
     if(!plan.supported)fail('lia_operation_unsupported',422);
     if(['code','research'].includes(plan.kind)?!codeConfigured||!codePlan:!configured)fail('lia_operations_unavailable',503);
     if(plan.needsUpload&&!upload)fail('lia_upload_required');
@@ -272,7 +272,14 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
         if(prior.instruction_hash!==hash)fail('lia_idempotency_conflict',409);
         return res.json({ok:true,conversationId:prior.conversation_id,operationId:prior.id,status:prior.status,duplicate:true});
       }
-      const plan=classifier(instruction,uploadId?'application/octet-stream':'');
+      let executionInstruction=instruction;
+      if(requestedConversation){
+        conversation(req.user.id,requestedConversation);
+        const previous=db.prepare("SELECT text FROM neural_chat_messages WHERE conversation_id=? AND role='user' ORDER BY sequence DESC LIMIT 8")
+          .all(requestedConversation).map(row=>row.text);
+        executionInstruction=contextualBrowserInstruction(instruction,previous);
+      }
+      const plan=classifier(executionInstruction,uploadId?'application/octet-stream':'');
       let codePlan=null,workspace='';
       if(['code','research'].includes(plan.kind)){
         const provision=await gateway('/v1/workspaces/provision',{method:'POST',body:{accountId:req.user.id,kind:'site'},timeout:30000});
@@ -280,7 +287,7 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
         if(!/^account-[1-9]\d{0,14}$/.test(workspace))fail('lia_workspace_unconfirmed',502);
         codePlan=codeBudget(req.user.id,await gateway('/v1/budget',{timeout:10000}),plan.kind==='research'?browserMicro:0);
       }
-      const claimed=claim.immediate(req.user.id,{instruction,key,uploadId,requestedConversation,codePlan});
+      const claimed=claim.immediate(req.user.id,{instruction,executionInstruction,key,uploadId,requestedConversation,codePlan});
       if(claimed.duplicate)return res.json({ok:true,conversationId:claimed.op.conversation_id,operationId:claimed.op.id,status:claimed.op.status,duplicate:true});
       op=claimed.op;
       // From this boundary onward, a timeout or HTTP error is NOT proof of zero work.
@@ -309,7 +316,7 @@ export function setupLiaChatOperations({app,db,coinWallet,requireUser,sameOrigin
       }else{
         progress(op,op.kind==='research'?'Buscando e lendo fontes públicas…':op.kind==='media'?'Editando o arquivo enviado…':'Abrindo e lendo a página pública…');
         const remoteResult=await remote(op.kind==='research'?'/v1/operations/research':'/v1/operations/tasks',
-          {method:'POST',body:{instruction,actor:`user:${req.user.id}`,artifactPath:claimed.upload?.artifact_path||''},timeout:15*60*1000});
+          {method:'POST',body:{instruction:executionInstruction,actor:`user:${req.user.id}`,artifactPath:claimed.upload?.artifact_path||''},timeout:15*60*1000});
         item=remoteResult.item;
         if(op.kind==='research'){
           const sources=Array.isArray(item?.resultData?.sources)?item.resultData.sources.filter(source=>

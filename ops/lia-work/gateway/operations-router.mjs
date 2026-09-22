@@ -2,7 +2,7 @@ import http from 'node:http';
 import { promises as fs, createReadStream } from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import {isRequestedBrowserInstruction,resolveRequestedBrowserUrl} from './browser-target.mjs';
+import {isPlaybackRequest,isRequestedBrowserInstruction,resolveRequestedBrowserUrl} from './browser-target.mjs';
 
 const MAX_JSON_BYTES=64*1024;
 const MAX_UPLOAD_BYTES=50*1024*1024;
@@ -27,16 +27,18 @@ function cleanInstruction(value){
 }
 function normalize(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();}
 function has(re,text){return re.test(normalize(text));}
+function youtubeSearch(url){try{const u=new URL(url);return /(^|\.)youtube\.com$/.test(u.hostname)&&u.pathname==='/results'&&u.searchParams.has('search_query');}catch{return false;}}
 
 export function classifyOperationInstruction(instruction){
   const text=cleanInstruction(instruction),n=normalize(text);
   const url=resolveRequestedBrowserUrl(text);
   const browser=isRequestedBrowserInstruction(text);
+  const playback=browser&&isPlaybackRequest(text)&&youtubeSearch(url);
   const media=/\b(video|foto|imagem|thumbnail|capa|cortar|corte|recortar|redimensionar|redimensione|vertical|horizontal|audio|som|normalizar)\b/.test(n);
   let kind='unsupported';
   if(browser)kind='browser';
   else if(media)kind='media';
-  return {kind,url,supported:['browser','media'].includes(kind),needsUpload:kind==='media',chargeClass:kind};
+  return {kind,url,playback,supported:['browser','media'].includes(kind),needsUpload:kind==='media',chargeClass:kind};
 }
 
 function parseDimensions(text){
@@ -195,13 +197,14 @@ export async function createOperationsRouter({env=process.env,dataDir='/opt/lia/
     const url=plan.url||(/vitrine\s*city/i.test(task.instruction)?'https://vitrinecity.com':'');
     if(!url)throw Object.assign(new Error('browser_url_required'),{status:400});
     const output=`op-${task.id}-page.png`;
-    const steps=[{action:'goto',url},{action:'text',selector:'body'},{action:'links'},...(plan.noScreenshot?[]:[{action:'screenshot',output,fullPage:true}])];
+    const steps=[{action:'goto',url},...(plan.playback?[{action:'openFirstYoutubeVideo'}]:[]),{action:'text',selector:'body'},{action:'links'},...(plan.noScreenshot?[]:[{action:'screenshot',output,fullPage:!plan.playback}])];
     const response=await fetch(browserUrl+'/v1/browser/run',{method:'POST',headers:{authorization:`Bearer ${browserToken}`,'content-type':'application/json'},body:JSON.stringify({steps}),signal:AbortSignal.timeout(120000)});
     const data=await response.json().catch(()=>({}));
     if(!response.ok)throw Object.assign(new Error(String(data.error||'browser_failed')),{status:502});
     const textOutput=(data.outputs||[]).find(x=>x.action==='text')?.text||'';
     const links=(data.outputs||[]).find(x=>x.action==='links')?.links||[];
     const artifact=(data.outputs||[]).find(x=>x.action==='screenshot')?.artifact||'';
+    const playbackOutput=(data.outputs||[]).find(x=>x.action==='openFirstYoutubeVideo')||null;
     task.events.push({tool:'browser.run',ok:true,detail:url});
     if(artifact)task.artifacts.push({path:'browser/'+artifact,kind:'image'});
     const candidates=sourceCandidates(links);
@@ -209,9 +212,13 @@ export async function createOperationsRouter({env=process.env,dataDir='/opt/lia/
       throw Object.assign(new Error('search_verification_required'),{status:502});
     const finalUrl=String(data.finalUrl||url);
     const found=candidates.length?'\n\nLinks encontrados:\n'+candidates.map(x=>`- ${x.text}: ${x.url}`).join('\n'):'';
-    const playback=/\b(?:toque|tocar|coloque|colocar|reproduza|reproduzir)\b/.test(normalize(task.instruction))
-      ?'\n\nA página e os resultados foram abertos pelo navegador da Lia. Para ouvir no seu dispositivo, abra o link; o Chrome ou o site pode exigir um clique para iniciar o áudio.'
-      :'';
+    const playback=playbackOutput?.playing
+      ?'\n\nO primeiro vídeo foi aberto e a reprodução foi confirmada no navegador remoto da Lia. Para ouvir no seu dispositivo, abra o link acima; o Chrome pode exigir um clique para liberar o áudio.'
+      :playbackOutput
+        ?'\n\nO primeiro vídeo foi aberto, mas o YouTube não confirmou a reprodução automática. Abra o link acima para iniciar no seu dispositivo.'
+        :isPlaybackRequest(task.instruction)
+          ?'\n\nA página foi aberta pelo navegador da Lia. Para ouvir no seu dispositivo, abra o link; o Chrome ou o site pode exigir um clique para iniciar o áudio.'
+          :'';
     return {summary:`${plan.search?'Busca por nome; confirme o endereço antes de abrir':'Página acessada'}: ${data.title||url}\n${finalUrl}\n\n${textOutput.slice(0,6000)}${found}${playback}`,raw:data,candidates};
   }
   async function mediaRun(task,input){
