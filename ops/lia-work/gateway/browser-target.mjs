@@ -33,3 +33,8 @@ export function resolveRequestedBrowserUrl(value){
   }
   return SITES[site];
 }
+
+export function isRequestedBrowserInstruction(value){
+  const n=normalize(value);
+  return Boolean(resolveRequestedBrowserUrl(value))&&/\b(?:abra|abrir|acesse|acessar|entre|entrar|navegue|navegar|visite|va|ir|toque|tocar|coloque|colocar|pagina|site|clique|clicar|preencha|captura|screenshot|print|leia|verifique|veja)\b/.test(n);
+}

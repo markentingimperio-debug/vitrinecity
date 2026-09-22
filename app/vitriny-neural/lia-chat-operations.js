@@ -5,7 +5,7 @@ import {referenceMediaKind} from '../public/neural-reference-media.js';
 import {containsChatSecret} from './chat-attachments.js';
 import {createLiveEcosystemContext} from './live-ecosystem-context.js';
 import {enrichLiaWorkInstruction} from './lia-work-context.js';
-import {resolveRequestedBrowserUrl} from './browser-target.js';
+import {isRequestedBrowserInstruction} from './browser-target.js';
 
 const BASE='/api/neural/chat/operations';
 const IDEMPOTENCY=/^[A-Za-z0-9_-]{12,100}$/;
@@ -23,11 +23,11 @@ function norm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/
 export function classifyLiaChatOperation(instruction,mime=''){
   // A new generation with an image belongs to Kling, not the FFmpeg resize worker.
   if(/^image\//.test(mime)&&referenceMediaKind(instruction))return {kind:'unsupported',supported:false,needsUpload:false};
-  const n=norm(instruction),browserUrl=resolveRequestedBrowserUrl(instruction),hasUrl=Boolean(browserUrl);
-  const research=!mime&&/\b(pesquise|pesquisar|pesquisa|busque|buscar|procure|procurar)\b/.test(n);
+  const n=norm(instruction);
+  const browser=isRequestedBrowserInstruction(instruction)||(/\bvitrine\s*city\b|\bvitrinecity\.com\b/.test(n)&&/\b(abra|abrir|acesse|acessar|entre|entrar|navegue|navegar|visite|va|ir|toque|tocar|coloque|colocar|captura|screenshot|print|leia|verifique|veja)\b/.test(n));
+  const research=!mime&&!browser&&/\b(pesquise|pesquisar|pesquisa|busque|buscar|procure|procurar)\b/.test(n);
   const code=!mime&&!research&&/^(?:(?:por favor|agora|quero que voce|preciso que voce)[, ]+)*(?:crie|criar|faca|fazer|construa|construir|implemente|implementar|codifique|codificar|programe|programar|corrija|corrigir|desenvolva|desenvolver)\b/.test(n)
     &&/\b(site|pagina web|website|html|css|javascript|codigo|programa|aplicativo|app|interface|componente|bug)\b/.test(n);
-  const browser=(hasUrl||/\bvitrine\s*city\b|\bvitrinecity\.com\b/.test(n))&&/\b(abra|abrir|acesse|acessar|entre|entrar|navegue|navegar|visite|va|ir|toque|tocar|coloque|colocar|captura|screenshot|print|leia|verifique|veja)\b/.test(n);
   const isVideo=/^video\//.test(mime),isAudio=/^audio\//.test(mime),isImage=/^image\//.test(mime);
   const dimensions=/\b\d{2,4}\s*[x×]\s*\d{2,4}\b/.test(n);
   const clip=isVideo&&/\b(corte|cortar|recorte|recortar)\b/.test(n);

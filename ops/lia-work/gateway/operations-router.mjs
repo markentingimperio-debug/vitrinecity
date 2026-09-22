@@ -2,7 +2,7 @@ import http from 'node:http';
 import { promises as fs, createReadStream } from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import {resolveRequestedBrowserUrl} from './browser-target.mjs';
+import {isRequestedBrowserInstruction,resolveRequestedBrowserUrl} from './browser-target.mjs';
 
 const MAX_JSON_BYTES=64*1024;
 const MAX_UPLOAD_BYTES=50*1024*1024;
@@ -31,7 +31,7 @@ function has(re,text){return re.test(normalize(text));}
 export function classifyOperationInstruction(instruction){
   const text=cleanInstruction(instruction),n=normalize(text);
   const url=resolveRequestedBrowserUrl(text);
-  const browser=Boolean(url)&&/\b(abra|abrir|acesse|acessar|entre|entrar|navegue|navegar|visite|va|ir|toque|tocar|coloque|colocar|pagina|site|clique|clicar|preencha|captura|screenshot)\b/.test(n);
+  const browser=isRequestedBrowserInstruction(text);
   const media=/\b(video|foto|imagem|thumbnail|capa|cortar|corte|recortar|redimensionar|redimensione|vertical|horizontal|audio|som|normalizar)\b/.test(n);
   let kind='unsupported';
   if(browser)kind='browser';
