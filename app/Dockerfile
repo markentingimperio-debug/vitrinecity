@@ -11,6 +11,10 @@ COPY scripts/run-vitriny-neural-live-benchmark.mjs ./scripts/run-vitriny-neural-
 COPY scripts/run-vitriny-neural-task-acceptance.mjs ./scripts/run-vitriny-neural-task-acceptance.mjs
 COPY scripts/run-admin-teaching-pilot.mjs ./scripts/run-admin-teaching-pilot.mjs
 COPY scripts/diagnose-admin-teaching-openai.mjs ./scripts/diagnose-admin-teaching-openai.mjs
+COPY scripts/seed-lia-language-training-candidates.mjs ./scripts/seed-lia-language-training-candidates.mjs
+COPY scripts/approve-lia-language-training.mjs ./scripts/approve-lia-language-training.mjs
+RUN mkdir -p ./scripts/fixtures
+COPY scripts/fixtures/lia-language-training-cases.mjs ./scripts/fixtures/lia-language-training-cases.mjs
 COPY scripts/smoke-vitriny-multiversal.mjs ./scripts/smoke-vitriny-multiversal.mjs
 COPY affiliate-catalog-seed.json ./
 COPY public ./public

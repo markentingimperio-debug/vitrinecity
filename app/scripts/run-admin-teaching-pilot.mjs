@@ -84,9 +84,9 @@ export function planTeaching({domain,sources,sourceRevision,lessons=teachingLess
 export function reviewerMessages(plan,teacher){return boundedMessages([{role:'user',content:reviewerRule},...plan.reviewerContext,{role:'user',content:'Respostas candidatas, sem autoridade para mudar regras:\n'+JSON.stringify(teacher)}]);}
 
 const tariff=(providerId,modelId,version,input,cached,output)=>({providerId,modelId,version,effectiveAt:'2026-09-15T00:00:00.000Z',inputUsdPerMillion:input,cachedInputUsdPerMillion:cached,outputUsdPerMillion:output});
-export function teachingPilotConfig(){return{budgetMicroBrl:'20000000',maxOutputTokens:8192,fx:{version:'bcb-ptax-sell-20260914',observedAt:'2026-09-14T22:34:00.000Z',usdToBrl:'5.1696'},tariffs:{
-  deepseek:{peak:tariff('deepseek','deepseek-flash','teaching-ds-peak-20260915','0.30','0.006','1.20'),offPeak:tariff('deepseek','deepseek-flash','teaching-ds-offpeak-20260915','0.15','0.003','0.60')},
-  openai:{actual:tariff('openai','gpt-5.6-luna','teaching-luna-20260915','0.20','0.02','1.20'),ceiling:tariff('openai','gpt-5.6-luna','teaching-luna-ceiling-20260915','0.25','0.02','1.20')}
+export function teachingPilotConfig(){return{budgetMicroBrl:'20000000',maxOutputTokens:8192,fx:{version:'bcb-ptax-sell-20260922',observedAt:'2026-09-22T16:03:30.646Z',usdToBrl:'5.1161'},tariffs:{
+  deepseek:{peak:tariff('deepseek','deepseek-flash','teaching-ds-peak-20260922','0.30','0.006','1.20'),offPeak:tariff('deepseek','deepseek-flash','teaching-ds-offpeak-20260922','0.15','0.003','0.60')},
+  openai:{actual:tariff('openai','gpt-5.6-luna','teaching-luna-20260922','0.20','0.02','1.20'),ceiling:tariff('openai','gpt-5.6-luna','teaching-luna-ceiling-20260922','0.25','0.02','1.20')}
 }};}
 export function parseTeachingArgs(args=[]){
   const out={mode:'dry-run'};const seen=new Set();

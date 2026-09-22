@@ -8,7 +8,7 @@ import {createAdminTeachingPilot} from '../vitriny-neural/admin-teaching-pilot.j
 import {teachingPilotConfig} from './run-admin-teaching-pilot.mjs';
 import {diagnoseOpenAi,DIAGNOSTIC_ID} from './diagnose-admin-teaching-openai.mjs';
 
-const now=()=>Date.parse('2026-09-15T17:30:00Z');
+const now=()=>Date.parse('2026-09-22T17:30:00Z');
 function fixture(t){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'lia-diag-test-'));
   t.after(()=>fs.rmSync(dir,{recursive:true}));

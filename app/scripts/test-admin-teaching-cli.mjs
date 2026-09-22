@@ -8,7 +8,7 @@ import {teachingSources,teachingSourceRevision} from '../vitriny-neural/admin-te
 import {teachingLessons,teachingHoldout} from '../vitriny-neural/admin-teaching-curriculum.js';
 import {planTeaching,reviewerMessages,validateTeacherResponse,validateReviewerResponse,parseTeachingJson,parseTeachingArgs,runTeachingCli,validateTeachingPaths} from './run-admin-teaching-pilot.mjs';
 
-const NOW=Date.parse('2026-09-15T12:00:00.000Z');
+const NOW=Date.parse('2026-09-22T17:30:00.000Z');
 const planning={sources:teachingSources,sourceRevision:teachingSourceRevision,now:()=>NOW};
 const plan=domain=>planTeaching({...planning,domain});
 const teacher=p=>({lessons:p.lessons.map(q=>({id:q.id,answer:'Resposta candidata de teste, limitada à fonte pública. Não executa ações.',sourceIds:[q.sourceIds[0]]}))});
