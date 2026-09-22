@@ -23,8 +23,8 @@ export function validateLocalBrowserResult(plan,value){
   if(plan.playback){
     const youtube=hostname==='youtube.com'||hostname.endsWith('.youtube.com');
     const currentTime=Number(value.currentTime);
-    if(!youtube||finalUrl.pathname!=='/watch'||!finalUrl.searchParams.get('v')||value.playing!==true||!Number.isFinite(currentTime)||currentTime<0.2)invalid('lia_local_browser_playback_unconfirmed');
-    return {connector:value.connector,finalUrl:finalUrl.href,title,playing:true,currentTime:Math.round(currentTime*10)/10};
+    if(!youtube||finalUrl.pathname!=='/watch'||!finalUrl.searchParams.get('v')||value.playing!==true||value.audible!==true||value.adShowing!==false||!Number.isFinite(currentTime)||currentTime<0.2)invalid('lia_local_browser_playback_unconfirmed');
+    return {connector:value.connector,finalUrl:finalUrl.href,title,playing:true,audible:true,currentTime:Math.round(currentTime*10)/10};
   }
   if(value.opened!==true)invalid('lia_local_browser_open_unconfirmed');
   return {connector:value.connector,finalUrl:finalUrl.href,title,opened:true};

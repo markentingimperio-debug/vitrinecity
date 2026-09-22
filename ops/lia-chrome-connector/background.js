@@ -48,21 +48,32 @@ async function firstYoutubeVideo(tabId){
 }
 
 async function confirmPlayback(tabId){
-  const [{result}]=await chrome.scripting.executeScript({target:{tabId},func:async()=>{
-    const deadline=Date.now()+15000;
-    let video=null;
-    while(Date.now()<deadline){video=document.querySelector('video');if(video)break;await new Promise(resolve=>setTimeout(resolve,350));}
-    if(!video)return {playing:false,currentTime:0,title:document.title};
-    try{await video.play();}catch{}
-    if(video.paused){
-      const button=document.querySelector('.ytp-large-play-button, button.ytp-play-button');
-      if(button instanceof HTMLElement)button.click();
+  const deadline=Date.now()+90000;
+  let previousTime=null,attemptedPlay=false;
+  while(Date.now()<deadline){
+    const [{result}]=await chrome.scripting.executeScript({target:{tabId},func:async(shouldPlay)=>{
+      const video=document.querySelector('video');
+      if(!video)return {ready:false,title:document.title};
+      if(shouldPlay){
+        try{await video.play();}catch{}
+        if(video.paused){
+          const button=document.querySelector('.ytp-large-play-button, button.ytp-play-button');
+          if(button instanceof HTMLElement)button.click();
+        }
+      }
+      return {ready:true,paused:video.paused,ended:video.ended,currentTime:Number(video.currentTime||0),
+        muted:video.muted,volume:video.volume,adShowing:!!document.querySelector('.html5-video-player.ad-showing'),title:document.title};
+    },args:[!attemptedPlay]});
+    if(result?.ready){
+      attemptedPlay=true;
+      if(!result.adShowing&&!result.paused&&!result.ended&&!result.muted&&result.volume>0&&
+        previousTime!==null&&result.currentTime>previousTime+0.2)
+        return {playing:true,currentTime:result.currentTime,title:result.title,audible:true,adShowing:false};
+      previousTime=result.adShowing?null:result.currentTime;
     }
-    const started=Number(video.currentTime||0);
-    await new Promise(resolve=>setTimeout(resolve,2200));
-    return {playing:!video.paused&&!video.ended&&Number(video.currentTime||0)>started,currentTime:Number(video.currentTime||0),title:document.title};
-  }});
-  return result||{playing:false,currentTime:0,title:''};
+    await new Promise(resolve=>setTimeout(resolve,1500));
+  }
+  return {playing:false,currentTime:0,title:'',audible:false,adShowing:false};
 }
 
 export async function executeTarget(value){
@@ -73,8 +84,8 @@ export async function executeTarget(value){
     if(current.pathname==='/results')selectedTitle=await firstYoutubeVideo(tab.id);
     const playback=await confirmPlayback(tab.id);
     tab=await chrome.tabs.get(tab.id);
-    if(playback.playing!==true||!Number.isFinite(playback.currentTime)||playback.currentTime<0.2)throw new Error('playback_not_confirmed');
-    return {connector:CONNECTOR,finalUrl:tab.url,title:String(selectedTitle||playback.title||tab.title||'YouTube').replace(/\s+-\s+YouTube$/i,'').slice(0,240),playing:true,currentTime:playback.currentTime};
+    if(playback.playing!==true||!Number.isFinite(playback.currentTime)||playback.currentTime<0.2||tab.mutedInfo?.muted||tab.audible!==true)throw new Error('playback_not_confirmed');
+    return {connector:CONNECTOR,finalUrl:tab.url,title:String(selectedTitle||playback.title||tab.title||'YouTube').replace(/\s+-\s+YouTube$/i,'').slice(0,240),playing:true,currentTime:playback.currentTime,audible:true,adShowing:false};
   }
   tab=await chrome.tabs.get(tab.id);
   return {connector:CONNECTOR,finalUrl:tab.url,title:String(tab.title||new URL(tab.url).hostname).slice(0,240),opened:true};

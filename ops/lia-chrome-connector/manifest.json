@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lia Work — Chrome Conectado",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Permite que a Lia execute e confirme tarefas no Chrome deste computador a partir do painel VitrineCity.",
   "permissions": ["tabs", "scripting"],
   "host_permissions": ["https://*/*"],

@@ -29,10 +29,12 @@ test('plano local bloqueia IP e rede local',()=>{
 
 test('confirmação de reprodução exige vídeo avançando no YouTube',()=>{
   const plan=createLocalBrowserPlan('abra o youtube e toque musica eletrônica');
-  const valid=validateLocalBrowserResult(plan,{connector:'lia-chrome-connector-v1',finalUrl:'https://www.youtube.com/watch?v=abc123',title:'Música eletrônica',playing:true,currentTime:2.4});
+  const valid=validateLocalBrowserResult(plan,{connector:'lia-chrome-connector-v1',finalUrl:'https://www.youtube.com/watch?v=abc123',title:'Música eletrônica',playing:true,audible:true,adShowing:false,currentTime:2.4});
   assert.equal(valid.playing,true);
-  assert.throws(()=>validateLocalBrowserResult(plan,{connector:'lia-chrome-connector-v1',finalUrl:'https://www.youtube.com/watch?v=abc123',title:'Música eletrônica',playing:false,currentTime:0}));
-  assert.throws(()=>validateLocalBrowserResult(plan,{connector:'lia-chrome-connector-v1',finalUrl:'https://example.com/',title:'Página',playing:true,currentTime:2}));
+  assert.throws(()=>validateLocalBrowserResult(plan,{connector:'lia-chrome-connector-v1',finalUrl:'https://www.youtube.com/watch?v=abc123',title:'Música eletrônica',playing:false,audible:true,adShowing:false,currentTime:0}));
+  assert.throws(()=>validateLocalBrowserResult(plan,{connector:'lia-chrome-connector-v1',finalUrl:'https://www.youtube.com/watch?v=abc123',title:'Anúncio',playing:true,audible:true,adShowing:true,currentTime:2}));
+  assert.throws(()=>validateLocalBrowserResult(plan,{connector:'lia-chrome-connector-v1',finalUrl:'https://www.youtube.com/watch?v=abc123',title:'Sem som',playing:true,audible:false,adShowing:false,currentTime:2}));
+  assert.throws(()=>validateLocalBrowserResult(plan,{connector:'lia-chrome-connector-v1',finalUrl:'https://example.com/',title:'Página',playing:true,audible:true,adShowing:false,currentTime:2}));
 });
 
 test('conector limita origem, permissões e destinos',()=>{
@@ -76,7 +78,7 @@ test('servidor reserva, recebe prova local e conclui uma única vez sem chamar a
   const key='local-browser-test-0001';
   const started=await post('/local/start',{instruction:'acesa o youtub e colca jazz pra toca',idempotencyKey:key,autoDebit:true});
   assert.equal(started.status,201);assert.equal(started.body.target.playback,true);assert.equal(remoteCalls,0);
-  const completed=await post('/local/complete',{operationId:started.body.operationId,idempotencyKey:key,result:{connector:'lia-chrome-connector-v1',finalUrl:'https://www.youtube.com/watch?v=abc123',title:'Jazz instrumental',playing:true,currentTime:3.2}});
+  const completed=await post('/local/complete',{operationId:started.body.operationId,idempotencyKey:key,result:{connector:'lia-chrome-connector-v1',finalUrl:'https://www.youtube.com/watch?v=abc123',title:'Jazz instrumental',playing:true,audible:true,adShowing:false,currentTime:3.2}});
   assert.equal(completed.status,201);assert.equal(remoteCalls,0);assert.equal(settled.size,1);
   const row=db.prepare('SELECT status,error,result_json FROM lia_chat_operations WHERE id=?').get(started.body.operationId);
   assert.equal(row.status,'completed');assert.equal(row.error,'');assert.equal(JSON.parse(row.result_json).executor,'lia-chrome-connector-v1');
