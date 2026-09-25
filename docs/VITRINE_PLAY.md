@@ -97,7 +97,7 @@ node app/scripts/vitrine-play-worker.mjs
 VITRINE_PLAY_WORKER_ONCE=1 node app/scripts/vitrine-play-worker.mjs
 ```
 
-Etapas, em ordem: `script`, `scenes`, `voices`, `video`, `edit`, `clips`, `social`.
+Etapas, em ordem: `script`, `scenes`, `voices`, `video`, `lipsync`, `edit`, `clips`, `social`.
 O briefing inclui bíblia, elenco/vozes/referências fixas, idioma pt-BR, narração breve,
 trilha instrumental licenciada, 9:16, duração de 60–90s e destino na Vitrine City.
 
@@ -155,3 +155,15 @@ no navegador, entrega de arquivos, CSP, volume persistente, compatibilidade do N
 botões no menu principal, plano de rollback e backup SQLite consistente. Não executar
 `docker compose down` nem reiniciar a VPS inteira. A implantação deve preservar o
 container/serviço correto e os volumes atuais; nenhuma troca foi executada aqui.
+
+
+## Política de provedores da Vitrine Play
+
+Fluxo oficial deste projeto, sem OpenRouter:
+
+- **ElevenLabs**: geração de todas as falas dos personagens e da narração. A voz é persistente por personagem durante toda a série.
+- **Kling**: geração das referências, Elements persistentes e cenas de vídeo. Não gerar fala final no Kling quando houver faixa de voz do ElevenLabs.
+- **HeyGen**: somente sincronização labial das cenas em que um rosto fala e edição quando necessário. Não usar HeyGen como gerador principal das vozes.
+- **FFmpeg**: montagem final, concatenação, mixagem, normalização, legendas e validação do MP4.
+
+Credenciais nunca entram no repositório. IDs públicos de personagem/voz podem ser persistidos; chaves e tokens ficam somente no armazenamento privado da VPS.
