@@ -104,6 +104,12 @@ export function createPlayStore({db,siteUrl,mediaHosts=[],now=()=>Date.now()}) {
   function plan(id) {
     return db.transaction(()=>{
       const e=episode(id);if(!e)fail('Capítulo não encontrado.',404);if(!e.releaseAt)fail('Defina a data de lançamento.');
+      const s=series(e.seriesId);if(!s)fail('Série não encontrada.',404);
+      const visualCharacters=s.characters.filter(c=>c.id!=='narrador');
+      if(visualCharacters.some(c=>!c.elementId))fail('Cadastre o Element permanente de todos os personagens antes de produzir.',409);
+      if(s.characters.some(c=>!c.voiceId))fail('Cadastre uma voz ElevenLabs fixa para cada personagem e para o narrador antes de produzir.',409);
+      const voiceIds=s.characters.map(c=>c.voiceId);
+      if(new Set(voiceIds).size!==voiceIds.length)fail('Cada personagem deve ter uma voz fixa distinta para preservar a identidade sonora da série.',409);
       if(e.status==='published')fail('Este capítulo já foi publicado.',409);
       for(const stage of STAGES)db.prepare(`INSERT OR IGNORE INTO vp_jobs(id,episode_id,revision,stage,status,due_at,created_at) VALUES(?,?,?,?,'queued',?,?)`).run(randomUUID(),id,e.revision,stage,iso(),iso());
       if(e.status==='draft'){e.status='producing';putEpisode(e);}audit('pipeline_planned',id);return jobs(id);
