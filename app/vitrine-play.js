@@ -68,7 +68,7 @@ export function createPlayStore({db,siteUrl,mediaHosts=[],now=()=>Date.now()}) {
     if(characters.length>12)fail('Limite de 12 personagens.');
     const ids=new Set(); const cast=characters.map(c=>{
       const cid=text(c.id,40);if(!/^[a-z0-9_-]+$/.test(cid)||ids.has(cid))fail('Identificadores dos personagens devem ser únicos.');ids.add(cid);
-      return {id:cid,name:text(c.name,80),description:text(c.description,800),elementId:text(c.elementId,120),voiceId:text(c.voiceId,120),referenceUrl:url(c.referenceUrl),continuity:text(c.continuity,2400)};
+      return {id:cid,name:text(c.name,80),description:text(c.description,800),elementId:text(c.elementId,120),klingApiElementId:text(c.klingApiElementId,120),voiceId:text(c.voiceId,120),referenceUrl:url(c.referenceUrl),continuity:text(c.continuity,2400)};
     });
     const s={id:old?.id||randomUUID(),slug,title,synopsis:text(input.synopsis,2000),genre:text(input.genre,60)||'Drama',bible:text(input.bible,12000),characters:cast,
       plannedEpisodes:integer(input.plannedEpisodes??old?.plannedEpisodes??12,1,100,'Use de 1 a 100 capítulos.'),
@@ -106,7 +106,7 @@ export function createPlayStore({db,siteUrl,mediaHosts=[],now=()=>Date.now()}) {
       const e=episode(id);if(!e)fail('Capítulo não encontrado.',404);if(!e.releaseAt)fail('Defina a data de lançamento.');
       const s=series(e.seriesId);if(!s)fail('Série não encontrada.',404);
       const visualCharacters=s.characters.filter(c=>c.id!=='narrador');
-      if(visualCharacters.some(c=>!c.elementId))fail('Cadastre o Element permanente de todos os personagens antes de produzir.',409);
+      if(visualCharacters.some(c=>!c.klingApiElementId))fail('Confirme o Element de cada personagem na Kling Developer API antes de produzir.',409);
       if(s.characters.some(c=>!c.voiceId))fail('Cadastre uma voz ElevenLabs fixa para cada personagem e para o narrador antes de produzir.',409);
       const voiceIds=s.characters.map(c=>c.voiceId);
       if(new Set(voiceIds).size!==voiceIds.length)fail('Cada personagem deve ter uma voz fixa distinta para preservar a identidade sonora da série.',409);
