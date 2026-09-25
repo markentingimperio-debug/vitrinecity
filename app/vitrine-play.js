@@ -18,7 +18,7 @@ export function mediaUrl(value, siteUrl, extraHosts=[]) {
   const origin=new URL(siteUrl); let u; try { u=new URL(raw,origin); } catch { fail('Endereço de mídia inválido.'); }
   if(u.username||u.password||u.hash)fail('Endereço de mídia inválido.');
   if(u.origin===origin.origin) {
-    if(!/^\/(generated-videos|social-media)\/[A-Za-z0-9_./-]+$/.test(u.pathname)||raw.includes('..')||u.search)fail('Use uma mídia local gerada ou um CDN autorizado.');
+    if(!/^\/uploads\/(generated-videos|social-media)\/[A-Za-z0-9_./-]+$/.test(u.pathname)||raw.includes('..')||u.search)fail('Use uma mídia local gerada ou um CDN autorizado.');
     return u.pathname;
   }
   if(u.protocol!=='https:'||u.port||!extraHosts.includes(u.hostname.toLowerCase()))fail('Host de mídia não autorizado. Configure VITRINE_PLAY_MEDIA_HOSTS na VPS.');
