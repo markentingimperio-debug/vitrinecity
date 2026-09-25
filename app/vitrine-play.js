@@ -32,7 +32,7 @@ export function productionBrief(s,e,stage,siteUrl) {
     series:{title:s.title,synopsis:s.synopsis,bible:s.bible,characters:s.characters},
     episode:{number:e.number,title:e.title,summary:e.summary,targetSeconds:e.targetSeconds,script:e.script,scenes:e.scenes,outputs:e.outputs},
     rules:{language:'pt-BR',minSeconds:60,maxSeconds:90,aspectRatio:'9:16',originalStory:true,
-      fixedCharacterReferences:true,fixedVoices:true,briefNarrator:true,instrumentalMusic:true,
+      fixedCharacterReferences:true,fixedElementIds:true,fixedVoices:true,briefNarrator:true,instrumentalMusic:true,directProvidersOnly:true,
       licensedAssetsOnly:true,aiDisclosure:true,approvedCostsOnly:true,noAdSpend:true},
     destination:new URL('/series/'+s.slug+'/'+e.number,siteUrl).href};
 }
@@ -68,7 +68,7 @@ export function createPlayStore({db,siteUrl,mediaHosts=[],now=()=>Date.now()}) {
     if(characters.length>12)fail('Limite de 12 personagens.');
     const ids=new Set(); const cast=characters.map(c=>{
       const cid=text(c.id,40);if(!/^[a-z0-9_-]+$/.test(cid)||ids.has(cid))fail('Identificadores dos personagens devem ser únicos.');ids.add(cid);
-      return {id:cid,name:text(c.name,80),description:text(c.description,800),voiceId:text(c.voiceId,100),referenceUrl:url(c.referenceUrl)};
+      return {id:cid,name:text(c.name,80),description:text(c.description,800),elementId:text(c.elementId,120),voiceId:text(c.voiceId,120),referenceUrl:url(c.referenceUrl),continuity:text(c.continuity,2400)};
     });
     const s={id:old?.id||randomUUID(),slug,title,synopsis:text(input.synopsis,2000),genre:text(input.genre,60)||'Drama',bible:text(input.bible,12000),characters:cast,
       plannedEpisodes:integer(input.plannedEpisodes??old?.plannedEpisodes??12,1,100,'Use de 1 a 100 capítulos.'),
