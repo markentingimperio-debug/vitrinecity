@@ -48,7 +48,7 @@
   const localInput=v=>v?new Date(Date.parse(v)-3*3600000).toISOString().slice(0,16):'';
   const field=(label,name,value='',type='text',extra='')=>`<label>${esc(label)}<input name="${name}" type="${type}" value="${esc(value)}" ${extra}></label>`;
   const area=(label,name,value='',rows=4)=>`<label>${esc(label)}<textarea name="${name}" rows="${rows}">${esc(value)}</textarea></label>`;
-  const stageLabel={script:'Roteiro',scenes:'Cenas',voices:'Vozes',video:'Vídeo',edit:'Edição',clips:'Clipes',social:'Redes'};
+  const stageLabel={script:'Roteiro',scenes:'Cenas',voices:'Vozes ElevenLabs',video:'Vídeo Kling',lipsync:'Lip-sync HeyGen',edit:'Edição HeyGen/FFmpeg',clips:'Clipes',social:'Redes'};
   const statusLabel={draft:'Rascunho',producing:'Em produção',review:'Aguardando revisão',approved:'Aprovado/agendado',published:'Publicado',queued:'Na fila',leased:'Executando',completed:'Concluído',uncertain:'Reconciliar',blocked:'Bloqueado',cancelled:'Cancelado'};
   function modal(title,html,onSave) {
     const d=document.createElement('dialog');d.innerHTML=`<form><h2>${esc(title)}</h2>${html}<p class="form-error" role="alert"></p><div class="actions"><button type="submit" class="button">Salvar</button><button type="button" class="secondary" data-close>Cancelar</button></div></form>`;
