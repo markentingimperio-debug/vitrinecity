@@ -62,8 +62,8 @@ VITRINE_PLAY_RECEIPTS_DIR=/data/vitrine-play-receipts
 # VITRINE_PLAY_SCHEDULER=off
 ```
 
-Sem MEDIA_HOSTS só são aceitos caminhos locais `/generated-videos/...` e
-`/social-media/...`. URLs HTTPS de hosts explicitamente autorizados podem ser usadas;
+Sem MEDIA_HOSTS só são aceitos caminhos locais `/uploads/generated-videos/...` e
+`/uploads/social-media/...`. URLs HTTPS de hosts explicitamente autorizados podem ser usadas;
 portas alternativas, credenciais em URLs, scripts e travessia de caminho são rejeitados.
 O módulo não faz requisições a URLs de mídia. A capacidade e o custo do armazenamento,
 CDN, banda e permissões do servidor precisam ser validados na implantação.
