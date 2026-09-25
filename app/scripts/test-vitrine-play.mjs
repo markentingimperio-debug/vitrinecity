@@ -13,13 +13,13 @@ function fixture(){
   const e=store.saveEpisode(input);
   return {db,store,s,e,input,now:()=>clock,setNow:t=>clock=Date.parse(t)};
 }
-const ready=(f,extra={})=>f.store.saveEpisode({...f.e,revision:f.e.revision,budgetBrl:20,mediaUrl:'/generated-videos/master.mp4',duration:80,...extra},f.e.id);
+const ready=(f,extra={})=>f.store.saveEpisode({...f.e,revision:f.e.revision,budgetBrl:20,mediaUrl:'/uploads/generated-videos/master.mp4',duration:80,...extra},f.e.id);
 const approve=(f,e)=>f.store.approve(e.id,{revision:e.revision,reviewed:true,rightsConfirmed:true});
 
 test('media URLs: allowlisted hosts/local generated media only',()=>{
-  assert.equal(mediaUrl('/generated-videos/a.mp4','https://vitrinecity.com'),'/generated-videos/a.mp4');
+  assert.equal(mediaUrl('/uploads/generated-videos/a.mp4','https://vitrinecity.com'),'/uploads/generated-videos/a.mp4');
   assert.equal(mediaUrl('https://media.example.com/a.mp4','https://vitrinecity.com',['media.example.com']),'https://media.example.com/a.mp4');
-  for(const bad of ['javascript:alert(1)','data:text/html,hi','file:///etc/passwd','https://evil.example/a.mp4','/admin.html','//evil.example/a','/generated-videos/../admin.html','/generated-videos/%2e%2e/admin.html','https://user:pass@media.example.com/a.mp4','https://media.example.com:444/a.mp4','https://[:::]/a'])assert.throws(()=>mediaUrl(bad,'https://vitrinecity.com',['media.example.com']));
+  for(const bad of ['javascript:alert(1)','data:text/html,hi','file:///etc/passwd','https://evil.example/a.mp4','/admin.html','//evil.example/a','/uploads/generated-videos/../admin.html','/uploads/generated-videos/%2e%2e/admin.html','https://user:pass@media.example.com/a.mp4','https://media.example.com:444/a.mp4','https://[:::]/a'])assert.throws(()=>mediaUrl(bad,'https://vitrinecity.com',['media.example.com']));
 });
 test('drafts, scripts, voice IDs and production metadata are not public',()=>{
   const f=fixture();assert.deepEqual(f.store.catalog()[0].episodes,[]);
@@ -70,8 +70,8 @@ test('only reviewed, licensed, due chapters in visible series publish',()=>{
   assert.equal(f.store.catalog()[0].episodes.length,1);assert.ok(!JSON.stringify(f.store.catalog()).includes('budgetCents'));
 });
 test('hidden series does not publish; compilation waits for entire season',()=>{
-  const f=fixture(),e=ready(f);approve(f,e);f.store.saveSeries({...f.s,status:'draft',compilationUrl:'/generated-videos/season.mp4'},f.s.id);f.setNow('2026-09-26T00:00:00Z');assert.equal(f.store.release(),0);
-  f.store.saveSeries({...f.s,compilationUrl:'/generated-videos/season.mp4'},f.s.id);assert.equal(f.store.release(),1);assert.equal(f.store.catalog()[0].compilationUrl,'');
+  const f=fixture(),e=ready(f);approve(f,e);f.store.saveSeries({...f.s,status:'draft',compilationUrl:'/uploads/generated-videos/season.mp4'},f.s.id);f.setNow('2026-09-26T00:00:00Z');assert.equal(f.store.release(),0);
+  f.store.saveSeries({...f.s,compilationUrl:'/uploads/generated-videos/season.mp4'},f.s.id);assert.equal(f.store.release(),1);assert.equal(f.store.catalog()[0].compilationUrl,'');
 });
 test('editing published media invalidates approval and preserves stable links',()=>{
   const f=fixture(),e=ready(f);approve(f,e);f.setNow('2026-09-26T00:00:00Z');f.store.release();
@@ -81,12 +81,12 @@ test('editing published media invalidates approval and preserves stable links',(
   assert.throws(()=>f.store.saveSeries({...f.s,slug:'outro'},f.s.id),/identificador/);
 });
 test('manual master satisfies production steps but social requires clip approval',()=>{
-  const f=fixture(),e=ready(f,{clipUrl:'/generated-videos/clip.mp4'});f.store.plan(e.id);approve(f,e);
+  const f=fixture(),e=ready(f,{clipUrl:'/uploads/generated-videos/clip.mp4'});f.store.plan(e.id);approve(f,e);
   assert.equal(f.store.claim('video',0),null);const clip=f.store.claim('clips',0);assert.ok(clip);
-  f.store.complete(clip.id,{leaseToken:clip.leaseToken,actualCostBrl:0,result:{clipUrl:'/generated-videos/new-clip.mp4'}});
+  f.store.complete(clip.id,{leaseToken:clip.leaseToken,actualCostBrl:0,result:{clipUrl:'/uploads/generated-videos/new-clip.mp4'}});
   f.setNow('2026-09-26T00:00:00Z');f.store.release();assert.equal(f.store.claim('social',0),null);
   assert.throws(()=>f.store.approveSocial(e.id,{revision:e.revision,reviewed:true,clipUrl:e.clipUrl}),/mudou/);
-  f.store.approveSocial(e.id,{revision:e.revision,reviewed:true,clipUrl:'/generated-videos/new-clip.mp4'});assert.ok(f.store.claim('social',0));
+  f.store.approveSocial(e.id,{revision:e.revision,reviewed:true,clipUrl:'/uploads/generated-videos/new-clip.mp4'});assert.ok(f.store.claim('social',0));
 });
 test('campaign packet has attribution links but cannot spend money',()=>{
   const f=fixture(),draft=buildAdDraft(f.s,f.e,'https://vitrinecity.com');assert.equal(draft.enabled,false);assert.equal(draft.budgetCents,0);
