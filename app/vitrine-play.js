@@ -1,7 +1,7 @@
 import {randomUUID, createHash, timingSafeEqual} from 'node:crypto';
 
-export const STAGES = ['script', 'scenes', 'voices', 'video', 'edit', 'clips', 'social'];
-const LABELS = {script:'Roteiro', scenes:'Cenas', voices:'Vozes', video:'Vídeo', edit:'Edição', clips:'Clipes', social:'Redes sociais'};
+export const STAGES = ['script', 'scenes', 'voices', 'video', 'lipsync', 'edit', 'clips', 'social'];
+const LABELS = {script:'Roteiro', scenes:'Cenas', voices:'Vozes ElevenLabs', video:'Vídeo Kling', lipsync:'Sincronização labial HeyGen', edit:'Edição', clips:'Clipes', social:'Redes sociais'};
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const json = value => JSON.stringify(value).replace(/</g, '\\u003c');
 const fail = (message, status=400) => { throw Object.assign(new Error(message), {status}); };
@@ -32,7 +32,7 @@ export function productionBrief(s,e,stage,siteUrl) {
     series:{title:s.title,synopsis:s.synopsis,bible:s.bible,characters:s.characters},
     episode:{number:e.number,title:e.title,summary:e.summary,targetSeconds:e.targetSeconds,script:e.script,scenes:e.scenes,outputs:e.outputs},
     rules:{language:'pt-BR',minSeconds:60,maxSeconds:90,aspectRatio:'9:16',originalStory:true,
-      fixedCharacterReferences:true,fixedElementIds:true,fixedVoices:true,briefNarrator:true,instrumentalMusic:true,directProvidersOnly:true,
+      fixedCharacterReferences:true,fixedElementIds:true,fixedVoices:true,briefNarrator:true,instrumentalMusic:true,directProvidersOnly:true,providers:{speech:'elevenlabs',video:'kling',lipsync:'heygen',edit:'heygen_ffmpeg'},
       licensedAssetsOnly:true,aiDisclosure:true,approvedCostsOnly:true,noAdSpend:true},
     destination:new URL('/series/'+s.slug+'/'+e.number,siteUrl).href};
 }
@@ -119,7 +119,7 @@ export function createPlayStore({db,siteUrl,mediaHosts=[],now=()=>Date.now()}) {
       e.rightsConfirmed=true;e.approvedRevision=e.revision;e.socialApproved=false;
       e.status='approved';putEpisode(e);
       // A manually delivered master supersedes unstarted production tasks only.
-      db.prepare("UPDATE vp_jobs SET status='completed',result_json=? WHERE episode_id=? AND revision=? AND stage IN ('script','scenes','voices','video','edit') AND status IN ('queued','blocked')").run(JSON.stringify({manualMaster:true}),id,e.revision);
+      db.prepare("UPDATE vp_jobs SET status='completed',result_json=? WHERE episode_id=? AND revision=? AND stage IN ('script','scenes','voices','video','lipsync','edit') AND status IN ('queued','blocked')").run(JSON.stringify({manualMaster:true}),id,e.revision);
       audit('episode_approved',id);return e;
     })();
   }
@@ -187,7 +187,7 @@ export function createPlayStore({db,siteUrl,mediaHosts=[],now=()=>Date.now()}) {
         result.scenes=r.scenes.map((s,i)=>({number:i+1,description:text(s.description,1200),seconds:integer(s.seconds,1,90,'Duração de cena inválida.'),dialogue:text(s.dialogue,1000)}));
         const total=result.scenes.reduce((n,s)=>n+s.seconds,0);if(total<60||total>90)fail('As cenas devem somar 60 a 90 segundos.');e.scenes=result.scenes;
       }
-      if(['voices','video'].includes(j.stage)){
+      if(['voices','video','lipsync'].includes(j.stage)){
         if(!Array.isArray(r.assets)||!r.assets.length||r.assets.length>60)fail('Informe os arquivos realmente gerados.');
         result.assets=r.assets.map(a=>({url:url(a.url),label:text(a.label,100)}));if(result.assets.some(a=>!a.url))fail('Arquivo ausente.');
       }
