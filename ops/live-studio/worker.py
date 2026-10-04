@@ -41,6 +41,31 @@ class OBS:
                     raise RuntimeError('OBS request failed: '+kind)
                 return reply['d'].get('responseData', {})
 
+def canvas_for_media(item):
+    width = int(item.get('width') or 0)
+    height = int(item.get('height') or 0)
+    if width <= 0 or height <= 0:
+        raise ValueError('Dimensões do vídeo ausentes.')
+    if width * 9 == height * 16:
+        return 1280, 720
+    if width * 16 == height * 9:
+        return 720, 1280
+    raise ValueError('Vídeo deve usar proporção 16:9 ou 9:16.')
+
+
+def fit_transform(width, height, canvas_width, canvas_height):
+    scale = min(canvas_width / width, canvas_height / height)
+    rendered_width = width * scale
+    rendered_height = height * scale
+    return {
+        'positionX': (canvas_width - rendered_width) / 2.0,
+        'positionY': (canvas_height - rendered_height) / 2.0,
+        'scaleX': scale,
+        'scaleY': scale,
+        'alignment': 5,
+    }
+
+
 def prepare(obs, config):
     filename = config.get('media','')
     if not re.fullmatch(r'[a-zA-Z0-9_-]+\.mp4',filename):
@@ -51,22 +76,37 @@ def prepare(obs, config):
     media = ROOT / 'media' / filename
     if not media.is_file() or media.is_symlink():
         raise ValueError('Arquivo de vídeo ausente.')
+    width = int(item.get('width') or 0)
+    height = int(item.get('height') or 0)
+    canvas_width, canvas_height = canvas_for_media(item)
+    obs.call('SetVideoSettings',
+             fpsNumerator=30, fpsDenominator=1,
+             baseWidth=canvas_width, baseHeight=canvas_height,
+             outputWidth=canvas_width, outputHeight=canvas_height)
     scenes = obs.call('GetSceneList')['scenes']
     if not any(s['sceneName']==SCENE for s in scenes):
         obs.call('CreateScene',sceneName=SCENE)
     settings={'is_local_file':True,'local_file':str(media),'looping':True,'restart_on_activate':True,'close_when_inactive':False}
     inputs = obs.call('GetInputList')['inputs']
     if not any(i['inputName']==SOURCE for i in inputs):
-        obs.call('CreateInput',sceneName=SCENE,inputName=SOURCE,inputKind='ffmpeg_source',inputSettings=settings,sceneItemEnabled=True)
+        created = obs.call('CreateInput',sceneName=SCENE,inputName=SOURCE,inputKind='ffmpeg_source',inputSettings=settings,sceneItemEnabled=True)
+        source_item_id = created['sceneItemId']
     else:
         obs.call('SetInputSettings',inputName=SOURCE,inputSettings=settings,overlay=True)
+        source_item_id = obs.call('GetSceneItemId',sceneName=SCENE,sourceName=SOURCE)['sceneItemId']
+    obs.call('SetSceneItemTransform',sceneName=SCENE,sceneItemId=source_item_id,
+             sceneItemTransform=fit_transform(width,height,canvas_width,canvas_height))
     # Persistent, transparent label on every streamed or recorded frame.
     label='Apresentação gravada em repetição\nvitrinecity.com'
     name='Aviso de apresentacao gravada'
     text_settings={'text':label,'font':{'face':'DejaVu Sans','size':23,'flags':0},'color1':0xFFFFFFFF,'color2':0xFFFFFFFF,'outline':True}
     if not any(i['inputName']==name for i in inputs):
         result=obs.call('CreateInput',sceneName=SCENE,inputName=name,inputKind='text_ft2_source_v2',inputSettings=text_settings,sceneItemEnabled=True)
-        obs.call('SetSceneItemTransform',sceneName=SCENE,sceneItemId=result['sceneItemId'],sceneItemTransform={'positionX':22.0,'positionY':1155.0})
+        label_item_id=result['sceneItemId']
+    else:
+        label_item_id=obs.call('GetSceneItemId',sceneName=SCENE,sourceName=name)['sceneItemId']
+    obs.call('SetSceneItemTransform',sceneName=SCENE,sceneItemId=label_item_id,
+             sceneItemTransform={'positionX':22.0,'positionY':float(max(22,canvas_height-125)),'alignment':5})
     obs.call('SetCurrentProgramScene',sceneName=SCENE)
     obs.call('TriggerMediaInputAction',inputName=SOURCE,mediaAction='OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART')
     return float(item['duration']) * config['repetitions']
