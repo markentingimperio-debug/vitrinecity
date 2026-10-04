@@ -8,10 +8,14 @@ for media in sorted((root/'media').glob('*.mp4')):
     probe=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_format','-show_streams','-of','json',str(media)]))
     duration=float(probe['format']['duration'])
     video=next(s for s in probe['streams'] if s['codec_type']=='video')
+    width=int(video['width']); height=int(video['height'])
+    portrait=width*16 == height*9
+    landscape=width*9 == height*16
     # AAC encoder padding may add a few milliseconds to an exact ten-minute video.
-    if not 0<duration<=601 or video['width']*16 != video['height']*9:
-        raise ValueError('Somente vídeos 9:16 com até 10 minutos: '+media.name)
-    items.append({'file':media.name,'label':media.stem.replace('-',' '),'duration':duration})
+    if not 0<duration<=601 or not (portrait or landscape):
+        raise ValueError('Somente vídeos 9:16 ou 16:9 com até 10 minutos: '+media.name)
+    items.append({'file':media.name,'label':media.stem.replace('-',' '),'duration':duration,
+                  'width':width,'height':height,'layout':'portrait' if portrait else 'landscape'})
 temp=root/'media.json.import.tmp'
 temp.write_text(json.dumps(items));temp.chmod(0o600);temp.replace(root/'media.json')
 if items and not (root/'config.json').exists():
