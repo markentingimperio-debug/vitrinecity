@@ -92,6 +92,20 @@ test('courses use the ready public injection and current database metadata; no p
   catalog[0].available=false;assert.equal(sources.get('course:curso-publico'),null);catalog[0].available=true;
   f.db.prepare("UPDATE managed_courses SET status='draft'").run();assert.equal(sources.get('course:curso-publico'),null);assert.deepEqual(sources.list(),[]);
 });
+test('the medicinal herb e-book campaign links to its purchase page only while the paid course is ready',t=>{
+  const f=fixture(t);f.course({slug:'50-ervas-medicinais',title:'50 Ervas Medicinais — E-book',price_cents:1599,material_url:'PRIVATE_PAID_EBOOK'});
+  let ready=true;
+  const sources=createWebStorySources({db:f.db,courses:()=>ready?[{slug:'50-ervas-medicinais',title:'E-book',available:true}]:[]});
+  const ebook=sources.get('course:50-ervas-medicinais');
+  assert.equal(ebook.sourcePath,'/ebook-50-ervas-medicinais');
+  assert.equal(ebook.sources[0].url,ebook.sourcePath);
+  assert.equal(ebook.facts.priceCents,1599);
+  assert.equal(ebook.commercial,true);
+  assert.ok(!JSON.stringify(ebook).includes('PRIVATE_PAID_EBOOK'));
+  ready=false;assert.equal(sources.get('course:50-ervas-medicinais'),null);
+  ready=true;f.db.prepare("UPDATE managed_courses SET status='draft' WHERE slug='50-ervas-medicinais'").run();
+  assert.equal(sources.get('course:50-ervas-medicinais'),null);
+});
 test('missing schemas are handled gracefully and public providers still work without a courses table',t=>{
   const db=new Database(':memory:');t.after(()=>db.close());const sources=createWebStorySources({db,courses:()=>[{slug:'publico',title:'Curso público',description:'Descrição pública',available:true,modules:3,priceCents:0}]});
   assert.equal(sources.get('missing'),null);assert.equal(sources.get('product:1'),null);assert.equal(sources.get('affiliate:missing'),null);assert.equal(sources.list().length,1);assert.equal(sources.get('course:publico').facts.priceCents,0);

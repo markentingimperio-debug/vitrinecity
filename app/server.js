@@ -1909,6 +1909,13 @@ for (const course of Object.values(COURSES)) {
     updated_at=CURRENT_TIMESTAMP WHERE slug=?`)
     .run(original?.description || '', original?.audience || '', original?.coverUrl || '', course.slug);
 }
+db.prepare(`INSERT OR IGNORE INTO managed_courses
+  (slug,title,description,audience,price_cents,modules,cover_url,video_url,material_url,status)
+  VALUES (?,?,?,?,?,?,?,?,?,'active')`).run(
+    '50-ervas-medicinais', '50 Ervas Medicinais — E-book',
+    'Conheça 50 plantas pelo nome botânico, parte utilizada, usos tradicionais e cuidados importantes. Guia educativo em PDF; não substitui atendimento médico ou farmacêutico.',
+    'Pessoas interessadas em conhecer plantas e em consultar cuidados de segurança.',
+    1599, 1, '/assets/ebooks/50-ervas-medicinais-vitrine-city.png', '', '');
 function managedCourse(slug) {
   const row = db.prepare('SELECT * FROM managed_courses WHERE slug=?').get(String(slug || ''));
   if (!row) return null;
@@ -1982,6 +1989,10 @@ function listCourseFiles(slug) {
 
 function courseReady(slug) {
   const course = managedCourse(slug);
+  if (slug === '50-ervas-medicinais') {
+    return course?.status === 'active' && course.priceCents === 1599 &&
+      listCourseFiles(slug).some(file => file.type === 'pdf');
+  }
   return course?.status === 'active' && (Boolean(originalCourse(slug)?.lessons?.length) || listCourseFiles(slug).length > 0 || Boolean(course.materialUrl || course.videoUrl));
 }
 
@@ -2846,7 +2857,8 @@ app.get('/sitemap.xml', (_req, res) => {
     ...categories.map(row => `/categoria/${marketplaceSlug(row.category, 'categoria')}`),
     ...cities.map(row => `/cidade/${marketplaceSlug(row.city, 'cidade')}`),
     ...articles.map(row => `/artigo/${row.slug}`),
-    ...books.map(row => `/livro/${row.slug}`)
+    ...books.map(row => `/livro/${row.slug}`),
+    ...(courseReady('50-ervas-medicinais') ? ['/ebook-50-ervas-medicinais'] : [])
   ];
   const urls = [...new Set([...fixedPaths, ...dynamicPaths])];
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
@@ -2887,14 +2899,18 @@ app.get('/feeds/meta-catalog.csv', (_req, res) => {
     image_link: metaCatalogUrl('/logo.png'), brand: 'VitrineCity',
     google_product_category: 'Serviços empresariais', item_group_id: 'vitrinecity-plataforma'
   });
-  for (const course of managedCourses(true)) rows.push({
-    id: `course-${course.slug}`, title: course.title,
-    description: course.description || `Curso online ${course.title} da VitrineCity`, availability: 'in stock',
-    condition: 'new', price: `${(Number(course.priceCents) / 100).toFixed(2)} BRL`,
-    link: metaCatalogUrl(`/centro-educacional.html#${encodeURIComponent(course.slug)}`),
-    image_link: metaCatalogUrl(course.coverUrl, '/logo.png'), brand: 'VitrineCity',
-    google_product_category: 'Educação e cursos', item_group_id: `course-${course.slug}`
-  });
+  for (const course of managedCourses(true)) {
+    if (course.slug === '50-ervas-medicinais' && (!courseReady(course.slug) || course.priceCents !== 1599)) continue;
+    rows.push({
+      id: `course-${course.slug}`, title: course.title,
+      description: course.description || `Curso online ${course.title} da VitrineCity`, availability: 'in stock',
+      condition: 'new', price: `${(Number(course.priceCents) / 100).toFixed(2)} BRL`,
+      link: metaCatalogUrl(course.slug === '50-ervas-medicinais'
+        ? '/ebook-50-ervas-medicinais' : `/centro-educacional.html#${encodeURIComponent(course.slug)}`),
+      image_link: metaCatalogUrl(course.coverUrl, '/logo.png'), brand: 'VitrineCity',
+      google_product_category: 'Educação e cursos', item_group_id: `course-${course.slug}`
+    });
+  }
   const columns = ['id','title','description','availability','condition','price','link','image_link','brand','google_product_category','item_group_id'];
   const csv = [columns.join(','), ...rows.map(row => columns.map(column => metaCatalogCsvCell(row[column])).join(','))].join('\n');
   return res.type('text/csv').set('Content-Disposition', 'inline; filename="vitrinecity-meta-catalog.csv"')
@@ -6832,9 +6848,11 @@ app.post('/api/credits/checkout', requireUser, sameOriginOnly, async (req, res) 
 });
 
 app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
-  const course = managedCourse(String(req.params.slug || ''));
-  if (!course || course.status !== 'active') return res.status(404).json({ error: 'Curso não encontrado.' });
-  if (!courseReady(course.slug)) return res.status(409).json({ error: 'Este curso está em preparação. A compra será liberada quando as aulas estiverem na área privada.' });
+  const slug = String(req.params.slug || '');
+  const isHerbEbook = slug === '50-ervas-medicinais';
+  const course = managedCourse(slug);
+  if (!course || course.status !== 'active') return res.status(404).json({ error: isHerbEbook ? 'E-book indisponível.' : 'Curso não encontrado.' });
+  if (!courseReady(course.slug)) return res.status(409).json({ error: isHerbEbook ? 'O e-book ainda não está disponível para compra.' : 'Este curso está em preparação. A compra será liberada quando as aulas estiverem na área privada.' });
   if (!req.body?.termsAccepted) return res.status(400).json({ error: 'Aceite os termos da compra para continuar.' });
   recordConsent(req,{userId:req.user.id,email:req.user.email,purpose:'course_purchase_terms',version:'course-purchase-2026-08-22',source:'course_checkout',evidence:{course:course.slug}});
   if (!process.env.MERCADOPAGO_ACCESS_TOKEN || !process.env.MERCADOPAGO_WEBHOOK_SECRET) {
@@ -6856,14 +6874,14 @@ app.post('/api/courses/:slug/checkout', requireUser, async (req, res) => {
       method: 'POST', headers: { ...mpHeaders(), 'X-Idempotency-Key': reference },
       body: JSON.stringify({
         items: [{ id: `vitrinecity-${course.slug}`, title: course.title,
-          description: 'Curso digital com acesso individual na área do aluno', category_id: 'services',
+          description: isHerbEbook ? 'E-book digital em PDF com acesso individual após pagamento' : 'Curso digital com acesso individual na área do aluno', category_id: 'services',
           quantity: 1, currency_id: 'BRL', unit_price: course.priceCents / 100 }],
         payer: { name: req.user.name, email: req.user.email }, external_reference: reference,
         notification_url: `${SITE_URL}/api/payments/mercadopago/webhook?order=${encodeURIComponent(reference)}&route_sig=${encodeURIComponent(marketplaceWebhookRouteSignature(reference))}`,
         back_urls: {
           success: `${SITE_URL}/meus-cursos.html?resultado=sucesso&ref=${encodeURIComponent(reference)}`,
           pending: `${SITE_URL}/meus-cursos.html?resultado=pendente&ref=${encodeURIComponent(reference)}`,
-          failure: `${SITE_URL}/centro-educacional.html?resultado=falha`
+          failure: isHerbEbook ? `${SITE_URL}/ebook-50-ervas-medicinais?resultado=falha` : `${SITE_URL}/centro-educacional.html?resultado=falha`
         },
         auto_return: 'approved', statement_descriptor: 'VITRINECITY',
         metadata: { product: 'course', course_slug: course.slug, affiliate_code: affiliate?.code || '' }

@@ -82,7 +82,7 @@ export function createWebStorySources({db,services=()=>[],courses=()=>[],publicD
     return rowsFrom(courses).filter(row=>publicInjected(row)&&slugValid(row.slug)&&(key===undefined||row.slug===key)&&(!current||current.has(row.slug))).flatMap(item=>{
       const row=current?.get(item.slug),value=(column,fallback)=>row&&cols.has(column)?row[column]:fallback,title=value('title',item.title);
       if(!named(title))return [];
-      const description=plain(value('description',item.description)),audience=plain(value('audience',item.audience)),priceCents=finiteNumber(value('price_cents',item.priceCents)),modules=finiteNumber(value('modules',item.modules)),sourcePath='/centro-educacional#'+encodeURIComponent(item.slug),key='course:'+item.slug;
+      const description=plain(value('description',item.description)),audience=plain(value('audience',item.audience)),priceCents=finiteNumber(value('price_cents',item.priceCents)),modules=finiteNumber(value('modules',item.modules)),sourcePath=item.slug==='50-ervas-medicinais'?'/ebook-50-ervas-medicinais':'/centro-educacional#'+encodeURIComponent(item.slug),key='course:'+item.slug;
       return [{id:key,key,kind:'course',group:'services',slug:item.slug,title,summary:description,body:basicBody(description,audience?'Público indicado: '+audience:'',modules===undefined?'':'Módulos: '+modules,priceText(priceCents)),image_url:plain(value('cover_url',item.coverUrl??item.imageUrl)),portal:'cursos',updated_at:plain(value('updated_at',item.updated_at??item.updatedAt)),sourcePath,sources:citations(title,sourcePath),facts:compact({audience,modules,priceCents}),commercial:true}];
     });
   }

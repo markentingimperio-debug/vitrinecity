@@ -34,4 +34,26 @@ if(deliveryParams.get('delivery')==='local'){
   fetch('/api/marketplace/products?delivery=local&q='+encodeURIComponent(search.value.trim())).then(response=>response.json()).then(payload=>{products=payload.products||[];render()});
   const localDigitalRender=render;render=()=>{localDigitalRender();for(const product of products.filter(item=>item.product_type==='digital')){const card=productsBox.querySelector(`[data-add="${product.id}"]`)?.closest('.card')||productsBox.querySelector(`a[href*="/produto/${product.id}/"]`)?.closest('.card');if(card&&!card.querySelector('.digital-delivery-badge'))card.querySelector('.copy').insertAdjacentHTML('afterbegin','<span class="digital-delivery-badge" style="display:inline-flex;padding:4px 8px;border-radius:999px;background:#e8f1ff;color:#075bc7;font-size:11px;font-weight:900">Entrega digital</span>')}};
 }
+</script>
+<style>
+.ebook-feature{margin-bottom:30px}.ebook-feature[hidden]{display:none}.ebook-feature h2{font-size:24px;margin:0 0 16px}.ebook-feature .ebook-card{max-width:280px}.ebook-feature .ebook-card img{aspect-ratio:1054/1492;object-fit:contain}.ebook-feature .ebook-label{display:block;color:#ffd76c;font-weight:900;margin-bottom:8px}.ebook-feature .ebook-action{display:block;text-align:center;margin-top:14px}
+</style>
+<script>
+const ebookFeature=document.createElement('section');
+ebookFeature.className='ebook-feature';
+ebookFeature.hidden=true;
+ebookFeature.setAttribute('aria-label','Livro digital da VitrineCity');
+ebookFeature.innerHTML='<h2>Livro digital</h2><div class="grid"><article class="card ebook-card"><a href="/ebook-50-ervas-medicinais"><img src="/assets/ebooks/50-ervas-medicinais-vitrine-city.png" alt="Capa do e-book 50 Ervas Medicinais"></a><div class="copy"><small class="ebook-label">VitrineCity · Entrega digital</small><h3>50 Ervas Medicinais</h3><p>Guia digital para leitura após a compra.</p><div class="price">R$ 15,99</div><a class="button ebook-action" href="/ebook-50-ervas-medicinais">Ver e-book</a></div></article></div>';
+productsBox.before(ebookFeature);
+async function loadEbookFeature(){
+  ebookFeature.hidden=true;
+  try{
+    const response=await fetch('/api/courses',{credentials:'same-origin'});
+    if(!response.ok)return;
+    const payload=await response.json();
+    const ebook=Array.isArray(payload.courses)&&payload.courses.find(course=>course.slug==='50-ervas-medicinais'&&course.available===true&&course.priceCents===1599&&(course.status===undefined||course.status==='active'));
+    ebookFeature.hidden=!ebook;
+  }catch{}
+}
+loadEbookFeature();
 </script></body></html>
