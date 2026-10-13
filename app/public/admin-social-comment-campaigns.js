@@ -48,11 +48,16 @@ export function socialImageUrl(value,origin) {
   return safeResultImageUrl(value,origin);
 }
 
+function metaPostUrl(value) {
+  try{const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password&&
+    ['facebook.com','www.facebook.com','m.facebook.com','instagram.com','www.instagram.com'].includes(url.hostname)?url.href:'';}catch{return '';}
+}
+
 export function mountSocialCampaigns(root,{document=root?.ownerDocument,window=document?.defaultView,fetcher=(...args)=>fetch(...args),randomUUID=()=>crypto.randomUUID(),setTimer=setTimeout,clearTimer=clearTimeout}={}) {
   if(!root||!document||!window)return {destroy(){}};
-  const ids=['Form','Notice','Reload','Search','SearchCatalog','Source','SourceCount','SourceCard','Account','Surface','CheckConnection','ConnectionState','ConnectionTitle','ConnectionMissing','ConnectionChecks','PostId','GroupId','GroupField','TriggerMode','TriggerHint','KeywordField','Keyword','PublicReplyEnabled','ReactEnabled','ReactionHint','Caption','Suggest','Invite','Prepare','Preview','PreviewTitle','Summary','Readiness','Missing','Cover','PublicCaption','PrivateReply','PublicReplyCard','PublicReply','ReactionPreview','Copy','Counts','PublicCounts','ReactionCounts','PreviewNote','Activate','Pause','Refresh','History'];
+  const ids=['Form','Notice','Reload','Search','SearchCatalog','Source','SourceCount','SourceCard','Account','Surface','CheckConnection','ConnectionState','ConnectionTitle','ConnectionMissing','ConnectionChecks','Discover','DiscoverMore','DiscoveryNotice','Candidates','PostId','GroupId','GroupField','TriggerMode','TriggerHint','KeywordField','Keyword','PublicReplyEnabled','ReactEnabled','ReactionHint','Caption','Suggest','Invite','Prepare','Preview','PreviewTitle','Summary','Readiness','Missing','Cover','PublicCaption','PrivateReply','PublicReplyCard','PublicReply','ReactionPreview','Copy','Counts','PublicCounts','ReactionCounts','PreviewNote','Activate','Pause','Refresh','History'];
   const ui=Object.fromEntries(ids.map(id=>[id,root.querySelector('#sc'+id)])),origin=window.location.origin,keyFor=socialRequestKey(randomUUID),listeners=[],requests=new Set();
-  let items=[],accounts=[],catalogQuery='',campaign=null,ready=false,busy=false,stale=false,destroyed=false,timer=null,readController=null,readVersion=0;
+  let items=[],accounts=[],catalogQuery='',campaign=null,ready=false,busy=false,stale=false,destroyed=false,timer=null,readController=null,readVersion=0,discoveryCursor='',discoveryKey='',candidateActions=[],discoverySeen=new Set(),seenCursors=new Set();
   const node=(tag,klass='',content)=>{const element=document.createElement(tag);if(klass)element.className=klass;if(content!==undefined)element.textContent=content;return element;};
   const listen=(target,event,fn)=>{target.addEventListener(event,fn);listeners.push(()=>target.removeEventListener(event,fn));};
   const notice=(value,error=false)=>{ui.Notice.textContent=value;ui.Notice.dataset.error=String(error);};
@@ -60,11 +65,14 @@ export function mountSocialCampaigns(root,{document=root?.ownerDocument,window=d
   const stopRead=()=>{readVersion++;readController?.abort();readController=null;stopPoll();};
   const selectedSource=()=>items.find(item=>item.key===ui.Source.value);
   function controls(){
-    for(const element of ui.Form.querySelectorAll('input,textarea,select,button'))element.disabled=busy||!ready;
+    for(const element of ui.Form.querySelectorAll('input,textarea,select,button'))if(!ui.Candidates.contains?.(element))element.disabled=busy||!ready;
     ui.Reload.disabled=busy;ui.Prepare.disabled=busy||!ready||!items.length||!accounts.length;ui.Suggest.disabled=busy||!selectedSource();ui.Refresh.disabled=busy||!campaign;
     ui.Activate.disabled=busy||!campaign||campaign.status==='active'||stale||campaign.readiness?.ready!==true||!campaign.postId;
     ui.Pause.disabled=busy||campaign?.status!=='active';ui.Copy.disabled=busy||!campaign;ui.GroupField.hidden=ui.Surface.value!=='facebook_group';
     ui.CheckConnection.disabled=busy||!ready||!ui.Account.value;
+    ui.Discover.disabled=busy||!ready||!ui.Account.value||ui.Surface.value==='facebook_group';
+    ui.DiscoverMore.disabled=busy||!ready||!discoveryCursor;
+    for(const action of candidateActions){action.checkbox.disabled=busy||!action.available;action.button.disabled=busy||!action.available||!action.checkbox.checked;}
     const anyComment=ui.TriggerMode.value==='any_comment',instagram=ui.Surface.value==='instagram';
     ui.KeywordField.hidden=anyComment;ui.Keyword.disabled=busy||!ready||anyComment;
     ui.TriggerHint.textContent=anyComment?'Vale somente para novos comentários nesta publicação, após a ativação. Comentários repetidos, da própria conta ou não elegíveis não geram outro envio.':'O link será enviado somente quando a pessoa comentar a frase escolhida nesta publicação.';
@@ -161,6 +169,59 @@ export function mountSocialCampaigns(root,{document=root?.ownerDocument,window=d
     }catch(error){if(!destroyed&&error.name!=='AbortError')notice(error.message,true);}
     finally{busy=false;if(!destroyed){controls();schedulePoll();}}
   }
+  function resetDiscovery(){discoveryCursor='';discoveryKey='';candidateActions=[];discoverySeen=new Set();seenCursors=new Set();ui.Candidates.replaceChildren();ui.DiscoverMore.hidden=true;ui.DiscoveryNotice.textContent='';controls();}
+  async function chooseCandidate(post){
+    if(busy||destroyed)return;busy=true;controls();
+    try{
+      const sourceKey='course:50-ervas-medicinais';
+      if(!items.some(item=>item.key===sourceKey)){
+        const data=await request('/catalog?q='+encodeURIComponent('50 Ervas Medicinais'));
+        if(!Array.isArray(data.items))throw Error('Não foi possível consultar o e-book no catálogo.');
+        items=[...items,...data.items.filter(item=>item?.key===sourceKey&&!items.some(previous=>previous.key===sourceKey))];
+      }
+      if(!items.some(item=>item.key===sourceKey))throw Error('O e-book ainda precisa estar ativo, com a capa e o arquivo privado prontos.');
+      ui.Search.value='';populateSources();ui.Source.value=sourceKey;sourceCard();
+      ui.PostId.value=post.postId;ui.GroupId.value='';ui.TriggerMode.value='keyword';ui.Keyword.value='QUERO GUIA';
+      ui.Caption.value=post.caption;ui.Invite.value='none';ui.PublicReplyEnabled.checked=false;ui.ReactEnabled.checked=false;
+      changed();ui.PostId.focus();ui.Form.scrollIntoView?.({behavior:'smooth',block:'start'});
+      notice('Publicação escolhida. Confira o e-book, a legenda real e a prévia antes de reservar este post para a campanha.');
+    }catch(error){notice(error.message,true);}finally{busy=false;controls();}
+  }
+  function renderCandidate(post,ebookReady){
+    if(!/^\d{1,40}(?:_\d{1,40})?$/.test(String(post?.postId||''))||typeof post.caption!=='string')return null;
+    const card=node('article','sc-candidate'),title=node('h4','',post.plantHint?'Possível publicação sobre plantas':'Revise se esta publicação trata de plantas');
+    const meta=node('p','sc-candidate-meta',(post.createdAt?post.createdAt.slice(0,10)+' · ':'')+'ID '+post.postId);
+    card.append(title,meta,node('p','sc-candidate-caption',post.caption||'Sem legenda.'));
+    const link=metaPostUrl(post.permalink);if(link){const anchor=node('a','','Abrir publicação na Meta ↗');anchor.href=link;anchor.target='_blank';anchor.rel='noopener noreferrer';card.append(anchor);}
+    const issues=Array.isArray(post.issues)?post.issues.filter(value=>typeof value==='string').slice(0,8):[];
+    if(issues.length){const list=node('ul','sc-hint');for(const issue of issues)list.append(node('li','',issue));card.append(list);}
+    if(post.campaign?.status)card.append(node('p','sc-hint','Já existe campanha '+post.campaign.status+' para esta publicação. Revise-a no histórico antes de criar outra.'));
+    const review=node('label','sc-check'),checkbox=node('input');checkbox.type='checkbox';review.append(checkbox,node('span','','Revisei a publicação e confirmo que trata de plantas e oferece o e-book pago.'));
+    const button=node('button','btn secondary','Usar esta publicação');button.type='button';
+    const available=ebookReady&&post.readyForSetup===true&&!post.campaign;
+    candidateActions.push({checkbox,button,available});checkbox.disabled=!available;button.disabled=true;
+    checkbox.addEventListener('change',controls);
+    button.addEventListener('click',()=>{if(available&&checkbox.checked)chooseCandidate(post);});
+    card.append(review,button);return card;
+  }
+  async function discover(more=false){
+    if(busy||destroyed||!ready||!ui.Account.value||ui.Surface.value==='facebook_group')return;
+    const key=ui.Account.value+':'+ui.Surface.value;
+    if(!more||key!==discoveryKey){resetDiscovery();discoveryKey=key;more=false;}
+    if(more&&!discoveryCursor)return;
+    if(more)seenCursors.add(discoveryCursor);
+    busy=true;controls();ui.DiscoveryNotice.textContent='Consultando publicações pela conexão oficial da Meta…';
+    try{
+      const query='?accountId='+encodeURIComponent(ui.Account.value)+'&surface='+encodeURIComponent(ui.Surface.value)+(more?'&after='+encodeURIComponent(discoveryCursor):'');
+      const data=await request('/post-candidates'+query);
+      if(destroyed||key!==ui.Account.value+':'+ui.Surface.value)return;
+      if(!Array.isArray(data.posts)||typeof data.nextCursor!=='string')throw Error('A lista de publicações veio incompleta.');
+      for(const post of data.posts){if(discoverySeen.has(post?.postId))continue;const card=renderCandidate(post,data.ebookReady===true);if(card){discoverySeen.add(post.postId);ui.Candidates.append(card);}}
+      discoveryCursor=data.nextCursor&&!seenCursors.has(data.nextCursor)?data.nextCursor:'';ui.DiscoverMore.hidden=!discoveryCursor;
+      ui.DiscoveryNotice.textContent=(data.posts.length?data.posts.length+' publicações consultadas nesta página.':'Nenhuma publicação nesta página.')+(data.ebookReady?' Revise cada post antes de preparar sua campanha.':' O e-book precisa estar ativo e pronto antes de preparar campanhas.');
+    }catch(error){ui.DiscoveryNotice.textContent=error.message;}
+    finally{busy=false;controls();}
+  }
   async function changeStatus(action){
     if(busy||destroyed||!campaign||(action==='activate'&&(stale||campaign.status==='active'||campaign.readiness.ready!==true||!campaign.postId))||(action==='pause'&&campaign.status!=='active'))return;
     busy=true;stopRead();controls();notice(action==='activate'?'Ativando as respostas desta publicação…':'Pausando as respostas desta publicação…');
@@ -170,16 +231,17 @@ export function mountSocialCampaigns(root,{document=root?.ownerDocument,window=d
   }
   listen(ui.Form,'submit',prepare);listen(ui.Reload,'click',loadCatalog);listen(ui.SearchCatalog,'click',loadCatalog);listen(ui.Search,'input',populateSources);
   listen(ui.Source,'change',()=>{sourceCard();changed();});listen(ui.Suggest,'click',()=>{const source=selectedSource();if(source){ui.Caption.value=suggestedCaption(source,ui.Keyword.value,ui.TriggerMode.value);changed();notice('Sugestão aplicada. Revise o texto antes de preparar a prévia.');}});
-  for(const id of ['Account','Surface'])listen(ui[id],'change',()=>{if(ui.Surface.value==='instagram')ui.ReactEnabled.checked=false;ui.ConnectionState.hidden=true;changed();});
+  for(const id of ['Account','Surface'])listen(ui[id],'change',()=>{if(ui.Surface.value==='instagram')ui.ReactEnabled.checked=false;ui.ConnectionState.hidden=true;resetDiscovery();changed();});
   listen(ui.TriggerMode,'change',()=>{changed();notice('Regra alterada. Revise a descrição ou use uma nova sugestão antes de preparar a prévia.');});
   for(const id of ['PublicReplyEnabled','ReactEnabled'])listen(ui[id],'change',()=>{ui.ConnectionState.hidden=true;changed();});
   for(const id of ['Keyword','Invite'])listen(ui[id],'change',changed);for(const id of ['PostId','GroupId','Caption'])listen(ui[id],'input',changed);
   listen(ui.CheckConnection,'click',checkConnection);
+  listen(ui.Discover,'click',()=>discover(false));listen(ui.DiscoverMore,'click',()=>discover(true));
   listen(ui.Activate,'click',()=>changeStatus('activate'));listen(ui.Pause,'click',()=>changeStatus('pause'));listen(ui.Refresh,'click',()=>refreshCampaign());
   listen(ui.Copy,'click',async()=>{if(!campaign||busy)return;try{await window.navigator.clipboard.writeText(campaign.caption);notice('Descrição copiada. Anexe a foto de capa ao publicar na rede.');}catch{ui.PublicCaption.focus();ui.PublicCaption.select();notice('Selecione e copie a descrição no campo acima.');}});
   listen(document,'visibilitychange',()=>{if(document.hidden)stopRead();else if(campaign)refreshCampaign(true);});
   function destroy(){destroyed=true;stopRead();for(const controller of requests)controller.abort();requests.clear();listeners.forEach(remove=>remove());}
-  listen(window,'pagehide',destroy);controls();loadCatalog().then(()=>{if(destroyed)return;let id='';try{id=window.localStorage.getItem(STORAGE)||'';}catch{}if(idPattern.test(id)){stale=true;refreshCampaign(true,id);}});
+  listen(window,'pagehide',destroy);ui.DiscoverMore.hidden=true;controls();loadCatalog().then(()=>{if(destroyed)return;let id='';try{id=window.localStorage.getItem(STORAGE)||'';}catch{}if(idPattern.test(id)){stale=true;refreshCampaign(true,id);}});
   return {destroy};
 }
 

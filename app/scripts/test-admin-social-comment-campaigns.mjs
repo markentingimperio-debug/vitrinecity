@@ -27,9 +27,9 @@ function fixture(t,fetcher,{saved='',denyStorage=false}={}){
   }
   const document=new Element(),window=new Element(),root=new Element(),nodes={};document.hidden=false;document.createElement=tag=>new Element(tag);root.ownerDocument=document;document.defaultView=window;window.location={origin};
   let stored=saved,copied='';window.localStorage={getItem:()=>{if(denyStorage)throw Error('denied');return stored;},setItem:(_key,value)=>{if(denyStorage)throw Error('denied');stored=value;}};window.navigator={clipboard:{writeText:async value=>{copied=value;}}};
-  for(const id of ['Form','Notice','Reload','Search','SearchCatalog','Source','SourceCount','SourceCard','Account','Surface','CheckConnection','ConnectionState','ConnectionTitle','ConnectionMissing','ConnectionChecks','PostId','GroupId','GroupField','TriggerMode','TriggerHint','KeywordField','Keyword','PublicReplyEnabled','ReactEnabled','ReactionHint','Caption','Suggest','Invite','Prepare','Preview','PreviewTitle','Summary','Readiness','Missing','Cover','PublicCaption','PrivateReply','PublicReplyCard','PublicReply','ReactionPreview','Copy','Counts','PublicCounts','ReactionCounts','PreviewNote','Activate','Pause','Refresh','History'])nodes[id]=new Element();
+  for(const id of ['Form','Notice','Reload','Search','SearchCatalog','Source','SourceCount','SourceCard','Account','Surface','CheckConnection','ConnectionState','ConnectionTitle','ConnectionMissing','ConnectionChecks','Discover','DiscoverMore','DiscoveryNotice','Candidates','PostId','GroupId','GroupField','TriggerMode','TriggerHint','KeywordField','Keyword','PublicReplyEnabled','ReactEnabled','ReactionHint','Caption','Suggest','Invite','Prepare','Preview','PreviewTitle','Summary','Readiness','Missing','Cover','PublicCaption','PrivateReply','PublicReplyCard','PublicReply','ReactionPreview','Copy','Counts','PublicCounts','ReactionCounts','PreviewNote','Activate','Pause','Refresh','History'])nodes[id]=new Element();
   nodes.Surface.value='facebook_page';nodes.TriggerMode.value='keyword';nodes.Keyword.value='QUERO RECEITA';nodes.Invite.value='none';
-  root.querySelector=selector=>nodes[selector.slice(3)];nodes.Form.querySelectorAll=()=>['Search','SearchCatalog','Source','Account','Surface','CheckConnection','PostId','GroupId','TriggerMode','Keyword','PublicReplyEnabled','ReactEnabled','Caption','Suggest','Invite','Prepare'].map(key=>nodes[key]);
+  root.querySelector=selector=>nodes[selector.slice(3)];nodes.Form.querySelectorAll=()=>['Search','SearchCatalog','Source','Account','Surface','CheckConnection','Discover','DiscoverMore','PostId','GroupId','TriggerMode','Keyword','PublicReplyEnabled','ReactEnabled','Caption','Suggest','Invite','Prepare'].map(key=>nodes[key]);
   const timers=new Map();let timerId=0,keyCount=0;
   const controller=mountSocialCampaigns(root,{document,window,fetcher,randomUUID:()=>`key-${++keyCount}`,setTimer:fn=>{timers.set(++timerId,fn);return timerId;},clearTimer:id=>timers.delete(id)});
   t.after(()=>controller.destroy());
@@ -84,6 +84,23 @@ test('connection verification is a selected-account GET, exposes missing permiss
   assert.equal(f.nodes.CheckConnection.disabled,true);f.nodes.Account.value='1';f.nodes.Account.dispatch('change');assert.equal(f.nodes.CheckConnection.disabled,false);f.nodes.CheckConnection.dispatch('click');await tick();
   assert.match(calls.at(-1).url,/\/connection\?accountId=1&surface=facebook_page$/);assert.ok(calls.every(call=>!call.options.method));assert.match(f.nodes.ConnectionChecks.textContent,/não confirmadas/);assert.match(f.nodes.ConnectionChecks.textContent,/Assinatura de comentários: verificada/);assert.equal(f.nodes.ConnectionMissing.children[0].textContent,'Autorize pages_messaging.');assert.equal(f.nodes.Activate.disabled,true);
   f.nodes.Surface.value='instagram';f.nodes.Surface.dispatch('change');assert.equal(f.nodes.ConnectionState.hidden,true);
+});
+
+test('herb post discovery is read-only and fills one explicit QUERO GUIA preview without activating it',async t=>{
+  const ebook={key:'course:50-ervas-medicinais',title:'50 Ervas Medicinais — E-book',summary:'Guia digital pago.',image:'/assets/ebooks/50-ervas-medicinais-vitrine-city.png',url:origin+'/ebook-50-ervas-medicinais',commercial:true};
+  const post={postId:'1234_900',caption:'Ervas medicinais: conheça o e-book por R$ 15,99. Comente QUERO GUIA para receber a oferta por mensagem privada.',permalink:'https://www.facebook.com/1234/posts/900',plantHint:true,readyForSetup:true,issues:[],campaign:null};
+  const calls=[],f=fixture(t,async(url,options)=>{calls.push({url,options});
+    if(url.endsWith('/catalog'))return response({items:[ebook],accounts:[account]});
+    if(url.includes('/post-candidates?'))return response({posts:[post],nextCursor:'',ebookReady:true});
+    return response({campaigns:[]});
+  });await tick();
+  f.nodes.Account.value='1';f.nodes.Account.dispatch('change');f.nodes.Discover.dispatch('click');await tick();
+  assert.equal(f.nodes.Candidates.children.length,1);assert.ok(calls.every(call=>!call.options.method));
+  const card=f.nodes.Candidates.children[0],review=card.children.find(child=>child.tagName==='LABEL'),button=card.children.find(child=>child.tagName==='BUTTON');
+  assert.equal(button.disabled,true);review.children[0].checked=true;review.children[0].dispatch('change');assert.equal(button.disabled,false);
+  button.dispatch('click');await tick();
+  assert.equal(f.nodes.Source.value,ebook.key);assert.equal(f.nodes.PostId.value,post.postId);assert.equal(f.nodes.Keyword.value,'QUERO GUIA');assert.equal(f.nodes.Caption.value,post.caption);
+  assert.equal(f.nodes.Activate.disabled,true);assert.ok(calls.every(call=>!call.options.method));
 });
 
 test('server search keeps matches found in the article body instead of filtering them out by title again',async t=>{

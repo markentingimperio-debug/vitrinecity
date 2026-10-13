@@ -10,13 +10,13 @@ async function fixture(t,options={}){
   const db=new Database(':memory:');
   db.exec(`CREATE TABLE social_accounts(id INTEGER PRIMARY KEY,page_id TEXT,page_name TEXT,instagram_id TEXT,instagram_username TEXT,token_encrypted TEXT,status TEXT,updated_at TEXT);
     INSERT INTO social_accounts VALUES (1,'100','Página VitrineCity','200','vitrinecity','SECRET_MUST_NEVER_APPEAR','connected','2026-09-09');`);
-  const state={time:Date.parse('2026-09-10T12:00:00Z'),ready:true,inspections:[],sends:[],publicReplies:[],reactions:[],sequence:[],inspectHook:null,sendHook:null,publicHook:null,reactionHook:null,sources:new Map([
+  const state={time:Date.parse('2026-09-10T12:00:00Z'),ready:true,inspections:[],postReads:[],postListing:{items:[],nextCursor:''},listHook:null,liveReads:[],liveCaption:'',readHook:null,sends:[],publicReplies:[],reactions:[],sequence:[],inspectHook:null,sendHook:null,publicHook:null,reactionHook:null,sources:new Map([
     ['recipe',{key:'recipe',title:'Bolo de cenoura',summary:'Receita com ingredientes e preparo explicados.',image_url:'/assets/bolo.jpg',sourcePath:'/artigo/bolo-de-cenoura',commercial:false,facts:{category:'receitas'},body:'Ingredientes e preparo completos.'}],
     ['plant',{key:'plant',title:'Guia de plantas',summary:'Entenda os cuidados básicos.',image_url:'/uploads/guia.png',sourcePath:'/artigo/plantas',commercial:false,facts:{category:'plantas'},body:'Cuidados com plantas.'}],
     ['product',{key:'product',title:'Adubo para plantas',summary:'Conheça a apresentação e confira a oferta.',image_url:'https://http2.mlstatic.com/D_NQ_NP_2X_123-F.webp',sourcePath:'/ofertas/adubo',commercial:true,facts:{affiliate:true},body:'Descrição conferida.'}]
   ])};
   const sourceCatalog={get:key=>state.sources.get(key),list:({q='',limit=200}={})=>[...state.sources.values()].filter(source=>!q||source.title.toLowerCase().includes(q.toLowerCase())).slice(0,limit)};
-  const metaAdapter={inspect:async input=>{state.inspections.push(input);if(state.inspectHook)return state.inspectHook(input);return {ready:state.ready,missing:state.ready?[]:['Falta a permissão necessária.'],postUrl:'https://www.facebook.com/100/posts/'+input.postId};},send:async input=>{state.sends.push(input);state.sequence.push('private');if(state.sendHook)return state.sendHook(input);return {messageId:'message_'+state.sends.length};},replyPublic:async input=>{state.publicReplies.push(input);state.sequence.push('public');if(state.publicHook)return state.publicHook(input);return {commentId:'900_'+state.publicReplies.length};},likeComment:async input=>{state.reactions.push(input);state.sequence.push('reaction');if(state.reactionHook)return state.reactionHook(input);return {success:true};}};
+  const metaAdapter={inspect:async input=>{state.inspections.push(input);if(state.inspectHook)return state.inspectHook(input);return {ready:state.ready,missing:state.ready?[]:['Falta a permissão necessária.'],postUrl:'https://www.facebook.com/100/posts/'+input.postId};},listPosts:async input=>{state.postReads.push(input);return state.listHook?state.listHook(input):state.postListing;},readPost:async input=>{state.liveReads.push(input);if(state.readHook)return state.readHook(input);return {id:input.postId,caption:state.liveCaption};},send:async input=>{state.sends.push(input);state.sequence.push('private');if(state.sendHook)return state.sendHook(input);return {messageId:'message_'+state.sends.length};},replyPublic:async input=>{state.publicReplies.push(input);state.sequence.push('public');if(state.publicHook)return state.publicHook(input);return {commentId:'900_'+state.publicReplies.length};},likeComment:async input=>{state.reactions.push(input);state.sequence.push('reaction');if(state.reactionHook)return state.reactionHook(input);return {success:true};}};
   const app=express();app.use(express.json());
   const register=app=>registerSocialCommentCampaigns({app,db,sourceCatalog,metaAdapter,canRun:()=>!state.paused,commentModerationReason:options.commentModerationReason,siteUrl:origin,now:()=>state.time,sendTimeoutMs:options.sendTimeoutMs??50,inspectTimeoutMs:options.inspectTimeoutMs??1000,
     requireAdmin:(req,res,next)=>req.headers['x-admin']==='yes'?next():res.status(401).end(),
@@ -206,6 +206,78 @@ test('read-only connection checks require admin, preserve missing steps and coal
   assert.equal(a.status,200);assert.deepEqual(a.body,b.body);assert.equal(a.body.readiness.missing.length,2);assert.equal(f.state.inspections.length,1);assert.equal(f.state.sends.length,0);assert.equal(f.rows().length,0);
   assert.equal((await f.request('/connection?accountId=999&surface=facebook_page')).status,400);
   assert.equal((await f.request('/connection?accountId=1&surface=profile')).status,400);
+});
+
+test('herb e-book inventory reviews Page and Instagram posts without creating campaigns or sending messages',async t=>{
+  const f=await fixture(t);
+  f.state.sources.set('course:50-ervas-medicinais',{key:'course:50-ervas-medicinais',title:'50 Ervas Medicinais — E-book',summary:'Guia digital educativo e pago.',image_url:'/assets/ebooks/50-ervas-medicinais-vitrine-city.png',sourcePath:'/ebook-50-ervas-medicinais',commercial:true,facts:{priceCents:1599},body:'Informações botânicas.'});
+  const caption='Ervas medicinais: conheça o e-book por R$ 15,99. Comente QUERO GUIA para receber a oferta por mensagem privada.';
+  f.state.postListing={items:[{id:'100_901',caption,permalink:'https://www.facebook.com/100/posts/901',createdAt:'2026-09-10T12:00:00Z'},{id:'100_902',caption:'Plantas no jardim.',permalink:'https://www.facebook.com/100/posts/902',createdAt:'2026-09-10T12:00:00Z'}],nextCursor:'next-cursor'};
+  assert.equal((await f.request('/post-candidates?accountId=1&surface=facebook_page','GET',undefined,{'x-admin':'no'})).status,401);
+  const result=await f.request('/post-candidates?accountId=1&surface=facebook_page');
+  assert.equal(result.status,200);assert.equal(result.body.ebookReady,true);assert.equal(result.body.nextCursor,'next-cursor');
+  assert.equal(result.body.posts[0].plantHint,true);assert.equal(result.body.posts[0].readyForSetup,true);assert.equal(result.body.posts[0].campaign,null);
+  assert.equal(result.body.posts[1].readyForSetup,false);assert(result.body.posts[1].issues.some(issue=>issue.includes('QUERO GUIA')));
+  assert.match(result.body.note,/impede respostas do atendimento legado/);assert.deepEqual(f.state.postReads,[{accountId:1,surface:'facebook_page',after:''}]);
+  assert.equal(f.db.prepare('SELECT COUNT(*) count FROM social_content_campaigns').get().count,0);assert.equal(f.state.sends.length,0);
+  assert.equal((await f.request('/post-candidates?accountId=1&surface=facebook_group')).status,400);
+  assert.equal((await f.request('/post-candidates?accountId=1&surface=instagram&after=cursor%20unsafe')).status,400);
+  f.state.postListing={items:[{id:'800',caption,permalink:'https://www.instagram.com/p/example/',createdAt:'2026-09-10T12:00:00Z'}],nextCursor:''};
+  const instagram=await f.request('/post-candidates?accountId=1&surface=instagram&after=next-cursor');
+  assert.equal(instagram.status,200);assert.equal(instagram.body.posts[0].readyForSetup,true);
+  assert.deepEqual(f.state.postReads.at(-1),{accountId:1,surface:'instagram',after:'next-cursor'});
+  assert.equal(f.db.prepare('SELECT COUNT(*) count FROM social_content_campaigns').get().count,0);
+});
+
+test('post inventory coalesces repeated reads and reports a safe reconnection error',async t=>{
+  const f=await fixture(t),url='/post-candidates?accountId=1&surface=facebook_page';
+  const [first,second]=await Promise.all([f.request(url),f.request(url)]);
+  assert.equal(first.status,200);assert.deepEqual(first.body,second.body);assert.equal(f.state.postReads.length,1);
+  f.state.time+=6000;
+  f.state.listHook=async()=>{throw Object.assign(Error('A conexão Meta expirou. Reconecte a conta no painel.'),{metaCommentSafe:true});};
+  const expired=await f.request(url);assert.equal(expired.status,409);assert.match(expired.body.error,/Reconecte/);
+  assert.equal(f.state.postReads.length,2);assert.equal(f.state.sends.length,0);
+});
+
+test('herb campaign checks the real Meta caption at preview, activation and before a delayed private reply',async t=>{
+  const f=await fixture(t),sourceKey='course:50-ervas-medicinais';
+  f.state.sources.set(sourceKey,{key:sourceKey,title:'50 Ervas Medicinais — E-book',summary:'Guia digital educativo e pago.',image_url:'/assets/ebooks/50-ervas-medicinais-vitrine-city.png',sourcePath:'/ebook-50-ervas-medicinais',commercial:true,facts:{priceCents:1599},body:'Informações botânicas.'});
+  const caption='Ervas medicinais: conheça o e-book por R$ 15,99. Comente QUERO GUIA para receber a oferta por mensagem privada.';
+  const input={sourceKey,keyword:'QUERO GUIA',caption};
+  f.state.liveCaption='Não comente QUERO GUIA. Não enviaremos oferta do e-book pago por R$ 15,99 por mensagem privada.';
+  const negative=await f.preview(input);assert.equal(negative.status,409);assert.match(negative.body.error,/contradiz/);
+  assert.equal(f.db.prepare('SELECT COUNT(*) count FROM social_content_campaigns').get().count,0);
+  f.state.liveCaption='Ervas medicinais: conheça o e-book por R$ 29,99. Comente QUERO GUIA para receber a oferta por mensagem privada.';
+  const wrongPrice=await f.preview(input);assert.equal(wrongPrice.status,409);assert.match(wrongPrice.body.error,/R\$ 15,99/);
+  f.state.readHook=async()=>{throw Error('META_SECRET');};
+  assert.equal((await f.preview(input)).status,409);assert.equal(f.state.sends.length,0);
+  f.state.readHook=null;f.state.liveCaption=caption;
+  assert.equal((await f.preview({...input,triggerMode:'any_comment'})).status,409);
+  const draft=await f.preview(input);assert.equal(draft.status,200);assert.match(draft.body.privateReply,/ebook-50-ervas-medicinais/);
+  f.state.liveCaption=caption+' A legenda mudou.';
+  assert.equal((await f.request('/'+draft.body.id+'/activate','POST',{})).status,409);assert.equal(f.state.sends.length,0);
+  f.state.liveCaption=caption;
+  assert.equal((await f.request('/'+draft.body.id+'/activate','POST',{})).status,200);
+  f.state.time+=1000;f.service.ingestWebhook(f.facebook({text:'QUERO GUIA'}));
+  let finishRead;f.state.readHook=()=>new Promise(resolve=>{finishRead=resolve;});
+  const processing=f.service.processPending();for(let i=0;i<20&&!finishRead;i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(typeof finishRead,'function');assert.equal(f.state.sends.length,0);
+  finishRead({id:'100_900',caption:'Plantas no jardim, sem convite para o e-book.'});
+  await processing;assert.equal(f.state.sends.length,0);assert.equal(f.rows()[0].status,'cancelled');
+  assert(f.state.liveReads.length>=4);assert.equal(f.state.liveReads.at(-1).surface,'facebook_page');
+});
+
+test('the herb campaign fails closed for unavailable paid file or wrong price and verifies Instagram posts',async t=>{
+  const f=await fixture(t),sourceKey='course:50-ervas-medicinais',caption='Plantas e ervas: veja o e-book pago por R$ 15,99. Comente QUERO GUIA para receber a oferta por mensagem privada.';
+  const source={key:sourceKey,title:'50 Ervas Medicinais — E-book',summary:'Guia digital pago.',image_url:'/assets/ebooks/50-ervas-medicinais-vitrine-city.png',sourcePath:'/ebook-50-ervas-medicinais',commercial:true,facts:{priceCents:1999},body:'Ervas.'};
+  f.state.sources.set(sourceKey,source);f.state.liveCaption=caption;
+  assert.equal((await f.preview({sourceKey,surface:'instagram',postId:'800',keyword:'QUERO GUIA',caption})).status,409);
+  source.facts.priceCents=1599;source.image_url='';assert.equal((await f.preview({sourceKey,surface:'instagram',postId:'800',keyword:'QUERO GUIA',caption})).status,409);
+  source.image_url='/assets/ebooks/50-ervas-medicinais-vitrine-city.png';
+  const draft=await f.preview({sourceKey,surface:'instagram',postId:'800',keyword:'QUERO GUIA',caption});assert.equal(draft.status,200);
+  assert.equal((await f.request('/'+draft.body.id+'/activate','POST',{})).status,200);
+  assert(f.state.liveReads.every(read=>read.surface==='instagram'));
+  assert.equal(f.state.sends.length,0);
 });
 
 test('edits and deletions revoke pending requests, including missing post IDs and invalidation during inspection',async t=>{

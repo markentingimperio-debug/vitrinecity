@@ -2,6 +2,7 @@ import {publicCopyHasLinks} from './public/social-public-copy.js';
 
 const ID=/^[0-9]{1,40}$/;
 const POST=/^[0-9]{1,40}(?:_[0-9]{1,40})?$/;
+const CURSOR=/^[A-Za-z0-9_+/=-]{1,1000}$/;
 const surfaces=new Set(['facebook_page','facebook_group','instagram']);
 const error=(message,uncertain=false)=>Object.assign(new Error(message),{uncertain,definitive:!uncertain,metaCommentSafe:true});
 
@@ -105,6 +106,44 @@ export function createMetaCommentApi({db,decryptToken,env=process.env,fetchImpl=
     }catch(e){missing.push(e.metaCommentSafe?e.message:'Não foi possível concluir a verificação da conexão Meta.');}
     return {ready:missing.length===0,missing:[...new Set(missing)],postUrl,details,note:missing.length?'':note};
   }
+  async function listPosts({accountId,surface,after=''}){
+    if(!['facebook_page','instagram'].includes(surface))throw error('Escolha a Página do Facebook ou o Instagram profissional.');
+    if(typeof after!=='string'||(after&&!CURSOR.test(after)))throw error('O cursor de publicações é inválido.');
+    const account=accountFor(accountId,surface);
+    let token;try{token=decryptToken(account.token_encrypted);}catch{throw error('Reconecte a conta Meta antes de consultar publicações.');}
+    const instagram=surface==='instagram',actor=instagram?account.instagram_id:account.page_id;
+    const fields=instagram?'id,caption,permalink,timestamp,media_type,media_product_type,owner':'id,message,permalink_url,created_time,from{id},is_published';
+    const result=await request(String(actor)+(instagram?'/media':'/posts'),{token,query:{fields,limit:25,...(after?{after}:{})}});
+    const validPermalink=value=>{
+      try{const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password&&
+        (instagram?['instagram.com','www.instagram.com']:['facebook.com','www.facebook.com','m.facebook.com']).includes(url.hostname)?url.href:'';}catch{return '';}
+    };
+    const items=(Array.isArray(result?.data)?result.data:[]).flatMap(row=>{
+      const id=String(row?.id||''),owner=String(instagram?row?.owner?.id||'':row?.from?.id||'');
+      if(!POST.test(id)||owner!==String(actor)||row?.is_published===false||row?.media_type==='LIVE'||row?.media_product_type==='LIVE')return [];
+      const permalink=validPermalink(instagram?row?.permalink:row?.permalink_url);
+      if(!permalink)return [];
+      const content=instagram?row?.caption:row?.message;
+      const caption=typeof content==='string'?content.slice(0,5000):'';
+      const rawTime=instagram?row?.timestamp:row?.created_time;
+      const createdAt=typeof rawTime==='string'&&Number.isFinite(Date.parse(rawTime))?new Date(rawTime).toISOString():'';
+      return [{id,caption,permalink,createdAt}];
+    });
+    const cursor=result?.paging?.next?result?.paging?.cursors?.after:'';
+    return {items,nextCursor:typeof cursor==='string'&&CURSOR.test(cursor)&&cursor!==after?cursor:''};
+  }
+  async function readPost({accountId,surface,postId}){
+    if(!['facebook_page','instagram'].includes(surface)||!POST.test(String(postId)))throw error('Escolha uma publicação válida da Página ou do Instagram.');
+    const account=accountFor(accountId,surface),instagram=surface==='instagram';
+    let token;try{token=decryptToken(account.token_encrypted);}catch{throw error('Reconecte a conta Meta antes de verificar a publicação.');}
+    const fields=instagram?'id,caption,owner':'id,message,from{id}';
+    const post=await request(String(postId),{token,query:{fields}});
+    const actor=instagram?account.instagram_id:account.page_id;
+    if(String(post?.id)!==String(postId)||String(instagram?post?.owner?.id||'':post?.from?.id||'')!==String(actor))throw error('A publicação não pertence à conta profissional selecionada.');
+    const caption=instagram?post?.caption:post?.message;
+    if(typeof caption!=='string')throw error('A legenda oficial da publicação não está disponível.');
+    return {id:String(postId),caption};
+  }
   async function send({accountId,surface,commentId,text}){
     const account=accountFor(accountId,surface);
     if(!POST.test(String(commentId))||typeof text!=='string'||!text.trim()||text.length>1900||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text))throw error('Confira o comentário e a mensagem antes do envio.');
@@ -132,5 +171,5 @@ export function createMetaCommentApi({db,decryptToken,env=process.env,fetchImpl=
     if(result?.success!==true)throw error('A Meta não confirmou a curtida. Confira o comentário antes de tentar novamente.',true);
     return {success:true};
   }
-  return {inspect,send,replyPublic,likeComment};
+  return {inspect,listPosts,readPost,send,replyPublic,likeComment};
 }

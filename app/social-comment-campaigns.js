@@ -5,6 +5,7 @@ import {publicCopyHasLinks,removePublicLinks} from './public/social-public-copy.
 const API='/api/admin/social-comment-campaigns', DAY=86400000;
 const SURFACES=new Set(['facebook_page','facebook_group','instagram']);
 const KEYWORDS=new Set(['EU QUERO','QUERO RECEITA','QUERO GUIA']);
+const CURSOR=/^[A-Za-z0-9_+/=-]{1,1000}$/;
 const TRIGGERS=new Set(['keyword','any_comment']);
 const clean=value=>typeof value==='string'?value.trim():'';
 const normalize=value=>clean(value).normalize('NFKC').toUpperCase().replace(/\s+/g,' ');
@@ -21,6 +22,19 @@ const interactionReason=text=>{
   if(/https?:\/\/|www\.|\b(porn\w*|nudes?|sexo explicito|supremacia|ataque racial|exterminar|tortura|estupro|pedofil\w*|vai se foder|filh[oa] da puta|vtnc)\b/.test(value))return 'Comentário retido pela moderação automática.';
   return '';
 };
+const plantTopic=text=>/(?:^|[^a-z0-9])(?:plantas?|ervas?|jardim|jardinagem|horta|cultivo|botanica|fitoterapia|alecrim|camomila|hortela|babosa|guaco|melissa|gengibre|curcuma|manjericao|eucalipto|lavanda|boldo|hibisco|salvia|tomilho|oregano|arruda|carqueja|cavalinha|capim santo|quebra pedra)(?=$|[^a-z0-9])/.test(plainText(text));
+const herbPostIssues=caption=>{
+  const value=clean(caption),folded=plainText(value),issues=[];
+  if(value.length<10||value.length>1800)issues.push('A legenda precisa ter entre 10 e 1.800 caracteres.');
+  if(publicCopyHasLinks(value))issues.push('Retire links da legenda; o link da compra ficará na mensagem privada.');
+  if(!/\b(?:comente|comentar|comenta|escreva|digite|responda)\s+(?:(?:a|o)\s+(?:palavra|frase)\s+)?["'“”]?quero\s+guia\b/.test(folded))issues.push('A legenda deve convidar a comentar QUERO GUIA.');
+  if(/\b(?:nao|nunca|jamais|evite)\s+(?:\S+\s+){0,3}(?:comente|comentar|comenta|escreva|digite|responda|enviaremos|enviar|receber|recebera|mandaremos)\b/.test(folded))issues.push('A legenda contradiz o convite ou o envio privado.');
+  if(!/\b(mensagem\s+privada|no\s+privado|direct|inbox|dm)\b/.test(folded))issues.push('A legenda deve avisar que a resposta chegará por mensagem privada.');
+  if(!/\b(e-?book|livro digital)\b/.test(folded)||/\b(gratis|gratuito|gratuita)\b/.test(folded))issues.push('A legenda deve identificar o e-book como uma oferta paga, sem prometer gratuidade.');
+  const prices=[...folded.matchAll(/\br\$\s*(\d{1,6}[,.]\d{2})\b/g)].map(match=>Number(match[1].replace(',','.')));
+  if(!prices.length||prices.some(price=>price!==15.99))issues.push('A legenda deve informar o preço correto: R$ 15,99.');
+  return issues;
+};
 const authorName=value=>{const name=clean(value).replace(/\s+/g,' ');return /^[\p{L}\p{N}][\p{L}\p{N} ._'’\-]{0,79}$/u.test(name)&&!publicCopyHasLinks(name)&&!interactionReason(name)?name.split(' ')[0]:'';};
 const publicThanks=(source,name='')=>{const safeName=name==='{nome}'?name:authorName(name);return `${safeName?safeName+', obrigado':'Obrigado'} pelo comentário! ${source.commercial?'Enviei o link da oferta no privado.':'Enviei um presente no privado: o conteúdo desta publicação.'}`;};
 const eventTime=value=>{
@@ -35,7 +49,7 @@ const openHours=time=>{const hour=Number(localParts(time).hour);return hour>=9&&
 /** Routes prepare copy only. An authenticated, signature-verified Meta webhook is
  * the sole queue input. This module never publishes a post or messages a liker. */
 export function registerSocialCommentCampaigns({app,db,requireAdmin,sameOriginOnly,siteUrl,sourceCatalog,metaAdapter,commentModerationReason=()=>'',canRun=()=>true,now=Date.now,sendTimeoutMs=20000,inspectTimeoutMs=35000}) {
-  const origin=new URL(siteUrl).origin, inflight=new Map(),connectionChecks=new Map();let processing=false,inspectionCount=0;
+  const origin=new URL(siteUrl).origin, inflight=new Map(),connectionChecks=new Map(),postListings=new Map();let processing=false,inspectionCount=0,postReadsInFlight=0;
   db.exec(`CREATE TABLE IF NOT EXISTS social_content_campaigns (
     id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,request_hash TEXT NOT NULL,
     status TEXT NOT NULL CHECK(status IN ('draft','active','paused')),
@@ -75,6 +89,19 @@ export function registerSocialCommentCampaigns({app,db,requireAdmin,sameOriginOn
     if(!source||!clean(source.title)||!url)throw fail('O conteúdo não está mais disponível para divulgação.',409);
     const snapshot={key:source.key,title:clean(source.title).slice(0,300),summary:clean(source.summary).slice(0,1400),image:safeResultImageUrl(source.image_url,origin),url,commercial:Boolean(source.commercial)};
     return {snapshot,fingerprint:hash([snapshot,source.facts,source.updated_at,source.body])};
+  }
+  async function verifyHerbPost({sourceKey,accountId,surface,postId,caption,triggerMode,keyword}){
+    if(sourceKey!=='course:50-ervas-medicinais')return;
+    if(triggerMode!=='keyword'||keyword!=='QUERO GUIA')throw fail('O e-book exige pedido explícito com a frase QUERO GUIA.',409);
+    const source=sourceCatalog.get(sourceKey);
+    if(source?.commercial!==true||source?.sourcePath!=='/ebook-50-ervas-medicinais'||source?.facts?.priceCents!==1599||!sourceSnapshot(sourceKey).snapshot.image)
+      throw fail('O e-book precisa estar ativo, com preço de R$ 15,99, capa e arquivo privado prontos.',409);
+    if(!postId)return;
+    if(!['facebook_page','instagram'].includes(surface)||typeof metaAdapter.readPost!=='function')throw fail('A verificação da publicação não está disponível para este canal.',409);
+    let post;try{post=await metaAdapter.readPost({accountId,surface,postId});}catch{throw fail('Não foi possível confirmar a legenda oficial na Meta. Tente novamente.',409);}
+    const issues=herbPostIssues(post?.caption);
+    if(issues.length)throw fail('Atualize a legenda oficial na Meta antes de ativar: '+issues.join(' '),409);
+    if(clean(post.caption)!==clean(caption))throw fail('A legenda oficial mudou. Prepare uma nova prévia a partir da publicação atualizada.',409);
   }
   function reply(source,invite,id,surface,triggerMode){
     const url=new URL(source.url);url.searchParams.set('utm_source',surface==='instagram'?'instagram':'facebook');url.searchParams.set('utm_medium','comment_reply');url.searchParams.set('utm_campaign',id);
@@ -145,6 +172,37 @@ export function registerSocialCommentCampaigns({app,db,requireAdmin,sameOriginOn
     if(!pending){if(connectionChecks.size>=50)throw fail('Aguarde um instante antes de verificar outra conexão.',429);pending={expiresAt:now()+5000,promise:performInspection({accountId,surface,publicReplyEnabled,reactEnabled})};connectionChecks.set(key,pending);}
     res.json({account:publicAccount(account),surface,readiness:await pending.promise});
   }));
+  app.get(API+'/post-candidates',requireAdmin,route(async(req,res)=>{
+    const accountId=Number(req.query.accountId),surface=req.query.surface,after=req.query.after??'';
+    const account=Number.isSafeInteger(accountId)&&accountId>0?accountById(accountId):null;
+    if(!account||!['facebook_page','instagram'].includes(surface)||typeof after!=='string'||(after&&!CURSOR.test(after)))throw fail('Escolha uma conta, um canal e um cursor válidos.');
+    if(surface==='instagram'&&!identifier(account.instagram_id))throw fail('O Instagram profissional não está conectado a esta Página.',409);
+    if(typeof metaAdapter.listPosts!=='function')throw fail('A consulta de publicações ainda não está disponível.',503);
+    for(const [key,value] of postListings)if(value.expiresAt<now())postListings.delete(key);
+    const listingKey=hash([accountId,surface,after]);let cached=postListings.get(listingKey);
+    if(!cached){
+      if(postListings.size>=50||postReadsInFlight>=3)throw fail('Há consultas de publicações em andamento. Aguarde um instante.',429);
+      postReadsInFlight++;
+      const promise=Promise.resolve().then(()=>metaAdapter.listPosts({accountId,surface,after})).catch(error=>{
+        if(error?.metaCommentSafe)throw fail(error.message,/Reconecte|expirou|autorizou/i.test(error.message)?409:502);
+        throw error;
+      }).finally(()=>{postReadsInFlight--;});
+      cached={expiresAt:now()+5000,promise};postListings.set(listingKey,cached);
+    }
+    const listing=await cached.promise,objectId=surface==='instagram'?account.instagram_id:account.page_id;
+    const posts=(Array.isArray(listing?.items)?listing.items:[]).slice(0,25).flatMap(item=>{
+      if(!(surface==='instagram'?/^\d{1,40}$/:/^\d{1,40}_\d{1,40}$/).test(String(item?.id||''))||typeof item?.caption!=='string')return [];
+      const caption=item.caption.slice(0,5000),issues=herbPostIssues(caption);
+      const campaign=db.prepare(`SELECT id,status FROM social_content_campaigns WHERE surface=? AND object_id=? AND post_id=? AND group_id='' ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,created_at DESC LIMIT 1`).get(surface,objectId,item.id);
+      return [{postId:item.id,caption,permalink:clean(item.permalink).slice(0,2000),createdAt:clean(item.createdAt).slice(0,40),plantHint:plantTopic(caption),readyForSetup:issues.length===0,issues,campaign:campaign?{id:campaign.id,status:campaign.status}:null}];
+    });
+    let ebookReady=false;try{
+      const ebook=sourceCatalog.get('course:50-ervas-medicinais');
+      ebookReady=ebook?.commercial===true&&ebook?.sourcePath==='/ebook-50-ervas-medicinais'&&
+        ebook?.facts?.priceCents===1599&&Boolean(sourceSnapshot('course:50-ervas-medicinais').snapshot.image);
+    }catch{}
+    res.json({account:publicAccount(account),surface,posts,nextCursor:typeof listing?.nextCursor==='string'&&CURSOR.test(listing.nextCursor)?listing.nextCursor:'',ebookReady,note:'A descoberta é somente leitura. Preparar uma prévia reserva a publicação para esta campanha e impede respostas do atendimento legado, mesmo antes da ativação.'});
+  }));
   app.get(API+'/:id',requireAdmin,route(async(req,res)=>{const row=rowById(req.params.id);if(!row)throw fail('Campanha não encontrada.',404);res.json(dto(row));}));
   app.post(API+'/preview',requireAdmin,sameOriginOnly,route(async(req,res)=>{
     const data=validateInput(req.body),requestParts=[data.sourceKey,data.accountId,data.surface,data.postId,data.groupId,data.keyword,data.caption,data.invite];
@@ -156,6 +214,7 @@ export function registerSocialCommentCampaigns({app,db,requireAdmin,sameOriginOn
     const promise=(async()=>{
       const {snapshot,fingerprint}=sourceSnapshot(data.sourceKey),readiness=await inspect(data,snapshot),id=randomUUID(),created=now();
       const caption=data.caption||`${removePublicLinks(snapshot.title)}\n\n${removePublicLinks(snapshot.summary.slice(0,650))}\n\n${data.triggerMode==='any_comment'?'Deixe seu comentário e enviaremos o link relacionado a esta publicação por mensagem privada.':`Quer acessar o conteúdo completo? Comente ${data.keyword} para receber o link por mensagem.`}`,privateReply=reply(snapshot,data.invite,id,data.surface,data.triggerMode);
+      await verifyHerbPost({sourceKey:data.sourceKey,accountId:data.accountId,surface:data.surface,postId:data.postId,caption,triggerMode:data.triggerMode,keyword:data.keyword});
       if(privateReply.length>1900)throw fail('O endereço e o título deste conteúdo excedem o tamanho permitido na mensagem.',409);
       db.prepare(`INSERT INTO social_content_campaigns (id,idempotency_key,request_hash,status,source_key,source_json,source_hash,account_id,account_json,object_id,surface,post_id,group_id,keyword,caption,invite,private_reply,readiness_json,created_at,activated_at,updated_at,trigger_mode,public_reply_enabled,react_enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,data.idempotencyKey,requestHash,'draft',data.sourceKey,JSON.stringify(snapshot),fingerprint,data.accountId,JSON.stringify(data.account),data.objectId,data.surface,data.postId,data.groupId,data.keyword,caption,data.invite,privateReply,JSON.stringify(readiness),created,null,created,data.triggerMode,data.publicReplyEnabled?1:0,data.reactEnabled?1:0);
       return rowById(id);
@@ -166,6 +225,7 @@ export function registerSocialCommentCampaigns({app,db,requireAdmin,sameOriginOn
     const row=rowById(req.params.id);if(!row)throw fail('Campanha não encontrada.',404);if(row.status==='active'){res.json(dto(row));return;}
     const current=sourceSnapshot(row.source_key);if(current.fingerprint!==row.source_hash)throw fail('O conteúdo mudou. Prepare e revise uma nova prévia.',409);
     const account=accountById(row.account_id);if(!account||hash(publicAccount(account))!==hash(JSON.parse(row.account_json)))throw fail('A conta mudou. Prepare uma nova prévia.',409);
+    await verifyHerbPost({sourceKey:row.source_key,accountId:row.account_id,surface:row.surface,postId:row.post_id,caption:row.caption,triggerMode:row.trigger_mode,keyword:row.keyword});
     const readiness=await inspect(inspectionInput(row),current.snapshot);
     db.prepare('UPDATE social_content_campaigns SET readiness_json=? WHERE id=?').run(JSON.stringify(readiness),row.id);
     if(!readiness.ready)throw fail(readiness.missing.join(' '),409);
@@ -250,7 +310,7 @@ export function registerSocialCommentCampaigns({app,db,requireAdmin,sameOriginOn
       return db.prepare(`UPDATE social_content_comment_events SET ${prefix}_status='processing',${prefix}_claimed_at=?,${prefix}_attempt_day=? WHERE id=? AND status='sent' AND provider_message_id IS NOT NULL AND ${prefix}_status='pending'`).run(now(),dayKey(now()),event.id).changes>0;
     })();if(!claimed)return false;
     let campaign;
-    try{campaign=freshCampaign(event,'sent');const readiness=await inspect(inspectionInput(campaign),JSON.parse(campaign.source_json));if(!readiness.ready)throw fail('Conexão indisponível.');campaign=freshCampaign(event,'sent');if(!openHours(now()))throw fail('Fora do horário de envio.');}
+    try{campaign=freshCampaign(event,'sent');const readiness=await inspect(inspectionInput(campaign),JSON.parse(campaign.source_json));if(!readiness.ready)throw fail('Conexão indisponível.');await verifyHerbPost({sourceKey:campaign.source_key,accountId:campaign.account_id,surface:campaign.surface,postId:campaign.post_id,caption:campaign.caption,triggerMode:campaign.trigger_mode,keyword:campaign.keyword});campaign=freshCampaign(event,'sent');if(!openHours(now()))throw fail('Fora do horário de envio.');}
     catch{if(!canRun()){restoreExtra(event.id,prefix);return true;}db.prepare(`UPDATE social_content_comment_events SET ${prefix}_status='cancelled',${prefix}_reason='Interação cancelada na verificação anterior ao envio.' WHERE id=? AND ${prefix}_status='processing'`).run(event.id);return true;}
     try{
       const input={accountId:campaign.account_id,surface:campaign.surface,commentId:event.comment_id};
@@ -282,6 +342,7 @@ export function registerSocialCommentCampaigns({app,db,requireAdmin,sameOriginOn
       try{
         campaign=freshCampaign(event);const readiness=await inspect(inspectionInput(campaign),JSON.parse(campaign.source_json));
         if(!readiness.ready)throw fail('A conexão ou a publicação deixou de estar pronta.',409);
+        await verifyHerbPost({sourceKey:campaign.source_key,accountId:campaign.account_id,surface:campaign.surface,postId:campaign.post_id,caption:campaign.caption,triggerMode:campaign.trigger_mode,keyword:campaign.keyword});
         campaign=freshCampaign(event);if(!openHours(now()))throw fail('O período de envio encerrou durante a verificação.',409);
       }catch{if(!canRun()){restorePrivate(event.id);break;}db.prepare("UPDATE social_content_comment_events SET status='cancelled',reason='Pedido cancelado na verificação anterior ao envio.' WHERE id=? AND status='processing'").run(event.id);cancelExtras('id',event.id,'Mensagem privada cancelada.');continue;}
       try{

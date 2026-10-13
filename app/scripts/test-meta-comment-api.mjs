@@ -42,6 +42,47 @@ test('inspect is read-only, verifies token grants, subscription and Page ownersh
   assert.equal(f.state.calls.length,4);
 });
 
+test('post inventory stays on Graph read endpoints, filters foreign or unsafe posts and uses cursors only',async t=>{
+  const f=fixture(t);f.state.hook=async({route,url})=>{
+    if(route==='100/posts')return new Response(JSON.stringify({data:[
+      {id:'100_901',from:{id:'100'},message:'Ervas medicinais',permalink_url:'https://www.facebook.com/100/posts/901',created_time:'2026-09-10T10:00:00Z'},
+      {id:'999_902',from:{id:'999'},message:'Outra Página',permalink_url:'https://www.facebook.com/999/posts/902'},
+      {id:'100_903',from:{id:'100'},message:'Rascunho',is_published:false,permalink_url:'https://www.facebook.com/100/posts/903'},
+      {id:'100_904',from:{id:'100'},message:'Link inseguro',permalink_url:'https://evil.test/steal'}
+    ],paging:{next:'https://evil.test/steal?access_token=SECRET',cursors:{after:'cursorA'}}}));
+    if(route==='200/media')return new Response(JSON.stringify({data:[
+      {id:'800',owner:{id:'200'},caption:'Camomila',permalink:'https://www.instagram.com/p/herbs/',timestamp:'2026-09-10T10:00:00Z'},
+      {id:'801',owner:{id:'999'},caption:'Outro Instagram',permalink:'https://www.instagram.com/p/other/'},
+      {id:'802',owner:{id:'200'},caption:'Ao vivo',media_product_type:'LIVE',permalink:'https://www.instagram.com/p/live/'},
+      {id:'803',caption:'Sem proprietário',permalink:'https://www.instagram.com/p/unknown/'}
+    ]}));
+  };
+  const page=await f.api.listPosts({accountId:1,surface:'facebook_page'});
+  assert.deepEqual(page.items.map(item=>item.id),['100_901']);assert.equal(page.nextCursor,'cursorA');
+  const instagram=await f.api.listPosts({accountId:1,surface:'instagram',after:page.nextCursor});
+  assert.deepEqual(instagram.items.map(item=>item.id),['800']);assert.equal(instagram.nextCursor,'');
+  assert.equal(f.state.calls[1].url.searchParams.get('after'),'cursorA');
+  assert(f.state.calls.every(call=>call.url.origin==='https://graph.facebook.com'&&call.init.method==='GET'&&call.init.body===undefined));
+  assert(!JSON.stringify([page,instagram]).includes('SECRET'));
+  const count=f.state.calls.length;
+  for(const input of [{accountId:1,surface:'facebook_group'},{accountId:1,surface:'instagram',after:'bad cursor'},{accountId:'https://evil.test',surface:'facebook_page'}])await assert.rejects(f.api.listPosts(input));
+  assert.equal(f.state.calls.length,count);
+});
+
+test('live caption verification requires the selected Page or Instagram owner and never writes to Meta',async t=>{
+  const f=fixture(t);f.state.hook=async({route})=>{
+    if(route==='100_901')return new Response(JSON.stringify({id:'100_901',from:{id:'100'},message:'Comente QUERO GUIA para o e-book pago no privado.'}));
+    if(route==='801')return new Response(JSON.stringify({id:'801',owner:{id:'200'},caption:'Plantas e e-book pago.'}));
+  };
+  assert.equal((await f.api.readPost({accountId:1,surface:'facebook_page',postId:'100_901'})).caption,'Comente QUERO GUIA para o e-book pago no privado.');
+  assert.equal((await f.api.readPost({accountId:1,surface:'instagram',postId:'801'})).caption,'Plantas e e-book pago.');
+  f.state.hook=async({route})=>route==='801'?new Response(JSON.stringify({id:'801',caption:'Sem owner'})):undefined;
+  await assert.rejects(f.api.readPost({accountId:1,surface:'instagram',postId:'801'}));
+  f.state.hook=async({route})=>route==='100_901'?new Response(JSON.stringify({id:'100_901',from:{id:'999'},message:'Post de outra página'})):undefined;
+  await assert.rejects(f.api.readPost({accountId:1,surface:'facebook_page',postId:'100_901'}));
+  assert(f.state.calls.every(call=>call.init.method==='GET'&&call.init.body===undefined));
+});
+
 test('expired access or data grants, wrong app, missing and granular permissions keep configuration blocked',async t=>{
   for(const mutation of [
     grant=>{grant.is_valid=false;},grant=>{grant.app_id='999';},grant=>{grant.expires_at=NOW/1000-1;},
