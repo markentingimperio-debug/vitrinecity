@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Passeie pela Avenida VitrineCity e visite as lojas publicadas, ou encontre uma loja diretamente pela busca.">
+  <title>Avenida VitrineCity · Passeio pelas lojas</title>
+  <link rel="canonical" href="https://vitrinecity.com/avenida">
+  <link rel="stylesheet" href="/avenida.css">
+  <script type="module" src="/avenida.js"></script>
+  <script src="/analytics.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">VITRINE<span>CITY</span><small>AVENIDA</small></a>
+    <nav aria-label="Outros caminhos"><a href="/multiverso?city=vitrine-city">Cidade 3D</a><a href="/loja">Todas as lojas</a></nav>
+  </header>
+  <main>
+    <section class="intro" aria-labelledby="title">
+      <div><p class="eyebrow">UM PASSEIO PELA CIDADE</p><h1 id="title">Sua próxima descoberta está logo adiante.</h1><p>Uma avenida viva com as lojas publicadas da VitrineCity. Passeie no seu ritmo ou encontre a loja pelo nome.</p></div>
+      <form id="searchForm" role="search"><label for="storeSearch">Encontrar uma loja</label><div><input id="storeSearch" type="search" placeholder="Nome, cidade ou tipo de loja" autocomplete="off"><button type="submit">Buscar</button></div></form>
+    </section>
+    <section class="street-section" aria-label="Passeio pela avenida">
+      <div class="street-sky" aria-hidden="true"><div class="sun"></div><div class="skyline"></div></div>
+      <div class="street-tools"><p id="streetStatus" role="status">Carregando as lojas da avenida…</p><div class="street-actions"><button type="button" id="previous" aria-label="Voltar uma fachada">←</button><button type="button" id="next" aria-label="Avançar uma fachada">→</button><button type="button" id="tour" aria-pressed="false">Iniciar passeio</button></div></div>
+      <div id="street" class="street" tabindex="0" aria-label="Fachadas das lojas. Deslize ou use as setas para passear."></div>
+      <button type="button" id="moreBuildings" class="more-buildings" hidden>Mostrar mais fachadas</button>
+      <div class="sidewalk" aria-hidden="true"><span>AVENIDA VITRINECITY</span><span>VISITE AS FACHADAS · ENTRE NAS LOJAS</span></div>
+      <div class="road" aria-hidden="true"><div class="lane"></div></div>
+    </section>
+    <section class="directory" aria-labelledby="directoryTitle"><div class="directory-heading"><div><p class="eyebrow">ATALHO DIRETO</p><h2 id="directoryTitle">Lojas da avenida</h2></div><p id="resultCount"></p></div><div id="storeList" class="store-list"></div><p id="empty" hidden>Nenhuma loja encontrada. Tente outro nome ou <a href="/loja">veja o catálogo completo</a>.</p></section>
+  </main>
+  <footer><a href="/">Início</a><a href="/multiverso?city=vitrine-city">Explorar em 3D</a><a href="/comprar-lote.html">Quero meu prédio</a></footer>
+</body>
+</html>
