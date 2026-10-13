@@ -1,8 +1,21 @@
 import unittest
-from worker import continuous_session, session_expired, validate_server
+from worker import canvas_for_media, continuous_session, fit_transform, session_expired, validate_server
 
 
 class SessionTests(unittest.TestCase):
+    def test_canvas_supports_youtube_lofi_and_vertical_live(self):
+        self.assertEqual(canvas_for_media({'width':1920,'height':1080}), (1280,720))
+        self.assertEqual(canvas_for_media({'width':1080,'height':1920}), (720,1280))
+        with self.assertRaises(ValueError):
+            canvas_for_media({'width':1000,'height':1000})
+        landscape=fit_transform(1920,1080,1280,720)
+        portrait=fit_transform(1080,1920,720,1280)
+        self.assertAlmostEqual(landscape['scaleX'], 2/3)
+        self.assertAlmostEqual(landscape['scaleY'], 2/3)
+        self.assertAlmostEqual(portrait['scaleX'], 2/3)
+        self.assertAlmostEqual(portrait['scaleY'], 2/3)
+        self.assertEqual(landscape['alignment'], 5)
+
     def test_platform_servers(self):
         for platform,server in [('instagram','rtmps://live-upload.instagram.com/rtmp/'),('youtube','rtmps://a.rtmps.youtube.com:443/live2'),('tiktok','rtmp://push.tiktok.com/live'),('tiktok','rtmps://push.tiktokv.com/live')]:
             validate_server({'platform':platform,'server':server,'key':'test'})
