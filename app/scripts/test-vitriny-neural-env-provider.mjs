@@ -25,3 +25,24 @@ try{
   assert.equal(requests[0].body.model,'qwen-test');
   console.log(JSON.stringify({ok:true,provider:result.provider,model:result.output.model}));
 }finally{db.close();}
+
+const routed=createEnvModelProviders({env:{
+  VITRINY_NEURAL_MODEL_ORIGIN:'http://local.internal:8080',
+  VITRINY_NEURAL_MODEL_ID:'local-general',
+  VITRINY_NEURAL_MODEL_CAPABILITIES:'support.classify,commerce.catalog-review',
+  VITRINY_NEURAL_SPECIALIST_ORIGIN:'https://specialist.example.test',
+  VITRINY_NEURAL_SPECIALIST_ID:'cloud-specialist',
+  VITRINY_NEURAL_SPECIALIST_MODEL:'coder-model',
+  VITRINY_NEURAL_SPECIALIST_REMOTE:'1',
+  VITRINY_NEURAL_TEACHER_ORIGIN:'https://teacher.example.test',
+  VITRINY_NEURAL_TEACHER_ID:'cloud-teacher',
+  VITRINY_NEURAL_TEACHER_MODEL:'teacher-model',
+  VITRINY_NEURAL_TEACHER_REMOTE:'1'
+},fetchImpl});
+assert.deepEqual(routed.map(item=>item.id),['local-general','cloud-specialist','cloud-teacher']);
+assert.deepEqual(routed[0].capabilities,['support.classify','commerce.catalog-review']);
+assert.equal(routed[0].local,true);
+assert.equal(routed[1].local,false);
+assert.ok(routed[1].capabilities.includes('code.patch'));
+assert.ok(!routed[1].capabilities.includes('support.classify'));
+assert.ok(routed[2].capabilities.includes('support.classify'));
