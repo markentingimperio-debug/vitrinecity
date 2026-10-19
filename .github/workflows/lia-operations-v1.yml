@@ -11,6 +11,10 @@ on:
       - 'app/public/admin-lia.*'
       - 'app/public/lia.*'
       - 'app/scripts/test-lia-customer-operations.mjs'
+      - 'app/scripts/test-lia-video-studio.mjs'
+      - 'app/public/admin-lia-video.*'
+      - 'app/public/lia-video.*'
+      - 'app/lia-video-studio.js'
       - '.github/workflows/lia-operations-v1.yml'
   pull_request:
     paths:
@@ -20,6 +24,10 @@ on:
       - 'app/public/admin-lia.*'
       - 'app/public/lia.*'
       - 'app/scripts/test-lia-customer-operations.mjs'
+      - 'app/lia-video-studio.js'
+      - 'app/public/lia-video.*'
+      - 'app/public/admin-lia-video.*'
+      - 'app/scripts/test-lia-video-studio.mjs'
 
 permissions:
   contents: read
@@ -46,8 +54,13 @@ jobs:
           node --check server.js
           node --check public/admin-lia.js
           node --check public/lia.js
+          node --check lia-video-studio.js
+          node --check public/lia-video.js
+          node --check public/admin-lia-video.js
       - name: Billing and refund tests
         run: node --test scripts/test-lia-customer-operations.mjs
+      - name: Video studio plans and pipeline tests
+        run: node --test scripts/test-lia-video-studio.mjs
       - name: Security guards
         run: |
           grep -q "lia_operation_reserve" vitriny-neural/lia-customer-operations.js
