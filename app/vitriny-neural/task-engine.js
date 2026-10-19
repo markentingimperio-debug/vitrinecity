@@ -104,8 +104,8 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, bill
   }
   function get(scope,id) {reap(); return view(row(scope,id));}
   function list(scope) {scopeCheck(scope);reap();return db.prepare('SELECT * FROM neural_tasks WHERE scope=? ORDER BY created_at DESC,id DESC LIMIT 50').all(scope).map(view);}
-  function status(scope) {
-    scopeCheck(scope);reap();
+  function status(scope,{reapExpired=true}={}) {
+    scopeCheck(scope);if(reapExpired)reap();
     const today=dayStart();
     const used=db.prepare('SELECT COUNT(*) n FROM neural_tasks WHERE scope=? AND created_at>=?').get(scope,today).n;
     const runs=db.prepare('SELECT COUNT(*) n FROM neural_tasks WHERE scope=? AND started_at>=?').get(scope,today).n;
@@ -282,6 +282,14 @@ export function createNeuralTaskEngine({db, skills, qualifications, config, bill
     return TERMINAL.has(item.status)&&!modelCalls.has(id)&&!inflight.has(id)&&
       (!db.prepare("SELECT 1 FROM neural_task_attempts WHERE task_id=? AND state='started'").get(id)||item.lease_until<=now());
   }
+  async function waitForInference(id){
+    // A terminal task deadline requests abort but does not prove the transport
+    // settled. Keep diagnostics/shutdown from closing SQLite while a late usage
+    // receipt is still able to arrive. Deliberately no second timeout here:
+    // a provider that ignores cancellation must settle before resources close.
+    await inflight.get(id)?.catch(()=>{});
+    await modelCalls.get(id)?.pending.catch(()=>{});
+  }
   return {status,submit:(scope,input)=>submit.immediate(scope,input),list,get,start,cancel,readFile,billingCanResolve,
-    wait:async(id)=>{await inflight.get(id);},limits};
+    wait:async(id)=>{await inflight.get(id);},waitForInference,limits};
 }

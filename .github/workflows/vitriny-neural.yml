@@ -5,15 +5,32 @@ on:
     paths:
       - 'app/vitriny-neural/**'
       - 'app/scripts/test-vitriny-neural*.mjs'
+      - 'app/scripts/test-neural-*.mjs'
+      - 'app/scripts/run-vitriny-neural*.mjs'
+      - 'app/public/*neural*'
+      - 'app/server.js'
+      - 'app/jarvis.js'
+      - 'app/security-fetch-guard.js'
+      - 'app/Dockerfile'
+      - 'docker-compose*.yml'
       - 'app/package.json'
       - 'app/package-lock.json'
       - '.github/workflows/vitriny-neural.yml'
   push:
     branches:
+      - main
       - feat/jarvis-auto-learning-skills
     paths:
       - 'app/vitriny-neural/**'
       - 'app/scripts/test-vitriny-neural*.mjs'
+      - 'app/scripts/test-neural-*.mjs'
+      - 'app/scripts/run-vitriny-neural*.mjs'
+      - 'app/public/*neural*'
+      - 'app/server.js'
+      - 'app/jarvis.js'
+      - 'app/security-fetch-guard.js'
+      - 'app/Dockerfile'
+      - 'docker-compose*.yml'
       - 'app/package.json'
       - 'app/package-lock.json'
       - '.github/workflows/vitriny-neural.yml'
